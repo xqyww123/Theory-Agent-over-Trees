@@ -25,7 +25,7 @@ inside a single theorem.
 | Document | Contents |
 | --- | --- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design |
-| [docs/MCP_SPECIFICATION.md](docs/MCP_SPECIFICATION.md) | What TAT exposes to the agent: tools, the caret, messages |
+| [docs/MCP_SPECIFICATION.md](docs/MCP_SPECIFICATION.md) | What TAT exposes to the agent: tools, node ids, evaluation, messages |
 | [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | What is undecided, and what it blocks |
 | [docs/appendix/](docs/appendix/) | Supporting detail: substrate research, Isabelle-MCP behaviour, experiments, segment integrity |
 

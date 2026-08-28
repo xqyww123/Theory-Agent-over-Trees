@@ -21,7 +21,7 @@ Hold an explicit `Toplevel.state`. For each theory:
   `Keyword.merge_keywords`) before tokenising, or a parent-defined command
   tokenises as garbage
 - split the whole file text, header included, with `Outer_Syntax.parse_spans`
-- run each span through `Toplevel.command_errors false`, threading the state.
+- run each span through `Toplevel.command_errors true`, threading the state.
   Do not pre-create the theory: start from `Toplevel.make_state NONE` and let
   the first span — the `theory … begin` command — call an `init` that performs
   `Resources.begin_theory master_dir header parents`
@@ -32,11 +32,32 @@ failing command can return no state. It is the error-recovering runner — batch
 loading uses `Toplevel.command_exception`, which re-raises and therefore stops
 at the first failure.
 
+Its first argument is Isabelle's interactive flag and must be `true`. `sorry` is
+`Method.cheating`, which raises `Cheating requires quick_and_dirty mode!` unless
+that flag is set or `quick_and_dirty` is on (`Pure/Isar/method.ML:155-158`).
+Stock Isabelle passes `true` (`Pure/PIDE/command.ML:234`), on the path both
+interactive and batch runs take. Isa-REPL passes `false`
+(`contrib/Isa-REPL/library/REPL.ML:662`); that part of its shape must not be
+copied, because TAT emits `sorry` by design (ARCHITECTURE §2.2).
+
 `Resources.begin_theory` does not touch the filesystem. It stores `master_dir`
 as data, which matters only for body commands like `ML_file` that resolve
 against it.
 
 `Runtime.error` is `((serial * string) * string option)`, not an `exn`.
+
+### 1.1 The state slot table
+
+The evaluator holds `Toplevel.state` values in one table keyed by a name, and
+the Python side holds only names (ARCHITECTURE §3.1). Running a node is
+"from the state under this name, run these commands, put the result under that
+name". Re-evaluating a node writes the same name again, so the table grows only
+when nodes are created and shrinks only when they are deleted.
+
+Concurrent chains of work share this table (ARCHITECTURE §9), so it is
+guarded. `contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the pattern in use in
+this project family: a hash table plus a `Synchronized.var` held across every
+read and write.
 
 ## 2. One session, and what resolution becomes
 
@@ -64,8 +85,8 @@ An import that is not there is loaded from source anyway rather than refused, so
 that an agent which discovers a dependency mid-work is not stopped to wait for a
 heap rebuild. The loader reports how many theories that cost, since one import
 can pull a large closure, and the report is what tells a user to widen the base
-session. Whether `Thy_Info.use_theories` may be used for
-the theories that are not is **open** — see §6.
+session. Such an import is loaded through `Thy_Info.use_theories`, behind the
+wrapper of §7.
 
 ## 3. The theory table is a graph
 
@@ -109,9 +130,11 @@ table in `Thread_Data` (`REPL.ML:243`, `:315`), so any message produced on a
 forked worker cannot find its session and is dropped (`REPL.ML:271-275`). Route
 by `Position.id` as PIDE does, or pass the identity explicitly.
 
-**Do not run two producers into two tables.** Isa-REPL evaluates some theories
+**Do not let one name have two producers.** Isa-REPL evaluates some theories
 itself into its own table and loads others through `Thy_Info.use_theories` into
-`Thy_Info`'s graph. A name then has two slots.
+`Thy_Info`'s graph, with nothing keeping a name out of both. TAT also has two
+tables (§7), and what makes that safe is §8: our table is consulted first, so a
+name that we produced is never requested from the other one.
 
 **Do not `chDir`.** `REPL.ML:353-395` changes the working directory of the whole
 process under a lock that covers only other loaders. It has forced defensive
@@ -135,8 +158,6 @@ too many.
   theory must be in the base heap for §2 to hold.
 - **Whether the base heap must be rebuilt when the forest needs a new import**,
   and whether that is acceptable for the intended workflow.
-- **How the evaluator is driven from Python.** TAT is a Python process; this
-  needs a channel. Isa-REPL's answer is a socket server.
 
 ## 7. Loading a library theory that is not in the base heap
 

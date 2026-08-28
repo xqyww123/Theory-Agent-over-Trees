@@ -1,6 +1,9 @@
 # How Isabelle-MCP behaves
 
-Findings that TAT's design depends on. Paths are relative to
+How the route TAT did not take behaves. TAT drives Isabelle itself
+(ARCHITECTURE §8), so nothing here constrains it; the record is kept because
+this is the only accurate account of Isabelle-MCP's behaviour and because both
+experiments were run against it. Paths are relative to
 `contrib/Isabelle-MCP/` unless prefixed; Isabelle sources are under
 `contrib/Isabelle2025-2/src/`.
 

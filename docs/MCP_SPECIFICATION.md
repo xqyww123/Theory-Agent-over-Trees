@@ -15,7 +15,7 @@ TAT runs as its own MCP server, named TAT.
 | `recall` | Retrieve — from the forest, or from the Isabelle library |
 | `new_theory` | Start a new tree |
 | `construct` | Start a node's own operation, where its class has one |
-| `evaluate_to` | Set the caret and wait for checking to reach it |
+| `evaluate_to` | Evaluate everything not yet evaluated, up to a node |
 | `status` | Collect pending messages |
 
 `construct` is generic: it dispatches to the node class, and a class without one
@@ -43,9 +43,9 @@ One tool, two indexes:
 
 A detail level selects between a summary rendering and the full one.
 
-A `recall` of a node past the caret reports it as unevaluated. Reading does not
-advance evaluation: TAT submits commands, so nothing is checked unless TAT asks
-for it.
+A `recall` of a node that has not been evaluated reports it as such. Reading
+never evaluates: TAT submits the commands, so nothing runs unless TAT asks for
+it.
 
 ## 2. Naming nodes
 
@@ -102,6 +102,10 @@ lemma_P
 When more than one node matches, TAT rejects the call and lists the candidates
 rather than choosing one.
 
+Resolution and shortest-form printing are the same problem Isabelle solves for
+its own name spaces; `Name_Space.extern` computes the shortest unambiguous
+external name.
+
 ### 2.2 What changes an id
 
 Renaming a node changes its id. So does changing a `Theorem`'s `kind`, since the
@@ -117,41 +121,44 @@ longer hold.
 ## 3. Running a change
 
 An edit reaches Isabelle by being evaluated, not by being written to a file.
-TAT sends the affected node's data to the evaluator, the evaluator runs its
-commands and reports the transcript and results, and TAT writes the `.thy` from
-the transcripts (ARCHITECTURE §5.1).
+TAT sends the affected node's data to its evaluator, the evaluator runs the
+node's commands and reports the result of each role, and the `.thy` is written
+later from what the nodes emit (ARCHITECTURE §4).
 
-Results therefore arrive as the return of the call that caused them. There is no
-window in which a result from an earlier version of the file can be mistaken for
-a current one.
+Editing a node invalidates that node and everything after it, then evaluates
+that node, so its own result comes back with the call. Everything after it is
+reported as not evaluated until the agent asks for it.
 
-## 4. The caret
+## 4. Evaluation
 
-One caret. It points at exactly one node.
+`evaluate_to(destination, ignore_error)` evaluates every node that is not
+evaluated, in tree order, up to and including the destination. It returns when
+it has finished or when it has stopped.
 
-- Editing a node makes that node the caret.
-- Isabelle evaluates up to the caret and no further, because TAT submits no
-  commands past it.
-- `evaluate_to(node_id)` moves the caret. It blocks for up to 30 seconds; if
-  evaluation has not reached the target by then it returns and evaluation
-  continues in the background.
+Evaluation stops at a node whose class says nothing useful can follow it —
+typically a definition that failed, since every later mention of the constant
+would then report the constant rather than itself. `ignore_error` carries on past
+such a node. It cannot carry on into the children of a nesting node whose opening
+command failed: those have no context to run in.
 
-A node counts as **evaluated** when its evaluator has reported on every command
-it ran. Nodes after the caret report as unevaluated, which is what they are.
+Each node reports two things, and they answer different questions
+(ARCHITECTURE §3.2): whether it has a current evaluation, and whether it still
+owes anything. A `Theorem` awaiting a proof has a perfectly good evaluation and
+still owes a proof. A node left unevaluated because evaluation stopped ahead of
+it names the node that stopped it.
 
 ## 5. Messages
 
-MCP has no channel that reliably delivers a server-initiated message to the
-model, so TAT attaches its messages to tool results.
+Evaluation is synchronous, so a result arrives as the return of the call that
+caused it. There is no window in which a result can be mistaken for one
+belonging to an earlier version of the forest.
 
-- When a node finishes evaluating, its new state is attached to the next tool
-  result.
-- A node that has been evaluating for 30 seconds with no change produces a
-  message saying so, repeated every 30 seconds. A proof that will never
-  terminate looks exactly like one that is merely slow, and only elapsed time
-  distinguishes them.
-- `status` returns the pending messages on demand, for an agent that wants them
-  before its next edit.
+`construct` is the exception: it starts a proof search that outlives the call.
+
+MCP has no channel that reliably delivers a server-initiated message to the
+model, so TAT attaches such messages to tool results: when a search finishes, the
+node's new state rides on the next tool result. `status` returns the pending
+messages on demand, for an agent that wants them before its next edit.
 
 ## 6. Undecided
 
@@ -161,10 +168,3 @@ model, so TAT attaches its messages to tool results.
   and weakens the schema to a union.
 - **The omissibility flags for `Locale` and `Context`**, along with the rest of
   those two node classes.
-
-Resolution and shortest-form printing are the same problem Isabelle solves for
-its own name spaces; `Name_Space.extern` computes the shortest unambiguous
-external name.
-- **Imported trees.** Evaluation is bounded by the caret for a tree that nothing
-  imports. Whether a tree that other open trees import is pushed further along
-  by their requirements has not been measured.

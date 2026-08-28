@@ -7,12 +7,17 @@ Either the mapping is **reconstructed** — generate the file, compute line span
 match ranged results back, handle asynchrony — or it is **given**, with the
 evaluator returning one record per command already stamped with its own span.
 
+None of the five is what TAT does. TAT writes its own evaluator in Isabelle/ML,
+which is route 3's approach without route 3's package
+([EVALUATOR_DESIGN.md](../../EVALUATOR_DESIGN.md)); the mapping is given, and
+none of the machinery that a reconstructed mapping needs exists.
+
 Citations are to `contrib/Isabelle2025-2/src/` unless prefixed.
 
 | Route | Mapping | Verdict |
 | --- | --- | --- |
-| LSP via Isabelle-MCP | reconstructed | candidate |
-| headless PIDE in Scala | given, one traversal | candidate |
+| LSP via Isabelle-MCP | reconstructed | not taken |
+| headless PIDE in Scala | given, one traversal | not taken |
 | Isa-REPL | given | rejected — cannot be shipped |
 | ML-side push (`Command.print_function`) | — | rejected |
 | batch build / exports / `dump` | — | rejected |
@@ -82,14 +87,13 @@ No span table is needed. It achieves this with the error-recovering
 `Toplevel.command_errors false tr s` (`contrib/Isa-REPL/library/REPL.ML:662`), and offers a per-command
 collector hook (`contrib/Isa-REPL/library/REPL.ML:191-197`) for extracting generated fact names.
 
-**Rejected**: Isa-REPL is a development tool and cannot be shipped.
+**Rejected as a package**: Isa-REPL is a development tool and cannot be
+shipped, because it relies on `Thy_Info.register_thy`, which the standard
+distribution does not expose. Its approach is what TAT builds for itself, so
+the defects below are a list of what not to repeat rather than a list of
+reasons to stay away.
 
-What the rejection costs TAT is the whole of the reconstructed-mapping
-machinery: the segment table, its invariants, the lexical self-containment
-check, the partition cross-check, and the freshness clock. Route 1 needs all of
-them and Isa-REPL needs none.
-
-Defects found while evaluating it, should it ever be reconsidered:
+Defects found while evaluating it:
 
 - `init_printers` is never called — the only occurrences are the signature
   (`contrib/Isa-REPL/library/REPL.ML:153`), the definition (`:265`) and a commented-out invocation
@@ -153,7 +157,10 @@ Mechanisms examined and their ceilings:
 Still useful for bulk offline passes over a finished forest, where per-command
 attribution is not needed.
 
-## 6. Comparing the two candidates
+## 6. The two routes that were not taken, compared
+
+Kept because it is the comparison anyone reconsidering a reconstructed mapping
+would have to redo.
 
 | | LSP | headless Scala |
 | --- | --- | --- |

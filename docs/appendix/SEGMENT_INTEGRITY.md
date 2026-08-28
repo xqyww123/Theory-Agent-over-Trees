@@ -1,8 +1,7 @@
 # Keeping emitted text self-delimiting
 
 TAT's own attribution does not depend on this: the evaluator runs one node's
-commands at a time and reports the spans it parsed, so a node cannot reach the
-next node's commands.
+commands at a time, so a node cannot reach the next node's commands.
 
 The finished `.thy` is a different matter. Whoever builds the forest parses each
 file as a whole, so a node that emits text which does not close — an unclosed

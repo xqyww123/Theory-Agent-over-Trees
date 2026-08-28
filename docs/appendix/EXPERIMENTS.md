@@ -140,7 +140,8 @@ and the reply caught the block starting for the first time —
 ```
 
 `late.log` appeared six seconds later. Probing an unevaluated command is what
-makes it run. Any TAT tool that reads a node past the caret inherits this.
+makes it run — a property of this route, not of TAT's own evaluator, where
+reading a node runs nothing because TAT submits the commands.
 
 ### Scope
 
