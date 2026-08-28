@@ -1,16 +1,22 @@
 # Theory-Agent-over-Trees (TAT)
 
-An agent that writes Isabelle theories by editing a **forest of trees** rather than
-by editing text. Each tree is one Isabelle theory; each node is a semantic unit
-(a theorem, a definition, a datatype, a section heading). The forest **compiles**
-to ordinary `.thy` files, which Isabelle checks; per-command results are routed
-back to the node that emitted them and rendered for the agent.
+An agent that writes Isabelle theories by editing a **forest of trees** rather
+than text. Each tree is one Isabelle theory; each node is a declaration — a
+theorem, a definition, a datatype, a section heading. The forest compiles to
+ordinary `.thy` files, and each command's result is routed back to the node that
+emitted it.
 
-TAT is the theory-level counterpart of
+The point of the tree is that routing. An agent that edits theory text can only
+be told that line 47 failed; an agent that edits a tree is told which
+declaration failed, and in which of the several commands that declaration
+produced.
+
+The trees are pure declarations. Every proof is emitted as the `AoA` proof
+method — a hammer first, falling back to the AoA proof agent when the hammer
+times out — so TAT decides what is claimed and how a theory is organised, never
+how a claim is established. That divides the work with
 [AoA](../Isa-Mini/IsaMini/AoA/) (Agent over AST), which works at proof level
-inside a single theorem. AoA's design principle applies here too: the agent
-manipulates a structured object whose nodes carry their own results, instead of
-emitting source text and re-locating results by line numbers afterwards.
+inside a single theorem.
 
 **Status: design. No implementation yet.**
 
@@ -18,15 +24,16 @@ emitting source text and re-locating results by line numbers afterwards.
 
 | Document | Contents |
 | --- | --- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The model (forest / tree / node / segment), compilation, and the command-to-node mapping |
-| [docs/SUBSTRATE_RESEARCH.md](docs/SUBSTRATE_RESEARCH.md) | How Isabelle is driven: five candidate routes, the evidence for each, and why four were rejected |
-| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Measured facts, as opposed to facts read out of source |
-| [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | Decisions still to be made, and what each one blocks |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design |
+| [docs/MCP_SPECIFICATION.md](docs/MCP_SPECIFICATION.md) | What TAT exposes to the agent: tools, the caret, messages |
+| [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | What is undecided, and what it blocks |
+| [docs/appendix/](docs/appendix/) | Supporting detail: substrate research, Isabelle-MCP behaviour, experiments, segment integrity |
 
-## Relationship to Isabelle-MCP
+## How it runs
 
-TAT is built as a plugin of [Isabelle-MCP](../Isabelle-MCP/), reusing its
-Isabelle process management, evaluation-completion logic, and its forked Isabelle
-Scala component (`isabelle mcp_server`). TAT exposes its **own** MCP server; in
-the intended deployment Isabelle-MCP's own tools are disabled and only TAT's are
-visible to the agent.
+TAT is a Python process and an Isabelle process. The Python side owns the forest
+and serves the MCP tools; the Isabelle side runs an evaluator that TAT provides,
+driving Isabelle one command at a time.
+
+Node classes are extensible, and a node class is installed by adding its theory
+to the Isabelle session TAT launches on.

@@ -1,10 +1,14 @@
 # TAT Architecture
 
-Status: **design draft**. Sections marked *(decided)* record choices already
-made; sections marked *(open)* are tracked in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md)
-and must not be treated as settled.
+Status: design draft.
 
-## 1. Glossary
+Section markers, and there are only three:
+
+- ***(decided)*** — settled. A decided section may not rest on an open one.
+- ***(open)*** — an active question, named in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
+- unmarked — provisional. Written down to fix the shape, not yet agreed.
+
+## 1. Glossary *(decided)*
 
 These terms are fixed. Use them and no synonyms.
 
@@ -12,256 +16,235 @@ These terms are fixed. Use them and no synonyms.
 | --- | --- |
 | **forest** | all working theories, as a set of trees |
 | **tree** | one Isabelle theory; the root's name is the short name of the theory |
-| **node** | one semantic unit in a tree (a theorem, a definition, a section heading) |
-| **node class** | the kind of a node — `Theorem`, `Define`, `Datatype`, … — extensible |
+| **node** | one semantic unit in a tree |
+| **node class** | the kind of a node — `Theorem`, `Define`, … — extensible |
 | **role** | tag distinguishing the several commands one node emits |
-| **segment** | one Isabelle command span in an emitted file (see §4) |
+| **segment** | one Isabelle span in an emitted file |
 | **compile** | turning trees into `.thy` files on disk |
 | **generation** | a monotone counter, bumped on every compile of a file |
 
+Two relations are easy to confuse, so neither is called an edge. **Import
+dependency** holds between trees, and is what the tree roots declare in their
+`imports` clauses. **Nesting** holds between nodes inside one tree.
+
+`node` in this repository always means a node of a TAT tree. Isabelle's own
+document model also calls a theory file a node; where that meaning is intended
+it is written **PIDE document node** in full.
+
 ## 2. The model *(decided)*
 
-A tree is one theory. The forest's edges are the `imports` relations declared by
-the tree roots, so the forest is a dependency graph and compilation order is a
-topological order over it.
+A tree is one theory. Import dependency between trees makes the forest a
+dependency graph, and compilation order is a topological order over it.
 
-Initial node classes: `Theorem`, `Define`, `Datatype`, `Quotient Type`, `Record`,
-`TypeClass`, `Text`, `Section`. **New node classes must be addable without
-touching the core** — this is a primary design requirement, not a nice-to-have.
+Initial node classes: `Theorem`, `Define`, `Datatype`, `QuotientType`, `Record`,
+`TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be
+addable without touching the core.
 
 Each node class corresponds to one or more Isabelle commands.
 
-### 2.1 `Theorem`
+TAT writes theories it authored. Taking over a `.thy` file it did not write is
+out of scope for now and may be supported later. The one place that would lose
+information is `Theorem`'s `statement`, which is a structured value rather than
+the surface text; section headings, theorem names and constant names are all
+recoverable from a file.
+
+### 2.0 Nesting *(decided)*
+
+A node either contains other nodes or does not.
+
+`Theorem` is a leaf.
+
+`Section` contains the declarations under its heading. It is **presentational
+only**: it emits a `section` command and creates no Isabelle scope, so it changes
+nothing about how its children are checked or named.
+
+`Context` and `Locale` also contain nodes, and unlike `Section` they carry
+**operational behaviour**: they open an Isabelle context, so their children are
+checked inside it and the facts they declare are qualified by it. Both are
+unspecified — see OPEN_QUESTIONS.
+
+### 2.1 The trees are pure declarations *(decided)*
+
+No proof structure enters a tree. Every proof is emitted as the `AoA` proof
+method, which runs a hammer first and falls back to the AoA proof agent when the
+hammer times out. A `Theorem` node carries what is claimed, never how it is
+established: no proof attribute, no proof text, no proof subtree.
+
+Throughout this repository, `AoA` in code font is that proof method. AoA in
+plain text is the agent system the method falls back to.
+
+TAT therefore has one execution model and no agent-written proof text.
+
+### 2.2 Node classes
+
+**`Theorem`**
 
 | Attribute | Type |
 | --- | --- |
 | `kind` | `lemma` \| `corollary` \| `theorem` |
-| `statement` | AoA's Long statement structure (`IsaMini/AoA/model.py`, `class LongStatement`) |
+| `statement` | AoA's Long statement (`contrib/Isa-Mini/IsaMini/AoA/model.py`, `class LongStatement`) |
+| `proof` | `not_started` \| `working` \| `proven` \| `failed` |
 
-Who writes the proof body is **(open)** — see OPEN_QUESTIONS §1.
+`proof` is the state of the search, not a proof: a tree holds no proof (§2.1).
+Adding a `Theorem` may start the search at once, but the default is
+`not_started`, so laying out a theory costs nothing. `construct` starts it.
 
-### 2.2 `Define`
+A node whose `proof` is `not_started` emits **`sorry`**. Emitting `by AoA` with
+nothing in the cache would fail, and a failing `by` means the fact is never
+added, so every later node using it fails too — a skeleton of twenty lemmas
+would check none of them past the first. With `sorry` the fact is admitted, the
+whole tree's structure and types are checked, and the agent constructs proofs
+afterwards.
+
+This is honest only because `proof` is tracked. TAT reports the tree as clean
+*and* names the nodes that are `not_started`; it is not claiming they are
+proved.
+
+**`Define`**
 
 | Attribute | Type |
 | --- | --- |
 | `kind` | `opaque` \| `auto-simp` |
 | `equations` | the defining equations |
 
-`auto-simp` adds `[simp]` to the resulting definitional equations. Several
-equations compile to `fun`, or to `function … by aoa` plus `termination by aoa`.
-`opaque` additionally emits `note xxx.simps[simp del]` to remove the simp rules.
+`auto-simp` adds `[simp]` to the resulting definitional equations; `opaque`
+removes them again with `note f.simps[simp del]`. Several equations compile to
+`fun`, or to `function` with its proof obligations discharged by `AoA`.
 
-This is the motivating example for the **role** mechanism: one node, several
-commands, each of which can fail independently and must be reported separately.
+`Define` is the motivating case for **role**: one node, several commands, each
+able to fail on its own.
 
-| role | emitted |
-| --- | --- |
-| `function` | `fun f where …` or `function f where …` |
-| `pat-completeness` | the completeness proof (only for the `function` form) |
-| `termination` | `termination by …` (only for the `function` form) |
-| `simp-del` | `note f.simps[simp del]` (only when `kind = opaque`) |
+| role | emitted | when |
+| --- | --- | --- |
+| `function` | `fun f where …` or `function f where …` | always |
+| `pat-completeness` | the completeness proof | `function` form |
+| `termination` | `termination by …` | `function` form |
+| `simp-del` | `note f.simps[simp del]` | `kind = opaque` |
 
-"The definition is wrong" and "the definition is fine but termination did not go
-through" are different reports, and the agent needs to be able to tell them apart.
+"The definition is wrong" and "the definition is fine but termination failed" are
+different reports.
 
-Remaining node classes: **(open)**, to be specified.
+`Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text` and `Section` are
+unspecified.
 
 ## 3. Compilation *(decided)*
 
-Compilation writes `.thy` files. TAT owns the files: it is the compiler, so it
-knows by construction what it wrote and where. After writing, it may notify the
-file watchers to trigger re-checking.
+TAT owns the `.thy` files: it is the compiler, so it knows by construction what
+it wrote and where. It also delivers each change to Isabelle itself; the file
+watcher plays no part. How, and why it must be that way, is in
+[MCP_SPECIFICATION.md §2](MCP_SPECIFICATION.md).
 
-The compiler must **not** build the file by string concatenation. It builds an
-ordered list of segments, and line numbers are computed once at serialisation
-time by counting newlines. Spans are therefore exact by construction and are
-never recovered by parsing the output back.
+The compiler builds an ordered list of segments and computes line numbers once,
+at serialisation, by counting newlines. It never concatenates strings and never
+parses its own output back.
 
-## 4. Segments
+## 4. Segments *(decided)*
 
-A **segment** is exactly one Isabelle command span. This mirrors Isabelle's own
-partition of a theory file:
+A segment is exactly one Isabelle span, mirroring Isabelle's own partition of a
+theory file (`contrib/Isabelle2025-2/src/Pure/PIDE/command_span.ML:36`, where the
+three kinds of span are `Command_Span`, `Ignored_Span` and `Malformed_Span`).
+That partition is total — whitespace and comments are spans, not gaps.
 
-```sml
-(* Pure/PIDE/command_span.ML:36 *)
-datatype kind = Command_Span of string * Position.T | Ignored_Span | Malformed_Span;
-```
-
-The partition is **total**: whitespace and comments are `Ignored_Span`, not gaps.
-On the Scala side the same distinction is `is_proper` / `is_ignored`
-(`Pure/PIDE/command.scala:497-498`). Because our segment list mirrors that
-partition, any position Isabelle reports lands in exactly one segment — lookup is
-a total function with no "not found" branch.
-
-Three segment kinds in TAT:
-
-| segment kind | in Isabelle's terms | owner |
+| segment kind | Isabelle's term | owner |
 | --- | --- | --- |
 | command | `Command_Span` | a node, plus a role |
 | layout (blank lines, separator comments) | `Ignored_Span` | none |
 | structural (`theory X imports … begin`, `end`) | `Command_Span` | the root node |
 
-### 4.1 The two invariants
+A node may own several segments; that is what `role` is for. No segment is owned
+by more than one node, because the evaluator runs one node's commands at a time
+and reports the spans it parsed (§6).
 
-1. **One node may own several segments.** Normal; that is what `role` is for.
-2. **No segment may be owned by more than one node.** This is the foundation of
-   the whole mapping and must be defended actively.
+What survives is a check on the published artefact rather than on attribution:
+the finished `.thy` is parsed as a whole by whoever builds it, so each node's
+text must still be self-delimiting. Cartouches, comments and quotes are balanced
+before a node's text is accepted. See
+[appendix/SEGMENT_INTEGRITY.md](appendix/SEGMENT_INTEGRITY.md).
 
-Invariant 2 is broken by exactly one failure mode: **a node's emitted text is not
-self-delimiting and swallows its successors.** An unclosed cartouche `‹`, an
-unclosed `(*`, or a truncated command makes Isabelle parse one span covering
-several of our segments (or a `Malformed_Span`). Attribution downstream then
-misaligns *silently*. With LLM-generated statement text this is not a theoretical
-risk.
+## 5. Node classes
 
-Three layers of defence, cheapest first:
+A node class is delivered as an Isabelle theory together with a Python package.
+The theory is primary: it registers the class's evaluator and constructor on the
+ML side, and it names the Python package carrying the class's data definition
+and its emitter. Installing a node class means adding a theory to the base
+session, so the set of available node classes is fixed when that heap is built.
 
-1. **Lexical self-containment check before emitting.** Balance cartouches,
-   comments and quotes over each node's text. On failure, report it as a
-   node-level error and never write the poisoned file. This also produces a far
-   better message than Isabelle's downstream parse error.
-2. **Partition cross-check.** Compare our segment boundaries against Isabelle's
-   actual command ranges. On disagreement, mark the file's attribution
-   *untrusted* rather than reporting misaligned results.
-3. **`Malformed_Span`** is Isabelle telling us defence 1 leaked. Free backstop.
+Four parts:
 
-The cost of defence 2 depends on the substrate: one round trip per command over
-LSP (`PIDE/output_at_position` returns the command's true range), versus a single
-in-process traversal under headless PIDE. See SUBSTRATE_RESEARCH §6.
+| part | side | |
+| --- | --- | --- |
+| data definition and argument schema | Python | becomes the MCP tool schema |
+| proposed emission | Python | node data to Isar text |
+| evaluator | ML | runs the node; may substitute its own commands |
+| constructor | ML | the `construct` operation, for classes that have one |
 
-## 5. Node class interface
+The evaluator has a default: run the proposed text. Only a class whose commands
+depend on the state they meet needs to write one. `Define` is the first — it
+emits `fun` and falls back to `function` when termination is not discharged on
+its own.
 
-The extension seam. Modelled on AoA's `Node` (`IsaMini/AoA/model.py:4124`), which
-separates assembling operations from rendering them.
+### 5.1 Emission is proposed; execution decides
 
-```python
-class NodeClass(ABC):
-    name: ClassVar[str]
-    ArgSchema: ClassVar[type[TypedDict]]               # -> MCP tool schema
+A node's contribution to the `.thy` file is the transcript of what its evaluator
+ran, not the text its emitter proposed. The two differ whenever an evaluator
+substitutes commands.
 
-    def compile(self, node) -> list[EmittedCommand]: ...
-    def absorb(self, node, results: Mapping[str, CommandResult]) -> NodeReport: ...
-    def quickview(self, node, report) -> str: ...
-    def print(self, node, report) -> str: ...
-```
+Python writes the file, from the transcripts, in tree order. The evaluator never
+writes one. The file and the evaluation therefore cannot disagree.
 
-`compile` is the **only** emission point, so span bookkeeping cannot be bypassed:
-a new node class inherits correct attribution for free. `absorb` is where a node
-class interprets raw per-command results into its own semantics.
+### 5.2 Two kinds of ML
 
-`ArgSchema` -> MCP tool schema generation should reuse AoA's existing machinery
-rather than being rewritten.
+The framework and the evaluators are needed only by TAT's own process. Generated
+theories never name them, so they belong in the base heap and in no tree's
+imports.
 
-## 6. Command-to-node mapping
+Anything the generated text does name — the `AoA` proof method, any syntax or
+attribute a node emits — must be imported by the trees that use it, and is a
+real dependency of the finished forest. A forest that cannot be built without
+TAT is not an Isabelle development.
 
-The mapping is **asserted at generation time, not recovered by analysis**: each
-`compile()` returns its own commands, so `node -> text` is known; `text -> lines`
-is newline counting. What must then be defended is that our asserted partition
-agrees with Isabelle's actual parse (§4.1).
+The concrete interfaces are unwritten.
 
-Results arrive in three kinds with very different costs, and must be harvested
-accordingly:
+## 6. Command-to-node mapping *(decided)*
 
-| result | source | cost | granularity |
-| --- | --- | --- | --- |
-| processing status | `PIDE/decoration` (pushed) | cheap, complete | ranged |
-| errors / warnings | `PIDE/decoration` (pushed) | cheap, complete | ranged |
-| full output (proof state, generated equations) | `PIDE/output_at_position` (pulled) | one round trip **per command** | single command |
+The evaluator runs one node's commands at a time and reports what it ran, with
+each command's own span and result. The mapping is given, not reconstructed:
+there is no line-span table, and no question of whether our partition agrees
+with Isabelle's — the spans are the ones Isabelle parsed.
 
-So: status and diagnostics are attributed in bulk by range; full output is pulled
-lazily, only for nodes that need detail. This mirrors AoA's
-`does_quickview_need_detail()`.
+A node emitting text that does not close cannot reach the next node's commands,
+because those have not been submitted yet. It fails at its own parse.
 
-Line-number types must reuse Isabelle-MCP's existing `MCPLine` / `LSPLine`
-(`evaluation.py`) rather than introducing a third 1-based/0-based convention.
+## 7. Substrate *(decided)*
 
-## 7. Evaluation completion
+TAT drives Isabelle itself, through its own evaluator written in Isabelle/ML.
+The evaluator holds an explicit `Toplevel.state` and runs one command at a time
+through `Toplevel.command_errors`, which recovers from a failing command instead
+of re-raising. Design in [EVALUATOR_DESIGN.md](../EVALUATOR_DESIGN.md); the
+routes examined and rejected are in
+[appendix/SUBSTRATE_RESEARCH.md](appendix/SUBSTRATE_RESEARCH.md).
 
-TAT must **not** invent its own notion of "the file checked out fine". It reuses
-Isabelle-MCP's completion predicate, which is the conjunction of two orthogonal
-conditions (`Isabelle-MCP/src/isabelle_mcp/evaluation.py:172-181`):
+The forest is not a session. TAT launches a prover on one base session heap and
+the forest sits on top of it: every tree is authored, none is in a heap. When
+the forest is finished it is an ordinary session that anyone can build.
 
-- `_frontier_reached` — the destination line lies in no `unprocessed` range
-  (running ranges are deliberately ignored: a fork means the evaluation chain has
-  already passed), **and** every recursive import is done.
-- `_prefix_quiet` — no `unprocessed` and no `running` range overlaps `[0, dest]`,
-  i.e. every forked proof in the prefix has joined.
+Everything the forest imports from outside itself must be in that base heap.
+That includes the theories registering TAT's own node classes (§5.2) and any
+proof method the generated text names.
 
-Neither suffices alone. Frontier-only reports success while a forked proof in the
-prefix is still running and about to fail — a real bug, fixed in Isabelle-MCP
-0.1.4 (`CHANGELOG.md:74-92`). Quiet-only cannot distinguish "finished" from
-"never started".
+A clean verdict does not mean proved. TAT emits `sorry` deliberately, for nodes
+whose proof has not been constructed, and knows which those are (§2.2). It never
+emits `oops`, which produces no diagnostic, no decoration and no warning, and so
+could not be accounted for.
 
-### 7.1 Facts about the verdict that TAT must encode
+## 8. Packaging
 
-- **Evaluation does not stop at the target line.** Both servers submit
-  `required = true`, and with it execution runs from the first changed command to
-  the end of the node (`Pure/PIDE/document.ML:864-870`). `evaluate_to` draws a
-  waiting-and-reporting boundary, not an execution boundary.
-- **`sorry` breaks `clean`** (it produces `background_bad`, folded into errors),
-  but **`oops` produces nothing at all** — no diagnostic, no decoration, no
-  warning (`Isabelle-MCP/docs/TECH_NOTE.md:143-147`). TAT is immune by
-  construction only as long as it never emits `oops`; free-text proof bodies must
-  be screened at the same gate as §4.1's defence 1.
-- **Freshness is a 2.0 s clock, not an event.** Every edit-send stamps a global
-  timestamp and cached decorations are distrusted for `DECORATION_GRACE`
-  (`Isabelle-MCP/src/isabelle_mcp/processing.py:24-40`). An event-based
-  acknowledgement is not available on this protocol: the server sends nothing
-  when recomputed decorations equal the published ones, so waiting for a push
-  would latch forever. This is a forced design choice, and it is the one
-  load-bearing heuristic in the stack.
+TAT is a Python process and an Isabelle process. The Python side owns the
+forest, serves the MCP tools, and writes the `.thy` files. The Isabelle side
+runs the evaluator. The channel between them is unwritten.
 
-### 7.2 Where TAT is better placed than Isabelle-MCP
+Node classes are installed by adding their theories to the base session (§5).
 
-Isabelle-MCP's docs name the disk-to-model race as intrinsic to a file-watching
-architecture (`docs/PIDE_MCP_COMPARISON.md:162`). TAT does not have to inherit
-it: TAT writes the files itself, so it knows the generation it just wrote. Two
-ways to convert the 2.0 s heuristic into a guarantee, both local changes because
-the Scala language server is already a fork owned by this project family
-(`Isabelle-MCP/src/isabelle_mcp/scala/Isabelle2025-2/`):
+## 9. Directory and module structure
 
-1. carry a document version on the decoration channel, and correlate;
-2. echo a content hash of the server's current model, and refuse to attribute
-   until it matches.
-
-Neither exists today. Until one does, results must be marked `PENDING` rather
-than `OK` inside the window — a `NodeStatus` with no defaultable success value.
-
-## 8. Edit cost: ranged edits are mandatory
-
-Measured, not inferred — see [EXPERIMENTS.md §1](EXPERIMENTS.md).
-
-Isabelle-MCP sends every file sync as a `didChange` carrying the **whole**
-document with no range (`Isabelle-MCP/src/isabelle_mcp/lsp_client.py:1327`). This
-**destroys PIDE's reuse of the unchanged prefix**: editing only the last lemma of
-a theory re-executes a slow command near its top, reproducibly, confirmed by
-timing, by the `running:` status, and by a side-effect probe.
-
-PIDE itself is not at fault. The identical edit delivered as a **ranged**
-`didChange` reuses the prefix perfectly, with the error diagnostic landing on the
-edited line in both cases. One call site is causally responsible.
-
-Therefore, for TAT:
-
-- **An edit must be delivered as a minimal range**, not as a full document.
-  Since TAT compiles the file itself it holds both the old and the new segment
-  lists, so a common-prefix/suffix trim is cheap and exact — it does not need a
-  general text diff.
-- Without this, the edit loop costs one whole theory per node edit, which
-  defeats the point of a node-granular agent.
-- The same trap exists on the headless route: `Headless.use_theories` also
-  performs a whole-file `Text.Edit.replace` (`Pure/PIDE/headless.scala:492`).
-  The difference is the size of the fix — a few dozen lines of range computation
-  in Python here, against a full document-bookkeeping layer in Scala there.
-
-## 9. Packaging *(decided)*
-
-TAT is a plugin of Isabelle-MCP exposing its own MCP server. It reuses
-Isabelle-MCP's `IsabelleLSPClient` (session lifecycle, evaluation status,
-decorations, `output_at_position`) as a library.
-
-This requires a small refactor of Isabelle-MCP first: `server.py` currently holds
-a module-level `FastMCP` instance with flat `@mcp.tool()` registrations, a
-module-level client singleton, and a lifespan bound to that server. Client,
-lifespan and file watcher need to be extractable without importing the tool
-surface.
+Unwritten.

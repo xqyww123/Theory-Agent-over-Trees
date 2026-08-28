@@ -1,78 +1,51 @@
 # Open questions
 
-Decisions not yet made. Nothing here may be treated as settled, and no code
-should assume an answer. Ordered by how much they block.
+Nothing here is settled. Ordered by what it blocks.
 
-## 1. Who writes a `Theorem` node's proof body?
+## 1. The channel between Python and Isabelle
 
-**Blocks:** the node class design for `Theorem`, and whether TAT has to host two
-execution models at once.
+**Blocks:** everything that crosses the boundary, which is most of the design.
 
-Three candidates:
+The Python side owns the forest and serves the MCP tools; the ML side runs the
+evaluator. Both directions are needed: Python drives evaluation, and the
+evaluator calls back — a node class asking for another variant, `construct`
+relaying between AoA and the tree.
 
-1. The proof is one opaque block of text the agent writes; TAT only reports
-   whether it checked.
-2. A `Theorem` node contains an embedded **AoA proof tree** — interactive,
-   stepwise, with live goal states. AoA runs on Isa-REPL, so this means running
-   PIDE and Isa-REPL side by side.
-3. TAT only emits an automatic tactic (`by aoa` and similar) and reports failure
-   otherwise.
+In this repository, `contrib/Isabelle_RPC` is ML to Python over MessagePack with
+callbacks, and Isa-REPL's answer to the other direction is a socket server.
 
-Note the interaction with the substrate decision: Isa-REPL is rejected for
-shipping (SUBSTRATE_RESEARCH §3), which makes option 2 considerably more
-expensive than it first appears.
+## 2. What the agent sees when an upstream node fails
 
-Recommendation on record: start with option 1 and keep the interface open for
-option 2. Not agreed.
+**Blocks:** the tool contract, and the evaluator's loop.
 
-## 2. Substrate: LSP via Isabelle-MCP, or headless PIDE in Scala?
+A failing node leaves its fact undeclared, so every later node using it fails
+too. TAT owns the evaluator, so it chooses: keep going from the state before the
+failure, or stop. And a node that fails because something above it failed should
+not read like a node that is itself wrong.
 
-**Blocks:** essentially all implementation.
+## 3. `construct` on one node or several
 
-Both are the same engine; see SUBSTRATE_RESEARCH §6 for the comparison table.
-Route 1 reuses a mature, well-tested completion model and costs far less to
-start. Route 2 removes a class of staleness and snapshot-consistency risk
-structurally, and makes the partition cross-check cheap, at the cost of a real
-Scala edit layer and a per-release port.
+After laying out a skeleton the agent will want to construct many proofs at
+once. Batching complicates the message model, since each is an independent
+asynchronous activity.
 
-Leaning on record: route 1, given that Isabelle-MCP is robust in practice and
-that its Scala component is already a fork we can extend when a specific need
-arises. Not formally decided.
+## 4. Tool granularity
 
-## 3. ~~Does the full-text `didChange` defeat PIDE's prefix reuse?~~ RESOLVED
+One tool per node class, or one `edit` taking a class parameter. Per-class tools
+give a typed schema per declaration kind and multiply the tool count — and since
+plugins add node classes, they would add tools.
 
-**Answered by experiment: yes, it does.** Moved to
-[EXPERIMENTS.md §1](EXPERIMENTS.md); the consequence is recorded in
-ARCHITECTURE §9.
+## 5. The remaining node classes
 
-What remains open is only what TAT does about it — send ranged edits itself, or
-fix the call site in Isabelle-MCP. See §7 below.
+`Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
+and `Locale` are unspecified. `Context` and `Locale` also need their two
+omissibility flags (MCP_SPECIFICATION §2.1).
 
-## 4. What does the agent see inside the freshness window?
+## 6. Where the `AoA` proof method lives
 
-**Blocks:** the tool contract.
+If it is defined in a theory, that theory must be in the base heap, and it is a
+real import of every tree that uses it.
 
-Cached decorations are distrusted for `DECORATION_GRACE` (2.0 s) after every
-edit-send. Options: block and poll until the verdict is trustworthy (as
-`isabelle_evaluate_to` does), or return immediately with an explicit `PENDING`
-per node.
+## 7. The framework's concrete interfaces
 
-Related: whether to close the window properly by adding a version or a
-content-hash handshake to the forked Scala server — see ARCHITECTURE §7.2.
-
-## 5. Remaining node class specifications
-
-`Datatype`, `Quotient Type`, `Record`, `TypeClass`, `Text`, `Section` have not
-been specified. `Theorem` and `Define` are in ARCHITECTURE §2.
-
-## 6. Forest-to-session mapping
-
-How trees map onto Isabelle sessions, which session TAT launches, and how a tree
-that another tree imports is made available. Note Isabelle-MCP's constraint that
-the launched session must not precompile the theories being edited.
-
-## 7. Isabelle-MCP refactor scope
-
-TAT needs `IsabelleLSPClient`, the lifespan and the file watcher extractable
-without importing Isabelle-MCP's tool surface (ARCHITECTURE §8). How far to go,
-and whether those changes land in Isabelle-MCP or in a shim inside TAT.
+The base classes and the ML registration API. To be given.
