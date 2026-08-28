@@ -59,3 +59,15 @@ component is one form. During development an Isa-REPL app serves.
 whether any theorem in a forest carries that oracle is an account of
 completeness independent of TAT's own, and the two disagreeing would mean TAT
 has a bug.
+
+## 9. Two loose ends in `Define`
+
+Small enough to be forgotten, big enough to bite.
+
+- **What the `termination` role emits when its proof failed.** The role's entry
+  in ARCHITECTURE §2.2 covers only the successful case. It is a proof
+  obligation, so `sorry` would discharge it, but which failures a node class
+  papers over is that class's design and this one is not decided.
+- **The role named `function` now covers all three forms**, `definition`
+  included, so it shares a name with one of the forms it covers. "The `Define`'s
+  `function` role failed" does not say which thing failed.

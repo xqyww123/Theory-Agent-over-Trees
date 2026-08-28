@@ -397,7 +397,9 @@ chains that run at the same time therefore need one outer call each;
 connection. A callback exists for Python to ask Isabelle to open another, which
 is what running a `construct` alongside evaluation needs.
 
-Concurrent chains share the state slot table, so that table is locked.
+Concurrent chains share the state slot table, so that table is locked. The
+other state they share is inside tools that a proof search reaches — AoA's proof
+store and `auto_sledgehammer`'s cache — and those are thread-safe.
 
 Node classes are installed by adding their theories to the base session (§6).
 
