@@ -35,10 +35,11 @@ hands it the new one (ARCHITECTURE §3.6); what `Theorem` does with that is
 not decided.
 
 Ignoring the change is free and correct: evaluation replays proofs and never
-searches, so a proof built against the old context is only a candidate either
-way, and a failed replay starts a new search. Suspending the search and
-re-running it against the new context saves a search when the change was
-harmless, and costs a suspend-and-resume path through the AoA agent.
+searches (ARCHITECTURE §3.6), so a proof built against the old context is only
+a candidate either way, and a failed replay leaves the node `failed` for another
+`construct`. Suspending the search and re-running it against the new context
+saves a search when the change was harmless, and costs a suspend-and-resume
+path through the AoA agent.
 
 ## 6. Where the `AoA` proof method lives
 

@@ -22,6 +22,7 @@ These terms are fixed. Use them and no synonyms.
 | **segment** | one Isabelle span in an emitted file |
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
 | **tree order** | depth-first, a node before its children, children in their own order |
+| **evaluate** | running a node's commands in Isabelle and recording what happened (§3) |
 | **compile** | turning trees into `.thy` files on disk |
 
 Two relations are easy to confuse, so neither is called an edge. **Import
@@ -39,7 +40,8 @@ dependency graph, and compilation order is a topological order over it.
 
 Initial node classes: `Theorem`, `Define`, `Datatype`, `QuotientType`, `Record`,
 `TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be
-addable without touching the core.
+addable without touching the core. Every tree's root is a `Theory` node, which
+owns the theory header, the `imports` list and the closing `end`.
 
 Each node class corresponds to one or more Isabelle commands.
 
@@ -69,8 +71,9 @@ unspecified — see OPEN_QUESTIONS.
 
 No proof structure enters a tree. Every proof is emitted as the `AoA` proof
 method, which runs a hammer first and falls back to the AoA proof agent when the
-hammer times out. A `Theorem` node carries what is claimed, never how it is
-established: no proof attribute, no proof text, no proof subtree.
+hammer times out; while a node has no proof it emits `sorry` instead (§2.2). A
+`Theorem` node carries what is claimed, never how it is established: no proof
+attribute, no proof text, no proof subtree.
 
 Throughout this repository, `AoA` in code font is that proof method. AoA in
 plain text is the agent system the method falls back to.
@@ -91,15 +94,17 @@ TAT therefore has one execution model and no agent-written proof text.
 Adding a `Theorem` may start the search at once, but the default is
 `not_started`, so laying out a theory costs nothing. `construct` starts it.
 
-A node whose `proof` is not `proven` emits **`sorry`**. Emitting `by AoA` with
-nothing in the cache would fail, and a failing `by` means the fact is never
-added, so every later node using it fails too — a skeleton of twenty lemmas
-would check none of them past the first. With `sorry` the fact is admitted, the
+A node whose `proof` is not `proven` emits **`sorry`**. Emitting `by AoA` for a
+proof that has not been constructed would fail, since evaluation never searches
+(§3.6), and a failing `by` means the fact is never added, so every later node
+using it fails too — a skeleton of twenty lemmas would check none of them past
+the first. With `sorry` the fact is admitted, the
 whole tree's structure and types are checked, and the agent constructs proofs
 afterwards.
 
-This is honest only because `proof` is tracked. TAT reports the tree as clean
-*and* names the nodes that are not proved; it is not claiming they are.
+This is honest only because `proof` is tracked: such a node evaluates without
+error and is still not `finished` (§3.2), so TAT never mistakes an admitted fact
+for a proved one.
 
 **`Define`**
 
@@ -150,6 +155,11 @@ A node's resulting state is the slot of its next sibling, or, for a last child,
 the slot its parent keeps for the position after all its children. The output of
 one node and the input of the next are therefore the same slot, and
 re-evaluating a node writes into slots that already exist.
+
+A nesting node's opening command writes its first child's slot. After the last
+child, a closing command reads the parent's after-children slot and writes the
+node's resulting slot; a class with no closing command, such as `Section`,
+copies the one into the other.
 
 A node that fails and is passed over leaves its input state in its resulting
 slot unchanged, so whatever follows always has something to run from.
@@ -228,14 +238,17 @@ to and including the destination, in tree order, beginning at the first one.
 Every tree the destination's tree imports must be evaluated to its own `end`
 first, since a theory value exists only once its theory is closed.
 
-Editing a node invalidates from that node and then evaluates it, so the result of
-what was just written comes back with the call.
+Editing a node invalidates from that node and then runs `evaluate_to` on it, so
+the result of what was just written comes back with the call.
 
 ### 3.6 Work that outlives a call
 
-Evaluation is synchronous: a loop that submits one command and waits. The one
-asynchronous activity is `construct`, which starts a proof search; a `Theorem`
-whose search is running has `proof = working`.
+Evaluation is synchronous: a loop that submits one command and waits. It never
+searches for a proof: when it reaches a `by AoA`, the `AoA` method replays what
+an earlier search stored and fails when there is nothing, so the method carries
+a switch that disables its own search and TAT's evaluator sets it. The one
+asynchronous activity, and the only thing that starts a search, is `construct`;
+a `Theorem` whose search is running has `proof = working`.
 
 A node class that starts such work decides for itself what happens when its
 context is invalidated under it. This adds no framework machinery: invalidation
@@ -246,8 +259,8 @@ new one at evaluation. What `Theorem` does with that is open.
 ## 4. Compilation *(decided)*
 
 TAT owns the `.thy` files: it is the compiler, so it knows by construction what
-it wrote and where. It also delivers each change to Isabelle itself; the file
-watcher plays no part.
+it wrote and where. Isabelle never reads them; every change reaches Isabelle by
+evaluation (§3), and the files exist for whoever builds the forest afterwards.
 
 A node writes its own text through `emit_isar(indent, out)`, which writes to
 `out` and returns the indent in effect after it. The `indent` passed in is a
@@ -369,14 +382,15 @@ The forest is not a session. TAT launches a prover on one base session heap and
 the forest sits on top of it: every tree is authored, none is in a heap. When
 the forest is finished it is an ordinary session that anyone can build.
 
-Everything the forest imports from outside itself must be in that base heap.
-That includes the theories registering TAT's own node classes (§6.3) and any
-proof method the generated text names.
+Everything the forest imports from outside itself is expected to be in that base
+heap, and the theories registering TAT's own node classes (§6.3) must be. A
+library theory that is not there is loaded from source, at a cost the loader
+reports (EVALUATOR_DESIGN §2).
 
-A clean verdict does not mean proved. TAT emits `sorry` deliberately, for nodes
-whose proof has not been constructed, and knows which those are (§3.2). It never
-emits `oops`, which produces no diagnostic, no decoration and no warning, and so
-could not be accounted for.
+Evaluating without error does not mean proved. `Theorem` emits `sorry`
+deliberately, for a proof that has not been constructed, and `finished` (§3.2)
+is what tells such a node apart. No node class emits `oops`, which leaves no
+trace in Isabelle's output and so could not be accounted for.
 
 ## 9. The two processes and the channel *(decided)*
 

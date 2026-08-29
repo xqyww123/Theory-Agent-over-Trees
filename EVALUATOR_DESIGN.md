@@ -5,27 +5,38 @@ Working plan, not part of the published document set.
 TAT drives Isabelle itself, command by command, rather than through a document
 model. Isa-REPL (`contrib/Isa-REPL`) is the reference: it has done this for
 years, so its shape is evidence and its defects are a map of the hazards. TAT
-does not use it — it cannot be shipped, and its own design choices are the
-subject of §5.
+does not build on it — it cannot be shipped, and its own design choices are the
+subject of §5. Its one use is as the development-time entry point
+(ARCHITECTURE §9).
 
 ## 1. The mechanism
 
 Measured on a stock Isabelle2025-2, using only functions in the public
 signatures of unpatched files.
 
-Hold an explicit `Toplevel.state`. For each theory:
+Every `Toplevel.state` lives in a state slot (§1.1), and a node's evaluator is
+handed the slot it starts from and the slot it writes (ARCHITECTURE §3.1). No
+file is read: each evaluator receives the text of its own node's commands.
 
-- read the header with `Thy_Header.read`
+For the `Theory` root node's header:
+
+- read it with `Thy_Header.read`
 - resolve each import to a `theory` value (§2)
 - merge the parents' keyword tables (`Thy_Header.get_keywords`,
   `Keyword.merge_keywords`) before tokenising, or a parent-defined command
   tokenises as garbage
-- split the whole file text, header included, with `Outer_Syntax.parse_spans`
-- run each span through `Toplevel.command_errors true`, threading the state.
-  Do not pre-create the theory: start from `Toplevel.make_state NONE` and let
-  the first span — the `theory … begin` command — call an `init` that performs
+- do not pre-create the theory: start from `Toplevel.make_state NONE` and let
+  the `theory … begin` span call an `init` that performs
   `Resources.begin_theory master_dir header parents`
-- at the end, `Toplevel.end_theory` yields the `theory` value
+
+For any node's commands:
+
+- split the text with `Outer_Syntax.parse_spans`
+- run each span through `Toplevel.command_errors true`, threading the state
+  from the input slot to the output slot
+
+For the root node's closing `end`, `Toplevel.end_theory` yields the `theory`
+value, which goes into the theory table (§3).
 
 `Toplevel.command_errors` returns `(errors, state option)`; check both, since a
 failing command can return no state. It is the error-recovering runner — batch
@@ -65,43 +76,41 @@ TAT launches a prover on one base session heap. The forest is not a session; it
 sits on top of one. Every tree is authored and none is in a heap. When the
 forest is finished it becomes an ordinary session someone else builds.
 
-Import resolution has two levels and no third:
+Import resolution, in order:
 
 ```
 resolve name =
-    our own table          (* trees this session evaluated *)
-  | Thy_Info.lookup_theory (* the base heap *)
-  | error
+    our own table            (* trees this session evaluated to their end *)
+  | Thy_Info.lookup_theory   (* the base heap *)
+  | load from source (§7)    (* a library theory the heap lacks *)
 ```
 
 One producer means one slot per name, so two distinct `theory` values with one
 name — which raise `Duplicate theory name` (`Pure/context.ML:383`) or `Cannot
 join theories` (`:521`) — cannot be constructed. The invariant holds by shape.
 
-The cost is a build-time requirement: everything the forest imports from outside
-itself is expected to be in the base heap.
-
-An import that is not there is loaded from source anyway rather than refused, so
+Everything the forest imports from outside itself is expected to be in the base
+heap. An import that is not there is loaded from source rather than refused, so
 that an agent which discovers a dependency mid-work is not stopped to wait for a
 heap rebuild. The loader reports how many theories that cost, since one import
 can pull a large closure, and the report is what tells a user to widen the base
-session. Such an import is loaded through `Thy_Info.use_theories`, behind the
-wrapper of §7.
+session.
 
-## 3. The theory table is a graph
+## 3. The theory table
 
-Not a `Symtab`. A `String_Graph` keyed by theory name, carrying the theory and
-its parent edges, so that re-evaluating a theory can delete everything derived
-from it. `Pure/Thy/thy_info.ML:188-194` is the operation, in three lines:
+A table from theory name to `theory` value, written by the `Theory` root
+node's closing command — its `end` (§1) — and overwritten when that command is
+evaluated again. It
+does not reject a second write: TAT re-evaluates on every edit, so rejecting a
+second definition of a name would make the tool unusable after the first edit
+of anything.
 
-```sml
-val succs = String_Graph.all_succs thys [name];
-in fold String_Graph.del_node succs thys
-```
-
-Re-evaluation replaces and invalidates. It does not reject: TAT recompiles a
-tree on every edit, so rejecting a second definition of a name would make the
-tool unusable after the first edit of anything.
+The table keeps no dependency edges and deletes nothing, because invalidation is
+not its job. The Python side marks every tree that imports a changed tree
+`not_evaluated` (ARCHITECTURE §3.4) and never requests a theory whose tree is
+not evaluated to its end (ARCHITECTURE §3.5), so a stale entry is never read; it is
+overwritten when the tree is evaluated again. Like the state slots (§1.1), the
+table is guarded, since concurrent chains write it.
 
 ## 4. What to take from Isa-REPL
 

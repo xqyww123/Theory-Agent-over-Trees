@@ -17,9 +17,6 @@ is invalidated. The fork carries PIDE requests the stock server lacks —
 `PIDE/theory_status`, `PIDE/cancel_execution`, `PIDE/command_at_position`,
 `PIDE/output_at_position`, `PIDE/symbols`, `PIDE/find_theorems_*`.
 
-Anything TAT needs on the Scala side is a change to a fork this project family
-owns.
-
 ## 2. The run model
 
 The agent owns the files; the server owns the prover.
@@ -88,13 +85,8 @@ There is no version on either status channel. `publishDiagnostics` carries only
 An event-based acknowledgement is not available on this protocol: the server
 sends nothing when recomputed decorations equal the published ones, so waiting
 for a push would latch forever. The clock is forced, and it is the one
-load-bearing heuristic in the stack.
-
-It can be tightened for TAT, which writes the files itself and knows the
-generation it wrote: carry a document version on the decoration channel and
-correlate, or echo a content hash and refuse to attribute until it matches.
-Both are changes to the fork of §1. Until one exists, a node's status inside the
-window is `PENDING`, never `OK`.
+load-bearing heuristic in the stack. It could be replaced by a document version
+on the decoration channel, which is a change to the fork.
 
 ## 5. Diagnostics are not the verdict channel
 

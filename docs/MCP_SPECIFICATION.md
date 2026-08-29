@@ -125,9 +125,9 @@ TAT sends the affected node's data to its evaluator, the evaluator runs the
 node's commands and reports the result of each role, and the `.thy` is written
 later from what the nodes emit (ARCHITECTURE §4).
 
-Editing a node invalidates that node and everything after it, then evaluates
-that node, so its own result comes back with the call. Everything after it is
-reported as not evaluated until the agent asks for it.
+Editing a node invalidates that node and everything after it, then runs
+`evaluate_to` on it (§4), so its own result comes back with the call. Everything
+after it is reported as not evaluated until the agent asks for it.
 
 ## 4. Evaluation
 

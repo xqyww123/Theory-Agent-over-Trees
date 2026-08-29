@@ -27,7 +27,8 @@ Citations are to `contrib/Isabelle2025-2/src/` unless prefixed.
 Behaviour is documented in [ISABELLE_MCP.md](ISABELLE_MCP.md). Against the
 grading question:
 
-- The mapping is reconstructed from a line-span table TAT maintains itself.
+- The mapping is reconstructed from a line-span table the client would have to
+  maintain itself.
 - Status and diagnostics arrive ranged and complete, cheaply.
 - Full output costs one round trip per command, and each call takes its own
   snapshot (`Tools/VSCode/src/language_server.scala:566-568`), so a report
@@ -125,9 +126,6 @@ per-command outcomes. Three independent defects, each fatal:
 Document markers cannot carry the node identity either: `apply_markers` is
 applied to the *result* of `apply_body`, so a raising command never reaches it
 (`Pure/Isar/toplevel.ML:329-335`). Markers cannot report failures.
-
-Usable later as an enrichment — structured payloads straight from ML — on top of
-a primary mapping.
 
 ## 5. Batch build, exports, `dump` — rejected
 
