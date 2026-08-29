@@ -135,8 +135,8 @@ The entry point of ARCHITECTURE §9. Starting a session:
    thread's own outer call into Python is the second chain of work
    (ARCHITECTURE §9);
 4. install the output routing of §2.4;
-5. `Remote_Procedure_Calling.load ["TAT"]`, then call the Python side, which
-   does not return for the life of the session.
+5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
+   procedure `TAT` (§4.5), which does not return for the life of the session.
 
 The callbacks go in the `callback` field of that one command, as AoA's do
 (`contrib/Isa-Mini/Agent/agent_server.ML:1740-1772`); none enters
@@ -229,10 +229,10 @@ fixed by the two flags:
 A nesting node whose opening command failed enters its children with itself
 as `blocked_by`. `stopped_at` ends evaluation but not the recursion, which
 goes on to invalidate what follows the destination; with `ignore_error` a
-class's stop ends nothing.
-A destination that is already evaluated ends the call before it starts. The
-`evaluate_to` tool calls `_evaluate` on the destination; `edit` marks the
-edited node `not_evaluated` first and then does the same.
+class's stop ends nothing. A destination that is already evaluated ends the
+call before it starts. The `evaluate_to` tool calls `_evaluate` on the
+destination; `edit` marks the edited node `not_evaluated` first and then does
+the same.
 
 ### 4.2 `isabelle_driver.py`
 

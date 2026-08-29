@@ -38,9 +38,10 @@ For the root node's closing `end`, `Toplevel.end_theory` yields the `theory`
 value, which goes into the theory table (§3).
 
 `Toplevel.command_errors` returns `(errors, state option)`; check both, since a
-failing command can return no state. It is the error-recovering runner — batch
-loading uses `Toplevel.command_exception`, which re-raises and therefore stops
-at the first failure.
+failing command can return no state. The errors are `Runtime.error` values,
+`((serial * string) * string option)`, not exceptions. It is the
+error-recovering runner — batch loading uses `Toplevel.command_exception`,
+which re-raises and therefore stops at the first failure.
 
 Its first argument is Isabelle's interactive flag and must be `true`. `sorry` is
 `Method.cheating`, which raises `Cheating requires quick_and_dirty mode!` unless
@@ -51,9 +52,6 @@ interactive and batch runs take.
 `Resources.begin_theory` does not touch the filesystem. It stores `master_dir`
 as data, which matters only for body commands like `ML_file` that resolve
 against it.
-
-The errors it returns are `Runtime.error` values,
-`((serial * string) * string option)`, not exceptions.
 
 ### 1.1 The state slot table
 
@@ -100,8 +98,8 @@ heap.
 ## 3. The theory table
 
 A table from qualified theory name (§7) to `theory` value, written by the
-`Theory` root node's closing command — its `end` (§1). A second write overwrites: TAT
-re-evaluates on every edit.
+`Theory` root node's closing command — its `end` (§1). A second write
+overwrites: TAT re-evaluates on every edit.
 
 The table keeps no dependency edges and deletes nothing, because invalidation is
 not its job. The Python side marks every tree that imports a changed tree

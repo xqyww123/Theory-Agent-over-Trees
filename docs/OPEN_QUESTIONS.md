@@ -6,7 +6,11 @@ Nothing here is settled. Ordered by what it blocks.
 
 **Blocks:** every part of the node class contract.
 
-The base classes and the ML registration API. To be given.
+The shape is fixed — `register_callback` and `env` on the ML side
+(MODULE_STRUCTURE §2.5), `Node` / `Leaf` / `NonLeaf_Node` / `StdBlock` on the
+Python side (MODULE_STRUCTURE §4.1) — but the signatures are not written: the
+envelope's packer, the operation type a class returns, and what `Node`'s
+fields and hooks are called.
 
 ## 2. The remaining node classes
 

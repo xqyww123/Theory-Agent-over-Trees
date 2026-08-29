@@ -69,13 +69,13 @@ opening command and no closing one.
 `Context` and `Locale` also contain nodes, and unlike `Section` they carry
 **operational behaviour**: they open an Isabelle context, so their children are
 checked inside it and the facts they declare are qualified by it. Both are
-unspecified — see OPEN_QUESTIONS.
+unspecified (OPEN_QUESTIONS §2).
 
 ### 2.1 The trees are pure declarations *(decided)*
 
 No proof structure enters a tree. Every proof is emitted as the `AoA` proof
-method, which runs a hammer first and falls back to the AoA proof agent when the
-hammer times out; while a node has no proof it emits `sorry` instead (§2.2). A
+method, which runs Sledgehammer first and falls back to the AoA proof agent
+when it times out; while a node has no proof it emits `sorry` instead (§2.2). A
 `Theorem` node carries what is claimed, never how it is established: no proof
 attribute, no proof text, no proof subtree.
 
@@ -296,8 +296,9 @@ current, and is given the new one at evaluation. What `Theorem` does with that i
 
 ## 4. Compilation *(decided)*
 
-TAT is the compiler and owns the `.thy` files. Isabelle never reads them; every change reaches Isabelle by
-evaluation (§3), and the files exist for whoever builds the forest afterwards.
+TAT is the compiler and owns the `.thy` files. Isabelle never reads them;
+every change reaches Isabelle by evaluation (§3), and the files exist for
+whoever builds the forest afterwards.
 
 A node writes its own text through `emit_isar(indent, out)`, which writes to
 `out` and returns the indent in effect after it. The `indent` passed in is a
@@ -314,9 +315,8 @@ theory.
 ### 4.1 Persistence
 
 The `.thy` files are not the forest: what a node records is not in them. The
-forest itself is saved with
-`pickle`, and each node class decides through `__getstate__` what of its node
-is saved. State slot names are not: the state slot table does not outlive the
+forest itself is saved with `pickle`, and each node class decides through
+`__getstate__` what of its node is saved. State slot names are not: the state slot table does not outlive the
 session (EVALUATOR_DESIGN §1.1), so a loaded forest is `not_evaluated`
 throughout and its slots are assigned afresh. The connection to Isabelle is
 not saved either; the session hands the loaded forest its current one. Work in
@@ -418,9 +418,9 @@ The evaluator holds an explicit `Toplevel.state` and runs one command at a time
 through `Toplevel.command_errors`, which recovers from a failing command instead
 of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md).
 
-TAT launches the prover on one **base heap** — that of the Isabelle session the forest
-is written against, with nothing of TAT in it — and the forest sits on top of
-it, no tree in any heap (EVALUATOR_DESIGN §2). A library theory the base heap
+TAT launches the prover on one **base heap** — that of the Isabelle session
+the forest is written against, with nothing of TAT in it — and the forest sits
+on top of it, no tree in any heap (EVALUATOR_DESIGN §2). A library theory the base heap
 lacks is loaded from source, at a cost the loader reports. TAT's own theories
 (§6.3) are never in the base heap: the session loads them from source when it
 starts, which is quick because they are small. The same goes for
@@ -445,18 +445,19 @@ carries no request identifiers, so one connection carries one chain of work. Two
 chains that run at the same time therefore need one outer call each;
 `Isabelle_RPC`'s connection pool
 (`contrib/Isabelle_RPC/Tools/RPC.ML:864-895`) gives every call its own
-connection. A callback exists for Python to ask Isabelle to open another, which
-is what running a `construct` alongside evaluation needs.
+connection. A callback exists that forks a thread and returns at once; the
+thread's own outer call into Python is a second chain, which is what running
+a `construct` alongside evaluation needs.
 
 Concurrent chains share the state slot table, so that table is locked. The
 other state they share is inside tools that a proof search reaches — AoA's proof
 store and `auto_sledgehammer`'s cache — and those are thread-safe.
 
-The entry point that starts a session in production is undecided
-(OPEN_QUESTIONS §7). During
-development an Isa-REPL app starts it, registered from a theory that the
-production build does not import, so Isa-REPL is a development dependency and
-never a shipped one.
+TAT is a library; whatever starts a session is a client of it, and the
+production client is undecided (OPEN_QUESTIONS §7). During development an
+Isa-REPL app is the client, registered from a theory nothing shipped imports
+(`Dev/TAT_Dev.thy`), so Isa-REPL is a development dependency and never a
+shipped one.
 
 ## 10. Directory and module structure
 

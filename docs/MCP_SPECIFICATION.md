@@ -20,7 +20,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 
 `construct` is generic: it dispatches to the node class, and a class without one
 reports that it is not supported. On a `Theorem` it starts the proof search.
-Whether it takes one node or several is undecided.
+Whether it takes one node or several is undecided (OPEN_QUESTIONS §4).
 
 `move` exists because order carries meaning at theory level: a lemma must follow
 everything it uses. Reordering and re-homing declarations is what a tree does
@@ -173,4 +173,4 @@ messages on demand, for an agent that wants them before its next edit.
 - **One tool per node class, or one `edit` with a class parameter**
   (OPEN_QUESTIONS §3).
 - **The omissibility flags for `Locale` and `Context`**, along with the rest of
-  those two node classes.
+  those two node classes (OPEN_QUESTIONS §2).
