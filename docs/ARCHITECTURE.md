@@ -2,15 +2,18 @@
 
 Status: design draft.
 
-Section markers, and there are only three:
+Three section markers:
 
-- ***(decided)*** — settled. A decided section may not rest on an open one.
-- ***(open)*** — an active question, named in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
-- unmarked — provisional. Written down to fix the shape, not yet agreed.
+- ***(decided)*** — settled, though it may name an open detail of its own and
+  point to [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) for it.
+- ***(open)*** — an active question, listed in [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
+- unmarked — provisional.
 
 ## 1. Glossary *(decided)*
 
-These terms are fixed. Use them and no synonyms.
+These terms are fixed. Use them and no synonyms, and write them in English
+wherever they appear — in documents, code, comments and discussion in any
+language. A concept that needs a name gets one here first.
 
 | Term | Meaning |
 | --- | --- |
@@ -18,20 +21,24 @@ These terms are fixed. Use them and no synonyms.
 | **tree** | one Isabelle theory; the root's name is the short name of the theory |
 | **node** | one semantic unit in a tree |
 | **node class** | the kind of a node — `Theorem`, `Define`, … — extensible |
-| **role** | tag distinguishing the several commands one node emits |
 | **segment** | one Isabelle span in an emitted file |
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
+| **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per session (EVALUATOR_DESIGN §1.1) |
+| **base heap** | the heap TAT's prover runs on: that of the Isabelle session the forest is written against, with nothing of TAT in it (§8) |
 | **tree order** | depth-first, a node before its children, children in their own order |
 | **evaluate** | running a node's commands in Isabelle and recording what happened (§3) |
+| **emit** | a node writing its own Isar text (§4) |
 | **compile** | turning trees into `.thy` files on disk |
+| **session** | one run of TAT, from Isabelle's call into Python to its return (§9); Isabelle's build unit is always written **Isabelle session** |
 
 Two relations are easy to confuse, so neither is called an edge. **Import
 dependency** holds between trees, and is what the tree roots declare in their
 `imports` clauses. **Nesting** holds between nodes inside one tree.
 
 `node` in this repository always means a node of a TAT tree. Isabelle's own
-document model also calls a theory file a node; where that meaning is intended
-it is written **PIDE document node** in full.
+document model (PIDE, its interactive document layer) also calls a theory file
+a node; where that meaning is intended it is written **PIDE document node** in
+full.
 
 ## 2. The model *(decided)*
 
@@ -45,11 +52,8 @@ owns the theory header, the `imports` list and the closing `end`.
 
 Each node class corresponds to one or more Isabelle commands.
 
-TAT writes theories it authored. Taking over a `.thy` file it did not write is
-out of scope for now and may be supported later. The one place that would lose
-information is `Theorem`'s `statement`, which is a structured value rather than
-the surface text; section headings, theorem names and constant names are all
-recoverable from a file.
+TAT writes only theories it authored; reading in a foreign `.thy` is out of
+scope.
 
 ### 2.0 Nesting *(decided)*
 
@@ -78,8 +82,6 @@ attribute, no proof text, no proof subtree.
 Throughout this repository, `AoA` in code font is that proof method. AoA in
 plain text is the agent system the method falls back to.
 
-TAT therefore has one execution model and no agent-written proof text.
-
 ### 2.2 Node classes *(decided)*
 
 **`Theorem`**
@@ -94,11 +96,10 @@ TAT therefore has one execution model and no agent-written proof text.
 Adding a `Theorem` may start the search at once, but the default is
 `not_started`, so laying out a theory costs nothing. `construct` starts it.
 
-A node whose `proof` is not `proven` emits **`sorry`**. Emitting `by AoA` for a
-proof that has not been constructed would fail, since evaluation never searches
-(§3.6), and a failing `by` means the fact is never added, so every later node
-using it fails too — a skeleton of twenty lemmas would check none of them past
-the first. With `sorry` the fact is admitted, the
+A node whose `proof` is not `proven` emits **`sorry`**, and its evaluator runs
+`sorry` in the same case (§3.6). A failing proof would mean the fact is never
+added, so every later node using it fails too — a skeleton of twenty lemmas
+would check none of them past the first. With `sorry` the fact is admitted, the
 whole tree's structure and types are checked, and the agent constructs proofs
 afterwards.
 
@@ -121,28 +122,25 @@ discharged by `AoA` when `fun` cannot establish termination on its own. Which of
 the three was used is decided during evaluation and recorded on the node, so
 emission needs no further enquiry.
 
-`Define` is the motivating case for **role**: one node, several commands, each
-able to fail on its own.
+A `Define` emits several commands, each able to fail on its own, and its
+evaluator reports each separately.
 
-| role | emitted | when |
+| command | emitted | when |
 | --- | --- | --- |
 | `function` | the defining command, in whichever `form` | always |
 | `pat-completeness` | the completeness proof | `form = function` |
 | `termination` | `termination by …` | `form = function` |
 | `simp-del` | `note f.simps[simp del]` | `kind = opaque` |
 
-"The definition is wrong" and "the definition is fine but termination failed" are
-different reports.
-
-`Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text` and `Section` are
-unspecified.
+`Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
+and `Locale` are unspecified (OPEN_QUESTIONS §2).
 
 ## 3. Evaluation *(decided)*
 
 Evaluating a node means handing its data to its node class's evaluator on the
-Isabelle side, which runs the node's commands and reports the result of each
-role. Nothing is checked unless TAT asks for it, because TAT submits the
-commands.
+Isabelle side, which runs the node's commands and reports what the class
+decides to report. Nothing is checked unless TAT asks for it, because TAT
+submits the commands.
 
 ### 3.1 State slots
 
@@ -152,14 +150,14 @@ and re-evaluating the node writes that same name again. The Python side never
 holds a state, only a name.
 
 A node's resulting state is the slot of its next sibling, or, for a last child,
-the slot its parent keeps for the position after all its children. The output of
-one node and the input of the next are therefore the same slot, and
-re-evaluating a node writes into slots that already exist.
+the slot its parent keeps for the position after all its children. The
+resulting slot of one node and the input slot of the next are therefore the
+same slot, and re-evaluating a node writes into slots that already exist.
 
 A nesting node's opening command writes its first child's slot. After the last
-child, a closing command reads the parent's after-children slot and writes the
-node's resulting slot; a class with no closing command, such as `Section`,
-copies the one into the other.
+child, the nesting node's closing command reads the slot it keeps for the
+position after all its children and writes its own resulting slot; a class
+with no closing command, such as `Section`, copies the one into the other.
 
 A node that fails and is passed over leaves its input state in its resulting
 slot unchanged, so whatever follows always has something to run from.
@@ -172,11 +170,13 @@ slot unchanged, so whatever follows always has something to run from.
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
 | `ready` | the node ran and its resulting slot is current |
-| `cannot_evaluate` | the node ran and evaluation stops here |
+| `cannot_evaluate` | evaluation does not pass through the node (§3.3) |
 
 A node whose own commands failed is still `ready` when its class can carry on
 regardless. A `Theorem` whose proof failed emits `sorry`, so the fact is declared
-and every later node still checks.
+and every later node still checks. A nesting node whose opening command failed
+is `ready` too: its input state stands as its result, and evaluation resumes
+after the block.
 
 `finished` says whether the node still owes anything. It is derived, never
 stored, so it cannot drift from what it is derived from.
@@ -184,7 +184,7 @@ stored, so it cannot drift from what it is derived from.
 | node class | `finished` when |
 | --- | --- |
 | `Theorem` | `proof` is `proven` |
-| `Define` | every role succeeded |
+| `Define` | every command it emitted succeeded |
 | a nesting class (`Section`, `Locale`, `Context`) | its own commands succeeded and every child is `finished` |
 | a class with nothing to discharge | it has been evaluated |
 
@@ -194,24 +194,34 @@ question: a `Theorem` that emitted `sorry` ran a command that succeeded.
 
 ### 3.3 Where evaluation stops
 
-`cannot_evaluate` has two sources, and they do not behave alike.
-
-A **nesting node whose opening command failed** leaves its children no context to
-run in. That is a fact about the state rather than a policy — there is nothing to
-run them from.
+`cannot_evaluate` has two sources.
 
 A node whose failure would make everything after it report **derived errors**
 stops evaluation by the judgement of its node class. `Define` is the case: when
 the defining command fails the constant does not exist, so every later node that
 mentions it fails with a message about the constant instead of about itself.
 
-`evaluate_to` takes an `ignore_error` flag for an agent that wants to see every
-error in one pass. It passes the second kind and never the first: a nesting node
-whose opening failed has its whole subtree skipped, and evaluation resumes after
-the block.
+A **nesting node whose opening command failed** leaves its children no context
+to run in. The nesting node itself is `ready` (§3.2); every node under it is
+`cannot_evaluate`, recording that ancestor as the reason, and none of them
+runs while the ancestor stays as it is. That is a fact about the state rather
+than a policy — there is nothing to run them from.
 
-A node left unevaluated because evaluation stopped before reaching it records
-which node stopped it, so it can say why rather than only that it did not run.
+`evaluate_to` takes an `ignore_error` flag for an agent that wants to see every
+error in one pass. It passes the first kind and never the second, which is not
+a stop at all: evaluation resumes after the block whether the flag is set or
+not.
+
+A stop is a fact about the forest, not about one call. Every `evaluate_to`
+returns either "continue" or "stopped at node X" to its caller (§3.5), and a
+node of the first kind returns "stopped" whenever it is passed — including on
+a later call that finds it already evaluated and skips it — unless
+`ignore_error` is set. So every call stops at the same node until that node is
+edited.
+
+A node left `not_evaluated` because evaluation stopped before reaching it
+records which node stopped it, so it can say why rather than only that it did
+not run.
 
 ### 3.4 Invalidation
 
@@ -227,39 +237,66 @@ State slots are not released. The name belongs to the node and re-evaluation
 overwrites it, so nothing accumulates. Deleting a node releases its slot and
 cancels any work in flight on it.
 
-Because invalidation always runs forward, a tree's evaluated nodes are always a
-prefix of it in tree order. TAT keeps no separate record of how far evaluation
-has reached: the first node that is not evaluated is that point.
+Because invalidation always runs forward, a tree's evaluated nodes are a prefix
+of it in tree order. TAT keeps no separate record of how far evaluation has
+reached: the recursion of §3.5 skips what is evaluated and runs what is not.
 
 ### 3.5 Running an evaluation
 
 `evaluate_to(destination, ignore_error)` evaluates every `not_evaluated` node up
-to and including the destination, in tree order, beginning at the first one.
-Every tree the destination's tree imports must be evaluated to its own `end`
-first, since a theory value exists only once its theory is closed.
+to and including the destination, in tree order. It is one method, defined on
+every node and called recursively from the top:
 
-Editing a node invalidates from that node and then runs `evaluate_to` on it, so
-the result of what was just written comes back with the call.
+- The **forest** resolves the destination's id, evaluates every tree the
+  destination's tree transitively imports to its own `end` — a theory value
+  exists only once its theory is closed — in dependency order, then calls the
+  destination's tree.
+- A **nesting node** runs its opening command if it is not evaluated. If that
+  command succeeded, now or earlier, it calls its children in order, and
+  those after the one that contains the destination only to invalidate them;
+  if it failed, it still enters them, but to mark each one `cannot_evaluate`
+  (§3.3) rather than to run it. A `Theory` runs its `end` only when the
+  destination is the `Theory` node itself, or when the forest is evaluating
+  the tree as an import.
+- A **leaf** runs its commands if it is not evaluated, and otherwise runs
+  nothing.
+
+The recursion visits every node of the tree. Past the destination it evaluates
+nothing and marks each node `not_evaluated` (§3.4). That is what makes an edit
+reach everything after the edited node; on a call from the agent it changes
+nothing, since those nodes are `not_evaluated` already. A destination that is
+already evaluated ends the call at once: everything before it is evaluated
+too, and nothing after it is touched.
+
+Every call returns "continue" or "stopped at node X" (§3.3); a nesting node
+that receives "stopped" from a child evaluates no further child, and the
+answer travels up to the forest.
+
+Editing a node marks it `not_evaluated` and runs `evaluate_to` on it, so the
+result of what was just written comes back with the call and everything after
+it is invalidated on the way.
 
 ### 3.6 Work that outlives a call
 
 Evaluation is synchronous: a loop that submits one command and waits. It never
-searches for a proof: when it reaches a `by AoA`, the `AoA` method replays what
-an earlier search stored and fails when there is nothing, so the method carries
-a switch that disables its own search and TAT's evaluator sets it. The one
-asynchronous activity, and the only thing that starts a search, is `construct`;
-a `Theorem` whose search is running has `proof = working`.
+searches for a proof, and never runs `by AoA`, which exists only in emitted
+files (§2.1). `Theorem`'s evaluator runs the statement alone, then either `sorry`
+or `by` applied to the proof `construct` stored on the node — the method text
+AoA writes to its proof store, such as `(simp add: …)` or `aoa_replay "…"` —
+which the node passes along with the statement. The one asynchronous activity,
+and the only thing that starts a search, is `construct`; a `Theorem` whose
+search is running has `proof = working`.
 
 A node class that starts such work decides for itself what happens when its
 context is invalidated under it. This adds no framework machinery: invalidation
-and evaluation are already the two methods a node class overrides, so the class
-is told at invalidation that its context is no longer current, and is given the
-new one at evaluation. What `Theorem` does with that is open.
+and evaluation are already the two moments the framework calls into a node
+class, so the class is told at invalidation that its context is no longer
+current, and is given the new one at evaluation. What `Theorem` does with that is open
+(OPEN_QUESTIONS §5).
 
 ## 4. Compilation *(decided)*
 
-TAT owns the `.thy` files: it is the compiler, so it knows by construction what
-it wrote and where. Isabelle never reads them; every change reaches Isabelle by
+TAT is the compiler and owns the `.thy` files. Isabelle never reads them; every change reaches Isabelle by
 evaluation (§3), and the files exist for whoever builds the forest afterwards.
 
 A node writes its own text through `emit_isar(indent, out)`, which writes to
@@ -274,26 +311,35 @@ all when its defining command failed, since no text would compile. A tree is
 written only when every node in it agrees to emit: a `.thy` with a hole is not a
 theory.
 
+### 4.1 Persistence
+
+The `.thy` files are not the forest: what a node records is not in them. The
+forest itself is saved with
+`pickle`, and each node class decides through `__getstate__` what of its node
+is saved. State slot names are not: the state slot table does not outlive the
+session (EVALUATOR_DESIGN §1.1), so a loaded forest is `not_evaluated`
+throughout and its slots are assigned afresh. The connection to Isabelle is
+not saved either; the session hands the loaded forest its current one. Work in
+flight is not saved, only its results.
+
 ## 5. Segments *(decided)*
 
 A segment is exactly one Isabelle span, mirroring Isabelle's own partition of a
-theory file (`contrib/Isabelle2025-2/src/Pure/PIDE/command_span.ML:36`, where the
+theory file (`contrib/Isabelle2025-2/src/Pure/PIDE/command_span.ML:35`, where the
 three kinds of span are `Command_Span`, `Ignored_Span` and `Malformed_Span`).
 That partition is total — whitespace and comments are spans, not gaps.
 
 | segment kind | Isabelle's term | owner |
 | --- | --- | --- |
-| command | `Command_Span` | a node, plus a role |
+| command | `Command_Span` | a node |
 | layout (blank lines, separator comments) | `Ignored_Span` | none |
 | structural (`theory X imports … begin`, `end`) | `Command_Span` | the root node |
 
-A node may own several segments; that is what `role` is for. No segment is owned
-by more than one node, because the evaluator runs one node's commands at a time
+A node may own several segments. No segment is owned by more than one node
 (§7).
 
-What survives is a check on the published artefact rather than on attribution:
-the finished `.thy` is parsed as a whole by whoever builds it, so each node's
-text must still be self-delimiting. Cartouches, comments and quotes are balanced
+The finished `.thy` is parsed as a whole by whoever builds it, so each node's
+text must be self-delimiting. Cartouches, comments and quotes are balanced
 before a node's text is accepted. See
 [appendix/SEGMENT_INTEGRITY.md](appendix/SEGMENT_INTEGRITY.md).
 
@@ -301,9 +347,8 @@ before a node's text is accepted. See
 
 A node class is delivered as an Isabelle theory together with a Python package.
 The theory is primary: it registers the class's evaluator on the ML side, and it
-names the Python package carrying the rest. Installing a node class means adding
-a theory to the base session, so the set of available node classes is fixed when
-that heap is built.
+names the Python package carrying the rest. Installing a node class means
+naming its theory to the session, which loads it from source at start (§8).
 
 | part | side | |
 | --- | --- | --- |
@@ -328,42 +373,39 @@ file.
 ### 6.2 The wire
 
 Each node class registers its own callback, with its own argument and result
-schema. There is no universal representation of node data: one would be either
-untyped or a union that the core has to know about, and a union defeats adding a
-node class without touching the core.
+schema. Node data has no universal representation; the core never sees it,
+which is what lets a node class be added without touching the core.
 
 The framework fixes the envelope and leaves the contents free.
 
-- Fixed: the input state slot, the destination state slot, the outcome that
-  becomes `evaluation_status`, and the per-role results.
-- Free: how the class packs its own data, and whatever else it wants recorded.
+- Fixed: the input state slot, the resulting state slot, and the outcome that
+  becomes `evaluation_status`.
+- Free: how the class packs its own data, and whatever it wants recorded —
+  which commands it ran and how each of them fared included.
 
 The framework supplies the unpacker that turns a state slot name into a
 `Toplevel.state`, and the packer for the envelope, so no class writes either
 twice.
 
-Callbacks are registered in one process-global table keyed by name, with
-`Strhashtab.update` (`contrib/Isabelle_RPC/Tools/RPC.ML:429-435`), which
-overwrites without complaint. Every callback name is therefore prefixed with the
-name of the node class that owns it.
+A class's callback is a local callback of the session's one RPC command (§9,
+MODULE_STRUCTURE §2.5), named after the class that owns it.
 
 ### 6.3 Two kinds of ML
 
 The framework and the evaluators are needed only by TAT's own process. Generated
-theories never name them, so they belong in the base heap and in no tree's
-imports.
+theories never name them, so they are loaded into that process at start (§8)
+and appear in no tree's imports.
 
 Anything the generated text does name — the `AoA` proof method, any syntax or
 attribute a node emits — must be imported by the trees that use it, and is a
-real dependency of the finished forest. A forest that cannot be built without
-TAT is not an Isabelle development.
+real dependency of the finished forest.
 
-The concrete interfaces are unwritten.
+The concrete interfaces are unwritten (OPEN_QUESTIONS §1).
 
 ## 7. Command-to-node mapping *(decided)*
 
-The evaluator runs one node's commands at a time and reports the result of each,
-by role. The mapping is given, not reconstructed: there is no line-span table,
+The evaluator runs one node's commands at a time and reports their results to
+that node. The mapping is given, not reconstructed: there is no line-span table,
 and no question of whether our partition of a file agrees with Isabelle's.
 
 A node emitting text that does not close cannot reach the next node's commands,
@@ -374,23 +416,17 @@ because those have not been submitted yet. It fails at its own parse.
 TAT drives Isabelle itself, through its own evaluator written in Isabelle/ML.
 The evaluator holds an explicit `Toplevel.state` and runs one command at a time
 through `Toplevel.command_errors`, which recovers from a failing command instead
-of re-raising. Design in [EVALUATOR_DESIGN.md](../EVALUATOR_DESIGN.md); the
-routes examined and rejected are in
-[appendix/SUBSTRATE_RESEARCH.md](appendix/SUBSTRATE_RESEARCH.md).
+of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md).
 
-The forest is not a session. TAT launches a prover on one base session heap and
-the forest sits on top of it: every tree is authored, none is in a heap. When
-the forest is finished it is an ordinary session that anyone can build.
+TAT launches the prover on one **base heap** — that of the Isabelle session the forest
+is written against, with nothing of TAT in it — and the forest sits on top of
+it, no tree in any heap (EVALUATOR_DESIGN §2). A library theory the base heap
+lacks is loaded from source, at a cost the loader reports. TAT's own theories
+(§6.3) are never in the base heap: the session loads them from source when it
+starts, which is quick because they are small.
 
-Everything the forest imports from outside itself is expected to be in that base
-heap, and the theories registering TAT's own node classes (§6.3) must be. A
-library theory that is not there is loaded from source, at a cost the loader
-reports (EVALUATOR_DESIGN §2).
-
-Evaluating without error does not mean proved. `Theorem` emits `sorry`
-deliberately, for a proof that has not been constructed, and `finished` (§3.2)
-is what tells such a node apart. No node class emits `oops`, which leaves no
-trace in Isabelle's output and so could not be accounted for.
+No node class emits `oops`: it leaves no trace in Isabelle's output and so
+could not be accounted for.
 
 ## 9. The two processes and the channel *(decided)*
 
@@ -415,13 +451,12 @@ Concurrent chains share the state slot table, so that table is locked. The
 other state they share is inside tools that a proof search reaches — AoA's proof
 store and `auto_sledgehammer`'s cache — and those are thread-safe.
 
-Node classes are installed by adding their theories to the base session (§6).
-
-The entry point that starts a session in production is undecided. During
+The entry point that starts a session in production is undecided
+(OPEN_QUESTIONS §7). During
 development an Isa-REPL app starts it, registered from a theory that the
 production build does not import, so Isa-REPL is a development dependency and
 never a shipped one.
 
 ## 10. Directory and module structure
 
-Unwritten.
+In [MODULE_STRUCTURE.md](MODULE_STRUCTURE.md).

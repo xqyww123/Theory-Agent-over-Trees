@@ -19,8 +19,9 @@ omissibility flags (MCP_SPECIFICATION §2.1).
 ## 3. Tool granularity
 
 One tool per node class, or one `edit` taking a class parameter. Per-class tools
-give a typed schema per declaration kind and multiply the tool count — and since
-plugins add node classes, they would add tools.
+give a typed schema per declaration kind and multiply the tool count by the
+number of node classes, which can grow; a single `edit` keeps the surface small
+and weakens the schema to a union.
 
 ## 4. `construct` on one node or several
 
@@ -34,10 +35,10 @@ The framework tells a node class that its context is no longer current and later
 hands it the new one (ARCHITECTURE §3.6); what `Theorem` does with that is
 not decided.
 
-Ignoring the change is free and correct: evaluation replays proofs and never
-searches (ARCHITECTURE §3.6), so a proof built against the old context is only
-a candidate either way, and a failed replay leaves the node `failed` for another
-`construct`. Suspending the search and re-running it against the new context
+Ignoring the change is free and correct: evaluation runs the stored proof and
+never searches (ARCHITECTURE §3.6), so a proof built against the old context is
+only a candidate either way, and a stored proof that fails leaves the node
+`failed` for another `construct`. Suspending the search and re-running it against the new context
 saves a search when the change was harmless, and costs a suspend-and-resume
 path through the AoA agent.
 
@@ -49,7 +50,8 @@ real import of every tree that uses it.
 ## 7. The entry point in production
 
 A session begins with Isabelle calling into Python (ARCHITECTURE §9), and
-something has to make Isabelle do that. An `isabelle` subcommand through a Scala
+something has to make Isabelle do that. TAT is a library and that something is
+a client of it (MODULE_STRUCTURE §4); an `isabelle` subcommand through a Scala
 component is one form. During development an Isa-REPL app serves.
 
 ## 8. Whether to check completeness against Isabelle's own record
@@ -65,10 +67,12 @@ has a bug.
 
 Small enough to be forgotten, big enough to bite.
 
-- **What the `termination` role emits when its proof failed.** The role's entry
-  in ARCHITECTURE §2.2 covers only the successful case. It is a proof
-  obligation, so `sorry` would discharge it, but which failures a node class
-  papers over is that class's design and this one is not decided.
-- **The role named `function` now covers all three forms**, `definition`
+- **How `Define`'s evaluator discharges `pat-completeness` and `termination`.**
+  ARCHITECTURE §2.2 says `AoA` discharges them, but evaluation never searches
+  (ARCHITECTURE §3.6); `Theorem` has a stored proof for this, `Define` has
+  nothing yet. And what it emits for `termination` when the proof failed: it is
+  a proof obligation, so `sorry` would discharge it, but which failures a node
+  class papers over is that class's design and this one is not decided.
+- **The table's `function` row covers all three forms**, `definition`
   included, so it shares a name with one of the forms it covers. "The `Define`'s
-  `function` role failed" does not say which thing failed.
+  `function` command failed" does not say which thing failed.

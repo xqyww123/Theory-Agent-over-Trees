@@ -12,7 +12,6 @@ So each node's text is checked for balanced cartouches, comments and quotes
 before it is accepted, and rejected at the node with a message naming what did
 not close. Statement text comes from a language model, so this happens.
 
-The check is cheap and it is also redundant with the evaluator, which will fail
-to parse the same text. Its value is the error: it names the node and the
-unclosed delimiter, where Isabelle would report a parse error some commands
-later.
+The evaluator would fail on the same text; the check's value is the error
+message, which names the node and the unclosed delimiter instead of a parse
+failure some commands later.

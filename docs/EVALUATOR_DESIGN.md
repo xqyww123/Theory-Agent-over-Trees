@@ -1,13 +1,12 @@
 # TAT's evaluator
 
-Working plan, not part of the published document set.
+Paths are relative to `contrib/Isabelle2025-2/src/` unless prefixed; Isa-REPL
+paths are relative to `contrib/Isa-REPL/`.
 
-TAT drives Isabelle itself, command by command, rather than through a document
-model. Isa-REPL (`contrib/Isa-REPL`) is the reference: it has done this for
-years, so its shape is evidence and its defects are a map of the hazards. TAT
-does not build on it — it cannot be shipped, and its own design choices are the
-subject of §5. Its one use is as the development-time entry point
-(ARCHITECTURE §9).
+TAT drives Isabelle itself, command by command. Isa-REPL (`contrib/Isa-REPL`)
+has done this for years and is the reference: its shape is evidence, and §4
+lists the hazards its review exposed. It serves only as the development-time
+client (ARCHITECTURE §9).
 
 ## 1. The mechanism
 
@@ -33,7 +32,7 @@ For any node's commands:
 
 - split the text with `Outer_Syntax.parse_spans`
 - run each span through `Toplevel.command_errors true`, threading the state
-  from the input slot to the output slot
+  from the input slot to the resulting slot
 
 For the root node's closing `end`, `Toplevel.end_theory` yields the `theory`
 value, which goes into the theory table (§3).
@@ -47,15 +46,14 @@ Its first argument is Isabelle's interactive flag and must be `true`. `sorry` is
 `Method.cheating`, which raises `Cheating requires quick_and_dirty mode!` unless
 that flag is set or `quick_and_dirty` is on (`Pure/Isar/method.ML:155-158`).
 Stock Isabelle passes `true` (`Pure/PIDE/command.ML:234`), on the path both
-interactive and batch runs take. Isa-REPL passes `false`
-(`contrib/Isa-REPL/library/REPL.ML:662`); that part of its shape must not be
-copied, because TAT emits `sorry` by design (ARCHITECTURE §2.2).
+interactive and batch runs take.
 
 `Resources.begin_theory` does not touch the filesystem. It stores `master_dir`
 as data, which matters only for body commands like `ML_file` that resolve
 against it.
 
-`Runtime.error` is `((serial * string) * string option)`, not an `exn`.
+The errors it returns are `Runtime.error` values,
+`((serial * string) * string option)`, not exceptions.
 
 ### 1.1 The state slot table
 
@@ -65,16 +63,19 @@ the Python side holds only names (ARCHITECTURE §3.1). Running a node is
 name". Re-evaluating a node writes the same name again, so the table grows only
 when nodes are created and shrinks only when they are deleted.
 
+Each session has its own state slot table, created when the session starts and
+left to the garbage collector when it ends. Nothing outlives the session.
+
 Concurrent chains of work share this table (ARCHITECTURE §9), so it is
-guarded. `contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the pattern in use in
+locked. `contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the pattern in use in
 this project family: a hash table plus a `Synchronized.var` held across every
 read and write.
 
 ## 2. One session, and what resolution becomes
 
-TAT launches a prover on one base session heap. The forest is not a session; it
-sits on top of one. Every tree is authored and none is in a heap. When the
-forest is finished it becomes an ordinary session someone else builds.
+TAT launches a prover on one base heap. The forest is not an Isabelle session;
+it sits on top of one. Every tree is authored and none is in a heap. When the
+forest is finished it becomes an ordinary Isabelle session someone else builds.
 
 Import resolution, in order:
 
@@ -82,7 +83,7 @@ Import resolution, in order:
 resolve name =
     our own table            (* trees this session evaluated to their end *)
   | Thy_Info.lookup_theory   (* the base heap *)
-  | load from source (§7)    (* a library theory the heap lacks *)
+  | load from source (§6)    (* a library theory the heap lacks *)
 ```
 
 One producer means one slot per name, so two distinct `theory` values with one
@@ -94,38 +95,25 @@ heap. An import that is not there is loaded from source rather than refused, so
 that an agent which discovers a dependency mid-work is not stopped to wait for a
 heap rebuild. The loader reports how many theories that cost, since one import
 can pull a large closure, and the report is what tells a user to widen the base
-session.
+heap.
 
 ## 3. The theory table
 
-A table from theory name to `theory` value, written by the `Theory` root
-node's closing command — its `end` (§1) — and overwritten when that command is
-evaluated again. It
-does not reject a second write: TAT re-evaluates on every edit, so rejecting a
-second definition of a name would make the tool unusable after the first edit
-of anything.
+A table from qualified theory name (§7) to `theory` value, written by the
+`Theory` root node's closing command — its `end` (§1). A second write overwrites: TAT
+re-evaluates on every edit.
 
 The table keeps no dependency edges and deletes nothing, because invalidation is
 not its job. The Python side marks every tree that imports a changed tree
 `not_evaluated` (ARCHITECTURE §3.4) and never requests a theory whose tree is
 not evaluated to its end (ARCHITECTURE §3.5), so a stale entry is never read; it is
 overwritten when the tree is evaluated again. Like the state slots (§1.1), the
-table is guarded, since concurrent chains write it.
+table is locked, since concurrent chains write it.
 
-## 4. What to take from Isa-REPL
+## 4. What to avoid, and why
 
-- Per-command `Toplevel.command_errors`, which yields per-command `errors` and
-  `range` without a span table. This is why the command-to-node mapping is given
-  rather than reconstructed.
-- The collector hook (`contrib/Isa-REPL/library/REPL.ML:191-197`): arbitrary ML
-  run after each command, returning structured data. Extracting the fact names a
-  command generated is a collector, not a protocol change.
-- Snapshot and rollback of `Toplevel.state` by name, which is a pointer swap.
-
-## 5. What to avoid, and why
-
-Each of these is a defect found in Isa-REPL by review. They are listed because
-they are the hazards of this design, not because Isa-REPL is careless.
+Each of these is a defect found in Isa-REPL by review, and a hazard of this
+design.
 
 **One flag must not gate several effects.** `register_theory'`
 (`REPL.ML:521`, `:679-684`) gates the theory-table insertion, the `Thy_Info`
@@ -142,7 +130,7 @@ by `Position.id` as PIDE does, or pass the identity explicitly.
 **Do not let one name have two producers.** Isa-REPL evaluates some theories
 itself into its own table and loads others through `Thy_Info.use_theories` into
 `Thy_Info`'s graph, with nothing keeping a name out of both. TAT also has two
-tables (§7), and what makes that safe is §8: our table is consulted first, so a
+tables (§6), and what makes that safe is §7: our table is consulted first, so a
 name that we produced is never requested from the other one.
 
 **Do not `chDir`.** `REPL.ML:353-395` changes the working directory of the whole
@@ -161,22 +149,17 @@ per-command results whenever the error slot is set, which is when they matter.
 `.thy` (`REPL.ML:472-485`, `:521-528`). TAT is the compiler; two writers is one
 too many.
 
-## 6. Open
+## 5. Open
 
-- **Where the `AoA` proof method lives.** If it is defined in a theory, that
-  theory must be in the base heap for §2 to hold.
-- **Whether the base heap must be rebuilt when the forest needs a new import**,
-  and whether that is acceptable for the intended workflow.
+Where the `AoA` proof method lives — OPEN_QUESTIONS §6. §2 holds only if its
+theory is in the base heap.
 
-## 7. Loading a library theory that is not in the base heap
+## 6. Loading a library theory that is not in the base heap
 
 Through `Thy_Info.use_theories`, behind one wrapper that is the only entry
-point.
+point (MODULE_STRUCTURE §2.3).
 
 ```ml
-structure Theory_Loader =
-struct
-
 (*Thy_Info.use_theories ends with Execution.reset () (thy_info.ML:284), which
   empties the process-global execution table and turns the failures it finds
   there into the exception of the call that produced them.  When a theory fails
@@ -194,8 +177,6 @@ fun load options qualifier imports =
     val result = Exn.result (Thy_Info.use_theories options qualifier) imports;
     val residue = map Exn.Exn (maps Task_Queue.group_status (Execution.reset ()));
   in hd (Par_Exn.release_all (result :: residue)) end;
-
-end;
 ```
 
 Three conditions, all required together:
@@ -210,9 +191,7 @@ Three conditions, all required together:
   two concurrent calls over overlapping sets each produce their own `theory`
   value for a shared name.
 
-Pass a path or a session-qualified name, not a bare name. Isa-REPL's
-process-global `OS.FileSys.chDir` (`contrib/Isa-REPL/library/REPL.ML:376`) is
-needed only because it passes bare names.
+Pass a path or a session-qualified name, not a bare name.
 
 Two hazards remain, both avoided by not doing something rather than by shape:
 
@@ -221,24 +200,26 @@ Two hazards remain, both avoided by not doing something rather than by shape:
   Our table is consulted first, so we never re-request. The eviction announces
   itself on the output channel if it ever happens.
 - Library theories live in `Thy_Info`'s table and forest theories in ours. Two
-  tables are safe only under §8.
+  tables are safe only under §7.
 
 The defect is a missing capture at `Pure/Thy/thy_info.ML:247`: `present ()`
-should be inside the `Exn.capture_body` that follows it. Worth reporting
-upstream; a fix there turns the drain above into a no-op.
+should be inside the `Exn.capture_body` that follows it. A fix there would
+turn the drain above into a no-op.
 
-## 8. One name-resolution rule
+## 7. One name-resolution rule
 
 Isabelle compares theory identities by **base name** — the part after the last
-dot (`Pure/context.ML:381-384`). Two theories sharing a base name and differing
+dot (`Pure/context.ML:380-383`). Two theories sharing a base name and differing
 in identity raise `Duplicate theory name` from the first theory that imports
 either, one level downstream of the mistake.
 
-This is not prevented by the direction of dependency. It was measured to arise
+Importing in one direction only does not prevent it. It was measured to arise
 from loading one file under two names, from a forest theory taking a base name
 the heap already uses, from two concurrent loads, and from staleness eviction.
 
 So: every import, forest or library, resolves through one
-`Resources.import_name` call; `#theory_name` is the only key for the table; no
-file is ever loaded under two name forms; and a forest theory whose base name is
-already taken is rejected when it is created, not when something imports it.
+`Resources.import_name` call; the qualified name it returns (`#theory_name`,
+such as `HOL-Library.Multiset`) is the only key for the theory table (§3); no
+file is ever loaded under two name forms; and a forest theory whose base name
+is already taken is rejected when it is created, not when something imports
+it.

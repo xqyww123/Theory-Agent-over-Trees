@@ -3,7 +3,7 @@
 What TAT exposes to the agent. For the model underneath, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-TAT runs as its own MCP server, named TAT.
+TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 
 ## 1. Tools
 
@@ -26,7 +26,7 @@ Whether it takes one node or several is undecided.
 everything it uses. Reordering and re-homing declarations is what a tree does
 better than text.
 
-There is deliberately no dependency query and no rename. Isabelle's own errors
+TAT has no dependency query and no rename. Isabelle's own errors
 report what broke and why, including when a node fails because something it
 depends on failed. A rename that does not know every use site is `edit` with
 extra steps, and knowing every use site is the dependency analysis TAT does not
@@ -51,9 +51,9 @@ it.
 
 Every node has a **name** and an **id**. The agent addresses nodes by id.
 
-Internally a node is a persistent opaque number that survives renaming and
-moving. The id is a rendering of that node's position and name, not its
-identity, so results already in flight are never disturbed by a rename.
+A node's identity is an opaque number that survives renaming and moving; the
+id renders its position and name, not that identity, so a rename never
+disturbs results already in flight.
 
 The name comes from the node class. A `Theorem`'s name is its `kind` joined to
 its theorem name — `lemma_P`, `theorem_Q`, `corollary_R`. A `Section`'s and a
@@ -67,7 +67,7 @@ the same id.
 
 A theory's name must also be unique against everything already loaded. Isabelle
 compares theory identities by **base name** — the part after the last dot
-(`contrib/Isabelle2025-2/src/Pure/context.ML:381-384`) — so a tree named `List`
+(`contrib/Isabelle2025-2/src/Pure/context.ML:380-383`) — so a tree named `List`
 builds without complaint and then kills the first theory that imports it, one
 level downstream, with `Duplicate theory name` and no useful location.
 `new_theory` therefore rejects a name whose base name already appears in the
@@ -81,7 +81,7 @@ agent **supplies**.
 
 `Theory` and `Section` are omissible in both directions. A node class that is
 omissible on output but compulsory on input would let TAT print an id it then
-refuses to accept; the registry rejects that combination.
+refuses to accept; TAT rejects that combination when the class is loaded.
 
 **Printing.** TAT omits an omissible component when the shorter id still
 identifies exactly one node. Ambiguity is judged across the whole forest, so an
@@ -106,46 +106,54 @@ Resolution and shortest-form printing are the same problem Isabelle solves for
 its own name spaces; `Name_Space.extern` computes the shortest unambiguous
 external name.
 
-### 2.2 What changes an id
+### 2.2 The id and Isabelle's qualified name
 
-Renaming a node changes its id. So does changing a `Theorem`'s `kind`, since the
-`kind` is part of the name.
+The id is TAT's name for a node: its ancestors' names and its own, joined
+(§2). The qualified name is Isabelle's name for what the node declares:
+`theory_X.lemma_P` declares `X.P`, and under `locale foo` it declares `foo.P`.
+A `Section` is in the id, being an ancestor, and not in the qualified name,
+being no scope to Isabelle.
 
-Moving a node changes its id only when its qualifying ancestors change — moving
-between positions under the same parent, or into another `Section`, does not.
-Moving into or out of a `Locale` or a `Context`, or into another tree, does.
-Those are also the cases where Isabelle's own qualified name for the fact
-changes, and where a statement written against a context's assumptions may no
-longer hold.
+The two correspond, and the omissibility flags (§2.1) are that correspondence:
+a nesting class Isabelle sees no scope in, such as `Section`, is droppable from
+an id; one that qualifies Isabelle's names is not. Shortest-form printing of an
+id is the same computation as Isabelle's shortest-form printing of a qualified
+name.
+
+The **id** changes on a rename, on a change of a `Theorem`'s `kind`, and on
+any move except between positions under the same parent; a move can also
+change the printed short form alone, by creating or removing an ambiguity.
+The **qualified name** changes only on a move into or out of a `Locale` or a
+`Context`, or into another tree — the moves after which a statement written
+against a context's assumptions may no longer hold, and references to the
+fact may break.
 
 ## 3. Running a change
 
 An edit reaches Isabelle by being evaluated, not by being written to a file.
 TAT sends the affected node's data to its evaluator, the evaluator runs the
-node's commands and reports the result of each role, and the `.thy` is written
+node's commands and reports what happened, and the `.thy` is written
 later from what the nodes emit (ARCHITECTURE §4).
 
-Editing a node invalidates that node and everything after it, then runs
-`evaluate_to` on it (§4), so its own result comes back with the call. Everything
-after it is reported as not evaluated until the agent asks for it.
+Editing a node invalidates that node, everything after it in its tree, and
+every tree that imports that tree (ARCHITECTURE §3.4), then runs `evaluate_to`
+on it (§4), so its own result comes back with the call. Everything else
+invalidated is reported as not evaluated until the agent asks for it.
 
 ## 4. Evaluation
 
 `evaluate_to(destination, ignore_error)` evaluates every node that is not
-evaluated, in tree order, up to and including the destination. It returns when
-it has finished or when it has stopped.
+evaluated, in tree order, up to and including the destination — a nesting
+node's whole subtree, so the `Theory` node's id means the whole tree, `end`
+included. It returns when it has finished or when it has stopped, naming the
+node it stopped at; `ignore_error` carries on past a node that would stop it.
+Where evaluation stops, and why the same node stops every later call until it
+is edited, is ARCHITECTURE §3.3.
 
-Evaluation stops at a node whose class says nothing useful can follow it —
-typically a definition that failed, since every later mention of the constant
-would then report the constant rather than itself. `ignore_error` carries on past
-such a node. It cannot carry on into the children of a nesting node whose opening
-command failed: those have no context to run in.
-
-Each node reports two things, and they answer different questions
-(ARCHITECTURE §3.2): whether it has a current evaluation, and whether it still
-owes anything. A `Theorem` awaiting a proof has a perfectly good evaluation and
-still owes a proof. A node left unevaluated because evaluation stopped ahead of
-it names the node that stopped it.
+For each node the result carries its `evaluation_status`, its `finished`
+(ARCHITECTURE §3.2), what its class chose to report, and — for a node not
+evaluated because evaluation stopped ahead of it, or under a nesting node
+whose opening failed — the node responsible.
 
 ## 5. Messages
 
@@ -162,9 +170,7 @@ messages on demand, for an agent that wants them before its next edit.
 
 ## 6. Undecided
 
-- **One tool per node class, or one `edit` with a class parameter.** Per-class
-  tools give the agent a typed schema per declaration kind and multiply the tool
-  count by the number of node classes; a single `edit` keeps the surface small
-  and weakens the schema to a union.
+- **One tool per node class, or one `edit` with a class parameter**
+  (OPEN_QUESTIONS §3).
 - **The omissibility flags for `Locale` and `Context`**, along with the rest of
   those two node classes.
