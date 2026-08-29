@@ -4,16 +4,28 @@ Status: design draft.
 
 ## 1. Directories and files
 
+The layout follows the sibling repositories (`contrib/Isa-Mini`,
+`contrib/Isabelle_RPC`): an Isabelle component and a Python package in one
+repository, one version number for both.
+
 ```
-TAT.thy                    ML_file "ML/TAT_Framework.ML"; ML_file "ML/TAT_Common_Nodes.ML"
-ML/TAT_Framework.ML        structure TAT_Framework
-ML/TAT_Common_Nodes.ML     structure TAT_Common_Nodes
-Dev/TAT_Dev.thy            the development-time client, an Isa-REPL app (ARCHITECTURE §9)
+Theory_Agent_over_Trees.thy   ML_file "ML/TAT_Framework.ML"; ML_file "ML/TAT_Common_Nodes.ML"
+ML/TAT_Framework.ML           structure TAT_Framework (§2)
+ML/TAT_Common_Nodes.ML        structure TAT_Common_Nodes (§3)
+Dev/TAT_Dev.thy               the development-time client, an Isa-REPL app (ARCHITECTURE §9)
+etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT"
+isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
+test/                         test_*.py for the Python side, Test_*.thy for the ML side
+docs/                         the design
+pyproject.toml, VERSION       the Python package; VERSION is the one number pip and conda read
+conda/recipe.yaml             the conda package
+COPYING, COPYING.LIB, COPYRIGHT   LGPL-2.1-or-later, as in Isa-Mini
 ```
 
-None of these is in a heap. The session loads `TAT.thy` — and every node
-class theory named to it — from source on the base heap when it starts
-(ARCHITECTURE §8).
+There is no `ROOT`: none of the theories is in a heap. The session loads
+`Theory_Agent_over_Trees.thy` — and every node class theory named to it — from
+source on the base heap when it starts (ARCHITECTURE §8), finding it through
+`$TAT_HOME`.
 
 One structure per file, and two structures in all. Inside a file the body is
 divided by Isabelle's sectioning comments — `(*** section ***)`,
@@ -150,15 +162,16 @@ app, later some Isabelle component — is a client built on it, and starting the
 Isabelle process is the client's business.
 
 ```
-tat/model.py             Node, Forest, ids, evaluation and invalidation, compilation, persistence
-tat/isar_helper.py       segment integrity (appendix/SEGMENT_INTEGRITY.md)
-tat/isabelle_driver.py   typed calls to the ML side's callbacks
-tat/plugin.py            loading node classes and their table
-tat/builtins.py          the predefined node classes
-tat/theorem_node.py      Theorem: construct, the AoA interface, the second chain of work
-tat/mcp.py               the tools, recall, the message queue
-tat/mcp_server.py        the MCP server itself
-tat/toplevel.py          the RPC entry point Isabelle calls into
+isabelle_theory_agent/
+  model.py             Node, Forest, ids, evaluation and invalidation, compilation, persistence
+  isar_helper.py       segment integrity (appendix/SEGMENT_INTEGRITY.md)
+  isabelle_driver.py   typed calls to the ML side's callbacks
+  plugin.py            loading node classes and their table
+  builtins.py          the predefined node classes
+  theorem_node.py      Theorem: construct, the AoA interface, the second chain of work
+  mcp.py               the tools, recall, the message queue
+  mcp_server.py        the MCP server itself
+  toplevel.py          the RPC entry point Isabelle calls into
 ```
 
 ### 4.1 `model.py`

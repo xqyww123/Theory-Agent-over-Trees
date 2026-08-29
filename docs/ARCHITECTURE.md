@@ -423,7 +423,8 @@ is written against, with nothing of TAT in it — and the forest sits on top of
 it, no tree in any heap (EVALUATOR_DESIGN §2). A library theory the base heap
 lacks is loaded from source, at a cost the loader reports. TAT's own theories
 (§6.3) are never in the base heap: the session loads them from source when it
-starts, which is quick because they are small.
+starts, which is quick because they are small. The same goes for
+`Isabelle_RPC`'s theory, which they import, when the base heap lacks it.
 
 No node class emits `oops`: it leaves no trace in Isabelle's output and so
 could not be accounted for.

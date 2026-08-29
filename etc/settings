@@ -1,0 +1,2 @@
+# -*- shell-script -*- :mode=shellscript:
+TAT_HOME="$COMPONENT"
