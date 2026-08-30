@@ -8,17 +8,17 @@ and are decided nowhere else.
 from Isabelle_RPC_Host import Connection
 
 
-async def delete_states(conn: Connection, names: list[str]) -> None:
+async def state_delete(conn: Connection, names: list[str]) -> None:
     """Remove the names from the session's state slot table, in one round
     trip.  A name that is not there is not an error."""
-    await conn.callback("TAT.delete_states", names)
+    await conn.callback("TAT.state_delete", names)
 
 
 async def state_exists(conn: Connection, name: str) -> bool:
     return await conn.callback("TAT.state_exists", name)
 
 
-async def copy_state(conn: Connection, src: str, dst: str) -> None:
+async def state_copy(conn: Connection, src: str, dst: str) -> None:
     """Afterwards `dst` holds what `src` holds — including nothing, when
     `src` is not in the table."""
-    await conn.callback("TAT.copy_state", (src, dst))
+    await conn.callback("TAT.state_copy", (src, dst))

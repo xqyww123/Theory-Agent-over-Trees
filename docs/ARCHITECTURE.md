@@ -369,9 +369,11 @@ before a node's text is accepted. See
 ## 6. The node class contract *(decided)*
 
 A node class is delivered as an Isabelle theory together with a Python package.
-The theory is primary: it registers the class's evaluator on the ML side, and it
-names the Python package carrying the rest. Installing a node class means
-naming its theory to the session, which loads it from source at start (§8).
+The theory is primary: it registers the class's evaluator on the ML side —
+into its own theory data (MODULE_STRUCTURE §2.5) — and it names the Python
+package carrying the rest. Installing a node class means having the theory
+the session starts from import it; the session loads it from source at start
+(§8).
 
 | part | side | |
 | --- | --- | --- |

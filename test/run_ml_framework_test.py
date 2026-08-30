@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Runs the ML framework test (TAT_Framework_Test.thy + tat_framework_ml_test.py).
+"""Runs the ML framework test (Test_TAT_Framework.thy + tat_framework_ml_test.py).
 
     python test/run_ml_framework_test.py [ADDR]
 
@@ -53,7 +53,7 @@ async def wait_for_server(addr: str, proc: subprocess.Popen, log_path: str) -> N
 
 
 async def run(addr: str) -> None:
-    with open(os.path.join(HERE, "TAT_Framework_Test.thy")) as f:
+    with open(os.path.join(HERE, "Test_TAT_Framework.thy")) as f:
         source = f.read()
     async with Client(addr, "Draft") as c:
         outputs = await c.eval(source, import_dir=HERE)
@@ -71,7 +71,10 @@ async def main() -> None:
         return
     addr = f"127.0.0.1:{free_port()}"
     env = dict(os.environ)
-    env["PYTHONPATH"] = HERE + os.pathsep + env.get("PYTHONPATH", "")
+    # this directory for tat_framework_ml_test, the repository root so that
+    # `import isabelle_theory_agent` works even without a pip install
+    env["PYTHONPATH"] = os.pathsep.join(
+        [HERE, os.path.dirname(HERE), env.get("PYTHONPATH", "")])
     env["ISABELLE_RPC_PYTHON"] = sys.executable
     outdir = tempfile.mkdtemp(prefix="tat_repl_out_")
     log_path = os.path.join(outdir, "server.log")

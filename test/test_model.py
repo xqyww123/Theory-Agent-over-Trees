@@ -29,15 +29,15 @@ class Table:
         self.deleted: list[str] = []
 
     def install(self, monkeypatch):
-        async def delete_states(conn, names):
+        async def state_delete(conn, names):
             for n in names:
                 self.values.pop(n, None); self.deleted.append(n)
         async def state_exists(conn, name):
             return name in self.values
-        async def copy_state(conn, src, dst):
+        async def state_copy(conn, src, dst):
             if src in self.values: self.values[dst] = self.values[src]
             else: self.values.pop(dst, None)
-        for f in (delete_states, state_exists, copy_state):
+        for f in (state_delete, state_exists, state_copy):
             monkeypatch.setattr(isabelle_driver, f.__name__, f)
 
 

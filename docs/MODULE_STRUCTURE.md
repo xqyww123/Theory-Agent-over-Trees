@@ -13,19 +13,22 @@ Theory_Agent_over_Trees.thy   ML_file "ML/TAT_Framework.ML"; ML_file "ML/TAT_Com
 ML/TAT_Framework.ML           structure TAT_Framework (§2)
 ML/TAT_Common_Nodes.ML        structure TAT_Common_Nodes (§3)
 Dev/TAT_Dev.thy               the development-time client, an Isa-REPL app (ARCHITECTURE §9)
+ROOT                          build checks only; nothing ever runs on these heaps
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT"
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
-test/                         test_*.py for the Python side, Test_*.thy for the ML side
+test/                         test_*.py for the Python side, Test_*.thy for the ML side,
+                              and their non-pytest helper modules
 docs/                         the design
 pyproject.toml, VERSION       the Python package; VERSION is the one number pip and conda read
 conda/recipe.yaml             the conda package
 COPYING, COPYING.LIB, COPYRIGHT   LGPL-2.1-or-later, as in Isa-Mini
 ```
 
-There is no `ROOT`: none of the theories is in a heap. The session loads
-`Theory_Agent_over_Trees.thy` — and every node class theory named to it — from
-source on the base heap when it starts (ARCHITECTURE §8), finding it through
-`$TAT_HOME`.
+The `ROOT` exists because registering the repository as a session root
+requires one; its sessions are compile checks of the sources. A running
+session never sits on those heaps: it loads `Theory_Agent_over_Trees.thy` —
+and every node class theory named to it — from source on the base heap when
+it starts (ARCHITECTURE §8), finding it through `$TAT_HOME`.
 
 One structure per file, and two structures in all. Inside a file the body is
 divided by Isabelle's sectioning comments — `(*** section ***)`,
@@ -117,7 +120,7 @@ type env = {
                                           (*§2.4's, imports resolved through this session's tables*)
   end_theory    : Toplevel.state -> unit  (*§2.4's, the result put into this session's theory table*)
 }
-val register_callback : (env -> Remote_Procedure_Calling.callback') -> unit
+val register_callback : (env -> Remote_Procedure_Calling.callback') -> theory -> theory
 ```
 
 On the wire a state slot is its name (§4.1), and `slot_unpacker` is how a
@@ -130,7 +133,11 @@ enter it (EVALUATOR_DESIGN §4's one-producer rule).
 
 The environment is bound to one session's tables, so it exists only
 once the session has started; the registered function is called then.
-Registrations wait in a list until then; there is no table of node classes.
+Until then the registration rides on the theory (`Theory_Data`, applied with
+`setup`), so a session's node classes are exactly the classes whose theories
+the starting theory imports, and re-evaluating a registering theory cannot
+register twice — the fresh theory value carries the registration once. There
+is no other table of node classes.
 
 What the callback takes and returns is the class's own affair, agreed with its
 Python half (ARCHITECTURE §6.2); the per-command records of §2.4 are there
@@ -138,11 +145,13 @@ for it to return if it so chooses.
 
 ### 2.6 Session
 
-The entry point of ARCHITECTURE §9. Starting a session:
+The entry point of ARCHITECTURE §9. Starting a session, from the theory
+whose ancestry names the node classes (§2.5):
 
 1. create the state slot table and the environment of §2.5;
-2. call every registered function, collecting the node classes' callbacks;
-3. add the framework's own: `TAT.copy_state`, `TAT.delete_states` and
+2. call every function registered in that theory's data, collecting the node
+   classes' callbacks;
+3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
    name), `check_new_tree_name`, the loader's report, and one that forks a

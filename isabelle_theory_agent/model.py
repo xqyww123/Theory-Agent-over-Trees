@@ -50,10 +50,10 @@ class Isar_State_Slot:
 
     async def delete(self) -> None:
         """Remove the value from the table.  The slot keeps its name."""
-        await isabelle_driver.delete_states(self.connection, [self.name])
+        await isabelle_driver.state_delete(self.connection, [self.name])
 
     async def copy_to(self, other: Isar_State_Slot) -> None:
-        await isabelle_driver.copy_state(self.connection, self.name, other.name)
+        await isabelle_driver.state_copy(self.connection, self.name, other.name)
 
     # Neither the connection nor the name survives persistence
     # (ARCHITECTURE §4.1): the loader reassigns every slot of a loaded forest.
@@ -129,7 +129,7 @@ class Evaluation:
 
     async def flush(self, connection: Connection) -> None:
         if self._released:
-            await isabelle_driver.delete_states(connection, sorted(self._released))
+            await isabelle_driver.state_delete(connection, sorted(self._released))
             self._released.clear()
 
 
@@ -334,8 +334,8 @@ class NonLeaf_Node(Node):
         async with self.forest().lock:
             index = next(i for i, c in enumerate(self.sub_nodes) if c is node)
             await node.state.copy_to(self._state_at(index + 1))
-            await isabelle_driver.delete_states(node.state.connection,
-                                                [s.name for s in node._states_inside()])
+            await isabelle_driver.state_delete(node.state.connection,
+                                               [s.name for s in node._states_inside()])
             del self.sub_nodes[index]
             node.parent = None
             successor = self.sub_nodes[index] if index < len(self.sub_nodes) else self
