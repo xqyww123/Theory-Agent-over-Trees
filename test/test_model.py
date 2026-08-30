@@ -5,12 +5,13 @@ against a fake state slot table.  Run: python -m pytest test/test_model.py
 import asyncio
 import sys
 import types
+import typing
 
 try:
     import Isabelle_RPC_Host  # noqa: F401
 except ImportError:                       # the test needs no Isabelle
     m = types.ModuleType("Isabelle_RPC_Host")
-    m.Connection = object
+    m.Connection = object  # type: ignore[attr-defined]
     sys.modules["Isabelle_RPC_Host"] = m
 
 import pytest
@@ -28,16 +29,15 @@ class Table:
         self.deleted: list[str] = []
 
     def install(self, monkeypatch):
-        async def delete_state(conn, name):
-            self.values.pop(name, None); self.deleted.append(name)
         async def delete_states(conn, names):
-            for n in names: await delete_state(conn, n)
+            for n in names:
+                self.values.pop(n, None); self.deleted.append(n)
         async def state_exists(conn, name):
             return name in self.values
         async def copy_state(conn, src, dst):
             if src in self.values: self.values[dst] = self.values[src]
             else: self.values.pop(dst, None)
-        for f in (delete_state, delete_states, state_exists, copy_state):
+        for f in (delete_states, state_exists, copy_state):
             monkeypatch.setattr(isabelle_driver, f.__name__, f)
 
 
@@ -86,7 +86,7 @@ class OneTreeForest(M.Forest):      # enough of `Forest` to drive one tree
 
 
 TABLE = Table()
-CONN = object()
+CONN = typing.cast(typing.Any, object())     # stands in for a Connection
 
 
 def slot(): return Isar_State_Slot.assign(CONN)

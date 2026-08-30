@@ -399,9 +399,11 @@ Each node class registers its own callback, with its own argument and result
 schema. Node data has no universal representation; the core never sees it,
 which is what lets a node class be added without touching the core.
 
-The framework fixes almost nothing. On the ML side a class's callback is given
-`get` and `put` on the session's state slot table and nothing else; what it
-takes and what it returns are between it and its own Python half. On the Python
+The framework fixes almost nothing. On the ML side a class's callback reads a
+state slot name off the wire into a handle carrying `get` and `put` on the
+session's state slot table, and beyond that is given only the session's
+`begin_theory` and `end_theory` (MODULE_STRUCTURE §2.5); what it takes and
+what it returns are between it and its own Python half. On the Python
 side the class's hook runs that callback itself, records on the node whatever
 it wants recorded — which commands it ran and how each of them fared included
 — and answers the framework with one boolean: whether evaluation passes

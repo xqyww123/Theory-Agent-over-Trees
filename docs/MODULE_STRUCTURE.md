@@ -50,7 +50,7 @@ reached only through five operations.
 | `put` | a node's commands have run and its resulting state is stored |
 | `get` | a node is about to run, from the state its input slot names |
 | `copy` | one slot's state stands as another's: a class with no closing command, a failed node passed over (ARCHITECTURE §3.1), a node inserted or deleted (ARCHITECTURE §3.4). Afterwards the target holds what the source holds — nothing, when the source holds nothing |
-| `delete` | a node leaves `ready`, or is deleted; takes one name or many |
+| `delete` | a node leaves `ready`, or is deleted; takes a list of names, so a batch is one round trip |
 | `exists` | the Python side asks whether a slot holds a state |
 
 ### 2.2 Theory table
@@ -106,14 +106,29 @@ A node class registers a function from the session's environment to a local
 callback of `Isabelle_RPC` (`Remote_Procedure_Calling.callback'`):
 
 ```sml
+type slot = {
+  get : unit -> Toplevel.state,           (*§2.1's get; an error when the slot holds nothing*)
+  put : Toplevel.state option -> unit     (*§2.1's put; NONE deletes*)
+}
 type env = {
-  get : string -> Toplevel.state,           (*§2.1's get, on this session's table*)
-  put : string -> Toplevel.state -> unit    (*§2.1's put, likewise*)
+  slot_unpacker : slot MessagePackBinIO.Unpack.unpacker,
+                                          (*reads a slot name off the wire, on this session's table*)
+  begin_theory  : Thy_Header.header -> Toplevel.state,
+                                          (*§2.4's, imports resolved through this session's tables*)
+  end_theory    : Toplevel.state -> unit  (*§2.4's, the result put into this session's theory table*)
 }
 val register_callback : (env -> Remote_Procedure_Calling.callback') -> unit
 ```
 
-The environment is bound to one session's state slot table, so it exists only
+On the wire a state slot is its name (§4.1), and `slot_unpacker` is how a
+callback's `arg_schema` takes one: it reads the name and yields the slot —
+read, write and delete all on the handle, so the callback never touches a
+name. `begin_theory` and `end_theory` are in the environment because the
+theory table they use is the session's: the table has exactly one writer,
+and a `theory` value that is not the yield of `Toplevel.end_theory` cannot
+enter it (EVALUATOR_DESIGN §4's one-producer rule).
+
+The environment is bound to one session's tables, so it exists only
 once the session has started; the registered function is called then.
 Registrations wait in a list until then; there is no table of node classes.
 
@@ -127,17 +142,22 @@ The entry point of ARCHITECTURE §9. Starting a session:
 
 1. create the state slot table and the environment of §2.5;
 2. call every registered function, collecting the node classes' callbacks;
-3. add the framework's own: `copy`, `delete` and `exists` on state slots, `check_new_tree_name`,
-   the loader's report, and one that forks a thread and returns at once — the
-   thread's own outer call into Python is the second chain of work
-   (ARCHITECTURE §9);
+3. add the framework's own: `TAT.copy_state`, `TAT.delete_states` and
+   `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
+   `get` and `put` ride inside the classes' own callbacks and need no wire
+   name), `check_new_tree_name`, the loader's report, and one that forks a
+   thread and returns at once — the thread's own outer call into Python is
+   the second chain of work (ARCHITECTURE §9);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
-   procedure `TAT` (§4.5), which does not return for the life of the session.
+   procedure `launch_TAT` (§4.5), which does not return for the life of the
+   session.
 
 The callbacks go in the `callback` field of that one command, as AoA's do
 (`contrib/Isa-Mini/Agent/agent_server.ML:1740-1772`); none enters
-`Isabelle_RPC`'s global callback table.
+`Isabelle_RPC`'s global callback table. Two callbacks under one name would
+silently shadow each other in that command's dispatch table, so starting the
+session rejects a duplicated name instead.
 
 ## 3. `TAT_Common_Nodes`
 
@@ -296,5 +316,5 @@ next tool result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 indexes — the forest, and the library through `contrib/Semantic_Embedding`'s
 retrieval — and the queue of pending messages. `mcp_server.py` builds the
 server from them. `toplevel.py` is the procedure Isabelle calls
-(`@isabelle_remote_procedure("TAT")`), which does not return for the life of
+(`@isabelle_remote_procedure("launch_TAT")`), which does not return for the life of
 the session and hands the loaded forest its connection.

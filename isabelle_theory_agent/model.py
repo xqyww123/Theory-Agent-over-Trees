@@ -50,7 +50,7 @@ class Isar_State_Slot:
 
     async def delete(self) -> None:
         """Remove the value from the table.  The slot keeps its name."""
-        await isabelle_driver.delete_state(self.connection, self.name)
+        await isabelle_driver.delete_states(self.connection, [self.name])
 
     async def copy_to(self, other: Isar_State_Slot) -> None:
         await isabelle_driver.copy_state(self.connection, self.name, other.name)

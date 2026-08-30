@@ -8,14 +8,9 @@ and are decided nowhere else.
 from Isabelle_RPC_Host import Connection
 
 
-async def delete_state(conn: Connection, name: str) -> None:
-    """Remove `name` from the session's state slot table.  A name that is not
-    there is not an error."""
-    await conn.callback("TAT.delete_state", name)
-
-
 async def delete_states(conn: Connection, names: list[str]) -> None:
-    """`delete_state` for many names in one round trip."""
+    """Remove the names from the session's state slot table, in one round
+    trip.  A name that is not there is not an error."""
     await conn.callback("TAT.delete_states", names)
 
 
