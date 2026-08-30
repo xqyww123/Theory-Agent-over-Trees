@@ -43,14 +43,15 @@ outside `TAT_Common_Nodes` would need it, it is in `TAT_Framework`.
 ### 2.1 State slots
 
 The state slot table (EVALUATOR_DESIGN §1.1): one per session, locked, and
-reached only through four operations.
+reached only through five operations.
 
 | operation | used when |
 | --- | --- |
 | `put` | a node's commands have run and its resulting state is stored |
 | `get` | a node is about to run, from the state its input slot names |
-| `copy` | one slot's state stands as another's: a class with no closing command, or a failed node passed over (ARCHITECTURE §3.1) |
-| `delete` | a node is deleted |
+| `copy` | one slot's state stands as another's: a class with no closing command, a failed node passed over (ARCHITECTURE §3.1), a node inserted or deleted (ARCHITECTURE §3.4). Afterwards the target holds what the source holds — nothing, when the source holds nothing |
+| `delete` | a node leaves `ready`, or is deleted; takes one name or many |
+| `exists` | the Python side asks whether a slot holds a state |
 
 ### 2.2 Theory table
 
@@ -107,8 +108,7 @@ callback of `Isabelle_RPC` (`Remote_Procedure_Calling.callback'`):
 ```sml
 type env = {
   get : string -> Toplevel.state,           (*§2.1's get, on this session's table*)
-  put : string -> Toplevel.state -> unit,   (*§2.1's put, likewise*)
-  ...                                        (*the envelope packer*)
+  put : string -> Toplevel.state -> unit    (*§2.1's put, likewise*)
 }
 val register_callback : (env -> Remote_Procedure_Calling.callback') -> unit
 ```
@@ -117,12 +117,9 @@ The environment is bound to one session's state slot table, so it exists only
 once the session has started; the registered function is called then.
 Registrations wait in a list until then; there is no table of node classes.
 
-The envelope fixes the input slot, the resulting slot and the outcome that
-becomes `evaluation_status`; the class adds what it wants recorded, the
-per-command records of §2.4 included if it so chooses. A node that did not
-write its resulting slot — one that stopped evaluation, or a nesting node whose
-opening failed (ARCHITECTURE §3.3) — has its input slot copied into it here,
-so no class can forget it.
+What the callback takes and returns is the class's own affair, agreed with its
+Python half (ARCHITECTURE §6.2); the per-command records of §2.4 are there
+for it to return if it so chooses.
 
 ### 2.6 Session
 
@@ -130,7 +127,7 @@ The entry point of ARCHITECTURE §9. Starting a session:
 
 1. create the state slot table and the environment of §2.5;
 2. call every registered function, collecting the node classes' callbacks;
-3. add the framework's own: `delete` on state slots, `check_new_tree_name`,
+3. add the framework's own: `copy`, `delete` and `exists` on state slots, `check_new_tree_name`,
    the loader's report, and one that forks a thread and returns at once — the
    thread's own outer call into Python is the second chain of work
    (ARCHITECTURE §9);
@@ -183,56 +180,92 @@ schema, `emit_isar`, the name it gives the node and its two omissibility flags
 persistence (ARCHITECTURE §4.1), and `invalidate`, the hook a class overrides
 to learn that its context is no longer current (ARCHITECTURE §3.6).
 
-The class hierarchy follows AoA's (`contrib/Isa-Mini/IsaMini/AoA/model.py`,
-`class Leaf` :5333, `class NonLeaf_Node` :5449, `class StdBlock` :5836). A
-class declares what to run and never runs it:
+**States.** `Isar_State_Slot` is a name in the ML side's state slot table
+(§2.1) together with the connection; on the wire it is the name
+(`to_msgpack`, `from_msgpack`). It offers `copy_to`, `delete` and
+`is_initialized`, each a round trip; nothing about the table is mirrored on
+the Python side. Persistence keeps neither the name nor the connection: a
+loaded forest is reassigned its slots.
 
-- `Leaf(Node)` overrides `the_operation()`;
-- `NonLeaf_Node(Node)` holds `sub_nodes`;
-- `StdBlock(NonLeaf_Node)` overrides `beginning_opr()` and `ending_opr()`;
-  `ending_opr()` returning `None` means the class has no closing command and
-  its resulting slot is a copy of the slot after its children.
+Every node holds one, `state`, the state before it. The state after it is
+computed, as in AoA (`contrib/Isa-Mini/IsaMini/AoA/model.py:4581`):
+`resulting_state()` asks the parent, which answers with the next sibling's
+`state`, or with the one it keeps for the position after all its children.
+So one node's result and the next node's input are one slot, and inserting
+or deleting a node moves a value between slots by one copy
+(`_insert_child`, `_delete_child`; ARCHITECTURE §3.4).
 
-An operation is what the class's evaluator on the ML side is sent (§2.5). The
-one place that sends it is `Node._evaluate` below, which runs the beginning
-operation, recurses into the children, and then the ending operation.
-`Theory` and `Section` are `StdBlock`s — `Section` with no ending operation —
-and `Theorem` and `Define` are `Leaf`s.
+**Status.** A status is `NotEvaluated`, `Ready`, or
+`CannotEvaluate(blocked_by)` (ARCHITECTURE §3.2, §3.3); the reason travels
+inside the value, so a `Ready` operation cannot carry a stale one. A `Leaf`
+has one, a `StdBlock` two — `evaluation_status_beginning` and
+`evaluation_status_ending` — and no node reads another's: the one question
+asked of a node from outside is `is_finished()`. Every status write goes
+through one setter per operation, which releases what the old status had
+written; the two singletons are the same instance across pickling, so `is`
+is always right, and a loaded forest's statuses are all `NotEvaluated`.
 
-`Forest` is a `Node` too, the root above every tree, and overrides much: id
-resolution and shortest-form printing, the import graph and its topological
-order, invalidation of every tree that imports a changed one, and
-`evaluate_to`'s first step of evaluating imports to their `end`.
+**Hierarchy**, following AoA's (`class Leaf` :5333, `class NonLeaf_Node`
+:5449, `class StdBlock` :5836):
 
-Evaluation and invalidation are one recursion (ARCHITECTURE §3.5), written
-once in `Node`:
+- `Leaf(Node)` — a class overrides `_eval_opr() -> bool`: run the node from
+  `state` into `resulting_state()`, return whether evaluation passes through
+  it.
+- `NonLeaf_Node(Node)` — `sub_nodes`, `_resulting_state_of_child`, and the
+  children loop of the recursion.
+- `StdBlock(NonLeaf_Node)` — keeps `_state_before_ending`, the slot after all
+  its children; a class overrides `_eval_beginning_opr() -> bool` (from
+  `state` into the first child's `state`) and, if it has a closing command,
+  `_eval_ending_opr() -> bool` (from `_state_before_ending` into
+  `resulting_state()`); the default ending copies.
+- `Forest(NonLeaf_Node)` — the root above every tree; holds the lock, and
+  overrides id resolution and shortest-form printing, the import graph and
+  its topological order, invalidation of every tree that imports a changed
+  one, and the first step of evaluating imports to their `end`.
+
+A hook runs the class's own ML callback itself, through `isabelle_driver`
+(§4.2), and records what it likes on the node; the framework reads only the
+boolean, and on False copies the operation's input into its resulting state
+itself (ARCHITECTURE §6.2). `Theory` and `Section` are `StdBlock`s,
+`Theorem` and `Define` `Leaf`s.
+
+**The recursion** (ARCHITECTURE §3.5), entered only through
+`Node.evaluate_to(ignore_error, evaluate)`, which takes the forest's lock and
+starts from the forest with the node as destination. A call's two constants
+and the states it releases travel in one `Evaluation`; where the walk is
+travels in a `Mode`:
 
 ```python
-@dataclass
-class EvaluationResult:
-    stopped_at: Node | None          # where a class's judgement stopped evaluation
-    has_passed_destination: bool
+class Evaluation:                    # one evaluate_to call
+    destination: Node
+    ignore_error: bool
+    def release(self, slot)          # deleted together when the call ends
 
-def _evaluate(self, destination: Node, ignore_error: bool,
-              has_passed_destination: bool, blocked_by: Node | None) -> EvaluationResult
+Mode = Evaluating | Seeking | Invalidating
+class Evaluating: blocked_by: Node | None   # before the destination: run what is not Ready,
+                                            # or, blocked, mark CannotEvaluate(blocked_by)
+class Seeking                               # before the destination without evaluating: touch nothing
+class Invalidating                          # past the destination: mark NotEvaluated
+
+@dataclass(frozen=True)
+class EvaluationResult:
+    stopped_at: Node | None          # the obstacle that ended evaluation
+    mode: Mode                       # the mode the node after this one runs under
+
+async def _evaluate(self, ev: Evaluation, mode: Mode) -> EvaluationResult
 ```
 
-It visits every node of the tree in tree order, and what it does to each is
-fixed by the two flags:
+`Leaf` and `StdBlock` each write it; `StdBlock`'s runs the beginning, the
+children, then the ending, and nothing is skipped: a `Ready` operation is
+not rerun, but every node is visited. The mode changes in one place: the
+destination turns it into `Invalidating`, and a stop turns `Evaluating` into
+`Evaluating(stop)` unless `ignore_error`. A nesting node whose opening
+failed enters its children with itself as `blocked_by`; a nesting node
+whose child stopped cannot run its ending and is `CannotEvaluate` with the
+same obstacle. A nesting node is reached at its ending.
 
-| `has_passed_destination` | `blocked_by` | on the node |
-| --- | --- | --- |
-| false | none | evaluate it, unless it is evaluated already |
-| false | an ancestor | mark it `cannot_evaluate`, with that ancestor as the reason |
-| true | any | mark it `not_evaluated` |
-
-A nesting node whose opening command failed enters its children with itself
-as `blocked_by`. `stopped_at` ends evaluation but not the recursion, which
-goes on to invalidate what follows the destination; with `ignore_error` a
-class's stop ends nothing. A destination that is already evaluated ends the
-call before it starts. The `evaluate_to` tool calls `_evaluate` on the
-destination; `edit` marks the edited node `not_evaluated` first and then does
-the same.
+`_insert_child` and `_delete_child` hold the same lock across the whole
+change: the copy of ARCHITECTURE §3.4, then the tree, then the walk.
 
 ### 4.2 `isabelle_driver.py`
 

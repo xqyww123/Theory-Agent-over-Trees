@@ -150,10 +150,9 @@ node it stopped at; `ignore_error` carries on past a node that would stop it.
 Where evaluation stops, and why the same node stops every later call until it
 is edited, is ARCHITECTURE §3.3.
 
-For each node the result carries its `evaluation_status`, its `finished`
-(ARCHITECTURE §3.2), what its class chose to report, and — for a node not
-evaluated because evaluation stopped ahead of it, or under a nesting node
-whose opening failed — the node responsible.
+Each node renders its own part of the result: what its class chose to report,
+whether it is `finished` (ARCHITECTURE §3.2), and — when it cannot be
+evaluated because of another node — which one (ARCHITECTURE §3.3).
 
 ## 5. Messages
 

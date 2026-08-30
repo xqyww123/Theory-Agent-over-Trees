@@ -58,8 +58,8 @@ against it.
 The evaluator holds `Toplevel.state` values in one table keyed by a name, and
 the Python side holds only names (ARCHITECTURE §3.1). Running a node is
 "from the state under this name, run these commands, put the result under that
-name". Re-evaluating a node writes the same name again, so the table grows only
-when nodes are created and shrinks only when they are deleted.
+name". Re-evaluating a node writes the same name again; a name's value is
+removed when its node is invalidated or deleted (ARCHITECTURE §3.4).
 
 Each session has its own state slot table, created when the session starts and
 left to the garbage collector when it ends. Nothing outlives the session.

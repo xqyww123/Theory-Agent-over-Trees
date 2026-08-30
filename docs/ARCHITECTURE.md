@@ -162,21 +162,29 @@ with no closing command, such as `Section`, copies the one into the other.
 A node that fails and is passed over leaves its input state in its resulting
 slot unchanged, so whatever follows always has something to run from.
 
+Whether a slot currently holds a state is asked of the table; the Python side
+mirrors nothing.
+
 ### 3.2 Two fields
 
-`evaluation_status` says whether evaluation can pass through the node.
+Every operation a node runs has an `evaluation_status`, which says whether
+evaluation passes through it. A leaf has one operation; a nesting node has two,
+its opening and its closing, and so two statuses.
 
 | value | meaning |
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
-| `ready` | the node ran and its resulting slot is current |
-| `cannot_evaluate` | evaluation does not pass through the node (§3.3) |
+| `ready` | the operation ran and its resulting slot is current |
+| `cannot_evaluate` | evaluation does not pass through (§3.3) |
 
 A node whose own commands failed is still `ready` when its class can carry on
 regardless. A `Theorem` whose proof failed emits `sorry`, so the fact is declared
 and every later node still checks. A nesting node whose opening command failed
-is `ready` too: its input state stands as its result, and evaluation resumes
-after the block.
+has that opening `cannot_evaluate` and its closing `ready`: its input state
+stands as its result, and evaluation resumes after the block.
+
+Nobody outside a node reads its statuses: a node renders its own report, and
+the one question asked from outside is `finished`.
 
 `finished` says whether the node still owes anything. It is derived, never
 stored, so it cannot drift from what it is derived from.
@@ -194,38 +202,36 @@ question: a `Theorem` that emitted `sorry` ran a command that succeeded.
 
 ### 3.3 Where evaluation stops
 
-`cannot_evaluate` has two sources.
+A `cannot_evaluate` node is either the obstacle itself or sits after or under
+one, and records which: its `blocked_by` is empty in the first case and names
+the obstacle in the second.
 
 A node whose failure would make everything after it report **derived errors**
-stops evaluation by the judgement of its node class. `Define` is the case: when
+is an obstacle by the judgement of its node class. `Define` is the case: when
 the defining command fails the constant does not exist, so every later node that
-mentions it fails with a message about the constant instead of about itself.
+mentions it fails with a message about the constant instead of about itself. A
+nesting node whose closing command failed is one too: a `Theory` whose `end`
+failed has no theory value. Such a node **stops** evaluation: everything after
+it in the tree is `cannot_evaluate` with that node as `blocked_by`.
 
 A **nesting node whose opening command failed** leaves its children no context
-to run in. The nesting node itself is `ready` (§3.2); every node under it is
-`cannot_evaluate`, recording that ancestor as the reason, and none of them
-runs while the ancestor stays as it is. That is a fact about the state rather
-than a policy — there is nothing to run them from.
+to run in. Its opening is `cannot_evaluate` and, like any obstacle, is not
+rerun until edited; its closing is `ready` (§3.2); every node under it is
+`cannot_evaluate` with that ancestor as `blocked_by`, and none of them runs
+while the ancestor stays as it is. This is not a stop: evaluation resumes after
+the block.
 
 `evaluate_to` takes an `ignore_error` flag for an agent that wants to see every
-error in one pass. It passes the first kind and never the second, which is not
-a stop at all: evaluation resumes after the block whether the flag is set or
-not.
+error in one pass. It passes a stop and never a failed opening.
 
 A stop is a fact about the forest, not about one call. Every `evaluate_to`
-returns either "continue" or "stopped at node X" to its caller (§3.5), and a
-node of the first kind returns "stopped" whenever it is passed — including on
-a later call that finds it already evaluated and skips it — unless
-`ignore_error` is set. So every call stops at the same node until that node is
-edited.
-
-A node left `not_evaluated` because evaluation stopped before reaching it
-records which node stopped it, so it can say why rather than only that it did
-not run.
+returns either "continue" or "stopped at node X" to its caller (§3.5), and an
+obstacle returns "stopped" whenever it is passed — including on a later call
+that finds it already evaluated and skips it — unless `ignore_error` is set. So
+every call stops at the same node until that node is edited. A node blocked by
+an obstacle, on the other hand, runs as soon as a call reaches it unblocked.
 
 ### 3.4 Invalidation
-
-Invalidation happens entirely on the Python side and sends nothing to Isabelle.
 
 Invalidating a node marks it and every node after it in its tree
 `not_evaluated`, and marks every tree that transitively imports that tree
@@ -233,9 +239,17 @@ Invalidating a node marks it and every node after it in its tree
 trees it imports, so a change anywhere in an imported tree invalidates all of an
 importing one.
 
-State slots are not released. The name belongs to the node and re-evaluation
-overwrites it, so nothing accumulates. Deleting a node releases its slot and
-cancels any work in flight on it.
+Whatever an operation wrote is released when the operation stops being
+current — its result, or the input it copied through on failing; the names
+stay with the node and re-evaluation writes them again. A call collects what
+it releases and deletes it all in one round trip at its end. Deleting a node
+releases every state its subtree owns and cancels any work in flight on it.
+
+Inserting or deleting a node changes which slot its predecessor's resulting
+state is (§3.1), so the value moves with it: on insertion the slot formerly at
+that position is copied into the new node's; on deletion the deleted node's
+slot is copied into the one now at its position. The predecessor is not
+touched.
 
 Because invalidation always runs forward, a tree's evaluated nodes are a prefix
 of it in tree order. TAT keeps no separate record of how far evaluation has
@@ -243,9 +257,10 @@ reached: the recursion of §3.5 skips what is evaluated and runs what is not.
 
 ### 3.5 Running an evaluation
 
-`evaluate_to(destination, ignore_error)` evaluates every `not_evaluated` node up
-to and including the destination, in tree order. It is one method, defined on
-every node and called recursively from the top:
+`evaluate_to(destination, ignore_error, evaluate)` runs every node that is not
+`ready` up to and including the destination, in tree order, and invalidates
+everything after it. It is one recursion, called from the top of the forest
+under the forest's one lock, so two calls never interleave:
 
 - The **forest** resolves the destination's id, evaluates every tree the
   destination's tree transitively imports to its own `end` — a theory value
@@ -255,26 +270,34 @@ every node and called recursively from the top:
   command succeeded, now or earlier, it calls its children in order, and
   those after the one that contains the destination only to invalidate them;
   if it failed, it still enters them, but to mark each one `cannot_evaluate`
-  (§3.3) rather than to run it. A `Theory` runs its `end` only when the
-  destination is the `Theory` node itself, or when the forest is evaluating
-  the tree as an import.
+  (§3.3) rather than to run it. A nesting node is reached at its closing
+  command: it is the destination only once its children have run, so naming a
+  `Theory` means the whole tree, `end` included.
 - A **leaf** runs its commands if it is not evaluated, and otherwise runs
   nothing.
 
 The recursion visits every node of the tree. Past the destination it evaluates
 nothing and marks each node `not_evaluated` (§3.4). That is what makes an edit
 reach everything after the edited node; on a call from the agent it changes
-nothing, since those nodes are `not_evaluated` already. A destination that is
-already evaluated ends the call at once: everything before it is evaluated
-too, and nothing after it is touched.
+nothing, since those nodes are `not_evaluated` already. Nothing is skipped on
+the way: a `ready` operation is not rerun, but a nesting node whose closing
+is `ready` is still entered, since an obstacle passed under `ignore_error`
+may sit inside it.
 
-Every call returns "continue" or "stopped at node X" (§3.3); a nesting node
-that receives "stopped" from a child evaluates no further child, and the
-answer travels up to the forest.
+Without `evaluate` the same walk touches nothing before the destination, not
+even a node that is not `ready`, and invalidates from the destination on. That
+is what a deletion needs (§3.4): nothing new to run, only the successor and
+what follows to invalidate.
+
+Every call returns "continue" or "stopped at node X" (§3.3); after a stop the
+recursion goes on, marking what follows `cannot_evaluate` with X as
+`blocked_by`, and the answer travels up to the forest.
 
 Editing a node marks it `not_evaluated` and runs `evaluate_to` on it, so the
 result of what was just written comes back with the call and everything after
-it is invalidated on the way.
+it is invalidated on the way. Editing a nesting node's own commands first
+invalidates from its first child, since the children are before it in the
+walk and would otherwise be kept.
 
 ### 3.6 Work that outlives a call
 
@@ -376,16 +399,15 @@ Each node class registers its own callback, with its own argument and result
 schema. Node data has no universal representation; the core never sees it,
 which is what lets a node class be added without touching the core.
 
-The framework fixes the envelope and leaves the contents free.
-
-- Fixed: the input state slot, the resulting state slot, and the outcome that
-  becomes `evaluation_status`.
-- Free: how the class packs its own data, and whatever it wants recorded —
-  which commands it ran and how each of them fared included.
-
-The framework supplies the unpacker that turns a state slot name into a
-`Toplevel.state`, and the packer for the envelope, so no class writes either
-twice.
+The framework fixes almost nothing. On the ML side a class's callback is given
+`get` and `put` on the session's state slot table and nothing else; what it
+takes and what it returns are between it and its own Python half. On the Python
+side the class's hook runs that callback itself, records on the node whatever
+it wants recorded — which commands it ran and how each of them fared included
+— and answers the framework with one boolean: whether evaluation passes
+through the node (§3.2). On no, the framework copies the operation's input
+state into its resulting state, so that `ignore_error` has something to run
+from; no class writes that copy.
 
 A class's callback is a local callback of the session's one RPC command (§9,
 MODULE_STRUCTURE §2.5), named after the class that owns it.
@@ -400,7 +422,7 @@ Anything the generated text does name — the `AoA` proof method, any syntax or
 attribute a node emits — must be imported by the trees that use it, and is a
 real dependency of the finished forest.
 
-The concrete interfaces are unwritten (OPEN_QUESTIONS §1).
+The concrete interfaces are MODULE_STRUCTURE §2.5 and §4.1.
 
 ## 7. Command-to-node mapping *(decided)*
 

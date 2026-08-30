@@ -2,15 +2,15 @@
 
 Nothing here is settled. Ordered by what it blocks.
 
-## 1. The framework's concrete interfaces
+## 1. `Forest` and `Theory` in the recursion
 
-**Blocks:** every part of the node class contract.
+**Blocks:** running anything.
 
-The shape is fixed — `register_callback` and `env` on the ML side
-(MODULE_STRUCTURE §2.5), `Node` / `Leaf` / `NonLeaf_Node` / `StdBlock` on the
-Python side (MODULE_STRUCTURE §4.1) — but the signatures are not written: the
-envelope's packer, the operation type a class returns, and what `Node`'s
-fields and hooks are called.
+`Node`, `Leaf`, `NonLeaf_Node` and `StdBlock` are written
+(`isabelle_theory_agent/model.py`); `Forest._evaluate` is not. Trees are not
+chained, so a `Theory` node's `state` is never written and the forest's
+`_resulting_state_of_child` cannot be the next tree's; what it is, and how a
+stop in one tree reaches the trees that import it and no other, is undecided.
 
 ## 2. The remaining node classes
 
