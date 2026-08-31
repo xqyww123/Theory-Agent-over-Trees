@@ -61,25 +61,28 @@ the Python side holds only names (ARCHITECTURE §3.1). Running a node is
 name". Re-evaluating a node writes the same name again; a name's value is
 removed when its node is invalidated or deleted (ARCHITECTURE §3.4).
 
-Each session has its own state slot table, created when the session starts and
-left to the garbage collector when it ends. Nothing outlives the session.
+Each conversation has its own state slot table, created when the conversation
+starts and left to the garbage collector when it ends. Nothing outlives the
+conversation.
 
-Concurrent chains of work share this table (ARCHITECTURE §9), so it is
-locked. `contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the pattern in use in
+A node class's asynchronous work can reach this table while evaluation runs
+(ARCHITECTURE §9), so it is locked. `contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the pattern in use in
 this project family: a hash table plus a `Synchronized.var` held across every
 read and write.
 
-## 2. One session, and what resolution becomes
+## 2. One prover, and what resolution becomes
 
-TAT launches a prover on one base heap. The forest is not an Isabelle session;
-it sits on top of one. Every tree is authored and none is in a heap. When the
-forest is finished it becomes an ordinary Isabelle session someone else builds.
+TAT launches a prover on one base heap. The forest's `Session`s are Isabelle
+sessions under construction: every tree is authored, none is in a heap, and a
+tree's qualified name is its `Session`'s `name` joined to its own (§7). When
+the forest is finished they are ordinary Isabelle sessions someone else builds
+(ARCHITECTURE §4).
 
 Import resolution, in order:
 
 ```
 resolve name =
-    our own table            (* trees this session evaluated to their end *)
+    our own table            (* trees this conversation evaluated to their end *)
   | Thy_Info.lookup_theory   (* the base heap *)
   | load from source (§6)    (* a library theory the heap lacks *)
 ```
@@ -91,9 +94,7 @@ join theories` (`:521`) — cannot be constructed. The invariant holds by shape.
 Everything the forest imports from outside itself is expected to be in the base
 heap. An import that is not there is loaded from source rather than refused, so
 that an agent which discovers a dependency mid-work is not stopped to wait for a
-heap rebuild. The loader reports how many theories that cost, since one import
-can pull a large closure, and the report is what tells a user to widen the base
-heap.
+heap rebuild.
 
 ## 3. The theory table
 
@@ -106,7 +107,8 @@ not its job. The Python side marks every tree that imports a changed tree
 `not_evaluated` (ARCHITECTURE §3.4) and never requests a theory whose tree is
 not evaluated to its end (ARCHITECTURE §3.5), so a stale entry is never read; it is
 overwritten when the tree is evaluated again. Like the state slots (§1.1), the
-table is locked, since concurrent chains write it.
+table is locked, since a node class's asynchronous work can reach it while
+evaluation runs.
 
 ## 4. What to avoid, and why
 
@@ -216,7 +218,8 @@ from loading one file under two names, from a forest theory taking a base name
 the heap already uses, from two concurrent loads, and from staleness eviction.
 
 So: every import, forest or library, resolves through one
-`Resources.import_name` call; the qualified name it returns (`#theory_name`,
+`Resources.import_name` call, with the importing tree's `Session` `name` as
+the qualifier; the qualified name it returns (`#theory_name`,
 such as `HOL-Library.Multiset`) is the only key for the theory table (§3); no
 file is ever loaded under two name forms; and a forest theory whose base name
 is already taken is rejected when it is created, not when something imports

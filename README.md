@@ -38,4 +38,4 @@ and serves the Model Context Protocol (MCP) tools; the Isabelle side runs an eva
 driving Isabelle one command at a time.
 
 Node classes are extensible, and a node class is installed by naming its theory
-to the session, which loads it from source at start.
+to the conversation, which loads it from source at start.

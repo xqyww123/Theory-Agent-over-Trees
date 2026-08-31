@@ -26,7 +26,7 @@ COPYING, COPYING.LIB, COPYRIGHT   LGPL-2.1-or-later, as in Isa-Mini
 
 The `ROOT` exists because registering the repository as a session root
 requires one; its sessions are compile checks of the sources. A running
-session never sits on those heaps: it loads `Theory_Agent_over_Trees.thy` —
+conversation never sits on those heaps: it loads `Theory_Agent_over_Trees.thy` —
 and every node class theory named to it — from source on the base heap when
 it starts (ARCHITECTURE §8), finding it through `$TAT_HOME`.
 
@@ -45,8 +45,8 @@ outside `TAT_Common_Nodes` would need it, it is in `TAT_Framework`.
 
 ### 2.1 State slots
 
-The state slot table (EVALUATOR_DESIGN §1.1): one per session, locked, and
-reached only through five operations.
+The state slot table (EVALUATOR_DESIGN §1.1): one per conversation, locked,
+and reached only through five operations.
 
 | operation | used when |
 | --- | --- |
@@ -69,19 +69,22 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 
 - `resolve` — the theory table, then the base heap, then a load from source;
 - `load` — the `Thy_Info.use_theories` wrapper of EVALUATOR_DESIGN §6, under
-  one lock, one theory per call, with `parallel_proofs = 1` checked at session
-  start, reporting how many theories the load cost;
-- `check_new_tree_name` — rejects a tree whose base name — the part after the
-  last dot, which is what Isabelle compares (EVALUATOR_DESIGN §7) — the base
-  heap already uses; the forest side of that check (MCP_SPECIFICATION §2) is
-  Python's.
+  one lock, one theory per call, with `parallel_proofs = 1` checked at
+  conversation start;
+- `check_new_theory_base_name` — rejects a new theory name whose base name —
+  the part after the last dot, which is what Isabelle compares
+  (EVALUATOR_DESIGN §7) — the base heap already uses; the forest side of that
+  check (MCP_SPECIFICATION §2) is Python's.
 
 ### 2.4 Running commands
 
 The mechanism of EVALUATOR_DESIGN §1, for any node.
 
-- `begin_theory` — reads the header, resolves each import through §2.3, merges
-  the parents' keywords, and runs the `theory … begin` span from
+- `begin_theory` — takes, alongside the header, the tree's Isabelle session
+  name and directory, read off its `Session` node (ARCHITECTURE §2.2): the
+  name qualifies every import resolution (EVALUATOR_DESIGN §7), the directory
+  is the `master_dir`. It resolves each import through §2.3, merges the
+  parents' keywords, and runs the `theory … begin` span from
   `Toplevel.make_state NONE`.
 - `run_commands` — splits a node's text with `Outer_Syntax.parse_spans` and
   runs each span through `Toplevel.command_errors true`, threading the state.
@@ -91,7 +94,7 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
 
 **Output.** Every `writeln`, `tracing` and `warning` in the process ends in
 `Private_Output.writeln_fn`, `tracing_fn` and `warning_fn`
-(`contrib/Isabelle2025-2/src/Pure/General/output.ML:66`, `:70`, `:71`). The session
+(`contrib/Isabelle2025-2/src/Pure/General/output.ML:66`, `:70`, `:71`). The conversation
 replaces the three once, with functions that route a message by the id in
 `Position.thread_data ()` into a per-command buffer, and fall back to the
 original function when there is no id. `run_commands` gives each span a fresh
@@ -105,8 +108,8 @@ not (EVALUATOR_DESIGN §4).
 The envelope of ARCHITECTURE §6.2, and the one interface a node class author
 sees.
 
-A node class registers a function from the session's environment to a local
-callback of `Isabelle_RPC` (`Remote_Procedure_Calling.callback'`):
+A node class registers a function from the conversation's environment to a
+local callback of `Isabelle_RPC` (`Remote_Procedure_Calling.callback'`):
 
 ```sml
 type slot = {
@@ -115,10 +118,12 @@ type slot = {
 }
 type env = {
   slot_unpacker : slot MessagePackBinIO.Unpack.unpacker,
-                                          (*reads a slot name off the wire, on this session's table*)
-  begin_theory  : Thy_Header.header -> Toplevel.state,
-                                          (*§2.4's, imports resolved through this session's tables*)
-  end_theory    : Toplevel.state -> unit  (*§2.4's, the result put into this session's theory table*)
+                    (*reads a slot name off the wire, on this conversation's table*)
+  begin_theory  : {session_name : string, master_dir : Path.T} ->
+                  Thy_Header.header -> Toplevel.state,
+                    (*§2.4's, imports resolved through this conversation's tables*)
+  end_theory    : Toplevel.state -> unit
+                    (*§2.4's, the result put into this conversation's theory table*)
 }
 val register_callback : (env -> Remote_Procedure_Calling.callback') -> theory -> theory
 ```
@@ -127,14 +132,14 @@ On the wire a state slot is its name (§4.1), and `slot_unpacker` is how a
 callback's `arg_schema` takes one: it reads the name and yields the slot —
 read, write and delete all on the handle, so the callback never touches a
 name. `begin_theory` and `end_theory` are in the environment because the
-theory table they use is the session's: the table has exactly one writer,
+theory table they use is the conversation's: the table has exactly one writer,
 and a `theory` value that is not the yield of `Toplevel.end_theory` cannot
 enter it (EVALUATOR_DESIGN §4's one-producer rule).
 
-The environment is bound to one session's tables, so it exists only
-once the session has started; the registered function is called then.
+The environment is bound to one conversation's tables, so it exists only
+once the conversation has started; the registered function is called then.
 Until then the registration rides on the theory (`Theory_Data`, applied with
-`setup`), so a session's node classes are exactly the classes whose theories
+`setup`), so a conversation's node classes are exactly the classes whose theories
 the starting theory imports, and re-evaluating a registering theory cannot
 register twice — the fresh theory value carries the registration once. There
 is no other table of node classes.
@@ -143,9 +148,9 @@ What the callback takes and returns is the class's own affair, agreed with its
 Python half (ARCHITECTURE §6.2); the per-command records of §2.4 are there
 for it to return if it so chooses.
 
-### 2.6 Session
+### 2.6 Conversation
 
-The entry point of ARCHITECTURE §9. Starting a session, from the theory
+The entry point of ARCHITECTURE §9. Starting a conversation, from the theory
 whose ancestry names the node classes (§2.5):
 
 1. create the state slot table and the environment of §2.5;
@@ -154,19 +159,17 @@ whose ancestry names the node classes (§2.5):
 3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
-   name), `check_new_tree_name`, the loader's report, and one that forks a
-   thread and returns at once — the thread's own outer call into Python is
-   the second chain of work (ARCHITECTURE §9);
+   name), and `TAT.check_new_theory_base_name` (§2.3);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.5), which does not return for the life of the
-   session.
+   conversation.
 
 The callbacks go in the `callback` field of that one command, as AoA's do
 (`contrib/Isa-Mini/Agent/agent_server.ML:1740-1772`); none enters
 `Isabelle_RPC`'s global callback table. Two callbacks under one name would
 silently shadow each other in that command's dispatch table, so starting the
-session rejects a duplicated name instead.
+conversation rejects a duplicated name instead.
 
 ## 3. `TAT_Common_Nodes`
 
@@ -181,11 +184,15 @@ One section per predefined node class, each a client of §2.5.
 
 `Theory` is registered like every other class; the framework does not know it.
 
+`Session` registers nothing: it runs no Isabelle commands — its evaluation is
+the forest's scheduling (ARCHITECTURE §3.5) and its emission the ROOT entry
+(ARCHITECTURE §4). It lives entirely in `builtins.py` (§4.4).
+
 ## 4. Python side
 
-TAT is a library. Whatever starts a session — during development an Isa-REPL
-app, later some Isabelle component — is a client built on it, and starting the
-Isabelle process is the client's business.
+TAT is a library. Whatever starts a conversation — during development an
+Isa-REPL app, later some Isabelle component — is a client built on it, and
+starting the Isabelle process is the client's business.
 
 ```
 isabelle_theory_agent/
@@ -194,7 +201,7 @@ isabelle_theory_agent/
   isabelle_driver.py   typed calls to the ML side's callbacks
   plugin.py            loading node classes and their table
   builtins.py          the predefined node classes
-  theorem_node.py      Theorem: construct, the AoA interface, the second chain of work
+  theorem_node.py      Theorem: construct, the AoA interface
   mcp.py               the tools, recall, the message queue
   mcp_server.py        the MCP server itself
   toplevel.py          the RPC entry point Isabelle calls into
@@ -247,6 +254,9 @@ is always right, and a loaded forest's statuses are all `NotEvaluated`.
   `state` into the first child's `state`) and, if it has a closing command,
   `_eval_ending_opr() -> bool` (from `_state_before_ending` into
   `resulting_state()`); the default ending copies.
+- `Session(NonLeaf_Node)` — groups trees and carries the ROOT entry's fields
+  (ARCHITECTURE §2.2); not on the evaluation path — the forest works on the
+  theories directly (ARCHITECTURE §3.5).
 - `Forest(NonLeaf_Node)` — the root above every tree; holds the lock, and
   overrides id resolution and shortest-form printing, the import graph and
   its topological order, invalidation of every tree that imports a changed
@@ -313,17 +323,17 @@ omissible on output but compulsory on input (MCP_SPECIFICATION §2.1).
 ### 4.4 `builtins.py` and `theorem_node.py`
 
 The predefined node classes of ARCHITECTURE §2.2. `Theorem` has its own file
-because `construct` is where everything asynchronous lives: it asks the ML side
-to fork a thread that calls into AoA, so that the search runs on a connection
-of its own while evaluation keeps the session's (ARCHITECTURE §9); it stores
-the method text AoA found on the node; it queues the message that rides on the
-next tool result (MCP_SPECIFICATION §5); and deleting the node cancels it.
+because `construct` is where everything asynchronous lives: it starts the AoA
+search and hangs the running search on the node (ARCHITECTURE §3.6, §9) — how
+it drives AoA is designed here, on AoA's own precedent; it stores the method
+text AoA found on the node; it queues the message that rides on the next tool
+result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
 ### 4.5 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
-`mcp.py` implements the eight tools of MCP_SPECIFICATION §1, `recall`'s two
+`mcp.py` implements the seven tools of MCP_SPECIFICATION §1, `recall`'s two
 indexes — the forest, and the library through `contrib/Semantic_Embedding`'s
 retrieval — and the queue of pending messages. `mcp_server.py` builds the
 server from them. `toplevel.py` is the procedure Isabelle calls
 (`@isabelle_remote_procedure("launch_TAT")`), which does not return for the life of
-the session and hands the loaded forest its connection.
+the conversation and hands the loaded forest its connection.

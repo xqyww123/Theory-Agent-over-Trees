@@ -7,10 +7,13 @@ Nothing here is settled. Ordered by what it blocks.
 **Blocks:** running anything.
 
 `Node`, `Leaf`, `NonLeaf_Node` and `StdBlock` are written
-(`isabelle_theory_agent/model.py`); `Forest._evaluate` is not. Trees are not
-chained, so a `Theory` node's `state` is never written and the forest's
-`_resulting_state_of_child` cannot be the next tree's; what it is, and how a
-stop in one tree reaches the trees that import it and no other, is undecided.
+(`isabelle_theory_agent/model.py`); `Forest._evaluate` is not. Its shape is
+fixed (ARCHITECTURE §3.5): the forest ignores the `Session` layer, builds the
+import dependency graph over the trees, and schedules evaluation on it, a
+`Session` as destination standing for all the trees under it. Still open:
+what a `Theory` root's `state` is — trees are not chained, so nothing writes
+it — and how a stop in one tree reaches the trees that import it and no
+other.
 
 ## 2. The remaining node classes
 
@@ -53,8 +56,8 @@ real import of every tree that uses it.
 
 ## 7. The entry point in production
 
-A session begins with Isabelle calling into Python (ARCHITECTURE §9), and
-something has to make Isabelle do that. TAT is a library and that something is
+A conversation begins with Isabelle calling into Python (ARCHITECTURE §9),
+and something has to make Isabelle do that. TAT is a library and that something is
 a client of it (MODULE_STRUCTURE §4); an `isabelle` subcommand through a Scala
 component is one form. During development an Isa-REPL app serves.
 

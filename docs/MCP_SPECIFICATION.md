@@ -11,9 +11,8 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | --- | --- |
 | `edit` | Add a node, or change an existing node's attributes |
 | `delete` | Remove a node or a subtree |
-| `move` | Reorder a node within its tree, or move it to another tree |
+| `move` | Reorder a node within its tree, or move it to another tree or `Session` |
 | `recall` | Retrieve — from the forest, or from the Isabelle library |
-| `new_theory` | Start a new tree |
 | `construct` | Start a node's own operation, where its class has one |
 | `evaluate_to` | Evaluate everything not yet evaluated, up to a node |
 | `status` | Collect pending messages |
@@ -61,6 +60,10 @@ its theorem name — `lemma_P`, `theorem_Q`, `corollary_R`. A `Section`'s and a
 node whose name is the theory's, and which owns the theory header, the `imports`
 list and the closing `end`.
 
+Above the trees, the forest's first layer is its `Session` nodes
+(ARCHITECTURE §2.2): a `Session`'s name is its Isabelle session name, written
+`session_<name>` in an id, and omissible in both directions (§2.1).
+
 The id is the dotted sequence of the names of a node's ancestors and its own —
 `theory_X.section_Basics.lemma_P`. TAT refuses a name that would give two nodes
 the same id.
@@ -70,8 +73,8 @@ compares theory identities by **base name** — the part after the last dot
 (`contrib/Isabelle2025-2/src/Pure/context.ML:380-383`) — so a tree named `List`
 builds without complaint and then kills the first theory that imports it, one
 level downstream, with `Duplicate theory name` and no useful location.
-`new_theory` therefore rejects a name whose base name already appears in the
-base heap or in the forest.
+Creating a tree — an `edit` adding a `Theory` node — therefore rejects a name
+whose base name already appears in the base heap or in the forest.
 
 ### 2.1 Which components appear
 
@@ -79,7 +82,7 @@ Each **node class** declares two independent properties: whether its name may be
 omitted from an id TAT **prints**, and whether it may be omitted from an id the
 agent **supplies**.
 
-`Theory` and `Section` are omissible in both directions. A node class that is
+`Session`, `Theory` and `Section` are omissible in both directions. A node class that is
 omissible on output but compulsory on input would let TAT print an id it then
 refuses to accept; TAT rejects that combination when the class is loaded.
 

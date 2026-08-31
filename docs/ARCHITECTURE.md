@@ -17,23 +17,28 @@ language. A concept that needs a name gets one here first.
 
 | Term | Meaning |
 | --- | --- |
-| **forest** | all working theories, as a set of trees |
+| **forest** | all working theories, as a set of trees grouped into `Session`s (§2) |
 | **tree** | one Isabelle theory; the root's name is the short name of the theory |
 | **node** | one semantic unit in a tree |
 | **node class** | the kind of a node — `Theorem`, `Define`, … — extensible |
 | **segment** | one Isabelle span in an emitted file |
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
-| **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per session (EVALUATOR_DESIGN §1.1) |
-| **base heap** | the heap TAT's prover runs on: that of the Isabelle session the forest is written against, with nothing of TAT in it (§8) |
+| **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per conversation (EVALUATOR_DESIGN §1.1) |
+| **base heap** | the heap TAT's prover runs on, chosen by the client, with nothing of TAT in it (§8) |
 | **tree order** | depth-first, a node before its children, children in their own order |
 | **evaluate** | running a node's commands in Isabelle and recording what happened (§3) |
 | **emit** | a node writing its own Isar text (§4) |
-| **compile** | turning trees into `.thy` files on disk |
-| **session** | one run of TAT, from Isabelle's call into Python to its return (§9); Isabelle's build unit is always written **Isabelle session** |
+| **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
+| **conversation** | one run of TAT, from Isabelle's call into Python to its return (§9) |
+| **forest directory** | the directory the client names when saving or loading; the ROOT and every `Session`'s directory lie under it (§4) |
+
+Isabelle's build unit is always written **Isabelle session** in full; the
+`Session` node class (§2.2) is one Isabelle session under construction.
 
 Two relations are easy to confuse, so neither is called an edge. **Import
 dependency** holds between trees, and is what the tree roots declare in their
-`imports` clauses. **Nesting** holds between nodes inside one tree.
+`imports` clauses. **Nesting** holds between nodes: a `Session` contains its
+trees' roots, and nodes inside one tree contain one another.
 
 `node` in this repository always means a node of a TAT tree. Isabelle's own
 document model (PIDE, its interactive document layer) also calls a theory file
@@ -42,10 +47,14 @@ full.
 
 ## 2. The model *(decided)*
 
-A tree is one theory. Import dependency between trees makes the forest a
-dependency graph, and compilation order is a topological order over it.
+A tree is one theory. The forest's first layer is its `Session` nodes: every
+tree's root sits under exactly one `Session`, an Isabelle session under
+construction (§2.2). Import dependency between trees makes the forest a
+dependency graph, and compilation order is a topological order over it;
+imports cross `Session` boundaries freely, and a `Session` imposes no order
+of its own.
 
-Initial node classes: `Theorem`, `Define`, `Datatype`, `QuotientType`, `Record`,
+Initial node classes: `Session`, `Theorem`, `Define`, `Datatype`, `QuotientType`, `Record`,
 `TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be
 addable without touching the core. Every tree's root is a `Theory` node, which
 owns the theory header, the `imports` list and the closing `end`.
@@ -58,6 +67,8 @@ scope.
 ### 2.0 Nesting *(decided)*
 
 A node either contains other nodes or does not.
+
+`Session` contains the roots of its trees (§2).
 
 `Theorem` is a leaf.
 
@@ -131,6 +142,26 @@ evaluator reports each separately.
 | `pat-completeness` | the completeness proof | `form = function` |
 | `termination` | `termination by …` | `form = function` |
 | `simp-del` | `note f.simps[simp del]` | `kind = opaque` |
+
+**`Session`**
+
+| Attribute | Type | |
+| --- | --- | --- |
+| `name` | the Isabelle session name, `str` | authored |
+| `parent` | the parent Isabelle session of the ROOT entry, `str` | authored |
+| `directory` | path relative to the forest directory, `PurePosixPath` | authored |
+| `options` | `dict[str, str]` | authored |
+| `description` | `str`, empty for none | authored |
+
+A `Session` groups trees into one Isabelle session under construction, and
+owns its ROOT entry: `session <name> in <directory> = <parent> + …`, with
+`options` and `description` transcribed and the `sessions` and `theories`
+clauses derived from the trees under it (§4). Its `name` prefixes its trees'
+qualified names (EVALUATOR_DESIGN §7). It runs no Isabelle commands:
+evaluation is transparent to it (§3.5), and what it emits is the ROOT entry
+and the directory, not Isar. `parent` is transcribed and nothing else: the
+prover sits on the base heap regardless (§8), and an import the heap lacks is
+loaded from source.
 
 `Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
 and `Locale` are unspecified (OPEN_QUESTIONS §2).
@@ -239,6 +270,9 @@ Invalidating a node marks it and every node after it in its tree
 trees it imports, so a change anywhere in an imported tree invalidates all of an
 importing one.
 
+Editing a `Session` invalidates every tree under it — their qualified names
+carry its `name` — and, through the same rule, every tree that imports them.
+
 Whatever an operation wrote is released when the operation stops being
 current — its result, or the input it copied through on failing; the names
 stay with the node and re-evaluation writes them again. A call collects what
@@ -262,10 +296,14 @@ reached: the recursion of §3.5 skips what is evaluated and runs what is not.
 everything after it. It is one recursion, called from the top of the forest
 under the forest's one lock, so two calls never interleave:
 
-- The **forest** resolves the destination's id, evaluates every tree the
+- The **forest** resolves the destination's id and works on the theories
+  directly — evaluation is transparent to the `Session` layer: it builds the
+  import dependency graph over the trees, evaluates every tree the
   destination's tree transitively imports to its own `end` — a theory value
   exists only once its theory is closed — in dependency order, then calls the
-  destination's tree.
+  destination's tree. A `Session` as destination stands for all the trees
+  under it: the forest schedules each of them, to its `end`, through the same
+  graph.
 - A **nesting node** runs its opening command if it is not evaluated. If that
   command succeeded, now or earlier, it calls its children in order, and
   those after the one that contains the destination only to invalidate them;
@@ -323,6 +361,12 @@ TAT is the compiler and owns the `.thy` files. Isabelle never reads them;
 every change reaches Isabelle by evaluation (§3), and the files exist for
 whoever builds the forest afterwards.
 
+Compilation writes under one directory, the **forest directory**, which the
+client names when saving or loading: at its top a ROOT holding every
+`Session`'s entry, and under each `Session`'s `directory` its trees' `.thy`
+files. The forest stores no absolute path — `directory` is relative to the
+forest directory — so a forest moves machines by being handed another one.
+
 A node writes its own text through `emit_isar(indent, out)`, which writes to
 `out` and returns the indent in effect after it. The `indent` passed in is a
 proposal; a node class that opens or closes an Isabelle block returns the value
@@ -340,9 +384,9 @@ theory.
 The `.thy` files are not the forest: what a node records is not in them. The
 forest itself is saved with `pickle`, and each node class decides through
 `__getstate__` what of its node is saved. State slot names are not: the state slot table does not outlive the
-session (EVALUATOR_DESIGN §1.1), so a loaded forest is `not_evaluated`
+conversation (EVALUATOR_DESIGN §1.1), so a loaded forest is `not_evaluated`
 throughout and its slots are assigned afresh. The connection to Isabelle is
-not saved either; the session hands the loaded forest its current one. Work in
+not saved either; the conversation hands the loaded forest its current one. Work in
 flight is not saved, only its results.
 
 ## 5. Segments *(decided)*
@@ -372,8 +416,8 @@ A node class is delivered as an Isabelle theory together with a Python package.
 The theory is primary: it registers the class's evaluator on the ML side —
 into its own theory data (MODULE_STRUCTURE §2.5) — and it names the Python
 package carrying the rest. Installing a node class means having the theory
-the session starts from import it; the session loads it from source at start
-(§8).
+the conversation starts from import it; the conversation loads it from source
+at start (§8).
 
 | part | side | |
 | --- | --- | --- |
@@ -403,8 +447,8 @@ which is what lets a node class be added without touching the core.
 
 The framework fixes almost nothing. On the ML side a class's callback reads a
 state slot name off the wire into a handle carrying `get` and `put` on the
-session's state slot table, and beyond that is given only the session's
-`begin_theory` and `end_theory` (MODULE_STRUCTURE §2.5); what it takes and
+conversation's state slot table, and beyond that is given only the
+conversation's `begin_theory` and `end_theory` (MODULE_STRUCTURE §2.5); what it takes and
 what it returns are between it and its own Python half. On the Python
 side the class's hook runs that callback itself, records on the node whatever
 it wants recorded — which commands it ran and how each of them fared included
@@ -413,8 +457,8 @@ through the node (§3.2). On no, the framework copies the operation's input
 state into its resulting state, so that `ignore_error` has something to run
 from; no class writes that copy.
 
-A class's callback is a local callback of the session's one RPC command (§9,
-MODULE_STRUCTURE §2.5), named after the class that owns it.
+A class's callback is a local callback of the conversation's one RPC command
+(§9, MODULE_STRUCTURE §2.5), named after the class that owns it.
 
 ### 6.3 Two kinds of ML
 
@@ -444,12 +488,13 @@ The evaluator holds an explicit `Toplevel.state` and runs one command at a time
 through `Toplevel.command_errors`, which recovers from a failing command instead
 of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md).
 
-TAT launches the prover on one **base heap** — that of the Isabelle session
-the forest is written against, with nothing of TAT in it — and the forest sits
-on top of it, no tree in any heap (EVALUATOR_DESIGN §2). A library theory the base heap
-lacks is loaded from source, at a cost the loader reports. TAT's own theories
-(§6.3) are never in the base heap: the session loads them from source when it
-starts, which is quick because they are small. The same goes for
+TAT launches the prover on one **base heap** — chosen by the client, with
+nothing of TAT in it — and the forest sits on top of it, no tree in any heap
+(EVALUATOR_DESIGN §2). A `Session`'s `parent` is ROOT metadata, not a
+constraint on the heap: a library theory the base heap lacks is loaded from
+source. TAT's own theories
+(§6.3) are never in the base heap: the conversation loads them from source
+when it starts, which is quick because they are small. The same goes for
 `Isabelle_RPC`'s theory, which they import, when the base heap lacks it.
 
 No node class emits `oops`: it leaves no trace in Isabelle's output and so
@@ -462,24 +507,23 @@ serves the MCP tools and writes the `.thy` files. The Isabelle side runs the
 evaluators.
 
 Isabelle opens the connection. An ML entry calls a Python procedure over
-`contrib/Isabelle_RPC` and does not return for the life of the session; Python
-drives Isabelle through that call's callbacks. AoA is built the same way
+`contrib/Isabelle_RPC` and does not return for the life of the conversation;
+Python drives Isabelle through that call's callbacks. AoA is built the same way
 (`contrib/Isa-Mini/IsaMini/AoA/toplevel.py:164`).
 
-Callbacks travel on the connection their outer call arrived on, and the protocol
-carries no request identifiers, so one connection carries one chain of work. Two
-chains that run at the same time therefore need one outer call each;
-`Isabelle_RPC`'s connection pool
-(`contrib/Isabelle_RPC/Tools/RPC.ML:864-895`) gives every call its own
-connection. A callback exists that forks a thread and returns at once; the
-thread's own outer call into Python is a second chain, which is what running
-a `construct` alongside evaluation needs.
+The framework starts, schedules and tracks no concurrent activity: evaluation
+is a synchronous loop (§3.6), driven through that one call's callbacks. The one
+asynchronous activity, `construct` (§3.6), is a node class's own affair: the
+class arranges it and the running work hangs on its node. How `Theorem`'s
+`construct` drives AoA is designed with its Python half (MODULE_STRUCTURE
+§4.4), on AoA's own precedent.
 
-Concurrent chains share the state slot table, so that table is locked. The
-other state they share is inside tools that a proof search reaches — AoA's proof
-store and `auto_sledgehammer`'s cache — and those are thread-safe.
+What the framework contributes to such work is thread safety where it can
+reach shared state: the state slot table and the theory table are locked, and
+the tools a proof search reaches — AoA's proof store and `auto_sledgehammer`'s
+cache — are thread-safe.
 
-TAT is a library; whatever starts a session is a client of it, and the
+TAT is a library; whatever starts a conversation is a client of it, and the
 production client is undecided (OPEN_QUESTIONS §7). During development an
 Isa-REPL app is the client, registered from a theory nothing shipped imports
 (`Dev/TAT_Dev.thy`), so Isa-REPL is a development dependency and never a
