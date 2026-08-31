@@ -9,7 +9,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 
 | Tool | Purpose |
 | --- | --- |
-| `edit` | Add a node, or change an existing node's attributes |
+| `edit` | Add nodes, or amend one — replace it, its children inherited (§3.1) |
 | `delete` | Remove a node or a subtree |
 | `move` | Reorder a node within its tree, or move it to another tree or `Session` |
 | `recall` | Retrieve — from the forest, or from the Isabelle library |
@@ -19,7 +19,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 
 `construct` is generic: it dispatches to the node class, and a class without one
 reports that it is not supported. On a `Theorem` it starts the proof search.
-Whether it takes one node or several is undecided (OPEN_QUESTIONS §4).
+Whether it takes one node or several is undecided (OPEN_QUESTIONS §3).
 
 `move` exists because order carries meaning at theory level: a lemma must follow
 everything it uses. Reordering and re-homing declarations is what a tree does
@@ -61,7 +61,7 @@ node whose name is the theory's, and which owns the theory header, the `imports`
 list and the closing `end`.
 
 Above the trees, the forest's first layer is its `Session` nodes
-(ARCHITECTURE §2.2): a `Session`'s name is its Isabelle session name, written
+(ARCHITECTURE §2): a `Session`'s name is its Isabelle session name, written
 `session_<name>` in an id, and omissible in both directions (§2.1).
 
 The id is the dotted sequence of the names of a node's ancestors and its own —
@@ -138,10 +138,49 @@ TAT sends the affected node's data to its evaluator, the evaluator runs the
 node's commands and reports what happened, and the `.thy` is written
 later from what the nodes emit (ARCHITECTURE §4).
 
+### 3.1 What `edit` takes
+
+Its argument shape is TOOL_SCHEMAS.md §1: one of three actions, and a list
+of node descriptions. A node description is a JSON object whose `kind`
+field selects the node class — a class registers the kinds it answers to,
+so `Theorem` answers to `lemma`, `theorem` and `corollary` — and whose
+other fields are that class's own: the framework enforces their mechanical
+shape from the class's declared schema, and the class's `gen` is the
+authority on their meaning (MODULE_STRUCTURE §4.1). A nesting class takes
+its contents in a `children` field, a list of node descriptions again; the
+field belongs to the framework and its name is the same for every class.
+
+**Adding** — `append` and `insert_before` (TOOL_SCHEMAS.md §1) — links the
+descriptions, in order, at the destination.
+
+**Amending** replaces the addressed node with the first description. The
+node's children are inherited, never resupplied: a replacement carrying
+`children` is rejected, as is a leaf replacement when the node has
+children (EXCEPTIONS.md). The node's identity (§2) passes to the
+replacement — a rename is an amend, and results in flight still find the
+node — and a running `construct` on it is cancelled. Which of the node's
+recorded fields survive is its class's judgement, made in `gen` through
+the node it is handed (MODULE_STRUCTURE §4.1): `Theorem` keeps its proof
+when the statement is unchanged, so a rename costs no search.
+Descriptions after the first are added after the replacement, so one call
+turns a lemma into a definition and two lemmas.
+
+An `edit` is atomic: nothing touches the forest until every description
+has been built and checked (MODULE_STRUCTURE §4.1), so it applies whole
+or leaves the forest exactly as it was, and the error names the element
+and field at fault (EXCEPTIONS.md).
+
+### 3.2 What follows
+
 Editing a node invalidates that node, everything after it in its tree, and
 every tree that imports that tree (ARCHITECTURE §3.4), then runs `evaluate_to`
-on it (§4), so its own result comes back with the call. Everything else
-invalidated is reported as not evaluated until the agent asks for it.
+on it (§4), so its own result comes back with the call. The destination is
+the last node the call submitted, in tree order — a nesting node is
+reached at its closing command (ARCHITECTURE §3.5), so a submitted subtree
+is evaluated whole — with `ignore_error` unset. Replacing a nesting node
+invalidates from its first child before evaluating, since the children
+come before its own commands in the walk (ARCHITECTURE §3.5). Everything
+else invalidated is reported as not evaluated until the agent asks for it.
 
 ## 4. Evaluation
 
@@ -172,7 +211,5 @@ messages on demand, for an agent that wants them before its next edit.
 
 ## 6. Undecided
 
-- **One tool per node class, or one `edit` with a class parameter**
-  (OPEN_QUESTIONS §3).
 - **The omissibility flags for `Locale` and `Context`**, along with the rest of
   those two node classes (OPEN_QUESTIONS §2).

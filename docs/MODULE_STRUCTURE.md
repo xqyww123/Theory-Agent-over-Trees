@@ -81,7 +81,8 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 The mechanism of EVALUATOR_DESIGN §1, for any node.
 
 - `begin_theory` — takes, alongside the header, the tree's Isabelle session
-  name and directory, read off its `Session` node (ARCHITECTURE §2.2): the
+  name and directory, read off its `Session` node
+  (node_classes/SESSION_AND_THEORY.md §1): the
   name qualifies every import resolution (EVALUATOR_DESIGN §7), the directory
   is the `master_dir`. It resolves each import through §2.3, merges the
   parents' keywords, and runs the `theory … begin` span from
@@ -211,10 +212,138 @@ isabelle_theory_agent/
 
 `Node` is the Python half of the node class contract (ARCHITECTURE §6): the
 authored and recorded fields, the argument schema that becomes the tool
-schema, `emit_isar`, the name it gives the node and its two omissibility flags
-(MCP_SPECIFICATION §2.1), an optional `construct`, `__getstate__` for
-persistence (ARCHITECTURE §4.1), and `invalidate`, the hook a class overrides
-to learn that its context is no longer current (ARCHITECTURE §3.6).
+schema and whose mechanical shape the framework enforces (below), `gen`
+(below), `emit_isar`, the name it gives the node and its two omissibility
+flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
+parent's `sub_nodes`, computed, never stored — an optional `construct`,
+`__getstate__` for persistence (ARCHITECTURE §4.1), and the event hooks
+(below).
+
+**Construction.** A node enters the forest from a `RawAST` — the JSON
+object the agent submitted, `Mapping[str, Any]`. Two of its fields belong
+to the framework: `kind` selects the node class (§4.3), and `children` —
+which no `gen` ever sees — holds a nesting node's contents. The framework
+also checks the description's mechanical shape — required fields present,
+types right — against the class's declared argument schema, the same
+declaration that builds the tool schema, raising `MissingField` /
+`InvalidField` before the class is consulted. Everything semantic lives in
+`gen`:
+
+```python
+class NodeConfig(NamedTuple):
+    state: Isar_State_Slot   # the state before the node. A name: the slot may
+                             # hold nothing, and gen neither reads nor writes
+                             # through it — only evaluation hooks may assume a
+                             # slot holds a state (see Events)
+    parent: NonLeaf_Node     # never None: the forest root is not made this way.
+                             # During an edit this may be a node not yet in the
+                             # forest (a nesting node under construction)
+    replacing: Node | None   # on the amend path, the node this description is
+                             # replacing; None on every other path. Read it for
+                             # exactly two things: leave it out of any uniqueness
+                             # check (it is leaving the forest), and carry over
+                             # recorded fields the class judges still valid —
+                             # Theorem keeps its proof when the statement is
+                             # unchanged. Read-only; never mutate it
+
+@classmethod
+async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
+```
+
+`gen` checks and constructs; the framework owns placement. It may read
+over the wire through the framework's query callbacks — `Theory.gen`
+checks its base name against the base heap and the forest, excluding
+`config.replacing` — and those callbacks raise only `TAT_Error` subclasses,
+so a transport failure is never blamed on the class. It must not write:
+an aborted edit undoes nothing remotely. It raises `TAT_Error`s bare; the
+framework prefixes the `raw_ast_path` (EXCEPTIONS.md §5).
+
+An `edit` builds everything before it touches the forest:
+
+1. **Construct, detached.** Every description, in submission order: the
+   `children`-legality checks (`UnexpectedChildren`,
+   `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
+   table alone, so they run before any `gen`), the class lookup, the
+   schema check, `gen`, then — for a nesting class — its `children`, built
+   by the framework onto the fresh, still-detached node the same way. The
+   framework assigns each new node a fresh state slot and reads the name
+   off the finished node: a name that is not a single id component, or
+   that collides with a surviving sibling or with the batch, is refused
+   (`DuplicateName`). The amend loop walks the whole submitted list,
+   `nodes[0]` built with `replacing` set; so every `raw_ast_path` indexes
+   the agent's own list.
+2. **Gates.** The hooks that may still veto (Events below), `BadEdit`
+   their only voice.
+3. **Commit** — pointer surgery only, nothing that can fail. The batch is
+   linked in; on amend the replacement takes `old`'s position, state
+   slot, identity number and children. The one copy of ARCHITECTURE §3.4
+   lands in the first new node's slot — and only when the predecessor
+   operation is `ready`, judged from the Python-side status, no round
+   trip; every other new slot stays empty, as befits `not_evaluated`
+   nodes.
+4. **Completed events**, then the caller invalidates and evaluates
+   (MCP_SPECIFICATION §3).
+
+A failure anywhere before the commit aborts the call with the forest
+untouched: there is no rollback, because nothing happened to roll back.
+
+**Entry points and the lock.** The tool entry takes the forest's lock and
+holds it across the whole change; `_insert_children`, `_amend_children`,
+`_delete_child`, `_move_child` and the evaluation walk all assume it is
+held. One ordering fact: `gen` awaits the ML side's loader lock (§2.3)
+while the forest lock is held; nothing on the ML side ever waits for the
+forest lock, and that order must stay one-way.
+
+`_move_child` is `move`'s entry: it re-homes a node with its subtree — a
+copy on the source side and a copy on the destination side (ARCHITECTURE
+§3.4), and **no delete**: the subtree's slots travel with their nodes,
+whose names they remain (ARCHITECTURE §3.1).
+
+**Events.** Ten hooks, empty by default, driven by the framework — a class
+only ever speaks for its own node. The tense is the contract:
+
+- **A progressive hook is a gate.** It fires before the commit, while
+  nothing has changed, and must be free of side effects. Raising `BadEdit`
+  vetoes the whole call; raising anything else is the class's bug.
+  Insertion's gate is `gen` itself, so there is no `on_inserting`.
+- **A completed hook is for effect.** It fires after the commit; this is
+  where irreversible work belongs — `Theorem`'s `on_deleted` cancels its
+  running search. Raising anything, `BadEdit` included, is the class's bug
+  (EXCEPTIONS.md §1).
+
+| hook | tense | fires |
+| --- | --- | --- |
+| `on_invalidated()` | completed | the node's status truly left `ready` — not on the walk re-marking a `not_evaluated` node (ARCHITECTURE §3.6) |
+| `on_deleting(reason)` | gate | the node is to leave for good; `reason` is `delete` (whole subtree, children first) or `amend` (the replaced node alone) |
+| `on_deleted(reason)` | completed | it left; the Python object is still whole — cancel running work here |
+| `on_inserted()` | completed | linked in, children and all |
+| `on_removing_child(child, mode)` | gate | `child` is to leave this node's `sub_nodes` |
+| `on_added_child(child, mode)` | completed | `child` entered this node's `sub_nodes` |
+| `on_inheriting(new_parent)` | gate | on each direct child of a replaced node; never recursive — grandchildren see nothing |
+| `on_inherited(old_parent)` | completed | the reparenting happened |
+| `on_moving(destination)` | gate | the node is to move; `destination` is the resolved Location — the new parent and the index within its `sub_nodes` |
+| `on_moved(origin)` | completed | it moved; `origin` is the resolved Location it left |
+
+A gate is handed the destination; a completed hook, the origin. `mode`
+says why a membership changed: `insert_or_delete`, `move`, `inheritance` —
+children passing to a replacement — or `amend`, the replacement exchange
+itself.
+
+Completed order after one commit: what left fires `on_deleted`, children
+before parents; inherited children fire `on_inherited`; then, in tree
+order over what entered or moved, the parent's `on_added_child` and then
+the node's own `on_inserted` or `on_moved`. `on_invalidated` fires during
+the walk that follows.
+
+No hook fires on an aborted call. In any hook, as in `gen`, a state slot
+may hold nothing; the only code that may assume its slot holds a state is
+an evaluation hook — `_eval_opr`, `_eval_beginning_opr`,
+`_eval_ending_opr` — because the recursion runs a node only after
+everything before it is `ready` (ARCHITECTURE §3.5). The one exception is
+a `Theory` root's own `state`, which nothing writes (OPEN_QUESTIONS §1).
+Everything that needs the prover — fetching facts, checking terms,
+recording results — therefore belongs in the evaluation hooks, not in
+`gen` and not in events.
 
 **States.** `Isar_State_Slot` is a name in the ML side's state slot table
 (§2.1) together with the connection; on the wire it is the name
@@ -229,7 +358,7 @@ computed, as in AoA (`contrib/Isa-Mini/IsaMini/AoA/model.py:4581`):
 `state`, or with the one it keeps for the position after all its children.
 So one node's result and the next node's input are one slot, and inserting
 or deleting a node moves a value between slots by one copy
-(`_insert_child`, `_delete_child`; ARCHITECTURE §3.4).
+(`_insert_children`, `_delete_child`, `_move_child`; ARCHITECTURE §3.4).
 
 **Status.** A status is `NotEvaluated`, `Ready`, or
 `CannotEvaluate(blocked_by)` (ARCHITECTURE §3.2, §3.3); the reason travels
@@ -255,8 +384,8 @@ is always right, and a loaded forest's statuses are all `NotEvaluated`.
   `_eval_ending_opr() -> bool` (from `_state_before_ending` into
   `resulting_state()`); the default ending copies.
 - `Session(NonLeaf_Node)` — groups trees and carries the ROOT entry's fields
-  (ARCHITECTURE §2.2); not on the evaluation path — the forest works on the
-  theories directly (ARCHITECTURE §3.5).
+  (node_classes/SESSION_AND_THEORY.md §1); not on the evaluation path — the
+  forest works on the theories directly (ARCHITECTURE §3.5).
 - `Forest(NonLeaf_Node)` — the root above every tree; holds the lock, and
   overrides id resolution and shortest-form printing, the import graph and
   its topological order, invalidation of every tree that imports a changed
@@ -303,8 +432,6 @@ failed enters its children with itself as `blocked_by`; a nesting node
 whose child stopped cannot run its ending and is `CannotEvaluate` with the
 same obstacle. A nesting node is reached at its ending.
 
-`_insert_child` and `_delete_child` hold the same lock across the whole
-change: the copy of ARCHITECTURE §3.4, then the tree, then the walk.
 
 ### 4.2 `isabelle_driver.py`
 
@@ -316,9 +443,12 @@ functions and never the wire.
 ### 4.3 `plugin.py`
 
 Loads the Python package a node class theory names (ARCHITECTURE §6) and
-keeps the table from class name to Python class. The table is what builds the
-tool schemas and what `edit` dispatches on; it also rejects a class that is
-omissible on output but compulsory on input (MCP_SPECIFICATION §2.1).
+keeps the table from `kind` to Python class, filled by the `@TAT_node`
+decorator; one class registers every kind it answers to — `Theorem`
+registers `lemma`, `theorem` and `corollary`. The table is what builds the
+tool schemas and what `edit` dispatches on; loading also rejects a class
+that is omissible on output but compulsory on input (MCP_SPECIFICATION
+§2.1).
 
 ### 4.4 `builtins.py` and `theorem_node.py`
 

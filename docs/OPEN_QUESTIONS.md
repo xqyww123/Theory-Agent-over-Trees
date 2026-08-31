@@ -23,20 +23,13 @@ other.
 and `Locale` are unspecified. `Context` and `Locale` also need their two
 omissibility flags (MCP_SPECIFICATION §2.1).
 
-## 3. Tool granularity
-
-One tool per node class, or one `edit` taking a class parameter. Per-class tools
-give a typed schema per declaration kind and multiply the tool count by the
-number of node classes, which can grow; a single `edit` keeps the surface small
-and weakens the schema to a union.
-
-## 4. `construct` on one node or several
+## 3. `construct` on one node or several
 
 After laying out a skeleton the agent will want to construct many proofs at
 once. Batching complicates the message model, since each is an independent
 asynchronous activity.
 
-## 5. What `Theorem` does when a running search is invalidated
+## 4. What `Theorem` does when a running search is invalidated
 
 The framework tells a node class that its context is no longer current and later
 hands it the new one (ARCHITECTURE §3.6); what `Theorem` does with that is
@@ -49,19 +42,19 @@ only a candidate either way, and a stored proof that fails leaves the node
 saves a search when the change was harmless, and costs a suspend-and-resume
 path through the AoA agent.
 
-## 6. Where the `AoA` proof method lives
+## 5. Where the `AoA` proof method lives
 
 If it is defined in a theory, that theory must be in the base heap, and it is a
 real import of every tree that uses it.
 
-## 7. The entry point in production
+## 6. The entry point in production
 
 A conversation begins with Isabelle calling into Python (ARCHITECTURE §9),
 and something has to make Isabelle do that. TAT is a library and that something is
 a client of it (MODULE_STRUCTURE §4); an `isabelle` subcommand through a Scala
 component is one form. During development an Isa-REPL app serves.
 
-## 8. Whether to check completeness against Isabelle's own record
+## 7. Whether to check completeness against Isabelle's own record
 
 `sorry` leaves a `skip_proof` oracle on the theorem, and
 `Thm_Deps.has_skip_proof`
@@ -70,7 +63,7 @@ whether any theorem in a forest carries that oracle is an account of
 completeness independent of TAT's own, and the two disagreeing would mean TAT
 has a bug.
 
-## 9. Two loose ends in `Define`
+## 8. Two loose ends in `Define`
 
 Small enough to be forgotten, big enough to bite.
 

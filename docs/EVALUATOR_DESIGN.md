@@ -151,7 +151,7 @@ too many.
 
 ## 5. Open
 
-Where the `AoA` proof method lives — OPEN_QUESTIONS §6. §2 holds only if its
+Where the `AoA` proof method lives — OPEN_QUESTIONS §5. §2 holds only if its
 theory is in the base heap.
 
 ## 6. Loading a library theory that is not in the base heap

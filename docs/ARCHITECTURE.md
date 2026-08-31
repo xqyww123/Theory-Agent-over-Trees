@@ -31,6 +31,8 @@ language. A concept that needs a name gets one here first.
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
 | **conversation** | one run of TAT, from Isabelle's call into Python to its return (§9) |
 | **forest directory** | the directory the client names when saving or loading; the ROOT and every `Session`'s directory lie under it (§4) |
+| **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
+| **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
 
 Isabelle's build unit is always written **Isabelle session** in full; the
 `Session` node class (§2.2) is one Isabelle session under construction.
@@ -143,25 +145,9 @@ evaluator reports each separately.
 | `termination` | `termination by …` | `form = function` |
 | `simp-del` | `note f.simps[simp del]` | `kind = opaque` |
 
-**`Session`**
-
-| Attribute | Type | |
-| --- | --- | --- |
-| `name` | the Isabelle session name, `str` | authored |
-| `parent` | the parent Isabelle session of the ROOT entry, `str` | authored |
-| `directory` | path relative to the forest directory, `PurePosixPath` | authored |
-| `options` | `dict[str, str]` | authored |
-| `description` | `str`, empty for none | authored |
-
-A `Session` groups trees into one Isabelle session under construction, and
-owns its ROOT entry: `session <name> in <directory> = <parent> + …`, with
-`options` and `description` transcribed and the `sessions` and `theories`
-clauses derived from the trees under it (§4). Its `name` prefixes its trees'
-qualified names (EVALUATOR_DESIGN §7). It runs no Isabelle commands:
-evaluation is transparent to it (§3.5), and what it emits is the ROOT entry
-and the directory, not Isar. `parent` is transcribed and nothing else: the
-prover sits on the base heap regardless (§8), and an import the heap lacks is
-loaded from source.
+**`Session`** and **`Theory`**, the two classes that carry the forest's
+structure, are specified in
+[node_classes/SESSION_AND_THEORY.md](node_classes/SESSION_AND_THEORY.md).
 
 `Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
 and `Locale` are unspecified (OPEN_QUESTIONS §2).
@@ -353,7 +339,7 @@ context is invalidated under it. This adds no framework machinery: invalidation
 and evaluation are already the two moments the framework calls into a node
 class, so the class is told at invalidation that its context is no longer
 current, and is given the new one at evaluation. What `Theorem` does with that is open
-(OPEN_QUESTIONS §5).
+(OPEN_QUESTIONS §4).
 
 ## 4. Compilation *(decided)*
 
@@ -524,7 +510,7 @@ the tools a proof search reaches — AoA's proof store and `auto_sledgehammer`'s
 cache — are thread-safe.
 
 TAT is a library; whatever starts a conversation is a client of it, and the
-production client is undecided (OPEN_QUESTIONS §7). During development an
+production client is undecided (OPEN_QUESTIONS §6). During development an
 Isa-REPL app is the client, registered from a theory nothing shipped imports
 (`Dev/TAT_Dev.thy`), so Isa-REPL is a development dependency and never a
 shipped one.
