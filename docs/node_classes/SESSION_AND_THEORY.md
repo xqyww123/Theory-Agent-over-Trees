@@ -31,7 +31,7 @@ transcribed and nothing else: the prover sits on the base heap regardless
 ## 2. `Theory`
 
 Every tree's root is a `Theory` node; it owns the theory header, the
-`imports` list and the closing `end` (ARCHITECTURE §2). Its evaluator runs
+`imports` list and the `end` (ARCHITECTURE §2). Its evaluator runs
 the header through the framework's `begin_theory`, writing the first child's
 slot, and `end` through `end_theory`, writing the theory table
 (MODULE_STRUCTURE §3).

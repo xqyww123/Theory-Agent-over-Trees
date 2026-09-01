@@ -1,7 +1,8 @@
 # TAT's evaluator
 
 Paths are relative to `contrib/Isabelle2025-2/src/` unless prefixed; Isa-REPL
-paths are relative to `contrib/Isa-REPL/`.
+paths are relative to `contrib/Isa-REPL/library/`, except `IsaREPL.py`
+(`contrib/Isa-REPL/IsaREPL/`) and `repl_server.sh` (`contrib/Isa-REPL/`).
 
 TAT drives Isabelle itself, command by command. Isa-REPL (`contrib/Isa-REPL`)
 has done this for years and is the reference: its shape is evidence, and §4
@@ -24,9 +25,10 @@ For the `Theory` root node's header:
 - merge the parents' keyword tables (`Thy_Header.get_keywords`,
   `Keyword.merge_keywords`) before tokenising, or a parent-defined command
   tokenises as garbage
-- do not pre-create the theory: start from `Toplevel.make_state NONE` and let
-  the `theory … begin` span call an `init` that performs
-  `Resources.begin_theory master_dir header parents`
+- do not pre-create the theory: start from `Toplevel.make_state NONE` and
+  parse the `theory … begin` span with `Outer_Syntax.parse_span`, whose
+  second argument supplies the `unit -> theory` the span's transition
+  calls — ours performs `Resources.begin_theory master_dir header parents`
 
 For any node's commands:
 
@@ -34,7 +36,7 @@ For any node's commands:
 - run each span through `Toplevel.command_errors true`, threading the state
   from the input slot to the resulting slot
 
-For the root node's closing `end`, `Toplevel.end_theory` yields the `theory`
+For the root node's `end`, `Toplevel.end_theory` yields the `theory`
 value, which goes into the theory table (§3).
 
 `Toplevel.command_errors` returns `(errors, state option)`; check both, since a
@@ -72,7 +74,7 @@ read and write.
 
 ## 2. One prover, and what resolution becomes
 
-TAT launches a prover on one base heap. The forest's `Session`s are Isabelle
+The prover runs on one base heap (ARCHITECTURE §8). The forest's `Session`s are Isabelle
 sessions under construction: every tree is authored, none is in a heap, and a
 tree's qualified name is its `Session`'s `name` joined to its own (§7). When
 the forest is finished they are ordinary Isabelle sessions someone else builds
@@ -99,7 +101,7 @@ heap rebuild.
 ## 3. The theory table
 
 A table from qualified theory name (§7) to `theory` value, written by the
-`Theory` root node's closing command — its `end` (§1). A second write
+`Theory` root node's ending command — its `end` (§1). A second write
 overwrites: TAT re-evaluates on every edit.
 
 The table keeps no dependency edges and deletes nothing, because invalidation is
@@ -116,7 +118,7 @@ Each of these is a defect found in Isa-REPL by review, and a hazard of this
 design.
 
 **One flag must not gate several effects.** `register_theory'`
-(`REPL.ML:521`, `:679-684`) gates the theory-table insertion, the `Thy_Info`
+(`REPL.ML:521`, `:679-686`) gates the theory-table insertion, the `Thy_Info`
 registration and the writing of `.thy` files together. Nobody can have one
 without the others.
 
@@ -124,18 +126,20 @@ without the others.
 propagates `Position.thread_data` and the generic context, nothing else
 (`Pure/Concurrent/future.ML:452`). Isa-REPL keeps its session id and its theory
 table in `Thread_Data` (`REPL.ML:243`, `:315`), so any message produced on a
-forked worker cannot find its session and is dropped (`REPL.ML:271-275`). Route
+forked worker cannot find its session and falls through to the global output
+function instead of reaching its client (`REPL.ML:268-273`). Route
 by `Position.id` as PIDE does, or pass the identity explicitly.
 
 **Do not let one name have two producers.** Isa-REPL evaluates some theories
 itself into its own table and loads others through `Thy_Info.use_theories` into
 `Thy_Info`'s graph, with nothing keeping a name out of both. TAT also has two
-tables (§6), and what makes that safe is §7: our table is consulted first, so a
-name that we produced is never requested from the other one.
+tables (§6), and what makes that safe is §2's resolution order: our table is
+consulted first, so a name that we produced is never requested from the
+other one.
 
 **Do not `chDir`.** `REPL.ML:353-395` changes the working directory of the whole
 process under a lock that covers only other loaders. It has forced defensive
-absolutisation of client paths at `Server.ML:256-267` and `:384-388`, and one
+absolutisation of client paths at `Server.ML:256-268` and `:384-389`, and one
 site was missed (`Server.ML:640,643`).
 
 **Do not discard per-command output on failure.** `IsaREPL.py:249-254` drops the
@@ -208,8 +212,9 @@ turn the drain above into a no-op.
 
 ## 7. One name-resolution rule
 
-Isabelle compares theory identities by **short name** — the part after the last
-dot (`Pure/context.ML:380-383`). Two theories sharing a short name and differing
+Isabelle compares theory identities by **short name** — the part after the
+last dot; Isabelle's own sources call it the base name (`theory_base_name`,
+`Pure/context.ML:380-383`). Two theories sharing a short name and differing
 in identity raise `Duplicate theory name` from the first theory that imports
 either, one level downstream of the mistake.
 

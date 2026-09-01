@@ -10,7 +10,8 @@ node description is MCP_SPECIFICATION §3.1's.
 
 Three actions, told apart by which key is present — exactly one of `append`,
 `insert_before`, `amend` per call, always together with `nodes`, a non-empty
-list of node descriptions.
+list of node descriptions, and the mandatory boolean `evaluate`
+(MCP_SPECIFICATION §3.2): whether to evaluate the change right away.
 
 | call | meaning |
 | --- | --- |
@@ -30,13 +31,17 @@ where, in the same language as `edit`'s actions:
 | `{"node": <id>, "after": <id>}` | after the addressed node, as its sibling |
 | `{"node": <id>, "to": <parent id>}` | at the end of the parent's children |
 
+Every call also carries the mandatory boolean `evaluate`
+(MCP_SPECIFICATION §3.2).
+
 ## 3. `delete`
 
 ```
 {"node": <id>}
 ```
 
-Removes the node and its subtree.
+Removes the node and its subtree. No `evaluate` flag: there is nothing new
+to see (MCP_SPECIFICATION §3.2).
 
 ## 4. `new_session`
 
@@ -47,11 +52,12 @@ Removes the node and its subtree.
 Creates one `Session` at the forest's first layer — the one place the
 editing tools do not serve: the forest root's id `$Root` is protected
 (MCP_SPECIFICATION §2), and the first layer carries no order. The
-tool itself fixes the description's `kind` to `session`; `children` may
-carry the session's first trees, built as any nested description is
+tool itself fixes the description's `kind` to `session`, and it carries the
+mandatory boolean `evaluate` (MCP_SPECIFICATION §3.2); `children` may
+carry the `Session`'s first trees, built as any nested description is
 (MODULE_STRUCTURE §4.1). Everything else about a `Session` goes through the
 generic tools: it has an id, so `amend` and `delete` address it, and
-`move … to` re-homes trees between sessions. A `Session` itself never
+`move … to` re-homes trees between `Session`s. A `Session` itself never
 moves — there is nowhere else for it to live, and the first layer carries
 no order (ARCHITECTURE §2).
 
@@ -76,9 +82,9 @@ The lines after it are the cause, prefixed by its `raw_ast_path`
 takes exactly these operation names: `append`, `insert_before`, `amend`,
 `move`, `delete`, `new_session`.
 
-A failed read-only tool — `recall`, `construct`, `evaluate_to`, `status` —
-renders the cause alone: it changed nothing, and the first line would only
-repeat the tool the agent just called.
+Any other tool's failure — `recall`, `construct`, `evaluate_to`, `status` —
+renders the cause alone: the forest's shape is untouched, and a first line
+would only repeat the tool the agent just called.
 
 ## 6. Undecided
 

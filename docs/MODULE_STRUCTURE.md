@@ -24,11 +24,11 @@ conda/recipe.yaml             the conda package
 COPYING, COPYING.LIB, COPYRIGHT   LGPL-2.1-or-later, as in Isa-Mini
 ```
 
-The `ROOT` exists because registering the repository as a session root
-requires one; its sessions are compile checks of the sources. A running
+The `ROOT` exists because registering the repository as an Isabelle session
+root requires one; its Isabelle sessions are compile checks of the sources. A running
 conversation never sits on those heaps: it loads `Theory_Agent_over_Trees.thy` —
-and every node class theory named to it — from source on the base heap when
-it starts (ARCHITECTURE §8), finding it through `$TAT_HOME`.
+and every node class theory the starting theory imports — from source on the
+base heap when it starts (ARCHITECTURE §8), finding it through `$TAT_HOME`.
 
 One structure per file, and two structures in all. Inside a file the body is
 divided by Isabelle's sectioning comments — `(*** section ***)`,
@@ -52,7 +52,7 @@ and reached only through five operations.
 | --- | --- |
 | `put` | a node's commands have run and its resulting state is stored |
 | `get` | a node is about to run, from the state its input slot names |
-| `copy` | one slot's state stands as another's: a class with no closing command, a failed node passed over (ARCHITECTURE §3.1), a node inserted or deleted (ARCHITECTURE §3.4). Afterwards the target holds what the source holds — nothing, when the source holds nothing |
+| `copy` | one slot's state stands as another's: a class with no ending command, a failed node passed over (ARCHITECTURE §3.1), a node inserted or deleted (ARCHITECTURE §3.4). Afterwards the target holds what the source holds — nothing, when the source holds nothing |
 | `delete` | a node leaves `ready`, or is deleted; takes a list of names, so a batch is one round trip |
 | `exists` | the Python side asks whether a slot holds a state |
 
@@ -60,7 +60,8 @@ and reached only through five operations.
 
 The map from qualified theory name (EVALUATOR_DESIGN §7) to `theory` value
 (EVALUATOR_DESIGN §3), locked like the state slot table. `put` overwrites and `lookup` reads;
-nothing else.
+nothing else. The key of an entry `end_theory` writes is the theory value's
+own long name — the same string §2.3's resolution produces.
 
 ### 2.3 Theory loader
 
@@ -126,13 +127,19 @@ type env = {
   end_theory    : Toplevel.state -> unit
                     (*§2.4's, the result put into this conversation's theory table*)
 }
-val register_callback : (env -> Remote_Procedure_Calling.callback') -> theory -> theory
+val register_callback :
+  {python_packages : string list} ->    (*the class's Python half; imported at
+                                          conversation start, filling the kind
+                                          table (§4.3)*)
+  (env -> Remote_Procedure_Calling.callback') -> theory -> theory
 ```
 
 On the wire a state slot is its name (§4.1), and `slot_unpacker` is how a
 callback's `arg_schema` takes one: it reads the name and yields the slot —
 read, write and delete all on the handle, so the callback never touches a
-name. `begin_theory` and `end_theory` are in the environment because the
+name. A callback's wire name rides inside the `callback'` value itself
+(`Remote_Procedure_Calling.mk_callback {name, …}`); the duplicate check of
+§2.6 reads it there. `begin_theory` and `end_theory` are in the environment because the
 theory table they use is the conversation's: the table has exactly one writer,
 and a `theory` value that is not the yield of `Toplevel.end_theory` cannot
 enter it (EVALUATOR_DESIGN §4's one-producer rule).
@@ -156,15 +163,15 @@ whose ancestry names the node classes (§2.5):
 
 1. create the state slot table and the environment of §2.5;
 2. call every function registered in that theory's data, collecting the node
-   classes' callbacks;
+   classes' callbacks and their `python_packages`, deduplicated;
 3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
    name), and `TAT.check_new_theory_short_name` (§2.3);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
-   procedure `launch_TAT` (§4.5), which does not return for the life of the
-   conversation.
+   procedure `launch_TAT` (§4.5) with the collected package list as an
+   argument; `launch_TAT` does not return for the life of the conversation.
 
 The callbacks go in the `callback` field of that one command, as AoA's do
 (`contrib/Isa-Mini/Agent/agent_server.ML:1740-1772`); none enters
@@ -198,7 +205,6 @@ starting the Isabelle process is the client's business.
 ```
 isabelle_theory_agent/
   model.py             Node, Forest, ids, evaluation and invalidation, compilation, persistence
-  isar_helper.py       segment integrity (appendix/SEGMENT_INTEGRITY.md)
   isabelle_driver.py   typed calls to the ML side's callbacks
   plugin.py            loading node classes and their table
   builtins.py          the predefined node classes
@@ -211,9 +217,9 @@ isabelle_theory_agent/
 ### 4.1 `model.py`
 
 `Node` is the Python half of the node class contract (ARCHITECTURE §6): the
-authored and recorded fields, the argument schema that becomes the tool
-schema and whose mechanical shape the framework enforces (below), `gen`
-(below), `emit_isar`, the name it gives the node and its two omissibility
+authored and recorded fields, the argument schema — it becomes the tool
+schema, and the framework checks submitted descriptions against it
+(below) — `gen` (below), `emit_isar`, the name it gives the node and its two omissibility
 flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
 parent's `sub_nodes`, computed, never stored — an optional `construct`,
 `__getstate__` for persistence (ARCHITECTURE §4.1), and the event hooks
@@ -285,8 +291,8 @@ An `edit` builds everything before it touches the forest:
    operation is `ready`, judged from the Python-side status, no round
    trip; every other new slot stays empty, as befits `not_evaluated`
    nodes.
-4. **Completed events**, then the caller invalidates and evaluates
-   (MCP_SPECIFICATION §3).
+4. **Completed events**, then the caller invalidates — and evaluates when
+   the call's `evaluate` says so (MCP_SPECIFICATION §3.2).
 
 A failure anywhere before the commit aborts the call with the forest
 untouched: there is no rollback, because nothing happened to roll back.
@@ -317,7 +323,7 @@ only ever speaks for its own node. The tense is the contract:
 
 | hook | tense | fires |
 | --- | --- | --- |
-| `on_invalidated()` | completed | the node's status truly left `ready` — not on the walk re-marking a `not_evaluated` node (ARCHITECTURE §3.6) |
+| `on_invalidated()` | completed | the node's status truly left `ready` — not on the walk re-marking a `not_evaluated` node (ARCHITECTURE §3.5; its purpose, §3.6) |
 | `on_deleting(reason)` | gate | the node is to leave for good; `reason` is `delete` (whole subtree, children first) or `amend` (the replaced node alone) |
 | `on_deleted(reason)` | completed | it left; the Python object is still whole — cancel running work here |
 | `on_inserted()` | completed | linked in, children and all |
@@ -325,10 +331,11 @@ only ever speaks for its own node. The tense is the contract:
 | `on_added_child(child, mode)` | completed | `child` entered this node's `sub_nodes` |
 | `on_inheriting(new_parent)` | gate | on each direct child of a replaced node; never recursive — grandchildren see nothing |
 | `on_inherited(old_parent)` | completed | the reparenting happened |
-| `on_moving(destination)` | gate | the node is to move; `destination` is the resolved Location — the new parent and the index within its `sub_nodes` |
-| `on_moved(origin)` | completed | it moved; `origin` is the resolved Location it left |
+| `on_moving(new_location)` | gate | the node is to move; `new_location` is the resolved Location — the new parent and the index within its `sub_nodes` |
+| `on_moved(old_location)` | completed | it moved; `old_location` is the resolved Location it left |
 
-A gate is handed the destination; a completed hook, the origin. `mode`
+The pairs that carry a place follow one rule: the gate is handed where the
+node is going, the completed hook where it came from. `mode`
 says why a membership changed: `insert_or_delete`, `move`, `inheritance` —
 children passing to a replacement — or `amend`, the replacement exchange
 itself.
@@ -352,7 +359,8 @@ recording results — therefore belongs in the evaluation hooks, not in
 **States.** `Isar_State_Slot` is a name in the ML side's state slot table
 (§2.1) together with the connection; on the wire it is the name
 (`to_msgpack`, `from_msgpack`). It offers `copy_to`, `delete` and
-`is_initialized`, each a round trip; nothing about the table is mirrored on
+`is_initialized` — §2.1's `copy`, `delete` and `exists`, seen from Python —
+each a round trip; nothing about the table is mirrored on
 the Python side. Persistence keeps neither the name nor the connection: a
 loaded forest is reassigned its slots.
 
@@ -365,7 +373,9 @@ or deleting a node moves a value between slots by one copy
 (`_insert_children`, `_delete_child`, `_move_child`; ARCHITECTURE §3.4).
 
 **Status.** A status is `NotEvaluated`, `Ready`, or
-`CannotEvaluate(blocked_by)` (ARCHITECTURE §3.2, §3.3); the reason travels
+`CannotEvaluate(blocked_by)` — the Python classes of ARCHITECTURE §3.2's
+`not_evaluated`, `ready` and `cannot_evaluate`, §3.3's `blocked_by` riding
+inside the third; the reason travels
 inside the value, so a `Ready` operation cannot carry a stale one. A `Leaf`
 has one, a `StdBlock` two — `evaluation_status_beginning` and
 `evaluation_status_ending` — and no node reads another's: the one question
@@ -384,7 +394,7 @@ is always right, and a loaded forest's statuses are all `NotEvaluated`.
   children loop of the recursion.
 - `StdBlock(NonLeaf_Node)` — keeps `_state_before_ending`, the slot after all
   its children; a class overrides `_eval_beginning_opr() -> bool` (from
-  `state` into the first child's `state`) and, if it has a closing command,
+  `state` into the first child's `state`) and, if it has an ending command,
   `_eval_ending_opr() -> bool` (from `_state_before_ending` into
   `resulting_state()`); the default ending copies.
 - `Session(NonLeaf_Node)` — groups trees and carries the ROOT entry's fields
@@ -395,15 +405,16 @@ is always right, and a loaded forest's statuses are all `NotEvaluated`.
   its topological order, invalidation of every tree that imports a changed
   one, and the first step of evaluating imports to their `end`.
 
-A hook runs the class's own ML callback itself, through `isabelle_driver`
+An evaluation hook runs the class's own ML callback itself, through `isabelle_driver`
 (§4.2), and records what it likes on the node; the framework reads only the
 boolean, and on False copies the operation's input into its resulting state
 itself (ARCHITECTURE §6.2). `Theory` and `Section` are `StdBlock`s,
 `Theorem` and `Define` `Leaf`s.
 
 **The recursion** (ARCHITECTURE §3.5), entered only through
-`Node.evaluate_to(ignore_error, evaluate)`, which takes the forest's lock and
-starts from the forest with the node as destination. A call's two constants
+`Node.evaluate_to(ignore_error, evaluate)`, under the forest's lock — taken
+once at the tool entry (above) — starting from the forest with the node as
+destination. A call's two constants
 and the states it releases travel in one `Evaluation`; where the walk is
 travels in a `Mode`:
 
@@ -431,7 +442,7 @@ async def _evaluate(self, ev: Evaluation, mode: Mode) -> EvaluationResult
 children, then the ending, and nothing is skipped: a `Ready` operation is
 not rerun, but every node is visited. The mode changes in one place: the
 destination turns it into `Invalidating`, and a stop turns `Evaluating` into
-`Evaluating(stop)` unless `ignore_error`. A nesting node whose opening
+`Evaluating(stop)` unless `ignore_error`. A nesting node whose beginning
 failed enters its children with itself as `blocked_by`; a nesting node
 whose child stopped cannot run its ending and is `CannotEvaluate` with the
 same obstacle. A nesting node is reached at its ending.
@@ -446,13 +457,14 @@ functions and never the wire.
 
 ### 4.3 `plugin.py`
 
-Loads the Python package a node class theory names (ARCHITECTURE §6) and
-keeps the table from `kind` to Python class, filled by the `@TAT_node`
-decorator; one class registers every kind it answers to — `Theorem`
-registers `lemma`, `theorem` and `corollary`. The table is what builds the
-tool schemas and what `edit` dispatches on; loading also rejects a class
-that is omissible on output but compulsory on input (MCP_SPECIFICATION
-§2.1).
+Imports every package in the list `launch_TAT` received (§2.6) — the
+`python_packages` the node class theories registered — and keeps the table
+from `kind` to Python class, which importing a package fills through the
+`@TAT_node` decorator; one class registers every kind it answers to —
+`Theorem` registers `lemma`, `theorem` and `corollary`. The table is what
+builds the tool schemas and what `edit` dispatches on; loading also rejects
+a class that is omissible on output but compulsory on input
+(MCP_SPECIFICATION §2.1).
 
 ### 4.4 `builtins.py` and `theorem_node.py`
 

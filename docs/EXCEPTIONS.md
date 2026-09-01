@@ -43,8 +43,9 @@ The groups under `TAT_Error` are the agent's four remediation directions:
 fix the id you gave (`ResolutionError`), fix the node description you
 submitted (`RawASTError`), rethink the change (`BadEdit`), or — for
 `ConstructFailed` — the node's class does not offer the operation, so reach
-the goal another way. A rendered error opens with the refused operation
-(§4); the cause under it tells the agent which direction it is.
+the goal another way. A failed forest-changing operation opens with the
+refused operation (§4); the cause — under it, or alone for the other
+tools — tells the agent which direction it is.
 
 ## 3. The hierarchy
 
@@ -62,7 +63,7 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 ├─ RawASTError                a submitted RawAST is malformed
 │  ├─ MalformedRawAST         not an object, or no `kind`         [framework]
 │  ├─ UnknownKind             kind, available_kinds               [framework]
-│  ├─ MissingField            field — derived from the class's declared
+│  ├─ MissingField            kind, field — derived from the class's declared
 │  │                          argument schema, before its gen     [framework]
 │  └─ InvalidField            field, reason — schema-derived like
 │                             MissingField; also ready-made for `gen`
@@ -82,15 +83,14 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap or
 │  │                          another tree already uses the short name
 │  │                          (MCP_SPECIFICATION §2)              [Theory.gen]
-│  ├─ UnexpectedChildren      children_count, children_ids — `children`
-│  │                          may not appear here: on an amend's
-│  │                          replacement they are inherited (the ids say
-│  │                          what will be), and a Leaf can hold none;
-│  │                          never silently dropped. Raised before any
-│  │                          gen runs                            [framework]
-│  ├─ ChildrenNotInheritable  old_id, new_kind — the replaced node has
-│  │                          children and the replacement class is a
-│  │                          Leaf. Raised before any gen runs    [framework]
+│  ├─ UnexpectedChildren      kind — `children` may not appear here: on an
+│  │                          amend's replacement they are inherited, and
+│  │                          a Leaf can hold none; never silently
+│  │                          dropped. Raised before any gen runs [framework]
+│  ├─ ChildrenNotInheritable  old_id, new_kind, children_count — the
+│  │                          replaced node has children and the
+│  │                          replacement class is a Leaf. Raised before
+│  │                          any gen runs                        [framework]
 │  ├─ Bad<Class>NodeParent    kind, parent_id — the class cannot live under
 │  │                          that parent. Not one class: each node class
 │  │                          derives its own from BadEdit, named after
@@ -125,9 +125,10 @@ The six operations that change the forest — `append`, `insert_before`,
 `amend`, `move`, `delete` and `new_session` (TOOL_SCHEMAS.md) — write their
 name into `opr` at the tool entry. `__str__` then opens with
 `Cannot {opr} {target}`, the target echoed from the call
-(TOOL_SCHEMAS.md §5). A read-only tool
-writes nothing, and the cause renders alone: the tool changed nothing, and
-an opening line would only repeat what the agent just called.
+(TOOL_SCHEMAS.md §5). Any other tool
+writes nothing, and the cause renders alone: the forest's shape is
+untouched, and an opening line would only repeat what the agent just
+called.
 
 `opr` is a field written once by the layer that knows it — like §5's, and
 deliberately not a wrapper exception: an `except DuplicateName` means the
@@ -147,7 +148,7 @@ raw)` deliberately has no such parameter. The path is instead written
 - the framework's per-element loop prefixes the element's coordinate and
   re-raises the same object — around everything it does for that element,
   its own checks included: the `kind` lookup, the schema check, the name
-  checks, the gates;
+  checks;
 - nesting prefixes `children` steps, so the unwinding loops spell out the
   full path, rendered as `nodes[2].children[0]`.
 
@@ -171,8 +172,8 @@ writes it.
 
 ## 6. What is deliberately not an exception
 
-- **Evaluation failure** is a status on the node —
-  `cannot_evaluate(blocked_by)` (ARCHITECTURE §3.2, §3.3) — or a recorded
+- **Evaluation failure** is a status on the node — `cannot_evaluate`, with
+  its `blocked_by` (ARCHITECTURE §3.2, §3.3) — or a recorded
   outcome of its class, such as `Theorem`'s `proof = failed`
   (ARCHITECTURE §2.2), reported in the tool result. A failing proof is a
   normal day at work, not an exception.

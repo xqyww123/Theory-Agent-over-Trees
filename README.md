@@ -18,7 +18,8 @@ how a claim is established. That divides the work with
 [AoA](../Isa-Mini/IsaMini/AoA/) (Agent over AST), which works at proof level
 inside a single theorem.
 
-**Status: design. No implementation yet.**
+**Status: design; the first steps of the ML framework and the Python model
+are implemented.**
 
 ## Documents
 
@@ -33,7 +34,6 @@ inside a single theorem.
 | [docs/RENDER_BASELINES.md](docs/RENDER_BASELINES.md) | The approved agent-facing wording of every error |
 | [docs/node_classes/SESSION_AND_THEORY.md](docs/node_classes/SESSION_AND_THEORY.md) | The `Session` and `Theory` node classes |
 | [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | What is undecided, and what it blocks |
-| [docs/appendix/SEGMENT_INTEGRITY.md](docs/appendix/SEGMENT_INTEGRITY.md) | The check that a node's text is self-delimiting |
 
 ## How it runs
 
@@ -41,5 +41,5 @@ TAT is a Python process and an Isabelle process. The Python side owns the forest
 and serves the Model Context Protocol (MCP) tools; the Isabelle side runs an evaluator that TAT provides,
 driving Isabelle one command at a time.
 
-Node classes are extensible, and a node class is installed by naming its theory
-to the conversation, which loads it from source at start.
+Node classes are extensible: a node class is installed by having the theory
+the conversation starts from import it, and is loaded from source at start.

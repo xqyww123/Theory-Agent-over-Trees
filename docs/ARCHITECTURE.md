@@ -31,7 +31,7 @@ language. A concept that needs a name gets one here first.
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
 | **conversation** | one run of TAT, from Isabelle's call into Python to its return (§9) |
 | **forest directory** | the directory the client names when saving or loading; the ROOT and every `Session`'s directory lie under it (§4) |
-| **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
+| **edit** | any change to the forest — the `edit`, `move`, `delete` and `new_session` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
 
 Isabelle's build unit is always written **Isabelle session** in full; the
@@ -56,10 +56,10 @@ dependency graph, and compilation order is a topological order over it;
 imports cross `Session` boundaries freely, and a `Session` imposes no order
 of its own.
 
-Initial node classes: `Session`, `Theorem`, `Define`, `Datatype`, `QuotientType`, `Record`,
-`TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be
+Initial node classes: `Session`, `Theory`, `Theorem`, `Define`, `Datatype`, `QuotientType`,
+`Record`, `TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be
 addable without touching the core. Every tree's root is a `Theory` node, which
-owns the theory header, the `imports` list and the closing `end`.
+owns the theory header, the `imports` list and the `end`.
 
 Each node class corresponds to one or more Isabelle commands.
 
@@ -77,7 +77,7 @@ A node either contains other nodes or does not.
 `Section` contains the declarations under its heading. It is **presentational
 only**: it emits a `section` command and creates no Isabelle scope, so it changes
 nothing about how its children are checked or named. It is a nesting node with an
-opening command and no closing one.
+beginning command and no ending one.
 
 `Context` and `Locale` also contain nodes, and unlike `Section` they carry
 **operational behaviour**: they open an Isabelle context, so their children are
@@ -124,12 +124,13 @@ for a proved one.
 
 | Attribute | Type | |
 | --- | --- | --- |
-| `kind` | `opaque` \| `auto-simp` | authored |
+| `auto_reduction` | `bool` | authored |
 | `equations` | the defining equations | authored |
 | `form` | `definition` \| `fun` \| `function` | recorded |
 
-`auto-simp` adds `[simp]` to the resulting definitional equations; `opaque`
-removes them again with `note f.simps[simp del]`. A single equation is a
+With `auto_reduction` true the resulting definitional equations carry
+`[simp]`; with it false they are removed again with
+`note f.simps[simp del]`. A single equation is a
 `definition`; several are a `fun`, or a `function` with its proof obligations
 discharged by `AoA` when `fun` cannot establish termination on its own. Which of
 the three was used is decided during evaluation and recorded on the node, so
@@ -143,7 +144,7 @@ evaluator reports each separately.
 | `function` | the defining command, in whichever `form` | always |
 | `pat-completeness` | the completeness proof | `form = function` |
 | `termination` | `termination by …` | `form = function` |
-| `simp-del` | `note f.simps[simp del]` | `kind = opaque` |
+| `simp-del` | `note f.simps[simp del]` | `auto_reduction` is false |
 
 **`Session`** and **`Theory`**, the two classes that carry the forest's
 structure, are specified in
@@ -171,13 +172,14 @@ the slot its parent keeps for the position after all its children. The
 resulting slot of one node and the input slot of the next are therefore the
 same slot, and re-evaluating a node writes into slots that already exist.
 
-A nesting node's opening command writes its first child's slot. After the last
-child, the nesting node's closing command reads the slot it keeps for the
+A nesting node's beginning command writes its first child's slot. After the
+last child, the nesting node's ending command reads the slot it keeps for the
 position after all its children and writes its own resulting slot; a class
-with no closing command, such as `Section`, copies the one into the other.
+with no ending command, such as `Section`, copies the one into the other.
 
-A node that fails and is passed over leaves its input state in its resulting
-slot unchanged, so whatever follows always has something to run from.
+When a node fails and is passed over, the framework copies its input state
+into its resulting slot (§6.2), so whatever follows always has something to
+run from.
 
 Whether a slot currently holds a state is asked of the table; the Python side
 mirrors nothing.
@@ -186,7 +188,7 @@ mirrors nothing.
 
 Every operation a node runs has an `evaluation_status`, which says whether
 evaluation passes through it. A leaf has one operation; a nesting node has two,
-its opening and its closing, and so two statuses.
+its beginning and its ending, and so two statuses.
 
 | value | meaning |
 | --- | --- |
@@ -196,12 +198,16 @@ its opening and its closing, and so two statuses.
 
 A node whose own commands failed is still `ready` when its class can carry on
 regardless. A `Theorem` whose proof failed emits `sorry`, so the fact is declared
-and every later node still checks. A nesting node whose opening command failed
-has that opening `cannot_evaluate` and its closing `ready`: its input state
-stands as its result, and evaluation resumes after the block.
+and every later node still checks. A nesting node whose beginning command
+failed has that beginning `cannot_evaluate` and its ending `ready` without
+running: the framework copies the node's own input state straight into its
+resulting slot, and evaluation resumes after the block. (An ending is
+`cannot_evaluate` in a different situation: the beginning succeeded and a
+child then stopped — §3.5.)
 
-Nobody outside a node reads its statuses: a node renders its own report, and
-the one question asked from outside is `finished`.
+No node class reads another node's statuses: a node renders its own report,
+and the one question a class asks of another node is `finished`. The
+framework's walk does read them — that is how it knows what to run (§3.5).
 
 `finished` says whether the node still owes anything. It is derived, never
 stored, so it cannot drift from what it is derived from.
@@ -210,7 +216,8 @@ stored, so it cannot drift from what it is derived from.
 | --- | --- |
 | `Theorem` | `proof` is `proven` |
 | `Define` | every command it emitted succeeded |
-| a nesting class (`Section`, `Locale`, `Context`) | its own commands succeeded and every child is `finished` |
+| a nesting class (`Theory`, `Section`, `Locale`, `Context`) | its own commands succeeded and every child is `finished` |
+| `Session` | every tree under it is `finished`; it runs no operation and has no `evaluation_status` of its own |
 | a class with nothing to discharge | it has been evaluated |
 
 `finished` is true only where `evaluation_status` is `ready`. A forest is
@@ -227,19 +234,21 @@ A node whose failure would make everything after it report **derived errors**
 is an obstacle by the judgement of its node class. `Define` is the case: when
 the defining command fails the constant does not exist, so every later node that
 mentions it fails with a message about the constant instead of about itself. A
-nesting node whose closing command failed is one too: a `Theory` whose `end`
+nesting node whose ending command failed is one too: a `Theory` whose `end`
 failed has no theory value. Such a node **stops** evaluation: everything after
 it in the tree is `cannot_evaluate` with that node as `blocked_by`.
 
-A **nesting node whose opening command failed** leaves its children no context
-to run in. Its opening is `cannot_evaluate` and, like any obstacle, is not
-rerun until edited; its closing is `ready` (§3.2); every node under it is
+A **nesting node whose beginning command failed** leaves its children no context
+to run in. Its beginning is `cannot_evaluate` and, like any obstacle, is not
+rerun until edited; its ending is `ready` (§3.2); every node under it is
 `cannot_evaluate` with that ancestor as `blocked_by`, and none of them runs
 while the ancestor stays as it is. This is not a stop: evaluation resumes after
 the block.
 
 `evaluate_to` takes an `ignore_error` flag for an agent that wants to see every
-error in one pass. It passes a stop and never a failed opening.
+error in one pass. With it set the walk carries on past a stop; a failed
+beginning is not passed — its children stay blocked (§3.3). The call then
+returns "continue", each error showing at its own node.
 
 A stop is a fact about the forest, not about one call. Every `evaluate_to`
 returns either "continue" or "stopped at node X" to its caller (§3.5), and an
@@ -277,10 +286,13 @@ reached: the recursion of §3.5 skips what is evaluated and runs what is not.
 
 ### 3.5 Running an evaluation
 
-`evaluate_to(destination, ignore_error, evaluate)` runs every node that is not
-`ready` up to and including the destination, in tree order, and invalidates
-everything after it. It is one recursion, called from the top of the forest
-under the forest's one lock, so two calls never interleave:
+`evaluate_to(destination, ignore_error, evaluate)` — the internal form; the
+tool omits `evaluate` (MCP_SPECIFICATION §4) — runs every `not_evaluated`
+node up to and including the destination, in tree order — a
+`cannot_evaluate` obstacle is not rerun; it reports its stop again (§3.3) —
+and invalidates everything after the destination in its tree (§3.4). It is
+one recursion, called from the top of the forest under the forest's one
+lock, so two calls never interleave:
 
 - The **forest** resolves the destination's id and works on the theories
   directly — evaluation is transparent to the `Session` layer: it builds the
@@ -290,11 +302,11 @@ under the forest's one lock, so two calls never interleave:
   destination's tree. A `Session` as destination stands for all the trees
   under it: the forest schedules each of them, to its `end`, through the same
   graph.
-- A **nesting node** runs its opening command if it is not evaluated. If that
+- A **nesting node** runs its beginning command if it is not evaluated. If that
   command succeeded, now or earlier, it calls its children in order, and
   those after the one that contains the destination only to invalidate them;
   if it failed, it still enters them, but to mark each one `cannot_evaluate`
-  (§3.3) rather than to run it. A nesting node is reached at its closing
+  (§3.3) rather than to run it. A nesting node is reached at its ending
   command: it is the destination only once its children have run, so naming a
   `Theory` means the whole tree, `end` included.
 - A **leaf** runs its commands if it is not evaluated, and otherwise runs
@@ -304,7 +316,7 @@ The recursion visits every node of the tree. Past the destination it evaluates
 nothing and marks each node `not_evaluated` (§3.4). That is what makes an edit
 reach everything after the edited node; on a call from the agent it changes
 nothing, since those nodes are `not_evaluated` already. Nothing is skipped on
-the way: a `ready` operation is not rerun, but a nesting node whose closing
+the way: a `ready` operation is not rerun, but a nesting node whose ending
 is `ready` is still entered, since an obstacle passed under `ignore_error`
 may sit inside it.
 
@@ -392,18 +404,20 @@ A node may own several segments. No segment is owned by more than one node
 (§7).
 
 The finished `.thy` is parsed as a whole by whoever builds it, so each node's
-text must be self-delimiting. Cartouches, comments and quotes are balanced
-before a node's text is accepted. See
-[appendix/SEGMENT_INTEGRITY.md](appendix/SEGMENT_INTEGRITY.md).
+text must be self-delimiting. No separate check enforces this: text that does
+not close — an unclosed cartouche, comment or quote — fails at its own node's
+evaluation (§7), and a node whose commands failed does not emit (§4), so such
+text never reaches a file.
 
 ## 6. The node class contract *(decided)*
 
 A node class is delivered as an Isabelle theory together with a Python package.
 The theory is primary: it registers the class's evaluator on the ML side —
-into its own theory data (MODULE_STRUCTURE §2.5) — and it names the Python
-package carrying the rest. Installing a node class means having the theory
-the conversation starts from import it; the conversation loads it from source
-at start (§8).
+into its own theory data (MODULE_STRUCTURE §2.5) — and the registration names
+the Python packages carrying the rest, which the conversation collects and
+hands to `plugin.py` to import (MODULE_STRUCTURE §2.6, §4.3). Installing a
+node class means having the theory the conversation starts from import it;
+the conversation loads it from source at start (§8).
 
 | part | side | |
 | --- | --- | --- |
@@ -436,7 +450,8 @@ state slot name off the wire into a handle carrying `get` and `put` on the
 conversation's state slot table, and beyond that is given only the
 conversation's `begin_theory` and `end_theory` (MODULE_STRUCTURE §2.5); what it takes and
 what it returns are between it and its own Python half. On the Python
-side the class's hook runs that callback itself, records on the node whatever
+side the class's evaluation hook (MODULE_STRUCTURE §4.1) runs that callback
+itself, records on the node whatever
 it wants recorded — which commands it ran and how each of them fared included
 — and answers the framework with one boolean: whether evaluation passes
 through the node (§3.2). On no, the framework copies the operation's input
@@ -444,7 +459,7 @@ state into its resulting state, so that `ignore_error` has something to run
 from; no class writes that copy.
 
 A class's callback is a local callback of the conversation's one RPC command
-(§9, MODULE_STRUCTURE §2.5), named after the class that owns it.
+(§9, MODULE_STRUCTURE §2.6), named after the class that owns it.
 
 ### 6.3 Two kinds of ML
 
@@ -474,8 +489,9 @@ The evaluator holds an explicit `Toplevel.state` and runs one command at a time
 through `Toplevel.command_errors`, which recovers from a failing command instead
 of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md).
 
-TAT launches the prover on one **base heap** — chosen by the client, with
-nothing of TAT in it — and the forest sits on top of it, no tree in any heap
+The prover runs on one **base heap** — launched and chosen by the client
+(§9), with nothing of TAT in it — and the forest sits on top of it, no tree
+in any heap
 (EVALUATOR_DESIGN §2). A `Session`'s `parent` is ROOT metadata, not a
 constraint on the heap: a library theory the base heap lacks is loaded from
 source. TAT's own theories

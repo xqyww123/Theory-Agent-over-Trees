@@ -57,7 +57,7 @@ The name comes from the node class. A `Theorem`'s name is its `kind` joined to
 its theorem name — `lemma_P`, `theorem_Q`, `corollary_R`. A `Section`'s and a
 `Text`'s are chosen by the agent. The tree root is a `Theory`
 node whose name is the theory's, and which owns the theory header, the `imports`
-list and the closing `end`.
+list and the `end`.
 
 Above the trees, the forest's first layer is its `Session` nodes
 (ARCHITECTURE §2): a `Session`'s name is its Isabelle session name, written
@@ -65,9 +65,12 @@ Above the trees, the forest's first layer is its `Session` nodes
 
 The id is the dotted sequence of the names of a node's ancestors and its own —
 `theory_X.section_Basics.lemma_P`. A name is therefore one id component: a
-letter followed by letters, digits, underscores and primes (`'`), not ending
-with an underscore (`InvalidName` otherwise). TAT refuses a name that would
-give two nodes the same id.
+letter followed by letters, digits, underscores, primes (`'`) and interior
+hyphens — a hyphen or underscore may not end a name, and a hyphen may not
+begin one (`InvalidName` otherwise). Hyphens exist for `Session` names like
+`HOL-Library`; a class whose names must be Isabelle identifiers, such as
+`Theorem`, rejects them in its `gen`. TAT refuses a name that would give
+two nodes the same id.
 
 The forest root has the one id outside this grammar, **`$Root`** — no name
 begins with `$`, so nothing an agent writes can collide with it — and every
@@ -79,23 +82,32 @@ compares theory identities by **short name** — the part after the last dot
 (`contrib/Isabelle2025-2/src/Pure/context.ML:380-383`) — so a tree named `List`
 builds without complaint and then kills the first theory that imports it, one
 level downstream, with `Duplicate theory name` and no useful location.
-Creating a tree — an `edit` adding a `Theory` node — therefore rejects a name
-whose short name already appears in the base heap or in the forest.
+`Theory.gen` therefore rejects a name whose short name already appears in
+the base heap or in the forest (`DuplicateTheoryShortName`) — excluding, on
+an amend, the node being replaced (MODULE_STRUCTURE §4.1).
 
 ### 2.1 Which components appear
 
-Each **node class** declares two independent properties: whether its name may be
-omitted from an id TAT **prints**, and whether it may be omitted from an id the
-agent **supplies**.
+Each **node class** declares three printing properties: whether its name may
+be omitted from an id TAT **prints**, whether it may be omitted from an id the
+agent **supplies**, and its **drop priority** — which output-omissible
+component goes first when several could go.
 
-`Session`, `Theory` and `Section` are omissible in both directions. A node class that is
-omissible on output but compulsory on input would let TAT print an id it then
-refuses to accept; TAT rejects that combination when the class is loaded.
+`Session`, `Theory` and `Section` are omissible in both directions; their drop
+priorities order them `Section` first, then `Session`, then `Theory` last. A
+node class that is omissible on output but compulsory on input would let TAT
+print an id it then refuses to accept; TAT rejects that combination when the
+class is loaded.
 
-**Printing.** TAT omits an omissible component when the shorter id still
-identifies exactly one node. Ambiguity is judged across the whole forest, so an
-id renders identically wherever it appears — there is no notion of a current
-tree for it to depend on.
+**Printing.** Starting from the full id, TAT repeatedly deletes one
+component: among the output-omissible components whose deletion leaves the id
+identifying exactly one node, the one with the lowest drop priority — the
+outermost of them when several tie — until none can go. Ambiguity is judged
+across the whole forest, so an id renders identically wherever it appears —
+there is no notion of a current tree for it to depend on. So
+`session_Arith.theory_X.section_B.lemma_P` shortens through
+`theory_X.section_B.lemma_P` and `theory_X.lemma_P` to `lemma_P`, stopping at
+the first form something else in the forest collides with.
 
 **Reading.** TAT accepts any id obtained from the full one by dropping
 input-omissible components. All four of these reach the same node when nothing
@@ -123,11 +135,12 @@ The id is TAT's name for a node: its ancestors' names and its own, joined
 A `Section` is in the id, being an ancestor, and not in the qualified name,
 being no scope to Isabelle.
 
-The two correspond, and the omissibility flags (§2.1) are that correspondence:
-a nesting class Isabelle sees no scope in, such as `Section`, is droppable from
-an id; one that qualifies Isabelle's names is not. Shortest-form printing of an
-id is the same computation as Isabelle's shortest-form printing of a qualified
-name.
+The two correspond, and the flags of §2.1 echo the correspondence: a nesting
+class Isabelle sees no scope in, such as `Section`, drops first. The class
+declarations of §2.1 are the authority, though — `Session` and `Theory` are
+droppable even while they qualify Isabelle's names, the id being TAT's name
+and not Isabelle's. Shortest-form printing of an id is the same computation
+as Isabelle's shortest-form printing of a qualified name.
 
 The **id** changes on a rename, on a change of a `Theorem`'s `kind`, and on
 any move except between positions under the same parent; a move can also
@@ -179,19 +192,27 @@ and field at fault (EXCEPTIONS.md).
 ### 3.2 What follows
 
 Editing a node invalidates that node, everything after it in its tree, and
-every tree that imports that tree (ARCHITECTURE §3.4), then runs `evaluate_to`
-on it (§4), so its own result comes back with the call. The destination is
-the last node the call submitted, in tree order — a nesting node is
-reached at its closing command (ARCHITECTURE §3.5), so a submitted subtree
-is evaluated whole — with `ignore_error` unset. Replacing a nesting node
-invalidates from its first child before evaluating, since the children
-come before its own commands in the walk (ARCHITECTURE §3.5). Everything
-else invalidated is reported as not evaluated until the agent asks for it.
+every tree that imports that tree (ARCHITECTURE §3.4) — unconditionally.
+Whether the call also evaluates is the agent's choice: `edit`, `move` and
+`new_session` each take a mandatory boolean `evaluate` (TOOL_SCHEMAS.md).
+With it true, the call runs `evaluate_to` on the change's natural
+destination — the last node the call submitted, in tree order; for a
+`move`, the moved node — with `ignore_error` unset, so the result comes
+back with the call; a nesting node is reached at its ending command
+(ARCHITECTURE §3.5), so a submitted subtree is evaluated whole. With it
+false, the call only reports that destination's id, for a later
+`evaluate_to`. `delete` takes no such flag: there is nothing new to see,
+and only the invalidation walk runs (ARCHITECTURE §3.5). Replacing a
+nesting node invalidates from its first child, since the children come
+before its own commands in the walk (ARCHITECTURE §3.5). Whatever is
+invalidated and not evaluated is reported as such until the agent asks for
+it.
 
 ## 4. Evaluation
 
-`evaluate_to(destination, ignore_error)` evaluates every node that is not
-evaluated, in tree order, up to and including the destination — a nesting
+`evaluate_to(destination, ignore_error)` — the tool; the recursion behind
+it carries one more, internal flag (MODULE_STRUCTURE §4.1) — evaluates
+every node that is not evaluated, in tree order, up to and including the destination — a nesting
 node's whole subtree, so the `Theory` node's id means the whole tree, `end`
 included. It returns when it has finished or when it has stopped, naming the
 node it stopped at; `ignore_error` carries on past a node that would stop it.

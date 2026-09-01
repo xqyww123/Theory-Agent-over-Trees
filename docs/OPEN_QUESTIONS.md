@@ -10,10 +10,14 @@ Nothing here is settled. Ordered by what it blocks.
 (`isabelle_theory_agent/model.py`); `Forest._evaluate` is not. Its shape is
 fixed (ARCHITECTURE §3.5): the forest ignores the `Session` layer, builds the
 import dependency graph over the trees, and schedules evaluation on it, a
-`Session` as destination standing for all the trees under it. Still open:
-what a `Theory` root's `state` is — trees are not chained, so nothing writes
-it — and how a stop in one tree reaches the trees that import it and no
-other.
+`Session` as destination standing for all the trees under it. Still open,
+settled where `Theory`'s own evaluation is implemented: both ends of a
+`Theory` root's slot chain — its `state`, which nothing writes (trees are
+not chained, and `begin_theory` starts from `Toplevel.make_state NONE`
+regardless), and the resulting slot its `end` would write, which nothing
+reads (the theory value goes to the theory table; the tree has no successor
+on the slot chain) — and how a stop in one tree reaches the trees that
+import it and no other.
 
 ## 2. The remaining node classes
 

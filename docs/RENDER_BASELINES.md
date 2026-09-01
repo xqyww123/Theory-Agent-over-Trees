@@ -18,6 +18,7 @@ the cause:
 Cannot append theory_X.section_Basics
 Cannot insert_before theory_X.lemma_P
 Cannot amend theory_X.lemma_P
+Cannot move theory_Sorting to before theory_X.lemma_P
 Cannot move theory_Sorting to after theory_X.section_Basics
 Cannot move theory_Sorting to session_Arith
 Cannot delete theory_X.section_Basics
@@ -26,7 +27,8 @@ Cannot new_session session_Arith
 
 ## 2. Cause lines
 
-`NodeNotFound` — without near matches, the first sentence alone:
+`NodeNotFound` — when there are no near matches, only the first sentence
+renders:
 
 ```
 `lemma_fo` is not found. Did you mean: `lemma_foo`, `lemma_fold`?
@@ -48,7 +50,7 @@ The field `kind` is missing.
 `UnknownKind`:
 
 ```
-Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `definition`, `section`, `text`, `theory`.
+Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `definition`, `section`, `text`, `theory`, `session`.
 ```
 
 `MissingField`:
@@ -116,6 +118,12 @@ A `lemma` cannot be placed under `session_Arith`; it belongs inside a theory.
 
 ```
 A `Session` cannot be inserted under `theory_X`. Use `new_session` to create a session.
+```
+
+`Theory`'s `BadTheoryNodeParent`:
+
+```
+A `theory` cannot be placed under `section_Basics`; a theory lives directly under a session.
 ```
 
 `MoveIntoOwnSubtree`:
