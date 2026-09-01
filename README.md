@@ -30,6 +30,7 @@ inside a single theorem.
 | [docs/MODULE_STRUCTURE.md](docs/MODULE_STRUCTURE.md) | Directories, files and modules on both sides |
 | [docs/EXCEPTIONS.md](docs/EXCEPTIONS.md) | The exceptions: the hierarchy and the two framework-written fields, `opr` and `raw_ast_path` |
 | [docs/TOOL_SCHEMAS.md](docs/TOOL_SCHEMAS.md) | The tools' argument shapes and the first line a failure renders |
+| [docs/RENDER_BASELINES.md](docs/RENDER_BASELINES.md) | The approved agent-facing wording of every error |
 | [docs/node_classes/SESSION_AND_THEORY.md](docs/node_classes/SESSION_AND_THEORY.md) | The `Session` and `Theory` node classes |
 | [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | What is undecided, and what it blocks |
 | [docs/appendix/SEGMENT_INTEGRITY.md](docs/appendix/SEGMENT_INTEGRITY.md) | The check that a node's text is self-delimiting |

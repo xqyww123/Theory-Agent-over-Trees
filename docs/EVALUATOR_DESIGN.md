@@ -208,19 +208,19 @@ turn the drain above into a no-op.
 
 ## 7. One name-resolution rule
 
-Isabelle compares theory identities by **base name** — the part after the last
-dot (`Pure/context.ML:380-383`). Two theories sharing a base name and differing
+Isabelle compares theory identities by **short name** — the part after the last
+dot (`Pure/context.ML:380-383`). Two theories sharing a short name and differing
 in identity raise `Duplicate theory name` from the first theory that imports
 either, one level downstream of the mistake.
 
 Importing in one direction only does not prevent it. It was measured to arise
-from loading one file under two names, from a forest theory taking a base name
+from loading one file under two names, from a forest theory taking a short name
 the heap already uses, from two concurrent loads, and from staleness eviction.
 
 So: every import, forest or library, resolves through one
 `Resources.import_name` call, with the importing tree's `Session` `name` as
 the qualifier; the qualified name it returns (`#theory_name`,
 such as `HOL-Library.Multiset`) is the only key for the theory table (§3); no
-file is ever loaded under two name forms; and a forest theory whose base name
+file is ever loaded under two name forms; and a forest theory whose short name
 is already taken is rejected when it is created, not when something imports
 it.

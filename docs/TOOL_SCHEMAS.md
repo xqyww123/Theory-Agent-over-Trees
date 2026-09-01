@@ -18,8 +18,6 @@ list of node descriptions.
 | `{"insert_before": <id>, "nodes": […]}` | add the nodes before the addressed node, as its siblings |
 | `{"amend": <id>, "nodes": […]}` | `nodes[0]` replaces the addressed node, its children inherited (MCP_SPECIFICATION §3.1); `nodes[1:]` follow the replacement |
 
-A description of kind `session` is refused here (`WrongParent`): a `Session`
-is created by `new_session` (§4).
 
 ## 2. `move`
 
@@ -46,8 +44,9 @@ Removes the node and its subtree.
 {"session": <node description>}
 ```
 
-Creates one `Session` at the forest's first layer — the one place `append`
-cannot name, since the forest root has no id (MCP_SPECIFICATION §2). The
+Creates one `Session` at the forest's first layer — the one place the
+editing tools do not serve: the forest root's id `$Root` is protected
+(MCP_SPECIFICATION §2), and the first layer carries no order. The
 tool itself fixes the description's `kind` to `session`; `children` may
 carry the session's first trees, built as any nested description is
 (MODULE_STRUCTURE §4.1). Everything else about a `Session` goes through the

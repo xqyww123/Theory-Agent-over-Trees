@@ -75,10 +75,12 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  ├─ DuplicateName           name; taken_by — an existing sibling's id, or
 │  │                          the raw_ast_path of the colliding element of
 │  │                          the same call: the two ask for opposite
-│  │                          remedies. The same check refuses a name that
-│  │                          is not a single id component        [framework]
-│  ├─ DuplicateTheoryBaseName base_name, holder — the base heap or another
-│  │                          tree already uses the base name
+│  │                          remedies                            [framework]
+│  ├─ InvalidName             name — outside the name grammar of
+│  │                          MCP_SPECIFICATION §2; checked where
+│  │                          DuplicateName is                    [framework]
+│  ├─ DuplicateTheoryShortName  short_name, holder — the base heap or
+│  │                          another tree already uses the short name
 │  │                          (MCP_SPECIFICATION §2)              [Theory.gen]
 │  ├─ UnexpectedChildren      children_count, children_ids — `children`
 │  │                          may not appear here: on an amend's
@@ -89,24 +91,33 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  ├─ ChildrenNotInheritable  old_id, new_kind — the replaced node has
 │  │                          children and the replacement class is a
 │  │                          Leaf. Raised before any gen runs    [framework]
-│  ├─ WrongParent             kind, parent_id — the class cannot live under
-│  │                          that parent; ready-made for `gen` and
-│  │                          `on_moving`
+│  ├─ Bad<Class>NodeParent    kind, parent_id — the class cannot live under
+│  │                          that parent. Not one class: each node class
+│  │                          derives its own from BadEdit, named after
+│  │                          itself, and raises it in its gen and
+│  │                          on_moving — BadTheoremNodeParent,
+│  │                          BadTheoryNodeParent, BadSessionNodeParent
+│  │                          (Session's gen refuses every parent but the
+│  │                          forest root). The framework checks no
+│  │                          containment
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
-│  └─ ProtectedNode           id — the target is the forest root, which no
-│                             edit, move or delete may touch      [framework]
+│  └─ ProtectedNode           id — the target is protected; the one such
+│                             node is the forest root, id `$Root`
+│                             (MCP_SPECIFICATION §2)              [framework]
 ├─ ConstructFailed            `construct` could not start
-│  └─ ConstructNotSupported   kind — the class has no `construct`
-│                             (MCP_SPECIFICATION §1)              [framework]
+│  └─ ConstructNotSupported   id — raised by Node.construct's default
+│                             implementation; a class with a `construct`
+│                             overrides it (MCP_SPECIFICATION §1)
 
 TAT_InternalError             outside TAT_Error; never caught at the boundary
 ```
 
 Every class carries its facts as fields; `__str__` assembles the
 agent-facing sentence from them. Logic tests assert on the fields; each
-concrete class keeps one **render baseline** — the reviewed, owner-approved
-agent-facing wording — and no other test touches the rendered string.
+concrete class keeps one **render baseline** — the owner-approved
+agent-facing wording, collected in RENDER_BASELINES.md — and no other test
+touches the rendered string.
 
 ## 4. The `opr` field
 

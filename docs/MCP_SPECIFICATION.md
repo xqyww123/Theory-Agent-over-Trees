@@ -64,16 +64,23 @@ Above the trees, the forest's first layer is its `Session` nodes
 `session_<name>` in an id, and omissible in both directions (§2.1).
 
 The id is the dotted sequence of the names of a node's ancestors and its own —
-`theory_X.section_Basics.lemma_P`. TAT refuses a name that would give two nodes
-the same id.
+`theory_X.section_Basics.lemma_P`. A name is therefore one id component: a
+letter followed by letters, digits, underscores and primes (`'`), not ending
+with an underscore (`InvalidName` otherwise). TAT refuses a name that would
+give two nodes the same id.
+
+The forest root has the one id outside this grammar, **`$Root`** — no name
+begins with `$`, so nothing an agent writes can collide with it — and every
+editing tool refuses it (`ProtectedNode`); `new_session` creates a
+`Session` there (TOOL_SCHEMAS.md §4).
 
 A theory's name must also be unique against everything already loaded. Isabelle
-compares theory identities by **base name** — the part after the last dot
+compares theory identities by **short name** — the part after the last dot
 (`contrib/Isabelle2025-2/src/Pure/context.ML:380-383`) — so a tree named `List`
 builds without complaint and then kills the first theory that imports it, one
 level downstream, with `Duplicate theory name` and no useful location.
 Creating a tree — an `edit` adding a `Theory` node — therefore rejects a name
-whose base name already appears in the base heap or in the forest.
+whose short name already appears in the base heap or in the forest.
 
 ### 2.1 Which components appear
 

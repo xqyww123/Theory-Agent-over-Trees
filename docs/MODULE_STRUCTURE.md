@@ -71,7 +71,7 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 - `load` — the `Thy_Info.use_theories` wrapper of EVALUATOR_DESIGN §6, under
   one lock, one theory per call, with `parallel_proofs = 1` checked at
   conversation start;
-- `check_new_theory_base_name` — rejects a new theory name whose base name —
+- `check_new_theory_short_name` — rejects a new theory name whose short name —
   the part after the last dot, which is what Isabelle compares
   (EVALUATOR_DESIGN §7) — the base heap already uses; the forest side of that
   check (MCP_SPECIFICATION §2) is Python's.
@@ -160,7 +160,7 @@ whose ancestry names the node classes (§2.5):
 3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
-   name), and `TAT.check_new_theory_base_name` (§2.3);
+   name), and `TAT.check_new_theory_short_name` (§2.3);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.5), which does not return for the life of the
@@ -250,9 +250,12 @@ class NodeConfig(NamedTuple):
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
 ```
 
-`gen` checks and constructs; the framework owns placement. It may read
+`gen` checks and constructs; the framework owns placement. Where a node
+may live is the node's own judgement: its `gen` refuses a parent its class
+cannot live under — `Bad<Class>NodeParent`, EXCEPTIONS.md §3 — and on a
+move its `on_moving` does; the framework checks no containment. It may read
 over the wire through the framework's query callbacks — `Theory.gen`
-checks its base name against the base heap and the forest, excluding
+checks its short name against the base heap and the forest, excluding
 `config.replacing` — and those callbacks raise only `TAT_Error` subclasses,
 so a transport failure is never blamed on the class. It must not write:
 an aborted edit undoes nothing remotely. It raises `TAT_Error`s bare; the
@@ -267,9 +270,10 @@ An `edit` builds everything before it touches the forest:
    schema check, `gen`, then — for a nesting class — its `children`, built
    by the framework onto the fresh, still-detached node the same way. The
    framework assigns each new node a fresh state slot and reads the name
-   off the finished node: a name that is not a single id component, or
-   that collides with a surviving sibling or with the batch, is refused
-   (`DuplicateName`). The amend loop walks the whole submitted list,
+   off the finished node: a name outside the grammar of
+   MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
+   surviving sibling or with the batch (`DuplicateName`), is refused.
+   The amend loop walks the whole submitted list,
    `nodes[0]` built with `replacing` set; so every `raw_ast_path` indexes
    the agent's own list.
 2. **Gates.** The hooks that may still veto (Events below), `BadEdit`
