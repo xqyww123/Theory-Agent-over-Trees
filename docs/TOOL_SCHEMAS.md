@@ -18,6 +18,9 @@ list of node descriptions.
 | `{"insert_before": <id>, "nodes": […]}` | add the nodes before the addressed node, as its siblings |
 | `{"amend": <id>, "nodes": […]}` | `nodes[0]` replaces the addressed node, its children inherited (MCP_SPECIFICATION §3.1); `nodes[1:]` follow the replacement |
 
+A description of kind `session` is refused here (`WrongParent`): a `Session`
+is created by `new_session` (§4).
+
 ## 2. `move`
 
 `node` names the node to move; exactly one of three destination keys says
@@ -37,11 +40,27 @@ where, in the same language as `edit`'s actions:
 
 Removes the node and its subtree.
 
-## 4. What a failure renders
+## 4. `new_session`
 
-A failed `edit`, `move` or `delete` — the three tools that change the forest
-(the glossary's broad **edit**, ARCHITECTURE §1) — opens with one line naming
-the refused operation and its target, echoed from the call:
+```
+{"session": <node description>}
+```
+
+Creates one `Session` at the forest's first layer — the one place `append`
+cannot name, since the forest root has no id (MCP_SPECIFICATION §2). The
+tool itself fixes the description's `kind` to `session`; `children` may
+carry the session's first trees, built as any nested description is
+(MODULE_STRUCTURE §4.1). Everything else about a `Session` goes through the
+generic tools: it has an id, so `amend` and `delete` address it, and
+`move … to` re-homes trees between sessions. A `Session` itself never
+moves — there is nowhere else for it to live, and the first layer carries
+no order (ARCHITECTURE §2).
+
+## 5. What a failure renders
+
+A failed `edit`, `move`, `delete` or `new_session` — the tools that change
+the forest (the glossary's broad **edit**, ARCHITECTURE §1) — opens with one
+line naming the refused operation and its target, echoed from the call:
 
 ```
 Cannot append theory_X.section_Basics
@@ -50,19 +69,18 @@ Cannot amend theory_X.lemma_P
 Cannot move theory_Sorting to after theory_X.section_Basics
 Cannot move theory_Sorting to session_Arith
 Cannot delete theory_X.section_Basics
+Cannot new_session session_Arith
 ```
 
 The lines after it are the cause, prefixed by its `raw_ast_path`
 (EXCEPTIONS.md §5) where one applies. The `opr` field (EXCEPTIONS.md §4)
 takes exactly these operation names: `append`, `insert_before`, `amend`,
-`move`, `delete`.
+`move`, `delete`, `new_session`.
 
 A failed read-only tool — `recall`, `construct`, `evaluate_to`, `status` —
 renders the cause alone: it changed nothing, and the first line would only
 repeat the tool the agent just called.
 
-## 5. Undecided
+## 6. Undecided
 
-- The argument shapes of `recall`, `construct`, `evaluate_to` and `status`.
-- How `append` names the forest root: adding a `Session` targets it, and it
-  has no id (MCP_SPECIFICATION §2).
+The argument shapes of `recall`, `construct`, `evaluate_to` and `status`.

@@ -12,6 +12,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | `edit` | Add nodes, or amend one — replace it, its children inherited (§3.1) |
 | `delete` | Remove a node or a subtree |
 | `move` | Reorder a node within its tree, or move it to another tree or `Session` |
+| `new_session` | Create a `Session` at the forest's first layer (TOOL_SCHEMAS.md §4) |
 | `recall` | Read the forest: a node by id, or the outline |
 | `construct` | Start a node's own operation, where its class has one |
 | `evaluate_to` | Evaluate everything not yet evaluated, up to a node |

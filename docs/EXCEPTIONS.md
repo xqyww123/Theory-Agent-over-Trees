@@ -110,10 +110,11 @@ agent-facing wording — and no other test touches the rendered string.
 
 ## 4. The `opr` field
 
-The five operations that change the forest — `append`, `insert_before`,
-`amend`, `move` and `delete` (TOOL_SCHEMAS.md) — write their name into
-`opr` at the tool entry. `__str__` then opens with `Cannot {opr} {target}`,
-the target echoed from the call (TOOL_SCHEMAS.md §4). A read-only tool
+The six operations that change the forest — `append`, `insert_before`,
+`amend`, `move`, `delete` and `new_session` (TOOL_SCHEMAS.md) — write their
+name into `opr` at the tool entry. `__str__` then opens with
+`Cannot {opr} {target}`, the target echoed from the call
+(TOOL_SCHEMAS.md §5). A read-only tool
 writes nothing, and the cause renders alone: the tool changed nothing, and
 an opening line would only repeat what the agent just called.
 

@@ -461,7 +461,7 @@ result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
 ### 4.5 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
-`mcp.py` implements the seven tools of MCP_SPECIFICATION §1 and the queue of
+`mcp.py` implements the eight tools of MCP_SPECIFICATION §1 and the queue of
 pending messages; the future `query` tool (MCP_SPECIFICATION §1.1) will land
 here too. `mcp_server.py` builds the
 server from them. `toplevel.py` is the procedure Isabelle calls
