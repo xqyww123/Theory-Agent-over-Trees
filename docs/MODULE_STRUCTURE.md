@@ -461,9 +461,9 @@ result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
 ### 4.5 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
-`mcp.py` implements the seven tools of MCP_SPECIFICATION §1, `recall`'s two
-indexes — the forest, and the library through `contrib/Semantic_Embedding`'s
-retrieval — and the queue of pending messages. `mcp_server.py` builds the
+`mcp.py` implements the seven tools of MCP_SPECIFICATION §1 and the queue of
+pending messages; the future `query` tool (MCP_SPECIFICATION §1.1) will land
+here too. `mcp_server.py` builds the
 server from them. `toplevel.py` is the procedure Isabelle calls
 (`@isabelle_remote_procedure("launch_TAT")`), which does not return for the life of
 the conversation and hands the loaded forest its connection.

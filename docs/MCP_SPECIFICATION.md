@@ -12,7 +12,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | `edit` | Add nodes, or amend one — replace it, its children inherited (§3.1) |
 | `delete` | Remove a node or a subtree |
 | `move` | Reorder a node within its tree, or move it to another tree or `Session` |
-| `recall` | Retrieve — from the forest, or from the Isabelle library |
+| `recall` | Read the forest: a node by id, or the outline |
 | `construct` | Start a node's own operation, where its class has one |
 | `evaluate_to` | Evaluate everything not yet evaluated, up to a node |
 | `status` | Collect pending messages |
@@ -33,18 +33,16 @@ do.
 
 ### 1.1 `recall`
 
-One tool, two indexes:
-
-- **the forest** — what has this project already declared? Retrieval by node id
-  or by query, plus, with no query, the outline of the forest.
-- **the library** — what does Isabelle or the AFP already provide? This is
-  theorem search over material TAT did not write.
-
-A detail level selects between a summary rendering and the full one.
+Reading the forest: a node by id, or, with no id, the outline of the whole
+forest. A detail level selects between a summary rendering and the full one.
 
 A `recall` of a node that has not been evaluated reports it as such. Reading
 never evaluates: TAT submits the commands, so nothing runs unless TAT asks for
 it.
+
+What Isabelle or the AFP already provide — theorem search over material TAT
+did not write — is not `recall`'s business. That will be a separate `query`
+tool, not yet designed; its errors are designed with it.
 
 ## 2. Naming nodes
 
