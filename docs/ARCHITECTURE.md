@@ -329,9 +329,10 @@ Every call returns "continue" or "stopped at node X" (§3.3); after a stop the
 recursion goes on, marking what follows `cannot_evaluate` with X as
 `blocked_by`, and the answer travels up to the forest.
 
-Editing a node marks it `not_evaluated` and runs `evaluate_to` on it, so the
-result of what was just written comes back with the call and everything after
-it is invalidated on the way. Editing a nesting node's own commands first
+Editing a node marks it `not_evaluated` and invalidates everything after it
+through this walk — run without `evaluate` when the editing call's
+`evaluate` flag is false, and as part of the full evaluation when it is true
+(MCP_SPECIFICATION §3.2). Editing a nesting node's own commands first
 invalidates from its first child, since the children are before it in the
 walk and would otherwise be kept.
 

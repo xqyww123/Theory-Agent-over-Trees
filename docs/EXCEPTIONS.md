@@ -143,8 +143,8 @@ of the submitted `nodes` list, nested under which `children`. AoA threads a
 raw)` deliberately has no such parameter. The path is instead written
 **upward** by the framework:
 
-- a node class's `gen` raises bare — `MissingField("statement")` — knowing
-  nothing about where its RawAST sat;
+- a node class's `gen` raises bare — an `InvalidField`, a
+  `DuplicateTheoryShortName` — knowing nothing about where its RawAST sat;
 - the framework's per-element loop prefixes the element's coordinate and
   re-raises the same object — around everything it does for that element,
   its own checks included: the `kind` lookup, the schema check, the name

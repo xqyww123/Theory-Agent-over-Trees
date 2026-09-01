@@ -107,7 +107,7 @@ When amending a non-leaf node, `children` is not allowed: the amended node inher
 `theory_X.section_Basics` has 3 children, which a `lemma` cannot hold. Move or delete them first.
 ```
 
-`Bad<Class>NodeParent` — each node class's carries its own sentence
+`Bad<Class>NodeParent` — each node class carries its own sentence
 (EXCEPTIONS.md §3). `Theorem`'s `BadTheoremNodeParent`:
 
 ```

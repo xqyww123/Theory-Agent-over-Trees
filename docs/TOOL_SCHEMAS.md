@@ -19,7 +19,6 @@ list of node descriptions, and the mandatory boolean `evaluate`
 | `{"insert_before": <id>, "nodes": […]}` | add the nodes before the addressed node, as its siblings |
 | `{"amend": <id>, "nodes": […]}` | `nodes[0]` replaces the addressed node, its children inherited (MCP_SPECIFICATION §3.1); `nodes[1:]` follow the replacement |
 
-
 ## 2. `move`
 
 `node` names the node to move; exactly one of three destination keys says

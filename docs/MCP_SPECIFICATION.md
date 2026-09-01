@@ -88,7 +88,7 @@ an amend, the node being replaced (MODULE_STRUCTURE §4.1).
 
 ### 2.1 Which components appear
 
-Each **node class** declares three printing properties: whether its name may
+Each **node class** declares three id properties: whether its name may
 be omitted from an id TAT **prints**, whether it may be omitted from an id the
 agent **supplies**, and its **drop priority** — which output-omissible
 component goes first when several could go.
@@ -106,8 +106,8 @@ outermost of them when several tie — until none can go. Ambiguity is judged
 across the whole forest, so an id renders identically wherever it appears —
 there is no notion of a current tree for it to depend on. So
 `session_Arith.theory_X.section_B.lemma_P` shortens through
-`theory_X.section_B.lemma_P` and `theory_X.lemma_P` to `lemma_P`, stopping at
-the first form something else in the forest collides with.
+`session_Arith.theory_X.lemma_P` and `theory_X.lemma_P` to `lemma_P`,
+stopping at the first form something else in the forest collides with.
 
 **Reading.** TAT accepts any id obtained from the full one by dropping
 input-omissible components. All four of these reach the same node when nothing
