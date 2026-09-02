@@ -57,6 +57,9 @@ async def run(addr: str) -> None:
         source = f.read()
     async with Client(addr, "Draft") as c:
         outputs = await c.eval(source, import_dir=HERE)
+    # out.output is always empty under repl_server.sh, which runs
+    # REPL.disable_output (); the loop matters only against a server
+    # configured otherwise
     for out in outputs or []:
         for kind, msg in out.output:
             print(f"[{out.command}] {kind.name}: {msg}")

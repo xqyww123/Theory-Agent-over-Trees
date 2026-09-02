@@ -143,3 +143,14 @@ The `$Root` cannot be edited.
 ```
 `theory_X.text_intro` does not support construct.
 ```
+
+## 3. Evaluation text (ML side)
+
+Not exception classes — evaluation failure lives outside the hierarchy
+(EXCEPTIONS.md §6) — but TAT-authored and agent-facing all the same.
+
+`Loader.load_target`, an import found nowhere:
+
+```
+Fail to load `TAT_Nowhere.Nope` because it is not found.
+```

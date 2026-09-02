@@ -94,16 +94,24 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
 - `end_theory` — `Toplevel.end_theory`, yielding the value the theory table
   stores.
 
-**Output.** Every `writeln`, `tracing` and `warning` in the process ends in
-`Private_Output.writeln_fn`, `tracing_fn` and `warning_fn`
-(`contrib/Isabelle2025-2/src/Pure/General/output.ML:66`, `:70`, `:71`). The conversation
-replaces the three once, with functions that route a message by the id in
-`Position.thread_data ()` into a per-command buffer, and fall back to the
-original function when there is no id. `run_commands` gives each span a fresh
-id and runs it under `Position.setmp_thread_data`. The id travels with
+**Output.** Agent-facing text leaves the process through six `Private_Output`
+channels (`contrib/Isabelle2025-2/src/Pure/General/output.ML`):
+`writeln_fn`, `writeln_urgent_fn` — a proof's or definition's result block
+prints through this one (`Pure/Isar/proof_display.ML:322-328`) —
+`tracing_fn`, `warning_fn`, `information_fn` and `legacy_fn`. The
+conversation replaces the six once, with functions that route a message by
+the id in `Position.thread_data ()` into a per-command buffer, and fall back
+to the function they replaced when there is no id, or no buffer under it.
+The remaining channels stay untouched: proof states are read off the states
+themselves, errors travel structurally out of `Toplevel.command_errors`, and
+the rest is PIDE protocol machinery. `run_commands` gives each span a fresh
+id — minted by `Document_ID.make` and registered with `Execution.running`
+before the span runs, since the id slot of a position is the execution
+registry's key and `Execution.fork`/`Execution.print` fail on an
+unregistered id — and runs the span under it. The id travels with
 `Future.fork` (`Pure/Concurrent/future.ML:452`), so a message printed on a
-forked worker still reaches its command's buffer; a key in `Thread_Data` would
-not (EVALUATOR_DESIGN §4).
+forked worker still reaches its command's buffer; a key in `Thread_Data`
+would not (EVALUATOR_DESIGN §4).
 
 ### 2.5 Node classes
 

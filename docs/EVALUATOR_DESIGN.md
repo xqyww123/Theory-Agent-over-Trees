@@ -68,9 +68,10 @@ starts and left to the garbage collector when it ends. Nothing outlives the
 conversation.
 
 A node class's asynchronous work can reach this table while evaluation runs
-(ARCHITECTURE §9), so it is locked. `contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the pattern in use in
-this project family: a hash table plus a `Synchronized.var` held across every
-read and write.
+(ARCHITECTURE §9), so it is locked: a pure table under one
+`Synchronized.var`, every compound operation one atomic change over it
+(`contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the mutable-hash-table
+variant of the same shape).
 
 ## 2. One prover, and what resolution becomes
 
@@ -175,15 +176,26 @@ point (MODULE_STRUCTURE §2.3).
   Running the reset here makes a failing load leave exactly the state a
   successful load leaves, so every exception describes the call that raised it.
   It also recovers errors that the callee dropped: on a batch where two theories
-  fail, the raw call reports one and strands the other.*)
-fun load options qualifier imports =
+  fail, the raw call reports one and strands the other.
+  Exn.capture_body rather than Exn.result: result re-raises an interrupt on
+  the spot, so a cancelled load would skip the reset and leave exactly the
+  residue this wrapper drains.  The drain therefore always runs; a
+  cancellation is then re-raised explicitly -- Par_Exn treats an interrupt
+  as a neutral element and release_all would swallow it whenever the residue
+  holds real errors -- and residue errors are released only when the call
+  was not cancelled.*)
+fun load options qualifier import =
   let
-    val result = Exn.result (Thy_Info.use_theories options qualifier) imports;
+    val result = Exn.capture_body (fn () => Thy_Info.use_theories options qualifier [import]);
     val residue = map Exn.Exn (maps Task_Queue.group_status (Execution.reset ()));
+    val _ =
+      (case Exn.get_exn result of
+        SOME exn => if Exn.is_interrupt_proper exn then Exn.reraise exn else ()
+      | NONE => ());
   in hd (Par_Exn.release_all (result :: residue)) end;
 ```
 
-Three conditions, all required together:
+Four conditions, all required together:
 
 - **`parallel_proofs` pinned to 1**, and checked at startup. At 3 — which
   `init_options_interactive` sets (`Pure/System/isabelle_process.ML:212`) — a
@@ -194,6 +206,16 @@ Three conditions, all required together:
 - **One lock around every call.** `Thy_Info` has no internal mutual exclusion;
   two concurrent calls over overlapping sets each produce their own `theory`
   value for a shared name.
+- **No command may be running anywhere in the process while a load runs.**
+  The call ends in `Execution.reset ()`, a wholesale wipe of the
+  process-global execution table each running span is registered in
+  (MODULE_STRUCTURE §2.4): a concurrent span would lose its entry, stranding
+  its forks and making a later `Execution.fork` under its id fail. The
+  framework's own evaluation cannot collide — the conversation's dispatch is
+  one synchronous loop, `run_commands` joins and purges each span before
+  returning, and `begin_theory` resolves every import before it registers or
+  runs anything — but a node class's asynchronous work must not call
+  `run_commands` while a load may run.
 
 Pass a path or a session-qualified name, not a bare name.
 
