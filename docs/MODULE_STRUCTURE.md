@@ -212,6 +212,7 @@ starting the Isabelle process is the client's business.
 
 ```
 isabelle_theory_agent/
+  exceptions.py        the TAT_Error hierarchy (EXCEPTIONS.md)
   model.py             Node, Forest, ids, evaluation and invalidation, compilation, persistence
   isabelle_driver.py   typed calls to the ML side's callbacks
   plugin.py            loading node classes and their table

@@ -44,9 +44,13 @@ class Table:
 # --- concrete node classes ------------------------------------------------------
 
 class T(M.Leaf):                    # a leaf whose operation succeeds unless told to fail
+    argument_schema = {"name": M.Argument(str)}
     def __init__(self, parent, state, name, fail=False):
         super().__init__(parent, state)
         self.name, self.fail, self.runs = name, fail, 0
+    @classmethod
+    async def gen(cls, config, raw):
+        return cls(config.parent, config.state, raw["name"])
     def is_finished(self): return self._status is READY
     async def _eval_opr(self):
         self.runs += 1
@@ -57,10 +61,15 @@ class T(M.Leaf):                    # a leaf whose operation succeeds unless tol
 
 
 class Block(M.StdBlock):
+    argument_schema = {"name": M.Argument(str)}
     def __init__(self, parent, state, name, sbe, fail_beginning=False, fail_ending=False):
         super().__init__(parent, state, [], sbe)
         self.name, self.fail_beginning, self.fail_ending = name, fail_beginning, fail_ending
         self.begin_runs = self.end_runs = 0
+    @classmethod
+    async def gen(cls, config, raw):
+        return cls(config.parent, config.state, raw["name"],
+                   Isar_State_Slot.assign(config.state.connection))
     def is_finished(self):
         return (self.evaluation_status_ending is READY and self.evaluation_status_beginning is READY
                 and all(c.is_finished() for c in self.sub_nodes))
@@ -114,6 +123,12 @@ def st(n):
 
 
 def run(coro): return asyncio.run(coro)
+
+
+async def locked(f, coro):
+    """The tool entry's lock hold, for driving an edit operation directly."""
+    async with f.lock:
+        return await coro
 
 
 @pytest.fixture(autouse=True)
@@ -185,7 +200,7 @@ def test_d_invalidate_only():
     assert t1.resulting_state().name in TABLE.deleted
     # deletion of the last child: the destination is the block itself
     run(t4.evaluate_to(False))
-    run(sec._delete_child(t2))
+    run(locked(f, sec._delete_child(t2)))
     assert sec.sub_nodes == [t1] and st(t1) is READY
     assert st(sec) == (READY, NOT_EVALUATED) and st(t3) is NOT_EVALUATED
     assert TABLE.values[t1.resulting_state().name] == "after T1"        # the value moved with the position
@@ -194,13 +209,22 @@ def test_d_invalidate_only():
 def test_insert_into_evaluated_tree():
     f, thy, sec, t1, t2, t3, t4 = build()
     run(t4.evaluate_to(False))
-    new = T(None, slot(), "N")
-    r = run(sec._insert_child(1, new, False, True))
+    kinds = {"t": T}
+
+    async def insert_and_run(parent, index, raws):     # the tool entry's flow
+        async with f.lock:
+            nodes = await parent._insert_children(index, raws, kinds)
+            return nodes, await f._run(M.Evaluation(nodes[-1], False), True)
+
+    (new,), r = run(insert_and_run(sec, 1, [{"kind": "t", "name": "N"}]))
     assert r == M.EvaluationResult(None, INVALIDATING)
     assert new.runs == 1 and st(new) is READY and sec.sub_nodes == [t1, new, t2]
     assert st(t2) is NOT_EVALUATED and st(t3) is NOT_EVALUATED
     assert st(sec) == (READY, NOT_EVALUATED) and st(thy) == (READY, NOT_EVALUATED)
     assert t1.runs == 1                                                  # the predecessor untouched
+    # a predecessor not ready: the new slot stays empty, no copy
+    (new2,) = run(locked(f, sec._insert_children(3, [{"kind": "t", "name": "N2"}], kinds)))
+    assert new2.state.name not in TABLE.values and sec.sub_nodes == [t1, new, t2, new2]
 
 
 def test_failed_ending_is_a_stop():
