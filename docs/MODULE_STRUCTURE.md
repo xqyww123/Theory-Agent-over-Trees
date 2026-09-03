@@ -226,9 +226,9 @@ isabelle_theory_agent/
 ### 4.1 `model.py`
 
 `Node` is the Python half of the node class contract (ARCHITECTURE §6): the
-authored and recorded fields, the argument schema — it becomes the tool
-schema, and the framework checks submitted descriptions against it
-(below) — `gen` (below), `emit_isar`, the name it gives the node and its two omissibility
+authored and recorded fields, the argument schema — a TypedDict the
+framework checks submitted descriptions against (below), and which types
+`gen`'s `raw` for the static checker — `gen` (below), `emit_isar`, the name it gives the node and its two omissibility
 flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
 parent's `sub_nodes`, computed, never stored — an optional `construct`,
 `__getstate__` for persistence (ARCHITECTURE §4.1), and the event hooks
@@ -238,10 +238,17 @@ parent's `sub_nodes`, computed, never stored — an optional `construct`,
 object the agent submitted, `Mapping[str, Any]`. Two of its fields belong
 to the framework: `kind` selects the node class (§4.3), and `children` —
 which no `gen` ever sees — holds a nesting node's contents. The framework
-also checks the description's mechanical shape — required fields present,
-types right — against the class's declared argument schema, the same
-declaration that builds the tool schema, raising `MissingField` /
-`InvalidField` before the class is consulted. Everything semantic lives in
+also checks the description's mechanical shape — no field the class does
+not declare, required fields present, types right — against the class's
+declared argument schema, raising `UnexpectedField` / `MissingField` /
+`InvalidField` before the class is consulted. A declaration's annotations
+come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
+`list[X]`, a TypedDict, and unions of those holding at most one
+TypedDict — so every check renders within RENDER_BASELINES §2's
+vocabulary; `@TAT_node` refuses anything else when the class is
+registered (§4.3), as it refuses a TypedDict that nests itself and an
+annotation Python cannot resolve. The JSON tool schemas are hand-written, as AoA's
+(`contrib/Isa-Mini/IsaMini/AoA/tools/`). Everything semantic lives in
 `gen`:
 
 ```python
@@ -297,26 +304,32 @@ An `edit` builds everything before it touches the forest:
    linked in; on amend the replacement takes `old`'s position, state
    slot, identity number and children. The one copy of ARCHITECTURE §3.4
    lands in the first new node's slot — and only when the predecessor
-   operation is `ready`, judged from the Python-side status, no round
-   trip; every other new slot stays empty, as befits `not_evaluated`
-   nodes.
+   operation has written it: `ready`, or an own stop, whose copy-through
+   counts — judged from the Python-side status, no round trip; every
+   other new slot stays empty, as befits `not_evaluated` nodes.
 4. **Completed events**, then the caller invalidates — and evaluates when
    the call's `evaluate` says so (MCP_SPECIFICATION §3.2).
 
 A failure anywhere before the commit aborts the call with the forest
 untouched: there is no rollback, because nothing happened to roll back.
 
-**Entry points and the lock.** The tool entry takes the forest's lock and
-holds it across the whole change; `_insert_children`, `_amend_children`,
-`_delete_child`, `_move_child` and the evaluation walk all assume it is
-held. One ordering fact: `gen` awaits the ML side's loader lock (§2.3)
-while the forest lock is held; nothing on the ML side ever waits for the
-forest lock, and that order must stay one-way.
+**Entry points and the lock.** A tool entry takes the forest's lock and
+holds it across the whole call. `evaluate_to`'s entry is
+`Node.evaluate_to`, which takes it itself; an edit's tool entry takes it
+and calls `_insert_children`, `_amend_children`, `_delete_child` or
+`_move_child`, which assume it held, as does the walk each ends with. One
+ordering fact: `gen` awaits the ML side's loader lock (§2.3) while the
+forest lock is held; nothing on the ML side ever waits for the forest
+lock, and that order must stay one-way.
 
 `_move_child` is `move`'s entry: it re-homes a node with its subtree — a
 copy on the source side and a copy on the destination side (ARCHITECTURE
-§3.4), and **no delete**: the subtree's slots travel with their nodes,
-whose names they remain (ARCHITECTURE §3.1).
+§3.4). The subtree's slots travel with their nodes, whose names they
+remain (ARCHITECTURE §3.1); no slot is deleted. Two values may be
+released: the moved node's old input, when nothing wrote a value at the
+destination — its writer is still current, so no release would otherwise
+clear it — and the source successor's slot, when the predecessor there
+wrote nothing but the moved node had, which is `delete`'s rule too.
 
 **Events.** Ten hooks, empty by default, driven by the framework — a class
 only ever speaks for its own node. The tense is the contract:
@@ -332,7 +345,7 @@ only ever speaks for its own node. The tense is the contract:
 
 | hook | tense | fires |
 | --- | --- | --- |
-| `on_invalidated()` | completed | the node's status truly left `ready` — not on the walk re-marking a `not_evaluated` node (ARCHITECTURE §3.5; its purpose, §3.6) |
+| `on_invalidated(operation)` | completed | an operation's status truly left `ready` — not on the walk re-marking a `not_evaluated` node (ARCHITECTURE §3.5; its purpose, §3.6). `operation` says which: a `StdBlock` passes `beginning` or `ending`, a `Leaf` passes `None`, a class with its own statuses passes its own value |
 | `on_deleting(reason)` | gate | the node is to leave for good; `reason` is `delete` (whole subtree, children first) or `amend` (the replaced node alone) |
 | `on_deleted(reason)` | completed | it left; the Python object is still whole — cancel running work here |
 | `on_inserted()` | completed | linked in, children and all |
@@ -340,7 +353,7 @@ only ever speaks for its own node. The tense is the contract:
 | `on_added_child(child, mode)` | completed | `child` entered this node's `sub_nodes` |
 | `on_inheriting(new_parent)` | gate | on each direct child of a replaced node; never recursive — grandchildren see nothing |
 | `on_inherited(old_parent)` | completed | the reparenting happened |
-| `on_moving(new_location)` | gate | the node is to move; `new_location` is the resolved Location — the new parent and the index within its `sub_nodes` |
+| `on_moving(new_location)` | gate | the node is to move; `new_location` is the resolved Location — the new parent and the index within its `sub_nodes`, counted after the node's removal, so within one parent it is the index the node will have |
 | `on_moved(old_location)` | completed | it moved; `old_location` is the resolved Location it left |
 
 The pairs that carry a place follow one rule: the gate is handed where the
@@ -389,8 +402,9 @@ inside the value, so a `Ready` operation cannot carry a stale one. A `Leaf`
 has one, a `StdBlock` two — `evaluation_status_beginning` and
 `evaluation_status_ending` — and no node reads another's: the one question
 asked of a node from outside is `is_finished()`. Every status write goes
-through one setter per operation, which releases what the old status had
-written; the two singletons are the same instance across pickling, so `is`
+through one setter per operation, which releases the operation's resulting
+state when the status goes from written to unwritten — never on a
+rewrite; the two singletons are the same instance across pickling, so `is`
 is always right, and a loaded forest's statuses are all `NotEvaluated`.
 
 **Hierarchy**, following AoA's (`class Leaf` :5333, `class NonLeaf_Node`
@@ -420,23 +434,26 @@ boolean, and on False copies the operation's input into its resulting state
 itself (ARCHITECTURE §6.2). `Theory` and `Section` are `StdBlock`s,
 `Theorem` and `Define` `Leaf`s.
 
-**The recursion** (ARCHITECTURE §3.5), entered only through
-`Node.evaluate_to(ignore_error, evaluate)`, under the forest's lock — taken
-once at the tool entry (above) — starting from the forest with the node as
-destination. A call's two constants
+**The recursion** (ARCHITECTURE §3.5), entered through
+`Node.evaluate_to(ignore_error, evaluate)` and, for an edit's unconditional
+invalidation, `Forest._invalidate_from(position)`, under the forest's lock
+(above), starting from the forest. A walk's two constants
 and the states it releases travel in one `Evaluation`; where the walk is
 travels in a `Mode`:
 
 ```python
-class Evaluation:                    # one evaluate_to call
-    destination: Node
+class Evaluation:                    # one walk
+    destination: Node | None         # the node an evaluating walk runs up to and including;
+                                     # none for an invalidate-only walk
     ignore_error: bool
-    def release(self, slot)          # deleted together when the call ends
+    def release(self, slot)          # deleted together when the walk ends
 
 Mode = Evaluating | Seeking | Invalidating
 class Evaluating: blocked_by: Node | None   # before the destination: run what is not Ready,
-                                            # or, blocked, mark CannotEvaluate(blocked_by)
-class Seeking                               # before the destination without evaluating: touch nothing
+                  rewritten: bool           # or, blocked, mark CannotEvaluate(blocked_by);
+                                            # rewritten: the state here was written this walk,
+                                            # so even a Ready node or an own stop runs again
+class Seeking: destination: Location        # before the position without evaluating: touch nothing
 class Invalidating                          # past the destination: mark NotEvaluated
 
 @dataclass(frozen=True)
@@ -451,10 +468,19 @@ async def _evaluate(self, ev: Evaluation, mode: Mode) -> EvaluationResult
 children, then the ending, and nothing is skipped: a `Ready` operation is
 not rerun, but every node is visited. The mode changes in one place: the
 destination turns it into `Invalidating`, and a stop turns `Evaluating` into
-`Evaluating(stop)` unless `ignore_error`. A nesting node whose beginning
+`Evaluating(stop)` unless `ignore_error`. An evaluating walk's destination
+is a node, reached at its ending; an invalidate-only walk's is a Location,
+reached before the child standing there — so a nesting node at that
+position is invalidated whole, opening first — or, at the index after the
+last child, before the parent's ending. A nesting node whose beginning
 failed enters its children with itself as `blocked_by`; a nesting node
 whose child stopped cannot run its ending and is `CannotEvaluate` with the
-same obstacle. A nesting node is reached at its ending.
+same obstacle. A blocked status never overwrites an own stop: an obstacle
+keeps reporting itself, and is not rerun until edited — or until the state
+under it is rewritten by this walk (ARCHITECTURE §3.3). A resulting state
+is released only when the status of the operation that writes it goes from
+written to unwritten; a rewrite releases nothing. A nesting node is reached
+at its ending.
 
 
 ### 4.2 `isabelle_driver.py`
@@ -471,9 +497,10 @@ Imports every package in the list `launch_TAT` received (§2.6) — the
 from `kind` to Python class, which importing a package fills through the
 `@TAT_node` decorator; one class registers every kind it answers to —
 `Theorem` registers `lemma`, `theorem` and `corollary`. The table is what
-builds the tool schemas and what `edit` dispatches on; loading also rejects
+`edit` dispatches on; loading also rejects
 a class that is omissible on output but compulsory on input
-(MCP_SPECIFICATION §2.1).
+(MCP_SPECIFICATION §2.1), and an `argument_schema` outside the grammar of
+§4.1.
 
 ### 4.4 `builtins.py` and `theorem_node.py`
 

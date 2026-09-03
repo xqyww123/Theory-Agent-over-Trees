@@ -6,6 +6,7 @@ import asyncio
 import sys
 import types
 import typing
+from typing import NotRequired, TypedDict
 
 try:
     import Isabelle_RPC_Host  # noqa: F401
@@ -27,14 +28,20 @@ class Table:
     def __init__(self):
         self.values: dict[str, str] = {}
         self.deleted: list[str] = []
+        self.calls: list[tuple] = []        # every round trip, in order
+
+    def clear(self):
+        self.values.clear(); self.deleted.clear(); self.calls.clear()
 
     def install(self, monkeypatch):
         async def state_delete(conn, names):
+            self.calls.append(("delete", tuple(names)))
             for n in names:
                 self.values.pop(n, None); self.deleted.append(n)
         async def state_exists(conn, name):
             return name in self.values
         async def state_copy(conn, src, dst):
+            self.calls.append(("copy", src, dst))
             if src in self.values: self.values[dst] = self.values[src]
             else: self.values.pop(dst, None)
         for f in (state_delete, state_exists, state_copy):
@@ -43,46 +50,70 @@ class Table:
 
 # --- concrete node classes ------------------------------------------------------
 
+class T_RawAST(TypedDict):
+    name: str
+    fail: NotRequired[bool]
+
 class T(M.Leaf):                    # a leaf whose operation succeeds unless told to fail
-    argument_schema = {"name": M.Argument(str)}
+    argument_schema = T_RawAST
     def __init__(self, parent, state, name, fail=False):
         super().__init__(parent, state)
         self.name, self.fail, self.runs = name, fail, 0
+        self.consumed = NOT_RUN     # what the last successful run read from `state`
+        self.copied = NOT_RUN       # what the last failing run copied through
     @classmethod
-    async def gen(cls, config, raw):
-        return cls(config.parent, config.state, raw["name"])
+    async def gen(cls, config, raw: T_RawAST):
+        return cls(config.parent, config.state, raw["name"], raw.get("fail", False))
     def is_finished(self): return self._status is READY
     async def _eval_opr(self):
         self.runs += 1
-        if self.fail: return False
-        TABLE.values[self.resulting_state().name] = f"after {self.name}"
+        got = TABLE.values.get(self.state.name)
+        if self.fail:
+            self.consumed, self.copied = NOT_RUN, got
+            return False
+        self.consumed = got
+        TABLE.values[self.resulting_state().name] = f"after {self.name}" + run_tag(self.runs)
         return True
+    def on_invalidated(self, operation): self.consumed = NOT_RUN
     def __repr__(self): return self.name
 
 
 class Block(M.StdBlock):
-    argument_schema = {"name": M.Argument(str)}
+    argument_schema = T_RawAST
     def __init__(self, parent, state, name, sbe, fail_beginning=False, fail_ending=False):
         super().__init__(parent, state, [], sbe)
         self.name, self.fail_beginning, self.fail_ending = name, fail_beginning, fail_ending
         self.begin_runs = self.end_runs = 0
+        self.consumed_begin = self.consumed_end = NOT_RUN
+        self.copied_end = NOT_RUN   # what the last failing ending copied through
     @classmethod
-    async def gen(cls, config, raw):
+    async def gen(cls, config, raw: T_RawAST):
         return cls(config.parent, config.state, raw["name"],
-                   Isar_State_Slot.assign(config.state.connection))
+                   Isar_State_Slot.assign(config.state.connection),
+                   fail_beginning=raw.get("fail", False))
     def is_finished(self):
         return (self.evaluation_status_ending is READY and self.evaluation_status_beginning is READY
                 and all(c.is_finished() for c in self.sub_nodes))
     async def _eval_beginning_opr(self):
         self.begin_runs += 1
+        self.consumed_begin = (NOT_RUN if self.fail_beginning
+                               else TABLE.values.get(self.state.name))
         if self.fail_beginning: return False
-        TABLE.values[self._state_after_beginning().name] = f"begin {self.name}"
+        TABLE.values[self._state_after_beginning().name] = \
+            f"begin {self.name}" + run_tag(self.begin_runs)
         return True
     async def _eval_ending_opr(self):
         self.end_runs += 1
-        if self.fail_ending: return False
-        TABLE.values[self.resulting_state().name] = f"end {self.name}"
+        got = TABLE.values.get(self._state_before_ending.name)
+        if self.fail_ending:
+            self.consumed_end, self.copied_end = NOT_RUN, got
+            return False
+        self.consumed_end = got
+        TABLE.values[self.resulting_state().name] = f"end {self.name}" + run_tag(self.end_runs)
         return True
+    def on_invalidated(self, operation):
+        if operation == "beginning": self.consumed_begin = NOT_RUN
+        else: self.consumed_end = NOT_RUN
     def __repr__(self): return self.name
 
 
@@ -96,6 +127,13 @@ class OneTreeForest(M.Forest):      # enough of `Forest` to drive one tree
 
 TABLE = Table()
 CONN = typing.cast(typing.Any, object())     # stands in for a Connection
+NOT_RUN = object()                           # "this operation has not run since it was last current"
+
+
+def run_tag(n):
+    """Every run writes a distinct value, so a stale copy is visible; the
+    first run's value stays bare for the tests that spell it out."""
+    return "" if n == 1 else f"#{n}"
 
 
 def slot(): return Isar_State_Slot.assign(CONN)
@@ -133,7 +171,7 @@ async def locked(f, coro):
 
 @pytest.fixture(autouse=True)
 def table(monkeypatch):
-    TABLE.values.clear(); TABLE.deleted.clear()
+    TABLE.clear()
     TABLE.install(monkeypatch)
 
 
@@ -203,7 +241,7 @@ def test_d_invalidate_only():
     run(locked(f, sec._delete_child(t2)))
     assert sec.sub_nodes == [t1] and st(t1) is READY
     assert st(sec) == (READY, NOT_EVALUATED) and st(t3) is NOT_EVALUATED
-    assert TABLE.values[t1.resulting_state().name] == "after T1"        # the value moved with the position
+    assert TABLE.values[t1.resulting_state().name] == "after T1#2"      # the value (of T1's second run) moved with the position
 
 
 def test_insert_into_evaluated_tree():
@@ -214,7 +252,7 @@ def test_insert_into_evaluated_tree():
     async def insert_and_run(parent, index, raws):     # the tool entry's flow
         async with f.lock:
             nodes = await parent._insert_children(index, raws, kinds)
-            return nodes, await f._run(M.Evaluation(nodes[-1], False), True)
+            return nodes, await f._run(M.Evaluation(nodes[-1], False), M.Evaluating())
 
     (new,), r = run(insert_and_run(sec, 1, [{"kind": "t", "name": "N"}]))
     assert r == M.EvaluationResult(None, INVALIDATING)

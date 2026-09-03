@@ -1,8 +1,8 @@
 """Loading node classes and their table (MODULE_STRUCTURE §4.3).
 
 Importing a node class package fills `kinds` through `@TAT_node`; the table
-is what `edit` dispatches on and what builds the tool schemas.  One
-conversation per process, so the table is module state.
+is what `edit` dispatches on.  One conversation per process, so the table
+is module state.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib
 
 from .exceptions import TAT_InternalError
-from .model import Node
+from .model import Node, validate_argument_schema
 
 # kind -> node class, in registration order — the order agent-facing lists
 # of kinds render in (EXCEPTIONS.md §3, `UnknownKind`).
@@ -27,6 +27,7 @@ def TAT_node(registered_kinds: list[str]):
             raise TAT_InternalError(
                 f"{cls.__name__} is omissible on output but compulsory on"
                 " input")
+        validate_argument_schema(cls.argument_schema)
         for kind in registered_kinds:      # validate whole before writing any
             if kind in kinds:
                 raise TAT_InternalError(

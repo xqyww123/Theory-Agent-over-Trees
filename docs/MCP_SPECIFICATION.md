@@ -53,15 +53,16 @@ A node's identity is an opaque number that survives renaming and moving; the
 id renders its position and name, not that identity, so a rename never
 disturbs results already in flight.
 
-The name comes from the node class. A `Theorem`'s name is its `kind` joined to
-its theorem name — `lemma_P`, `theorem_Q`, `corollary_R`. A `Section`'s and a
-`Text`'s are chosen by the agent. The tree root is a `Theory`
-node whose name is the theory's, and which owns the theory header, the `imports`
-list and the `end`.
+The name comes from the node class, which assembles it from what the agent
+supplied. A `Theorem`'s name is its `kind` joined to its theorem name —
+`lemma_P`, `theorem_Q`, `corollary_R`. A `Section` and a `Text` prefix their
+kind to a name the agent chooses — `section_Basics`, `text_intro`. The tree
+root is a `Theory` node named `theory_<name>` after its theory, and it owns
+the theory header, the `imports` list and the `end`.
 
 Above the trees, the forest's first layer is its `Session` nodes
-(ARCHITECTURE §2): a `Session`'s name is its Isabelle session name, written
-`session_<name>` in an id, and omissible in both directions (§2.1).
+(ARCHITECTURE §2): a `Session` is named `session_<name>` after its Isabelle
+session name, and omissible in both directions (§2.1).
 
 The id is the dotted sequence of the names of a node's ancestors and its own —
 `theory_X.section_Basics.lemma_P`. A name is therefore one id component: a
@@ -69,8 +70,10 @@ letter followed by letters, digits, underscores, primes (`'`) and interior
 hyphens — a hyphen or underscore may not end a name, and a hyphen may not
 begin one (`InvalidName` otherwise). Hyphens exist for `Session` names like
 `HOL-Library`; a class whose names must be Isabelle identifiers, such as
-`Theorem`, rejects them in its `gen`. TAT refuses a name that would give
-two nodes the same id.
+`Theorem`, rejects them in its `gen`. A class judges the part the agent
+supplied in its `gen`, so an `InvalidName` it raises renders the agent's own
+spelling; the framework then checks the assembled name against this grammar.
+TAT refuses a name that would give two nodes the same id.
 
 The forest root has the one id outside this grammar, **`$Root`** — no name
 begins with `$`, so nothing an agent writes can collide with it — and every
@@ -110,7 +113,8 @@ there is no notion of a current tree for it to depend on. So
 stopping at the first form something else in the forest collides with.
 
 **Reading.** TAT accepts any id obtained from the full one by dropping
-input-omissible components. All four of these reach the same node when nothing
+input-omissible components — never the node's own, the component every
+form ends with. All four of these reach the same node when nothing
 else in the forest ends the same way:
 
 ```
@@ -121,7 +125,11 @@ lemma_P
 ```
 
 When more than one node matches, TAT rejects the call and lists the candidates
-rather than choosing one.
+rather than choosing one — unless the id equals one candidate's full id,
+component for component with nothing dropped: the exact match wins. Sibling
+names are unique, so at most one node matches exactly; a full id therefore
+always designates its node, and every id TAT prints resolves back to the node
+it was printed for.
 
 Resolution and shortest-form printing are the same problem Isabelle solves for
 its own name spaces; `Name_Space.extern` computes the shortest unambiguous

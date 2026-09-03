@@ -15,7 +15,7 @@ from isabelle_theory_agent.exceptions import (
     InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
     ResolutionError, TAT_Error, TAT_InternalError, UnexpectedChildren,
-    UnknownKind)
+    UnexpectedField, UnknownKind)
 
 DOC = (Path(__file__).resolve().parent.parent
        / "docs" / "RENDER_BASELINES.md").read_text()
@@ -49,7 +49,11 @@ def check(exc, expected):
 
 def test_node_not_found():
     check(NodeNotFound(id="lemma_fo", near_matches=["lemma_foo", "lemma_fold"]),
-          "`lemma_fo` is not found. Did you mean: `lemma_foo`, `lemma_fold`?")
+          "`lemma_fo` is not found. Did you mean `lemma_foo` or `lemma_fold`?")
+    assert (str(NodeNotFound(id="x", near_matches=["a", "b", "c"]))
+            == "`x` is not found. Did you mean `a`, `b` or `c`?")
+    assert (str(NodeNotFound(id="x", near_matches=["a"]))
+            == "`x` is not found. Did you mean `a`?")
     # No near matches: the doc documents only the first sentence of its line.
     short = str(NodeNotFound(id="lemma_fo", near_matches=[]))
     assert short == "`lemma_fo` is not found."
@@ -82,14 +86,28 @@ def test_missing_field():
 
 def test_invalid_field():
     # The doc holds the shape with a <reason> placeholder.
-    placeholder = "Field `statement`: <reason>."
+    placeholder = "The field `statement` <reason>."
     assert placeholder in BASELINES
     COVERED.add(placeholder)
-    assert (str(InvalidField(field="statement", reason="not a term"))
-            == "Field `statement`: not a term.")
+    assert (str(InvalidField(field="statement", reason="is not a term"))
+            == "The field `statement` is not a term.")
     # A reason ending in a period does not double it.
-    assert (str(InvalidField(field="statement", reason="not a term."))
-            == "Field `statement`: not a term.")
+    assert (str(InvalidField(field="statement", reason="is not a term."))
+            == "The field `statement` is not a term.")
+    # The schema check's own reason form.
+    check(InvalidField(field="statement", reason="must be a string"),
+          "The field `statement` must be a string.")
+
+
+def test_unexpected_field():
+    check(UnexpectedField(holder="lemma", field="statment",
+                          takes=["statement", "name", "facts"],
+                          holder_is_kind=True),
+          "A `lemma` has no field `statment`; it takes `statement`, `name`,"
+          " `facts`.")
+    check(UnexpectedField(holder="facts[1]", field="nmae", takes=["name"],
+                          holder_is_kind=False),
+          "`facts[1]` has no field `nmae`; it takes `name`.")
 
 def test_duplicate_name():
     check(DuplicateName(name="lemma_assoc",
@@ -113,13 +131,14 @@ def test_invalid_name():
 def test_duplicate_theory_short_name():
     check(DuplicateTheoryShortName(short_name="List", holder="HOL.List"),
           "The theory name `List` conflicts with the short name of"
-          " `HOL.List`. No theories can share the same short name.")
+          " `HOL.List`. No two theories can share a short name.")
 
 def test_unexpected_children():
     check(UnexpectedChildren(kind="section", is_leaf=False),
           "When amending a non-leaf node, `children` is not allowed: the"
           " amended node inherits its existing children. To change the"
-          " children, use `delete` and/or `append`/`insert_before`.")
+          " children, use `delete` to remove them and `append` or"
+          " `insert_before` to add new ones.")
     check(UnexpectedChildren(kind="lemma", is_leaf=True),
           "`children` is not allowed: a `lemma` holds no children.")
 
@@ -128,6 +147,10 @@ def test_children_not_inheritable():
                                  new_kind="lemma", children_count=3),
           "`theory_X.section_Basics` has 3 children, which a `lemma` cannot"
           " hold. Move or delete them first.")
+    check(ChildrenNotInheritable(old_id="theory_X.section_Basics",
+                                 new_kind="lemma", children_count=1),
+          "`theory_X.section_Basics` has 1 child, which a `lemma` cannot"
+          " hold. Move or delete it first.")
 
 def test_move_into_own_subtree():
     check(MoveIntoOwnSubtree(id="theory_X.section_Basics",
@@ -190,11 +213,9 @@ def test_raw_ast_path_accumulates_upward():
         e._prefix_raw_ast_path("nodes[2]")
         assert e is exc
     assert exc.raw_ast_path == "nodes[2].children[0]"
-    # Wording pending owner approval; enters RENDER_BASELINES.md once
-    # approved.
-    assert (str(exc) ==
-            "At `nodes[2].children[0]`: A `lemma` needs the field"
-            " `statement`.")
+    check(exc,
+          "At `nodes[2].children[0]`: A `lemma` needs the field"
+          " `statement`.")
 
 def test_opening_line_above_prefixed_cause():
     exc = MissingField(kind="lemma", field="statement")

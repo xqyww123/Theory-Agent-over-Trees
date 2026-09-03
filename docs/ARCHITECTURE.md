@@ -255,7 +255,11 @@ returns either "continue" or "stopped at node X" to its caller (§3.5), and an
 obstacle returns "stopped" whenever it is passed — including on a later call
 that finds it already evaluated and skips it — unless `ignore_error` is set. So
 every call stops at the same node until that node is edited. A node blocked by
-an obstacle, on the other hand, runs as soon as a call reaches it unblocked.
+an obstacle, on the other hand, runs as soon as a call reaches it unblocked. A
+node that is both — its own obstacle, and after another — keeps reporting
+itself: a blocked status never overwrites an own stop, so it is neither rerun
+nor misreported — until a walk rewrites the state under it, by rerunning a
+predecessor that had been blocked; then it runs again, on its new input.
 
 ### 3.4 Invalidation
 
@@ -275,10 +279,12 @@ it releases and deletes it all in one round trip at its end. Deleting a node
 releases every state its subtree owns and cancels any work in flight on it.
 
 Inserting or deleting a node changes which slot its predecessor's resulting
-state is (§3.1), so the value moves with it: on insertion the slot formerly at
-that position is copied into the new node's; on deletion the deleted node's
-slot is copied into the one now at its position. The predecessor is not
-touched.
+state is (§3.1), so the value moves with it when the predecessor has written
+one: on insertion the slot formerly at that position is copied into the new
+node's; on deletion the deleted node's slot is copied into the one now at its
+position. When the predecessor has written nothing, nothing is copied — and
+on deletion the slot at that position is released if the deleted node had
+written it, since its writer is gone. The predecessor is not touched.
 
 Because invalidation always runs forward, a tree's evaluated nodes are a prefix
 of it in tree order. TAT keeps no separate record of how far evaluation has
@@ -321,9 +327,12 @@ is `ready` is still entered, since an obstacle passed under `ignore_error`
 may sit inside it.
 
 Without `evaluate` the same walk touches nothing before the destination, not
-even a node that is not `ready`, and invalidates from the destination on. That
-is what a deletion needs (§3.4): nothing new to run, only the successor and
-what follows to invalidate.
+even a node that is not `ready`, and invalidates from the destination on. Its
+destination is then a position — a parent and an index among its children —
+reached before whatever stands there, so a nesting node at that position is
+invalidated whole, opening first; the index after the last child names the
+parent's ending. That is what a deletion needs (§3.4): nothing new to run,
+only the successor and what follows to invalidate.
 
 Every call returns "continue" or "stopped at node X" (§3.3); after a stop the
 recursion goes on, marking what follows `cannot_evaluate` with X as

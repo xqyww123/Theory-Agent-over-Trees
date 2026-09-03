@@ -61,32 +61,41 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │                             each in its shortest unambiguous form
 │                             (MCP_SPECIFICATION §2.1)            [framework]
 ├─ RawASTError                a submitted RawAST is malformed
-│  ├─ MalformedRawAST         not an object, or no `kind`         [framework]
+│  ├─ MalformedRawAST         missing_kind — an object with no `kind`, or
+│  │                          not an object at all                [framework]
 │  ├─ UnknownKind             kind, available_kinds               [framework]
 │  ├─ MissingField            kind, field — derived from the class's declared
 │  │                          argument schema, before its gen     [framework]
+│  ├─ UnexpectedField         holder, holder_is_kind, field, takes — a field
+│  │                          the class does not declare; holder is the
+│  │                          kind (holder_is_kind), or a nested container's
+│  │                          path.  Schema-derived like MissingField, its
+│  │                          dual                                [framework]
 │  └─ InvalidField            field, reason — schema-derived like
 │                             MissingField; also ready-made for `gen`
 │                             authors' semantic checks (a term Isabelle
 │                             rejects, …), who derive further subclasses
-│                             freely
+│                             freely.  reason is a predicate completing
+│                             "The field `X` …"
 ├─ BadEdit                    the request is well formed, but the change
 │  │                          would break a standing rule; "edit" in the
 │  │                          broad sense of the glossary (ARCHITECTURE §1)
 │  ├─ DuplicateName           name; taken_by — an existing sibling's id, or
-│  │                          the raw_ast_path of the colliding element of
-│  │                          the same call: the two ask for opposite
-│  │                          remedies                            [framework]
+│  │                          the colliding element's coordinate in its own
+│  │                          list (`nodes[0]`, `children[2]`; the
+│  │                          exception's raw_ast_path names that list):
+│  │                          the two ask for opposite remedies   [framework]
 │  ├─ InvalidName             name — outside the name grammar of
 │  │                          MCP_SPECIFICATION §2; checked where
 │  │                          DuplicateName is                    [framework]
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap or
 │  │                          another tree already uses the short name
 │  │                          (MCP_SPECIFICATION §2)              [Theory.gen]
-│  ├─ UnexpectedChildren      kind — `children` may not appear here: on an
-│  │                          amend's replacement they are inherited, and
-│  │                          a Leaf can hold none; never silently
-│  │                          dropped. Raised before any gen runs [framework]
+│  ├─ UnexpectedChildren      kind, is_leaf — `children` may not appear
+│  │                          here: a Leaf can hold none (is_leaf), and an
+│  │                          amend's replacement inherits them; never
+│  │                          silently dropped. Raised before any gen
+│  │                          runs                                [framework]
 │  ├─ ChildrenNotInheritable  old_id, new_kind, children_count — the
 │  │                          replaced node has children and the
 │  │                          replacement class is a Leaf. Raised before

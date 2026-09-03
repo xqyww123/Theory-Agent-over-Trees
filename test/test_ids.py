@@ -108,6 +108,18 @@ def test_reading_accepts_every_omissible_drop(forest):
     assert f.resolve("$Root") is f
     assert f.resolve("section_Basics") is basics
 
+def test_exact_full_id_wins_over_a_drop_match(forest):
+    f, arith, x, basics, p = forest
+    q = mk_leaf(x, "lemma_P")
+    # "session_Arith.theory_X.lemma_P" is q's full id and also p's
+    # section-dropped form: the exact match wins (MCP_SPECIFICATION §2.1),
+    # so every id TAT prints resolves back to the node it was printed for.
+    assert f.resolve("session_Arith.theory_X.lemma_P") is q
+    assert f.id_of(q) == "session_Arith.theory_X.lemma_P"
+    assert f.resolve(f.id_of(q)) is q and f.resolve(f.id_of(p)) is p
+    with pytest.raises(AmbiguousId):        # a form that is nobody's full id
+        f.resolve("lemma_P")
+
 def test_ambiguous_id_lists_candidates_in_tree_order(forest):
     f, arith, x, basics, p = forest
     y = mk_block(Thy, arith, "theory_Y")
@@ -137,6 +149,9 @@ def test_nested_same_name(forest):
         f.resolve("section_Basics")
     assert f.resolve("section_Basics.section_Basics") is inner
     assert f.id_of(inner) == "section_Basics.section_Basics"
+    # the outer section's shortest form is its full id, which its inner
+    # namesake also matches by dropping — the exact match wins
+    assert f.resolve(f.id_of(basics)) is basics
 
 
 # --- the name grammar -------------------------------------------------------

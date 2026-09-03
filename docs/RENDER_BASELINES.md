@@ -31,7 +31,7 @@ Cannot new_session session_Arith
 renders:
 
 ```
-`lemma_fo` is not found. Did you mean: `lemma_foo`, `lemma_fold`?
+`lemma_fo` is not found. Did you mean `lemma_foo` or `lemma_fold`?
 ```
 
 `AmbiguousId`:
@@ -59,10 +59,27 @@ Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `definit
 A `lemma` needs the field `statement`.
 ```
 
-`InvalidField` — `<reason>` is the schema check's or the `gen` author's:
+`InvalidField` — `<reason>` is the schema check's or the `gen` author's, a
+predicate completing the sentence:
 
 ```
-Field `statement`: <reason>.
+The field `statement` <reason>.
+```
+
+The schema check's own reasons are `must be` followed by the JSON type —
+`a string`, `a number`, `a boolean`, `a list`, `an object` — several
+joined with ` or `:
+
+```
+The field `statement` must be a string.
+```
+
+`UnexpectedField` — the holder is the kind, or a nested container's path,
+and `it takes` lists that holder's fields in declaration order:
+
+```
+A `lemma` has no field `statment`; it takes `statement`, `name`, `facts`.
+`facts[1]` has no field `nmae`; it takes `name`.
 ```
 
 `InvalidName`:
@@ -86,13 +103,13 @@ The name `lemma_assoc` is already used by `nodes[0]` of this call.
 `DuplicateTheoryShortName`:
 
 ```
-The theory name `List` conflicts with the short name of `HOL.List`. No theories can share the same short name.
+The theory name `List` conflicts with the short name of `HOL.List`. No two theories can share a short name.
 ```
 
 `UnexpectedChildren`, on an amend's replacement:
 
 ```
-When amending a non-leaf node, `children` is not allowed: the amended node inherits its existing children. To change the children, use `delete` and/or `append`/`insert_before`.
+When amending a non-leaf node, `children` is not allowed: the amended node inherits its existing children. To change the children, use `delete` to remove them and `append` or `insert_before` to add new ones.
 ```
 
 `UnexpectedChildren`, on a leaf:
@@ -101,10 +118,11 @@ When amending a non-leaf node, `children` is not allowed: the amended node inher
 `children` is not allowed: a `lemma` holds no children.
 ```
 
-`ChildrenNotInheritable`:
+`ChildrenNotInheritable`, and with one child:
 
 ```
 `theory_X.section_Basics` has 3 children, which a `lemma` cannot hold. Move or delete them first.
+`theory_X.section_Basics` has 1 child, which a `lemma` cannot hold. Move or delete it first.
 ```
 
 `Bad<Class>NodeParent` — each node class carries its own sentence
@@ -142,6 +160,13 @@ The `$Root` cannot be edited.
 
 ```
 `theory_X.text_intro` does not support construct.
+```
+
+The `raw_ast_path` prefix — on any cause raised while building a batch
+(EXCEPTIONS.md §5):
+
+```
+At `nodes[2].children[0]`: A `lemma` needs the field `statement`.
 ```
 
 ## 3. Evaluation text (ML side)

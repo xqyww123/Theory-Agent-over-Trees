@@ -96,8 +96,10 @@ class NodeNotFound(ResolutionError):
     def _cause(self) -> str:
         sentence = f"`{self.id}` is not found."
         if self.near_matches:
-            guesses = ", ".join(f"`{m}`" for m in self.near_matches)
-            sentence += f" Did you mean: {guesses}?"
+            quoted = [f"`{m}`" for m in self.near_matches]
+            guesses = (quoted[0] if len(quoted) == 1
+                       else ", ".join(quoted[:-1]) + " or " + quoted[-1])
+            sentence += f" Did you mean {guesses}?"
         return sentence
 
 
@@ -164,11 +166,35 @@ class InvalidField(RawASTError):
     def __init__(self, field: str, reason: str):
         super().__init__()
         self.field = field
-        # A clause; the rendering supplies the trailing period.
+        # A predicate completing "The field `X` ..." — e.g. "must be a
+        # string", "is not a well-formed term".  The rendering supplies the
+        # trailing period.
         self.reason = reason
 
     def _cause(self) -> str:
-        return f"Field `{self.field}`: {self.reason.rstrip('.')}."
+        return f"The field `{self.field}` {self.reason.rstrip('.')}."
+
+
+class UnexpectedField(RawASTError):
+    """A field the class does not declare.  Schema-derived like
+    `MissingField`, its dual."""
+
+    def __init__(self, holder: str, field: str, takes: list[str],
+                 holder_is_kind: bool):
+        super().__init__()
+        # The kind (holder_is_kind), or the path of the nested object the
+        # field sits in, e.g. "facts[1]".
+        self.holder = holder
+        self.holder_is_kind = holder_is_kind
+        self.field = field
+        # Every field the holder declares, in declaration order.
+        self.takes = takes
+
+    def _cause(self) -> str:
+        subject = (f"A `{self.holder}`" if self.holder_is_kind
+                   else f"`{self.holder}`")
+        takes = ", ".join(f"`{t}`" for t in self.takes)
+        return f"{subject} has no field `{self.field}`; it takes {takes}."
 
 
 # ---------------------------------------------------------------------------
@@ -225,8 +251,8 @@ class DuplicateTheoryShortName(BadEdit):
 
     def _cause(self) -> str:
         return (f"The theory name `{self.short_name}` conflicts with the"
-                f" short name of `{self.holder}`. No theories can share the"
-                " same short name.")
+                f" short name of `{self.holder}`. No two theories can share"
+                " a short name.")
 
 
 class UnexpectedChildren(BadEdit):
@@ -246,7 +272,8 @@ class UnexpectedChildren(BadEdit):
                     " children.")
         return ("When amending a non-leaf node, `children` is not allowed:"
                 " the amended node inherits its existing children. To change"
-                " the children, use `delete` and/or `append`/`insert_before`.")
+                " the children, use `delete` to remove them and `append` or"
+                " `insert_before` to add new ones.")
 
 
 class ChildrenNotInheritable(BadEdit):
@@ -259,9 +286,11 @@ class ChildrenNotInheritable(BadEdit):
         self.children_count = children_count
 
     def _cause(self) -> str:
-        return (f"`{self.old_id}` has {self.children_count} children, which"
-                f" a `{self.new_kind}` cannot hold. Move or delete them"
-                " first.")
+        one = self.children_count == 1
+        return (f"`{self.old_id}` has"
+                f" {'1 child' if one else f'{self.children_count} children'},"
+                f" which a `{self.new_kind}` cannot hold."
+                f" Move or delete {'it' if one else 'them'} first.")
 
 
 class MoveIntoOwnSubtree(BadEdit):
