@@ -31,7 +31,7 @@ language. A concept that needs a name gets one here first.
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
 | **conversation** | one run of TAT, from Isabelle's call into Python to its return (§9) |
 | **forest directory** | the directory the client names when saving or loading; the ROOT and every `Session`'s directory lie under it (§4) |
-| **edit** | any change to the forest — the `edit`, `move`, `delete` and `new_session` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
+| **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
 
 Isabelle's build unit is always written **Isabelle session** in full; the
@@ -53,8 +53,8 @@ A tree is one theory. The forest's first layer is its `Session` nodes: every
 tree's root sits under exactly one `Session`, an Isabelle session under
 construction (§2.2). Import dependency between trees makes the forest a
 dependency graph, and compilation order is a topological order over it;
-imports cross `Session` boundaries freely, and a `Session` imposes no order
-of its own.
+imports cross `Session` boundaries freely. The `Session` layer is ordered
+like every other; Isabelle reads no meaning into that order.
 
 Initial node classes: `Session`, `Theory`, `Theorem`, `Define`, `Datatype`, `QuotientType`,
 `Record`, `TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be

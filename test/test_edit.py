@@ -123,7 +123,7 @@ def test_batch_aborts_whole_with_the_path(  ):
              "children": [{"kind": "wrong", "name": "x"}]}]
     with pytest.raises(UnknownKind) as e:
         run(locked(f, thy._insert_children(2, raws, KINDS)))
-    assert e.value.raw_ast_path == "nodes[1].children[0]"
+    assert e.value.raw_ast_path == "constructs[1].children[0]"
     assert e.value.kind == "wrong" and e.value.available_kinds == ["t", "block"]
     assert thy.sub_nodes == before and EVENTS == []      # forest untouched
     assert tm.TABLE.values == before_table               # and nothing remote
@@ -134,11 +134,11 @@ def test_duplicate_name_against_sibling_and_batch():
     with pytest.raises(DuplicateName) as e:
         run(locked(f, thy._insert_children(
             2, [{"kind": "t", "name": "c"}], KINDS)))
-    assert e.value.taken_by == "Theory.c" and e.value.raw_ast_path == "nodes[0]"
+    assert e.value.taken_by == "Theory.c" and e.value.raw_ast_path == "constructs[0]"
     with pytest.raises(DuplicateName) as e:
         run(locked(f, thy._insert_children(
             2, [{"kind": "t", "name": "z"}, {"kind": "t", "name": "z"}], KINDS)))
-    assert e.value.taken_by == "nodes[0]" and e.value.raw_ast_path == "nodes[1]"
+    assert e.value.taken_by == "constructs[0]" and e.value.raw_ast_path == "constructs[1]"
 
 def test_the_rawast_error_family():
     f, thy, sec, a, b, c = rbuild()
@@ -160,7 +160,7 @@ def test_the_rawast_error_family():
         run(insert({"kind": "t", "name": True}))     # a flag is not a string
     with pytest.raises(InvalidName) as e:
         run(insert({"kind": "t", "name": "bad name"}))
-    assert e.value.raw_ast_path == "nodes[0]"
+    assert e.value.raw_ast_path == "constructs[0]"
     with pytest.raises(UnexpectedChildren) as e:
         run(insert({"kind": "t", "name": "x", "children": []}))
     assert e.value.is_leaf
@@ -334,7 +334,7 @@ def test_gen_raises_bare_and_the_framework_prefixes_the_path():
                  "children": [{"kind": "t", "name": "x"},
                               {"kind": "fussy", "name": "y"}]}],
             KINDS | {"fussy": Fussy})))
-    assert e.value.raw_ast_path == "nodes[0].children[1]"
+    assert e.value.raw_ast_path == "constructs[0].children[1]"
 
 def test_duplicate_name_inside_a_children_list():
     f, thy, sec, a, b, c = rbuild()
@@ -344,7 +344,7 @@ def test_duplicate_name_inside_a_children_list():
                  "children": [{"kind": "t", "name": "x"},
                               {"kind": "t", "name": "x"}]}], KINDS)))
     assert e.value.taken_by == "children[0]"
-    assert e.value.raw_ast_path == "nodes[0].children[1]"
+    assert e.value.raw_ast_path == "constructs[0].children[1]"
 
 
 # --- amend ------------------------------------------------------------------

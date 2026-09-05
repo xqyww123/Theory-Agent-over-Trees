@@ -12,7 +12,6 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | `edit` | Add nodes, or amend one — replace it, its children inherited (§3.1) |
 | `delete` | Remove a node or a subtree |
 | `move` | Reorder a node within its tree, or move it to another tree or `Session` |
-| `new_session` | Create a `Session` at the forest's first layer (TOOL_SCHEMAS.md §4) |
 | `recall` | Read the forest: a node by id, or the outline |
 | `construct` | Start a node's own operation, where its class has one |
 | `evaluate_to` | Evaluate everything not yet evaluated, up to a node |
@@ -75,10 +74,9 @@ supplied in its `gen`, so an `InvalidName` it raises renders the agent's own
 spelling; the framework then checks the assembled name against this grammar.
 TAT refuses a name that would give two nodes the same id.
 
-The forest root has the one id outside this grammar, **`$Root`** — no name
-begins with `$`, so nothing an agent writes can collide with it — and every
-editing tool refuses it (`ProtectedNode`); `new_session` creates a
-`Session` there (TOOL_SCHEMAS.md §4).
+The forest root has the id **`Sessions`**, a reserved name no node may
+bear. `edit`'s `append` on it creates a `Session`; every other action on it
+is refused (`ProtectedNode`).
 
 A theory's name must also be unique against everything already loaded. Isabelle
 compares theory identities by **short name** — the part after the last dot
@@ -201,8 +199,8 @@ and field at fault (EXCEPTIONS.md).
 
 Editing a node invalidates that node, everything after it in its tree, and
 every tree that imports that tree (ARCHITECTURE §3.4) — unconditionally.
-Whether the call also evaluates is the agent's choice: `edit`, `move` and
-`new_session` each take a mandatory boolean `evaluate` (TOOL_SCHEMAS.md).
+Whether the call also evaluates is the agent's choice: `edit` and `move`
+each take a mandatory boolean `evaluate` (TOOL_SCHEMAS.md).
 With it true, the call runs `evaluate_to` on the change's natural
 destination — the last node the call submitted, in tree order; for a
 `move`, the moved node — with `ignore_error` unset, so the result comes

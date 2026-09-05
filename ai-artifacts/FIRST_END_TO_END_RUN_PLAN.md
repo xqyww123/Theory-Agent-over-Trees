@@ -10,9 +10,9 @@ this file keeps only the implementation record.
 One real tree, evaluated by Isabelle, through the MCP tools. That needs the
 `Session` and `Theory` node classes, the forest scheduling that evaluates
 imported trees first (ARCHITECTURE §3.5), a `Theorem` that emits only
-`sorry`, the `new_session` and `edit` tools, and the persistence and file
-layout everything sits on. `construct`, AoA, and the other node classes are
-outside this plan.
+`sorry`, the `edit` tool, and the persistence and file layout everything
+sits on. `construct`, AoA, and the other node classes are outside this
+plan.
 
 ## 1. The working directory *(approved 2026-09-04)*
 
@@ -27,8 +27,7 @@ fixed:
     <theory name>.thy      one file per tree, named after the theory's short name
 ```
 
-- A `Session`'s directory is its name; the attribute `directory` of
-  `SESSION_AND_THEORY.md` §1 is removed.
+- A `Session`'s directory is its name, not an attribute.
 - The client hands the directory to `TAT_Framework.start`, which passes it
   to `launch_TAT` as an argument. Both sides read the same string: the ML
   side's `begin_theory` takes `<working directory>/<session name>` as the
@@ -55,8 +54,8 @@ The forest is stored in one SQLite database, not pickled.
   (ARCHITECTURE §4.1). Every stored value must be MessagePack-representable;
   that is a requirement on node classes.
 - Every **write operation** is one transaction: `edit`, `move`, `delete`,
-  `new_session`, and an evaluation hook writing a recorded field. Read
-  operations (`recall`, `status`) do not touch the database. The transaction
+  and an evaluation hook writing a recorded field. Read operations
+  (`recall`, `status`) do not touch the database. The transaction
   opens once the operation has succeeded in memory and closes before the
   next `await`; nothing is awaited inside a transaction. Identities are
   handed out before the transaction exists, so `next_identity()` needs none:
@@ -110,41 +109,47 @@ excluding `config.replacing`, and then against the base heap through
 `check_new_theory_short_name` (`DuplicateTheoryShortName`); `imports`
 non-empty with non-empty strings (`InvalidField`).
 
-## 4. `new_session`
+## 4. Creating a `Session` *(approved 2026-09-04)*
 
-*(approved 2026-09-04)*: the tool creates one empty `Session`. It takes no
-`children` — theories are added with `edit`'s `append` on the session's
-id — and no `evaluate`, since a `Session` runs nothing. The `directory`
-field is gone (§1). Remaining fields: `name`, `parent`, `options`,
-`description`; `name` and `parent` required, `options` defaults to empty,
-`description` to empty. The `description` text reads `The session's
-description.`
+There is no `new_session` tool. The forest root has the id `Sessions`;
+`edit` with `action: "append"` and `target_id: "Sessions"` creates a
+`Session`, and `amend` and `delete` address one by id like any node. Every
+other action on the root is refused (`ProtectedNode`), and `Sessions` is a
+reserved node name. The first layer is ordered like any other.
 
-*(approved 2026-09-04)*: the argument object is flat — no enclosing
-`session` key — and reads, description texts included:
+`Session` is an ordinary node class: its `construct_schema` (PLUGIN_SYSTEM.md
+§3) carries `name`, `parent`, `options` (defaults to empty), `description`
+(defaults to empty; the field's schema description reads `The session's
+description.`), and `children` typed `{"$ref": "#/$defs/Theory"}`, so a
+session may be created with its first theories in one call. It has no
+`directory` field (§1).
 
-```jsonc
-{
-  "type": "object",
-  "properties": {
-    "name":        { "type": "string",
-                     "description": "The Isabelle session name, such as `Arith` or `My-Project`." },
-    "parent":      { "type": "string",
-                     "description": "The session this one builds on, such as `HOL` or `HOL-Analysis`." },
-    "options":     { "type": "object", "additionalProperties": { "type": "string" },
-                     "description": "Isabelle session options, such as `document = false`." },
-    "description": { "type": "string", "description": "The session's description." }
-  },
-  "required": ["name", "parent"],
-  "additionalProperties": false
-}
+The root renders as
+
 ```
+Sessions:
+- session_A
+  <fields, rendered by Session.print>
+- session_B
+  ...
+```
+
+and, when the forest is empty,
+
+```
+Sessions:
+  There are no Isabelle sessions yet. Call `edit` with `{"action": "append", "target_id": "Sessions", "constructs": [{"kind": "session", ...}]}` to declare one.
+```
+
+Rendering is every node's own: `print(self, indent: int, out: TextIO) -> int`
+(the full rendering: the node's fields and status, then its children) and
+`quickview(self, indent: int, out: TextIO) -> int` (one line, children
+compressed), each returning the indent for what follows, as `emit_isar`
+does (ARCHITECTURE §4). `recall`'s two detail levels call one or the other,
+and every tool result ends with the forest's `quickview`, as AoA's do.
 
 *(open)*: whether `parent` is checked against Isabelle's known sessions
 (needs a new ML callback) or only transcribed into the ROOT entry.
-
-Documents to update: TOOL_SCHEMAS §1–§4 and MCP_SPECIFICATION §3.2 (the
-`evaluate` flag no longer on `new_session`), `SESSION_AND_THEORY.md` §1.
 
 ## 5. How an import names a forest tree *(open)*
 

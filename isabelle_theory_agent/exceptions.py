@@ -27,7 +27,7 @@ class TAT_Error(Exception, ABC):
     opr: str | None = None
     target: str | None = None
 
-    # Which element of the submitted `nodes` list, e.g. "nodes[2].children[0]"
+    # Which element of the submitted `constructs` list, e.g. "constructs[2].children[0]"
     # (EXCEPTIONS.md §5).  Accumulated by `_prefix_raw_ast_path`.
     raw_ast_path: str | None = None
 
@@ -40,8 +40,8 @@ class TAT_Error(Exception, ABC):
         super().__init__()
 
     def _set_operation(self, opr: str, target: str) -> None:
-        """Framework-only, at the tool entry.  `opr` is one of the six
-        operation names of TOOL_SCHEMAS.md §5; `target` is the operation's
+        """Framework-only, at the tool entry.  `opr` is one of the five
+        operation names of TOOL_SCHEMAS.md §4; `target` is the operation's
         target echoed from the call — for `move` including the destination
         phrase, e.g. "theory_Sorting to before theory_X.lemma_P"."""
         if self.opr is not None or opr not in _OPERATIONS:
@@ -51,7 +51,7 @@ class TAT_Error(Exception, ABC):
 
     def _prefix_raw_ast_path(self, step: str) -> None:
         """Framework-only, on the unwind path.  `step` is the raising
-        element's coordinate in the loop's own list — "nodes[2]" at the top
+        element's coordinate in the loop's own list — "constructs[2]" at the top
         level, "children[0]" nested."""
         self.raw_ast_path = (
             step if self.raw_ast_path is None
@@ -81,9 +81,9 @@ class TAT_StartupError(Exception):
     starts the conversation; never rendered to the agent (EXCEPTIONS.md §1)."""
 
 
-# The six forest-changing operations (TOOL_SCHEMAS.md §5).
+# The five forest-changing operations (TOOL_SCHEMAS.md §4).
 _OPERATIONS = frozenset(
-    {"append", "insert_before", "amend", "move", "delete", "new_session"})
+    {"append", "insert_before", "amend", "move", "delete"})
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +213,9 @@ class BadEdit(TAT_Error, ABC):
     `Bad<Class>NodeParent` from this class (EXCEPTIONS.md §3)."""
 
 
-# A coordinate into the submitted call ("nodes[0]", "children[2]"), which no
+# A coordinate into the submitted call ("constructs[0]", "children[2]"), which no
 # id can be: a name never contains a bracket (MCP_SPECIFICATION §2).
-_COORDINATE = re.compile(r"(?:nodes|children)\[\d+\]")
+_COORDINATE = re.compile(r"(?:constructs|children)\[\d+\]")
 
 
 class DuplicateName(BadEdit):

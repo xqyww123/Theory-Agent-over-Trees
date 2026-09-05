@@ -88,7 +88,7 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          broad sense of the glossary (ARCHITECTURE §1)
 │  ├─ DuplicateName           name; taken_by — an existing sibling's id, or
 │  │                          the colliding element's coordinate in its own
-│  │                          list (`nodes[0]`, `children[2]`; the
+│  │                          list (`constructs[0]`, `children[2]`; the
 │  │                          exception's raw_ast_path names that list):
 │  │                          the two ask for opposite remedies   [framework]
 │  ├─ InvalidName             name — outside the name grammar of
@@ -117,9 +117,9 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          containment
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
-│  └─ ProtectedNode           id — the target is protected; the one such
-│                             node is the forest root, id `$Root`
-│                             (MCP_SPECIFICATION §2)              [framework]
+│  └─ ProtectedNode           id — the target is protected: the forest
+│                             root `Sessions`, which takes `append` and
+│                             nothing else (MCP_SPECIFICATION §2) [framework]
 ├─ ConstructFailed            `construct` could not start
 │  └─ ConstructNotSupported   id — raised by Node.construct's default
 │                             implementation; a class with a `construct`
@@ -140,11 +140,11 @@ touches the rendered string.
 
 ## 4. The `opr` field
 
-The six operations that change the forest — `append`, `insert_before`,
-`amend`, `move`, `delete` and `new_session` (TOOL_SCHEMAS.md) — write their
+The five operations that change the forest — `append`, `insert_before`,
+`amend`, `move` and `delete` (TOOL_SCHEMAS.md) — write their
 name into `opr` at the tool entry. `__str__` then opens with
 `Cannot {opr} {target}`, the target echoed from the call
-(TOOL_SCHEMAS.md §5). Any other tool
+(TOOL_SCHEMAS.md §4). Any other tool
 writes nothing, and the cause renders alone: the forest's shape is
 untouched, and an opening line would only repeat what the agent just
 called.
@@ -157,7 +157,7 @@ unfilled.
 ## 5. The `raw_ast_path` field
 
 An error raised while building a batch must say which element: which index
-of the submitted `nodes` list, nested under which `children`. AoA threads a
+of the submitted `constructs` list, nested under which `children`. AoA threads a
 `path` string down through every parser signature; TAT's `gen(cls, config,
 raw)` deliberately has no such parameter. The path is instead written
 **upward** by the framework:
@@ -169,11 +169,11 @@ raw)` deliberately has no such parameter. The path is instead written
   its own checks included: the `kind` lookup, the schema check, the name
   checks;
 - nesting prefixes `children` steps, so the unwinding loops spell out the
-  full path, rendered as `nodes[2].children[0]`.
+  full path, rendered as `constructs[2].children[0]`.
 
 A coordinate always indexes the **submitted list** — never a position in
 the forest; that is a Location (ARCHITECTURE §1), a different thing under a
-different name. The amend loop walks the whole submitted list, `nodes[0]`
+different name. The amend loop walks the whole submitted list, `constructs[0]`
 dispatched as the replacement, so its indexes are the agent's own.
 
 Two rules keep this sound:

@@ -76,7 +76,7 @@ def test_shortest_form_when_unique(forest):
     assert f.id_of(basics) == "section_Basics"      # its own component stays
     assert f.id_of(x) == "theory_X"
     assert f.id_of(arith) == "session_Arith"
-    assert f.id_of(f) == "$Root"
+    assert f.id_of(f) == "Sessions"
 
 def test_printing_stops_at_the_first_collision(forest):
     f, arith, x, basics, p = forest
@@ -105,7 +105,7 @@ def test_reading_accepts_every_omissible_drop(forest):
                  "session_Arith.lemma_P",
                  "lemma_P"):
         assert f.resolve(form) is p
-    assert f.resolve("$Root") is f
+    assert f.resolve("Sessions") is f
     assert f.resolve("section_Basics") is basics
 
 def test_exact_full_id_wins_over_a_drop_match(forest):
@@ -160,7 +160,7 @@ def test_name_grammar():
     for good in ("lemma_P", "HOL-Library", "x'", "a_b", "T2", "a'b-c_d'"):
         assert is_valid_name(good), good
     for bad in ("Ch. 2 lemmas", "", "a_", "a-", "-a", "_a", "1a", "a.b",
-                "$Root", "a b"):
+                "Sessions", "a b"):
         assert not is_valid_name(bad), bad
 
 

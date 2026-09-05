@@ -15,11 +15,10 @@ sit in the `Session` layer.
 | --- | --- | --- |
 | `name` | the Isabelle session name, `str` | authored |
 | `parent` | the parent Isabelle session of the ROOT entry, `str` | authored |
-| `directory` | path relative to the forest directory, `PurePosixPath` | authored |
 | `options` | `dict[str, str]` | authored |
 | `description` | `str`, empty for none | authored |
 
-A `Session` owns its ROOT entry: `session <name> in <directory> = <parent> +
+A `Session` owns its ROOT entry: `session <name> in <name> = <parent> +
 …`, with `options` and `description` transcribed and the `sessions` and
 `theories` clauses derived from the trees under it (ARCHITECTURE §4). Its
 `name` prefixes its trees' qualified names (EVALUATOR_DESIGN §7). It runs no

@@ -115,8 +115,8 @@ def test_duplicate_name():
           "The name `lemma_assoc` is already taken by"
           " `theory_Sorting.lemma_assoc`. Amend that node, or pick another"
           " name.")
-    check(DuplicateName(name="lemma_assoc", taken_by="nodes[0]"),
-          "The name `lemma_assoc` is already used by `nodes[0]` of this"
+    check(DuplicateName(name="lemma_assoc", taken_by="constructs[0]"),
+          "The name `lemma_assoc` is already used by `constructs[0]` of this"
           " call.")
     # A nested collision coordinate takes the batch rendering too.
     assert (str(DuplicateName(name="x", taken_by="children[2]"))
@@ -158,8 +158,8 @@ def test_move_into_own_subtree():
           "`theory_X.section_Basics` cannot move into its own subtree.")
 
 def test_protected_node():
-    check(ProtectedNode(id="$Root"),
-          "The `$Root` cannot be edited.")
+    check(ProtectedNode(id="Sessions"),
+          "The `Sessions` cannot be edited.")
 
 def test_construct_not_supported():
     check(ConstructNotSupported(id="theory_X.text_intro"),
@@ -176,22 +176,21 @@ OPENINGS = [
     ("move", "theory_Sorting to after theory_X.section_Basics"),
     ("move", "theory_Sorting to session_Arith"),
     ("delete", "theory_X.section_Basics"),
-    ("new_session", "session_Arith"),
 ]
 
 @pytest.mark.parametrize("opr,target", OPENINGS)
 def test_opening_line(opr, target):
-    exc = ProtectedNode(id="$Root")
+    exc = ProtectedNode(id="Sessions")
     exc._set_operation(opr, target)
     opening, cause = str(exc).split("\n")
     assert opening == f"Cannot {opr} {target}"
     assert opening in BASELINES
     COVERED.add(opening)
-    assert cause == "The `$Root` cannot be edited."
+    assert cause == "The `Sessions` cannot be edited."
 
 
 def test_set_operation_refuses_misuse():
-    exc = ProtectedNode(id="$Root")
+    exc = ProtectedNode(id="Sessions")
     with pytest.raises(TAT_InternalError):
         exc._set_operation("frobnicate", "x")        # not one of the six
     exc._set_operation("delete", "theory_X")
@@ -210,20 +209,20 @@ def test_raw_ast_path_accumulates_upward():
             e._prefix_raw_ast_path("children[0]")
             raise                              # the same object re-raised
     except MissingField as e:                  # an outer except still catches
-        e._prefix_raw_ast_path("nodes[2]")
+        e._prefix_raw_ast_path("constructs[2]")
         assert e is exc
-    assert exc.raw_ast_path == "nodes[2].children[0]"
+    assert exc.raw_ast_path == "constructs[2].children[0]"
     check(exc,
-          "At `nodes[2].children[0]`: A `lemma` needs the field"
+          "At `constructs[2].children[0]`: A `lemma` needs the field"
           " `statement`.")
 
 def test_opening_line_above_prefixed_cause():
     exc = MissingField(kind="lemma", field="statement")
-    exc._prefix_raw_ast_path("nodes[2]")
+    exc._prefix_raw_ast_path("constructs[2]")
     exc._set_operation("append", "theory_X.section_Basics")
     assert (str(exc) ==
             "Cannot append theory_X.section_Basics\n"
-            "At `nodes[2]`: A `lemma` needs the field `statement`.")
+            "At `constructs[2]`: A `lemma` needs the field `statement`.")
 
 
 # --- the hierarchy's shape (EXCEPTIONS.md §1, §3) ---------------------------
@@ -254,8 +253,8 @@ def test_group_bases_are_abstract():
 EXEMPT = {
     "A `lemma` cannot be placed under `session_Arith`; it belongs inside a"
     " theory.",
-    "A `Session` cannot be inserted under `theory_X`. Use `new_session` to"
-    " create a session.",
+    "A `session` cannot be placed under `theory_X`; a session lives directly"
+    " under `Sessions`.",
     "A `theory` cannot be placed under `section_Basics`; a theory lives"
     " directly under a session.",
 }

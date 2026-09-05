@@ -195,7 +195,8 @@ def is_valid_name(name: str) -> bool:
     letters, digits, underscores, primes and interior hyphens — a hyphen or
     underscore may not end a name, and a hyphen cannot begin one, since a
     name starts with a letter."""
-    return bool(_NAME_GRAMMAR.fullmatch(name)) and not name.endswith(("-", "_"))
+    return (bool(_NAME_GRAMMAR.fullmatch(name)) and not name.endswith(("-", "_"))
+            and name != "Sessions")                  # the forest root's id (MCP_SPECIFICATION §2)
 
 
 @dataclass(frozen=True)
@@ -517,7 +518,7 @@ class NonLeaf_Node(Node):
         §3.2)."""
         forest = self.forest()
         taken: dict[str, Node | str] = {c.name: c for c in self.sub_nodes}
-        nodes = await _construct_siblings(self, raws, kinds, "nodes", taken,
+        nodes = await _construct_siblings(self, raws, kinds, "constructs", taken,
                                           forest)
         # Commit: pointer surgery plus the one copy of ARCHITECTURE §3.4
         # into the first new node's slot — only when the predecessor
@@ -549,7 +550,7 @@ class NonLeaf_Node(Node):
         forest = self.forest()
         taken: dict[str, Node | str] = {c.name: c
                                         for c in self.sub_nodes if c is not old}
-        nodes = await _construct_siblings(self, raws, kinds, "nodes", taken,
+        nodes = await _construct_siblings(self, raws, kinds, "constructs", taken,
                                           forest, replacing_first=old)
         replacement = nodes[0]
         inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []
@@ -1240,14 +1241,14 @@ class Forest(NonLeaf_Node):
         return [n for n in self._all_nodes() if admits(self._chain(n))]
 
     def resolve(self, id: str) -> Node:
-        """The node an agent-supplied id designates; `$Root` is the forest
+        """The node an agent-supplied id designates; `Sessions` is the forest
         itself.  No match: `NodeNotFound`, with the closest printed ids as
         guesses.  Several: the exact match wins — the one whose chain
         equals the id component for component, nothing dropped; sibling
         names are unique, so there is at most one, and a full id therefore
         always designates its node (MCP_SPECIFICATION §2.1).  Otherwise:
         `AmbiguousId`, the candidates in tree order."""
-        if id == "$Root":
+        if id == "Sessions":
             return self
         parts = id.split(".")
         matches = self._read(parts)
@@ -1274,7 +1275,7 @@ class Forest(NonLeaf_Node):
         to exactly this node — the one with the lowest drop priority, the
         outermost on ties, until none can go."""
         if node is self:
-            return "$Root"
+            return "Sessions"
         chain = self._chain(node)
         kept = list(range(len(chain)))
         while True:

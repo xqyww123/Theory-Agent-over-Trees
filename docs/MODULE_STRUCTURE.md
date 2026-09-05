@@ -296,7 +296,7 @@ An `edit` builds everything before it touches the forest:
    MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
    surviving sibling or with the batch (`DuplicateName`), is refused.
    The amend loop walks the whole submitted list,
-   `nodes[0]` built with `replacing` set; so every `raw_ast_path` indexes
+   `constructs[0]` built with `replacing` set; so every `raw_ast_path` indexes
    the agent's own list.
 2. **Gates.** The hooks that may still veto (Events below), `BadEdit`
    their only voice.

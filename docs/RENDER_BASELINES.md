@@ -22,7 +22,6 @@ Cannot move theory_Sorting to before theory_X.lemma_P
 Cannot move theory_Sorting to after theory_X.section_Basics
 Cannot move theory_Sorting to session_Arith
 Cannot delete theory_X.section_Basics
-Cannot new_session session_Arith
 ```
 
 ## 2. Cause lines
@@ -97,7 +96,7 @@ The name `lemma_assoc` is already taken by `theory_Sorting.lemma_assoc`. Amend t
 `DuplicateName`, colliding inside the submitted batch:
 
 ```
-The name `lemma_assoc` is already used by `nodes[0]` of this call.
+The name `lemma_assoc` is already used by `constructs[0]` of this call.
 ```
 
 `DuplicateTheoryShortName`:
@@ -135,7 +134,7 @@ A `lemma` cannot be placed under `session_Arith`; it belongs inside a theory.
 `Session`'s `BadSessionNodeParent`:
 
 ```
-A `Session` cannot be inserted under `theory_X`. Use `new_session` to create a session.
+A `session` cannot be placed under `theory_X`; a session lives directly under `Sessions`.
 ```
 
 `Theory`'s `BadTheoryNodeParent`:
@@ -153,7 +152,7 @@ A `theory` cannot be placed under `section_Basics`; a theory lives directly unde
 `ProtectedNode`:
 
 ```
-The `$Root` cannot be edited.
+The `Sessions` cannot be edited.
 ```
 
 `ConstructNotSupported`:
@@ -166,7 +165,7 @@ The `raw_ast_path` prefix — on any cause raised while building a batch
 (EXCEPTIONS.md §5):
 
 ```
-At `nodes[2].children[0]`: A `lemma` needs the field `statement`.
+At `constructs[2].children[0]`: A `lemma` needs the field `statement`.
 ```
 
 ## 3. Evaluation text (ML side)
