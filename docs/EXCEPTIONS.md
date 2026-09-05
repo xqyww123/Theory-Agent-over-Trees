@@ -2,7 +2,7 @@
 
 Status: design draft.
 
-## 1. Two worlds
+## 1. Three kinds
 
 `TAT_Error` is what TAT says to the agent: an error the agent can act on,
 raised anywhere, handled in exactly one place — the tool boundary — and
@@ -14,6 +14,12 @@ inherit from `TAT_Error`, and that absent inheritance is the load-bearing
 line of the whole design: the tool boundary catches `TAT_Error` and nothing
 else, so a bug can never dress up as an agent-facing error and be quietly
 retried against. Bugs escape and crash loud.
+
+`TAT_StartupError` is the third kind, and the smallest: TAT cannot start in
+this environment — the working directory's database was written by another
+schema version, or is not a database. It is raised before any tool boundary
+or agent exists, to the client that starts the conversation, and is never
+rendered to the agent. It inherits from neither of the other two.
 
 The same line sorts what node classes raise:
 
@@ -120,9 +126,13 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │                             overrides it (MCP_SPECIFICATION §1)
 
 TAT_InternalError             outside TAT_Error; never caught at the boundary
+
+TAT_StartupError              outside both; TAT cannot start here (§1)
+└─ IncompatibleStore          the database was written under another
+                              schema version                      [Forest_Store]
 ```
 
-Every class carries its facts as fields; `__str__` assembles the
+Every `TAT_Error` carries its facts as fields; `__str__` assembles the
 agent-facing sentence from them. Logic tests assert on the fields; each
 concrete class keeps one **render baseline** — the owner-approved
 agent-facing wording, collected in RENDER_BASELINES.md — and no other test

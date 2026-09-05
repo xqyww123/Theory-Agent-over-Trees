@@ -14,6 +14,9 @@ authors = [
     { name = "Qiyuan Xu", email = "xqyww123@gmail.com" },
 ]
 requires-python = ">=3.11"
+# Also needs the SQLite library Python links to be 3.37 or newer (STRICT
+# tables).  It is not a package, so it cannot be listed below; the store
+# checks it at start (isabelle_theory_agent/store.py, SQLITE_MINIMUM).
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

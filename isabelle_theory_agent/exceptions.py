@@ -75,6 +75,12 @@ class TAT_InternalError(Exception):
     `TAT_Error`, so the tool boundary never catches it (EXCEPTIONS.md §1)."""
 
 
+class TAT_StartupError(Exception):
+    """TAT cannot start in this environment -- the working directory, its
+    database.  Raised before any tool boundary exists, to the client that
+    starts the conversation; never rendered to the agent (EXCEPTIONS.md §1)."""
+
+
 # The six forest-changing operations (TOOL_SCHEMAS.md §5).
 _OPERATIONS = frozenset(
     {"append", "insert_before", "amend", "move", "delete", "new_session"})
