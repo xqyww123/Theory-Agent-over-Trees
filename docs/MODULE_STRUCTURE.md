@@ -310,13 +310,16 @@ An `edit` builds everything before it touches the forest:
    the agent's own list.
 2. **Gates.** The hooks that may still veto (Events below), `BadEdit`
    their only voice.
-3. **Commit** — pointer surgery only, nothing that can fail. The batch is
+3. **Commit** — pointer surgery, which cannot fail, then one store
+   transaction writing what changed (ARCHITECTURE §4.1). The batch is
    linked in; on amend the replacement takes `old`'s position, state
    slot, identity number and children. The one copy of ARCHITECTURE §3.4
    lands in the first new node's slot — and only when the predecessor
    operation has written it: `ready`, or an own stop, whose copy-through
    counts — judged from the Python-side status, no round trip; every
-   other new slot stays empty, as befits `not_evaluated` nodes.
+   other new slot stays empty, as befits `not_evaluated` nodes. A
+   transaction that fails raises `TAT_DisasterError` (EXCEPTIONS.md §1):
+   memory and the database have parted, and the conversation ends.
 4. **Completed events**, then the caller invalidates — and evaluates when
    the call's `evaluate` says so (MCP_SPECIFICATION §3.2).
 

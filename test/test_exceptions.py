@@ -14,8 +14,8 @@ from isabelle_theory_agent.exceptions import (
     ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
-    ResolutionError, TAT_Error, TAT_InternalError, UnexpectedChildren,
-    UnexpectedField, UnknownKind)
+    ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
+    TAT_StartupError, UnexpectedChildren, UnexpectedField, UnknownKind)
 
 DOC = (Path(__file__).resolve().parent.parent
        / "docs" / "RENDER_BASELINES.md").read_text()
@@ -237,8 +237,10 @@ def test_opening_line_above_prefixed_cause():
 
 # --- the hierarchy's shape (EXCEPTIONS.md §1, §3) ---------------------------
 
-def test_internal_error_is_outside():
-    assert not issubclass(TAT_InternalError, TAT_Error)
+def test_the_four_kinds_are_disjoint():
+    kinds = (TAT_Error, TAT_InternalError, TAT_StartupError, TAT_DisasterError)
+    for kind in kinds:
+        assert not issubclass(kind, tuple(k for k in kinds if k is not kind))
 
 def test_groups():
     assert issubclass(NodeNotFound, ResolutionError)

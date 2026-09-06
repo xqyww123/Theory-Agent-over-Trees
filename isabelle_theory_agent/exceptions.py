@@ -81,6 +81,13 @@ class TAT_StartupError(Exception):
     starts the conversation; never rendered to the agent (EXCEPTIONS.md §1)."""
 
 
+class TAT_DisasterError(Exception):
+    """The forest in memory and the forest in the database have parted: a
+    store transaction failed after the operation had been committed in
+    memory.  Not caught at the tool boundary; the conversation ends
+    (EXCEPTIONS.md §1).  `__cause__` is what failed."""
+
+
 # The forest-changing operations (TOOL_SCHEMAS.md §4).
 _OPERATIONS = frozenset(
     {"append", "insert_before", "insert_after", "amend", "move", "delete"})

@@ -9,8 +9,10 @@ Every write happens inside `transaction()`, one per write operation, except
 `next_identity`, which is its own write when no transaction is open.  A
 transaction is held within one synchronous stretch, never across an
 `await`: it opens once the operation has succeeded in memory and closes
-before the next `await`, or two write operations would share it.  Reads
-need no transaction.
+before the next `await`, or two write operations would share it.  Because
+it opens only after the operation is committed in memory, a transaction
+that fails leaves memory and database apart: it raises `TAT_DisasterError`
+(EXCEPTIONS.md §1) and the conversation ends.  Reads need no transaction.
 
 There is no per-field delete: to rewrite a node's fields, `delete_node` and
 `put` them again inside the one transaction.  `delete_node` removes one node;
@@ -38,7 +40,7 @@ from typing import Any, cast
 
 import msgpack
 
-from .exceptions import TAT_InternalError, TAT_StartupError
+from .exceptions import TAT_DisasterError, TAT_InternalError, TAT_StartupError
 
 SCHEMA_VERSION = 1
 SQLITE_MINIMUM = (3, 37, 0)          # STRICT tables; the library Python links, not a package
@@ -95,7 +97,7 @@ class Forest_Store:
             raise TAT_StartupError(f"{path}: {e}") from e
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
-            with self.transaction():
+            with self._transaction():           # nothing is committed in memory yet
                 self._conn.execute(
                     "CREATE TABLE IF NOT EXISTS fields ("
                     " node INTEGER NOT NULL, field TEXT NOT NULL, value BLOB NOT NULL,"
@@ -127,7 +129,8 @@ class Forest_Store:
     @contextmanager
     def transaction(self) -> Generator[None]:
         """One write operation.  Commits on exit; on an exception rolls back
-        and lets it propagate.
+        and raises `TAT_DisasterError` from it -- the operation is already
+        committed in memory, so memory and database have parted.
 
         Never `await` inside: the transaction opens once the operation has
         succeeded in memory and closes before the next `await`.  A
@@ -137,6 +140,18 @@ class Forest_Store:
         suite's fake driver asserts it at every round trip."""
         if self._conn.in_transaction:
             raise TAT_InternalError("Forest_Store: a transaction is already open")
+        try:
+            with self._transaction():
+                yield
+        except Exception as e:
+            raise TAT_DisasterError(
+                f"Forest_Store: a write operation failed after its commit in memory: {e}") from e
+
+    @contextmanager
+    def _transaction(self) -> Generator[None]:
+        """The bare transaction: commit on exit, roll back and let the
+        exception through otherwise.  For opening the database, where no
+        operation is committed in memory."""
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             yield

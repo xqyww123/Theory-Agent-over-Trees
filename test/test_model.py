@@ -20,7 +20,8 @@ except ImportError:                       # the test needs no Isabelle
 import pytest
 
 from isabelle_theory_agent import isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import TAT_InternalError, TAT_StartupError
+from isabelle_theory_agent.exceptions import (
+    TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.model import (
     NOT_EVALUATED, READY, INVALIDATING, CannotEvaluate, Isar_State_Slot)
 from isabelle_theory_agent.store import Forest_Store
@@ -463,10 +464,31 @@ class WriteOnly(Bare):              # ... and one that wrote only to_store
     def to_store(self, rows): rows.put("name", self.name)
 
 
+def test_a_store_failure_after_the_commit_is_a_disaster(tmp_path):
+    """The transaction opens after the in-memory commit, so its failure
+    parts memory from the database: `TAT_DisasterError`, from the cause;
+    the database keeps the last committed forest (EXCEPTIONS.md §1)."""
+    class Broken(T):
+        def to_store(self, rows):
+            raise ZeroDivisionError("to_store broke")
+    path = tmp_path / "theory_forest.sqlite"
+    f = OneTreeForest(CONN, Forest_Store(path))
+    (thy,) = run(locked(f, f._insert_children(0, [{"kind": "block", "name": "Theory"}], KINDS)))
+    with pytest.raises(TAT_DisasterError, match="to_store broke") as e:
+        run(locked(f, thy._insert_children(0, [{"kind": "b", "name": "x"}], {"b": Broken})))
+    assert isinstance(e.value.__cause__, ZeroDivisionError)
+    assert [n.name for n in thy.sub_nodes] == ["x"]          # memory kept the change
+    f.store.close()
+    f2 = OneTreeForest(CONN, Forest_Store(path))              # the database did not
+    assert [t.name for t in f2.sub_nodes] == ["Theory"] and f2.sub_nodes[0].sub_nodes == []
+
+
 def test_a_class_without_to_store_fails_at_its_first_edit():
     f = OneTreeForest(CONN)
-    with pytest.raises(TAT_InternalError, match="Bare has no to_store"):
+    # inside the store transaction, so a disaster whose cause is the class's bug
+    with pytest.raises(TAT_DisasterError, match="Bare has no to_store") as e:
         run(locked(f, f._insert_children(0, [{"kind": "bare", "name": "x"}], {"bare": Bare})))
+    assert isinstance(e.value.__cause__, TAT_InternalError)
 
 
 def test_a_class_without_from_store_fails_at_the_reopen():

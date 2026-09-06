@@ -9,7 +9,8 @@ import threading
 import msgpack
 import pytest
 
-from isabelle_theory_agent.exceptions import TAT_InternalError, TAT_StartupError
+from isabelle_theory_agent.exceptions import (
+    TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.store import SCHEMA_VERSION, Forest_Store, IncompatibleStore
 
 
@@ -91,18 +92,19 @@ def test_transactions_do_not_nest(store):
     assert store.get(1, "kind") == "lemma"
 
 
-def test_an_exception_rolls_the_whole_operation_back(store):
+def test_an_exception_rolls_the_whole_operation_back_as_a_disaster(store):
     with store.transaction():
         store.put(1, "kind", "theory")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TAT_DisasterError, match="to_store broke") as e:
         with store.transaction():
             store.put(1, "kind", "lemma")
             store.put(2, "kind", "lemma")
             store.delete_node(1)
-            raise RuntimeError("gate vetoed")
+            raise RuntimeError("to_store broke")
+    assert isinstance(e.value.__cause__, RuntimeError)
     assert store.nodes() == [1]
-    assert store.fields(1) == {"kind": "theory"}
-    # and the store is usable afterwards
+    assert store.fields(1) == {"kind": "theory"}          # the last committed forest
+    # and the store is usable afterwards: the next start loads it
     with store.transaction():
         store.put(3, "kind", "section")
     assert store.nodes() == [1, 3]
@@ -118,18 +120,20 @@ def _nested(depth: int) -> list:
 @pytest.mark.parametrize("value", [object(), 2**64, -2**63 - 1, _nested(700),
                                    {(1, 2): "a tuple key packs, and unpacks to a list"}])
 def test_unrepresentable_value_names_the_field(store, value):
-    with pytest.raises(TAT_InternalError, match=r"field `statement` of node 5"):
+    with pytest.raises(TAT_DisasterError, match=r"field `statement` of node 5") as e:
         with store.transaction():
             store.put(5, "statement", value)
+    assert isinstance(e.value.__cause__, TAT_InternalError)   # the class's bug, as the cause
     assert store.nodes() == []
 
 
-def test_a_failed_write_raises_the_real_error_and_leaves_the_store_usable(store):
+def test_a_failed_write_carries_the_real_error_and_leaves_the_store_usable(store):
     store._conn.execute("PRAGMA max_page_count = 12")      # fault injection: a full disk
-    with pytest.raises(sqlite3.OperationalError, match="full"):
+    with pytest.raises(TAT_DisasterError, match="full") as e:
         with store.transaction():
             for node in range(200):
                 store.put(node, "text", "x" * 4096)
+    assert isinstance(e.value.__cause__, sqlite3.OperationalError)
     store._conn.execute("PRAGMA max_page_count = 1073741823")
     assert store.nodes() == []
     with store.transaction():
@@ -142,10 +146,11 @@ def test_the_columns_are_typed(store):
     # field column nothing but text, so nodes() can never return anything
     # but ints.  A value SQLite can convert without loss ("7") is
     # converted; one it cannot is a caller bug
-    with pytest.raises(TAT_InternalError, match=r"field `kind` of node x/y"):
+    with pytest.raises(TAT_DisasterError, match=r"field `kind` of node x/y") as e:
         with store.transaction():
             store.put("x/y", "kind", "lemma")
-    with pytest.raises(TAT_InternalError, match=r"of node 1"):
+    assert isinstance(e.value.__cause__, TAT_InternalError)
+    with pytest.raises(TAT_DisasterError, match=r"of node 1"):
         with store.transaction():
             store.put(1, b"\x00", "lemma")
     assert store.nodes() == []
@@ -201,7 +206,7 @@ def test_identities_are_fresh_across_reopen(tmp_path):
 
 
 def test_a_rolled_back_identity_is_handed_out_again(store):
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TAT_DisasterError):
         with store.transaction():
             assert store.next_identity() == 1
             raise RuntimeError

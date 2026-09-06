@@ -102,7 +102,10 @@ The forest is stored in one SQLite database, not pickled.
   and an evaluation hook writing a recorded field. Read operations
   (`recall`, `status`) do not touch the database. The transaction opens
   once the operation has succeeded in memory and closes before the next
-  `await`; nothing is awaited inside a transaction. Identities are handed
+  `await`; nothing is awaited inside a transaction. A transaction that
+  fails raises `TAT_DisasterError` (EXCEPTIONS.md §1): the operation is
+  already committed in memory, so memory and the database have parted,
+  and the conversation ends. Identities are handed
   out before the transaction exists, so `next_identity()` needs none:
   outside one it is its own write. An operation stores only what it
   changed: `_store_subtree` for every new subtree, `_store_node` for a
