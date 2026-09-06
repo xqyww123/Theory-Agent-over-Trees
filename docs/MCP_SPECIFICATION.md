@@ -19,7 +19,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 
 `construct` is generic: it dispatches to the node class, and a class without one
 reports that it is not supported. On a `Theorem` it starts the proof search.
-Whether it takes one node or several is undecided (OPEN_QUESTIONS §3).
+Whether it takes one node or several is undecided (OPEN_QUESTIONS §2).
 
 `move` exists because order carries meaning at theory level: a lemma must follow
 everything it uses. Reordering and re-homing declarations is what a tree does
@@ -178,7 +178,7 @@ field's name is the same for every class.
 **Adding** — `append`, `insert_before` and `insert_after` (TOOL_SCHEMAS.md
 §1) — links the constructs, in order, at the destination.
 
-**Amending** replaces the addressed node with the first description. The
+**Amending** replaces the addressed node with the first construct. The
 node's children are inherited, never resupplied: a replacement carrying
 `children` is rejected, as is a leaf replacement when the node has
 children (EXCEPTIONS.md). The node's identity (§2) passes to the
@@ -187,10 +187,10 @@ node — and a running `construct` on it is cancelled. Which of the node's
 recorded fields survive is its class's judgement, made in `gen` through
 the node it is handed (MODULE_STRUCTURE §4.1): `Theorem` keeps its proof
 when the statement is unchanged, so a rename costs no search.
-Descriptions after the first are added after the replacement, so one call
+Constructs after the first are added after the replacement, so one call
 turns a lemma into a definition and two lemmas.
 
-An `edit` is atomic: nothing touches the forest until every description
+An `edit` is atomic: nothing touches the forest until every construct
 has been built and checked (MODULE_STRUCTURE §4.1), so it applies whole
 or leaves the forest exactly as it was, and the error names the element
 and field at fault (EXCEPTIONS.md).
@@ -220,8 +220,9 @@ it.
 it carries one more, internal flag (MODULE_STRUCTURE §4.1) — evaluates
 every node that is not evaluated, in tree order, up to and including the destination — a nesting
 node's whole subtree, so the `Theory` node's id means the whole tree, `end`
-included. It returns when it has finished or when it has stopped, naming the
-node it stopped at; `ignore_error` carries on past a node that would stop it.
+included. It returns when every tree it ran has finished or stopped, naming
+the first stopped node in tree order; `ignore_error` carries on past a node
+that would stop it.
 Where evaluation stops, and why the same node stops every later call until it
 is edited, is ARCHITECTURE §3.3.
 
@@ -245,4 +246,4 @@ messages on demand, for an agent that wants them before its next edit.
 ## 6. Undecided
 
 - **The omissibility flags for `Locale` and `Context`**, along with the rest of
-  those two node classes (OPEN_QUESTIONS §2).
+  those two node classes (OPEN_QUESTIONS §1).

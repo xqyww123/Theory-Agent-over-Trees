@@ -196,13 +196,13 @@ One section per predefined node class, each a client of §2.5.
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot; `end` through `end_theory`, writing the theory table |
 | `Theorem` | the statement, then `sorry` or `by` with the stored proof (ARCHITECTURE §3.6) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
-| `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §2) |
+| `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
-`Theory` is registered like every other class; the framework does not know it.
-
-`Session` registers nothing: it runs no Isabelle commands — its evaluation is
+`Theory`'s evaluator is registered like every other class's. `Session`
+registers no evaluator: it runs no Isabelle commands — its evaluation is
 the forest's scheduling (ARCHITECTURE §3.5) and its emission the ROOT entry
-(ARCHITECTURE §4). It lives entirely in `builtins.py` (§4.4).
+(ARCHITECTURE §4). The Python halves of both are framework classes in
+`model.py` (§4.4).
 
 ## 4. Python side
 
@@ -227,7 +227,7 @@ isabelle_theory_agent/
 
 `Node` is the Python half of the node class contract (ARCHITECTURE §6): the
 authored and recorded fields, the argument schema — a TypedDict the
-framework checks submitted descriptions against (below), and which types
+framework checks submitted constructs against (below), and which types
 `gen`'s `raw` for the static checker — `gen` (below), `emit_isar`, the name it gives the node and its two omissibility
 flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
 parent's `sub_nodes`, computed, never stored — an optional `construct`,
@@ -238,7 +238,7 @@ parent's `sub_nodes`, computed, never stored — an optional `construct`,
 object the agent submitted, `Mapping[str, Any]`. Two of its fields belong
 to the framework: `kind` selects the node class (§4.3), and `children` —
 which no `gen` ever sees — holds a nesting node's contents. The framework
-also checks the description's mechanical shape — no field the class does
+also checks the construct's mechanical shape — no field the class does
 not declare, required fields present, types right — against the class's
 declared argument schema, raising `UnexpectedField` / `MissingField` /
 `InvalidField` before the class is consulted. A declaration's annotations
@@ -260,13 +260,18 @@ class NodeConfig(NamedTuple):
     parent: NonLeaf_Node     # never None: the forest root is not made this way.
                              # During an edit this may be a node not yet in the
                              # forest (a nesting node under construction)
-    replacing: Node | None   # on the amend path, the node this description is
+    replacing: Node | None   # on the amend path, the node this construct is
                              # replacing; None on every other path. Read it for
                              # exactly two things: leave it out of any uniqueness
                              # check (it is leaving the forest), and carry over
                              # recorded fields the class judges still valid —
                              # Theorem keeps its proof when the statement is
                              # unchanged. Read-only; never mutate it
+    claims: Claims           # the batch's claims registry: names taken in a
+                             # forest-wide namespace by the pre-edit forest
+                             # (less `replacing`) and by the constructs built
+                             # so far in this call (ai-artifacts/
+                             # FIRST_END_TO_END_RUN_PLAN.md §3)
 
 @classmethod
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
@@ -277,15 +282,15 @@ may live is the node's own judgement: its `gen` refuses a parent its class
 cannot live under — `Bad<Class>NodeParent`, EXCEPTIONS.md §3 — and on a
 move its `on_moving` does; the framework checks no containment. It may read
 over the wire through the framework's query callbacks — `Theory.gen`
-checks its short name against the base heap and the forest, excluding
-`config.replacing` — and those callbacks raise only `TAT_Error` subclasses,
+checks its short name against the base heap — and those callbacks raise
+only `TAT_Error` subclasses,
 so a transport failure is never blamed on the class. It must not write:
 an aborted edit undoes nothing remotely. It raises `TAT_Error`s bare; the
 framework prefixes the `raw_ast_path` (EXCEPTIONS.md §5).
 
 An `edit` builds everything before it touches the forest:
 
-1. **Construct, detached.** Every description, in submission order: the
+1. **Construct, detached.** Every construct, in submission order: the
    `children`-legality checks (`UnexpectedChildren`,
    `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
    table alone, so they run before any `gen`), the class lookup, the
@@ -294,7 +299,11 @@ An `edit` builds everything before it touches the forest:
    framework assigns each new node a fresh state slot and reads the name
    off the finished node: a name outside the grammar of
    MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
-   surviving sibling or with the batch (`DuplicateName`), is refused.
+   surviving sibling or with the batch (`DuplicateName`), is refused; a
+   class may also claim a name in a forest-wide namespace — `Theory`'s
+   short names — through the claims registry on `NodeConfig`, seeded from
+   the pre-edit forest less `config.replacing`, which refuses a second
+   claim the same way (`DuplicateTheoryShortName`).
    The amend loop walks the whole submitted list,
    `constructs[0]` built with `replacing` set; so every `raw_ast_path` indexes
    the agent's own list.
@@ -373,7 +382,8 @@ may hold nothing; the only code that may assume its slot holds a state is
 an evaluation hook — `_eval_opr`, `_eval_beginning_opr`,
 `_eval_ending_opr` — because the recursion runs a node only after
 everything before it is `ready` (ARCHITECTURE §3.5). The one exception is
-a `Theory` root's own `state`, which nothing writes (OPEN_QUESTIONS §1).
+a `Theory` root's own `state`, which nothing writes
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 Everything that needs the prover — fetching facts, checking terms,
 recording results — therefore belongs in the evaluation hooks, not in
 `gen` and not in events.
@@ -402,8 +412,9 @@ inside the value, so a `Ready` operation cannot carry a stale one. A `Leaf`
 has one, a `StdBlock` two — `evaluation_status_beginning` and
 `evaluation_status_ending` — and no node reads another's: the one question
 asked of a node from outside is `is_finished()`, which the framework
-answers — every operation of the node and of its subtree `Ready`, and the
-class's `_owes_nothing()` true (ARCHITECTURE §3.2); a class overrides
+answers — every operation of the node and of its subtree `Ready`, and
+`_owes_nothing()` true on it and on every node of its subtree
+(ARCHITECTURE §3.2); a class overrides
 `_owes_nothing()` and never `is_finished()`, and the loader refuses one that
 does (PLUGIN_SYSTEM §5). Every status write goes through one setter per
 operation, which releases the operation's resulting state when the status
@@ -423,13 +434,19 @@ statuses are all `NotEvaluated`.
   `state` into the first child's `state`) and, if it has an ending command,
   `_eval_ending_opr() -> bool` (from `_state_before_ending` into
   `resulting_state()`); the default ending copies.
-- `Session(NonLeaf_Node)` — groups trees and carries the ROOT entry's fields
-  (node_classes/SESSION_AND_THEORY.md §1); not on the evaluation path — the
-  forest works on the theories directly (ARCHITECTURE §3.5).
-- `Forest(NonLeaf_Node)` — the root above every tree; holds the lock, and
-  overrides id resolution and shortest-form printing, the import graph and
-  its topological order, invalidation of every tree that imports a changed
-  one, and the first step of evaluating imports to their `end`.
+- `Unchained_Node(NonLeaf_Node)` — a container whose children are not
+  chained: a child's resulting slot is its own slot, which nothing reads,
+  and no child's result is the next child's input; it runs no operation
+  of its own (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
+- `Session(Unchained_Node)` — groups trees and carries the ROOT entry's
+  fields (node_classes/SESSION_AND_THEORY.md §1); not on the evaluation
+  path — the forest works on the theories directly (ARCHITECTURE §3.5),
+  and a walk reaching a `Session` is a framework bug.
+- `Forest(Unchained_Node)` — the root above every `Session`; holds the
+  lock, and overrides id resolution and shortest-form printing, the import
+  graph (recomputed whenever needed, never stored), the routing of a walk
+  to the tree it concerns, invalidation of every tree that imports a
+  changed one, and the running of a tree's imports to their `end`.
 
 An evaluation hook runs the class's own ML callback itself, through `isabelle_driver`
 (§4.2), and records what it likes on the node; the framework reads only the
@@ -505,7 +522,9 @@ schema, is PLUGIN_SYSTEM.md.
 
 ### 4.4 `builtins.py` and `theorem_node.py`
 
-The predefined node classes of ARCHITECTURE §2.2. `Theorem` has its own file
+The predefined node classes of ARCHITECTURE §2.2, except `Session` and
+`Theory`, which carry the forest's structure and live in `model.py`
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). `Theorem` has its own file
 because `construct` is where everything asynchronous lives: it starts the AoA
 search and hangs the running search on the node (ARCHITECTURE §3.6, §9) — how
 it drives AoA is designed here, on AoA's own precedent; it stores the method

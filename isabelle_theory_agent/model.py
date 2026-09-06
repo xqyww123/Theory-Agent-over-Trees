@@ -228,14 +228,14 @@ class Node(ABC):
     drop_priority: ClassVar[int] = 0
 
     # The class's declared argument schema (MODULE_STRUCTURE §4.1): a
-    # TypedDict.  The framework checks a submitted description against it
+    # TypedDict.  The framework checks a submitted construct against it
     # before `gen` is consulted, and it types `gen`'s `raw` for the static
     # checker.  The JSON tool schemas are hand-written, as AoA's.
     argument_schema: ClassVar[Any] = None
 
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
-        """Semantic construction from the agent's description — `raw`, the
+        """Semantic construction from the agent's construct — `raw`, the
         RawAST, which the class annotates with its own `argument_schema`
         TypedDict (MODULE_STRUCTURE §4.1): judge the fields' meaning, refuse
         a parent the class cannot live under, and build the node from
@@ -873,7 +873,7 @@ class NodeConfig(NamedTuple):
     parent: NonLeaf_Node     # never None: the forest root is not made this
                              # way.  During an edit this may be a node not
                              # yet in the forest
-    replacing: Node | None   # on the amend path, the node this description
+    replacing: Node | None   # on the amend path, the node this construct
                              # is replacing; None on every other path.  Read
                              # it for exactly two things: leave it out of any
                              # uniqueness check, and carry over recorded
@@ -1004,8 +1004,11 @@ def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
         if not prefix and field in ("kind", "children"):
             continue                       # the framework's own fields
         if field not in hints:
+            # At the top level `kind` is the framework's field, not one the
+            # class "takes" (RENDER_BASELINES.md §2).
+            takes = [f for f in hints if prefix or f != "kind"]
             raise UnexpectedField(prefix[:-1] if prefix else kind, field,
-                                  list(hints), holder_is_kind=not prefix)
+                                  takes, holder_is_kind=not prefix)
     for field in td.__required_keys__:
         if field not in mapping:
             raise MissingField(kind, prefix + field)
@@ -1084,7 +1087,7 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST],
                               taken: dict[str, Node | str], forest: Forest,
                               replacing_first: Node | None = None
                               ) -> list[Node]:
-    """Step 1 of an edit: every description in submission order, detached.
+    """Step 1 of an edit: every construct in submission order, detached.
     `taken` maps each surviving sibling's name to the node, each batch
     element's to its coordinate — printed only at the raise — so
     `DuplicateName` points either way.  The element's coordinate is
@@ -1164,7 +1167,7 @@ async def _construct_element(raw: RawAST, kinds: Mapping[str, type[Node]],
 
 class Forest(NonLeaf_Node):
     """The root above every tree.  Trees are not chained: a tree's result is
-    not the next tree's input.  Undecided with `Theory` (OPEN_QUESTIONS §1)."""
+    not the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6)."""
 
     lock: asyncio.Lock                         # held across every evaluation and tree change
 

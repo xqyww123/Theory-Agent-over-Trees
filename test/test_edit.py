@@ -220,6 +220,17 @@ def test_schema_typed_dict_forms():
                                     "facts": [{"name": "f", "extra": 1}]})
     assert (e.value.holder, e.value.field) == ("facts[0]", "extra")
     assert e.value.takes == ["name"] and not e.value.holder_is_kind
+    # a TypedDict that declares `kind` for the static checker: `takes`
+    # still does not advertise the framework's field
+    from typing import Literal, TypedDict
+
+    class WithKind(TypedDict):
+        kind: Literal["t"]
+        name: str
+    with pytest.raises(UnexpectedField) as e:
+        M._check_schema(type("RK", (RT,), {"argument_schema": WithKind}),
+                        "t", {"kind": "t", "nmae": "x"})
+    assert e.value.takes == ["name"]
     # no declaration, no check
     class Loose(RT):
         argument_schema = None
@@ -705,7 +716,7 @@ def test_random_interleavings_keep_the_invariants():
             op = rng.choice(["insert", "delete", "amend", "move",
                              "evaluate", "invalidate", "flip"])
             if op == "flip" and movable:     # a verdict changes between runs; not the
-                n = rng.choice(movable)      # tree root's, whose input nobody writes (OPEN_QUESTIONS §1)
+                n = rng.choice(movable)      # tree root's, whose input nobody writes (the plan's §6)
                 if isinstance(n, Block):
                     which = rng.choice(["fail_beginning", "fail_ending"])
                     setattr(n, which, not getattr(n, which))

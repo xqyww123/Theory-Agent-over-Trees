@@ -83,7 +83,7 @@ beginning command and no ending one.
 `Context` and `Locale` also contain nodes, and unlike `Section` they carry
 **operational behaviour**: they open an Isabelle context, so their children are
 checked inside it and the facts they declare are qualified by it. Both are
-unspecified (OPEN_QUESTIONS §2).
+unspecified (OPEN_QUESTIONS §1).
 
 ### 2.1 The trees are pure declarations *(decided)*
 
@@ -152,7 +152,7 @@ structure, are specified in
 [node_classes/SESSION_AND_THEORY.md](node_classes/SESSION_AND_THEORY.md).
 
 `Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
-and `Locale` are unspecified (OPEN_QUESTIONS §2).
+and `Locale` are unspecified (OPEN_QUESTIONS §1).
 
 ## 3. Evaluation *(decided)*
 
@@ -172,6 +172,10 @@ A node's resulting state is the slot of its next sibling, or, for a last child,
 the slot its parent keeps for the position after all its children. The
 resulting slot of one node and the input slot of the next are therefore the
 same slot, and re-evaluating a node writes into slots that already exist.
+The one exception is a container whose children are not chained — a
+`Session`'s trees, the root's `Session`s: there a child's resulting slot is
+its own slot, which nothing reads (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
+§6).
 
 A nesting node's beginning command writes its first child's slot. After the
 last child, the nesting node's ending command reads the slot it keeps for the
@@ -213,9 +217,9 @@ framework's walk does read them — that is how it knows what to run (§3.5).
 `finished` says whether the node still owes anything. It is derived, never
 stored, so it cannot drift from what it is derived from, and the framework
 owns the derivation: a node is `finished` when every operation of its own
-and of its subtree is `ready` and the node owes nothing of its own. The
-class supplies only the last part, `_owes_nothing()`, which is true by
-default.
+and of its subtree is `ready`, and it and every node of its subtree owes
+nothing. The class supplies only its own part, `_owes_nothing()`, which is
+true by default.
 
 | node class | owes nothing when |
 | --- | --- |
@@ -274,12 +278,15 @@ Invalidating a node marks it and every node after it in its tree
 trees it imports, so a change anywhere in an imported tree invalidates all of an
 importing one.
 
-Editing a `Session` invalidates every tree under it — their qualified names
-carry its `name` — and, through the same rule, every tree that imports them.
+Renaming a `Session` invalidates every tree under it — their qualified names
+carry its `name` — and, through the same rule, every tree that imports them;
+an edit that changes no tree's qualified name and no tree's resolved import
+set invalidates nothing (the mechanism: ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
+§6).
 
 Whatever an operation wrote is released when the operation stops being
 current — its result, or the input it copied through on failing; the names
-stay with the node and re-evaluation writes them again. A call collects what
+stay with the node and re-evaluation writes them again. A walk collects what
 it releases and deletes it all in one round trip at its end. Deleting a node
 releases every state its subtree owns and cancels any work in flight on it.
 
@@ -366,7 +373,7 @@ context is invalidated under it. This adds no framework machinery: invalidation
 and evaluation are already the two moments the framework calls into a node
 class, so the class is told at invalidation that its context is no longer
 current, and is given the new one at evaluation. What `Theorem` does with that is open
-(OPEN_QUESTIONS §4).
+(OPEN_QUESTIONS §3).
 
 ## 4. Compilation *(decided)*
 
@@ -509,7 +516,7 @@ of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md).
 The prover runs on one **base heap** — launched and chosen by the client
 (§9), with nothing of TAT in it — and the forest sits on top of it, no tree
 in any heap
-(EVALUATOR_DESIGN §2). A `Session`'s `parent` is ROOT metadata, not a
+(EVALUATOR_DESIGN §2). A `Session`'s `parent_session` is ROOT metadata, not a
 constraint on the heap: a library theory the base heap lacks is loaded from
 source. TAT's own theories
 (§6.3) are never in the base heap: the conversation loads them from source
@@ -543,7 +550,7 @@ the tools a proof search reaches — AoA's proof store and `auto_sledgehammer`'s
 cache — are thread-safe.
 
 TAT is a library; whatever starts a conversation is a client of it, and the
-production client is undecided (OPEN_QUESTIONS §6). During development an
+production client is undecided (OPEN_QUESTIONS §5). During development an
 Isa-REPL app is the client, registered from a theory nothing shipped imports
 (`Dev/TAT_Dev.thy`), so Isa-REPL is a development dependency and never a
 shipped one.

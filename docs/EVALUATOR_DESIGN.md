@@ -105,13 +105,19 @@ A table from qualified theory name (§7) to `theory` value, written by the
 `Theory` root node's ending command — its `end` (§1). A second write
 overwrites: TAT re-evaluates on every edit.
 
-The table keeps no dependency edges and deletes nothing, because invalidation is
-not its job. The Python side marks every tree that imports a changed tree
-`not_evaluated` (ARCHITECTURE §3.4) and never requests a theory whose tree is
-not evaluated to its end (ARCHITECTURE §3.5), so a stale entry is never read; it is
-overwritten when the tree is evaluated again. Like the state slots (§1.1), the
-table is locked, since a node class's asynchronous work can reach it while
-evaluation runs.
+The table keeps no dependency edges: invalidation is the Python side's,
+which marks every tree that imports a changed tree `not_evaluated`
+(ARCHITECTURE §3.4) and never requests a theory whose tree is not evaluated
+to its end (ARCHITECTURE §3.5), so an entry that is merely out of date is
+never read and is overwritten when the tree is evaluated again. An entry
+whose qualified name has vanished — its tree deleted, renamed, or moved
+into another `Session`, or its `Session` renamed — is deleted in the same
+operation, through
+`TAT.theory_delete` (`Theories.delete`), so that `resolve` (§2) can never
+hand an importer the theory of a tree that no longer exists
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). Like the state slots
+(§1.1), the table is locked, since a node class's asynchronous work can
+reach it while evaluation runs.
 
 ## 4. What to avoid, and why
 
@@ -156,7 +162,7 @@ too many.
 
 ## 5. Open
 
-Where the `AoA` proof method lives — OPEN_QUESTIONS §5. §2 holds only if its
+Where the `AoA` proof method lives — OPEN_QUESTIONS §4. §2 holds only if its
 theory is in the base heap.
 
 ## 6. Loading a library theory that is not in the base heap

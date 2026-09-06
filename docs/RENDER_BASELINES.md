@@ -115,15 +115,7 @@ The theory name `Foo` is also used by `constructs[1].children[0]` of this call.
 `HoldsNoChildren`:
 
 ```
-`theory_X.lemma_P` is a `lemma`, and you cannot add child constructs to it.
-```
-
-The order constraint's stop (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6),
-a tree importing a forest tree placed after it; `S.C` as the agent wrote
-it in `imports`:
-
-```
-Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move it later.
+`theory_X.lemma_P` is a `lemma`, and it cannot hold children.
 ```
 
 `UnexpectedChildren`, on an amend's replacement:
@@ -189,12 +181,20 @@ The `raw_ast_path` prefix — on any cause raised while building a batch
 At `constructs[2].children[0]`: A `lemma` needs the field `statement`.
 ```
 
-## 3. Evaluation text (ML side)
+## 3. Evaluation text
 
 Not exception classes — evaluation failure lives outside the hierarchy
 (EXCEPTIONS.md §6) — but TAT-authored and agent-facing all the same.
 
-`Loader.load_target`, an import found nowhere:
+The order constraint's stop (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6),
+a tree importing a forest tree placed after it; `S.C` as the agent wrote
+it in `imports`:
+
+```
+Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move it later.
+```
+
+`Loader.load_target` (ML side), an import found nowhere:
 
 ```
 Fail to load `TAT_Nowhere.Nope` because it is not found.

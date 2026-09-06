@@ -17,8 +17,10 @@ plugin's theory registers as `python_packages`. The ML side collects and
 deduplicates them at conversation start and hands the list to `launch_TAT`;
 `plugin.load` imports each with `importlib.import_module`. Importing is
 what registers: a node class is defined at module top level under
-`@TAT_node`, and the decorator runs as the class statement executes. There
-is no other table of node classes.
+`@TAT_node`, and the decorator runs as the class statement executes. The
+two framework classes, `Session` and `Theory` (`model.py`), are registered
+by `load` itself, first, through the same `TAT_node`. There is no other
+table of node classes.
 
 A package that fails to import — a syntax error, a registration check
 below — fails the conversation start: a plugin's bug is never skipped
@@ -26,15 +28,16 @@ quietly.
 
 ## 2. What a class declares
 
-A node class derives from `Leaf` or `StdBlock` (MODULE_STRUCTURE §4.1) and
-is registered with `@TAT_node`, which takes no arguments. Besides its hooks
-it declares, as class attributes:
+A node class derives from `Leaf`, `StdBlock` or `Unchained_Node`
+(MODULE_STRUCTURE §4.1) and is registered with `@TAT_node`, which takes no
+arguments. Besides its hooks it declares, as class attributes:
 
 | attribute | what it is |
 | --- | --- |
 | `construct_schema` | the complete JSON schema of a construct of this class, hand-written (§3) |
 | `argument_schema` | a TypedDict of the same fields, which the framework checks a submitted construct against and which types `gen`'s `raw` (MODULE_STRUCTURE §4.1) |
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1 |
+| `namespace`, optional | the forest-wide namespace the node's name is claimed in through the claims registry (MODULE_STRUCTURE §4.1), and the `BadEdit` to raise on a second claim — `Theory`'s short names, `DuplicateTheoryShortName` |
 
 The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5).
@@ -42,8 +45,9 @@ the type checker — and the loader holds them to each other (§5).
 ## 3. The construct schema
 
 `construct_schema` is a Python `dict` holding the whole JSON schema of the
-class's construct. The loader places it under `#/$defs/<class name>`
-unchanged: it adds no key and rewrites none.
+class's construct. The loader places it under `#/$defs/<class name>`,
+hoisting its `$defs` to the top level (§4) and changing nothing else: it
+invents no key and rewrites no schema of the class's own.
 
 ```python
 @TAT_node
@@ -125,8 +129,8 @@ class:
   or to a node class, or an `anyOf` of such;
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
-- the class does not override `is_finished`; it overrides
-  `_owes_nothing` (ARCHITECTURE §3.2);
+- the class does not override `is_finished` — `_owes_nothing` is the
+  override point (ARCHITECTURE §3.2);
 - `argument_schema` is a TypedDict — an empty one for a class with no
   fields — within the closed annotation grammar (MODULE_STRUCTURE §4.1);
 - the two schemas agree: the keys of `properties`, less `kind` and

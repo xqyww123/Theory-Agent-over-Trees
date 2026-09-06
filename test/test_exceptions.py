@@ -32,7 +32,8 @@ def _fenced_lines(*section_prefixes):
             lines.append(line)
     return lines
 
-# §3 is ML-side text, not this module's.
+# §3 is evaluation text, not exception renderings; the forest walk's test
+# pins its Python-side line (the plan's §7, step 4).
 BASELINES = set(_fenced_lines("1.", "2."))
 COVERED = set()
 
@@ -139,8 +140,7 @@ def test_duplicate_theory_short_name():
 
 def test_holds_no_children():
     check(HoldsNoChildren(id="theory_X.lemma_P", kind="lemma"),
-          "`theory_X.lemma_P` is a `lemma`, and you cannot add child"
-          " constructs to it.")
+          "`theory_X.lemma_P` is a `lemma`, and it cannot hold children.")
 
 def test_unexpected_children():
     check(UnexpectedChildren(kind="section", is_leaf=False),
@@ -258,12 +258,9 @@ def test_group_bases_are_abstract():
 # --- completeness: runs last, after every check() above ---------------------
 
 # Bad<Class>NodeParent renderings belong to the node classes
-# (EXCEPTIONS.md §3), and the order constraint's stop to the forest walk
-# (the plan's §6); this list is the checklist that fails loudly when those
-# land.
+# (EXCEPTIONS.md §3); this list is the checklist that fails loudly when
+# those classes land.
 EXEMPT = {
-    "Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move"
-    " it later.",
     "A `lemma` cannot be placed under `session_Arith`; it belongs inside a"
     " theory.",
     "A `session` cannot be placed under `theory_X`; a session lives directly"

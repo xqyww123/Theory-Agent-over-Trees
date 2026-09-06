@@ -118,6 +118,7 @@ naming the refused operation and its target, echoed from the call:
 ```
 Cannot append theory_X.section_Basics
 Cannot insert_before theory_X.lemma_P
+Cannot insert_after theory_X.lemma_P
 Cannot amend theory_X.lemma_P
 Cannot move theory_Sorting to after theory_X.section_Basics
 Cannot move theory_Sorting to session_Arith

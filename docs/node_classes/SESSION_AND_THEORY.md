@@ -1,19 +1,23 @@
 # The `Session` and `Theory` node classes
 
-Status: design draft; the field descriptions of §1 and §2 await the
-owner's approval.
+Status: design, approved 2026-09-06; the classes are not yet written.
 
 The two node classes that carry the forest's structure: a `Session` groups
 trees into one Isabelle session under construction, and a `Theory` is the
-root of every tree (ARCHITECTURE §2). They are specified together because
-neither means much without the other: the `Session`'s `name` prefixes its
-trees' qualified names, and a tree's imports resolve against where the trees
-sit in the `Session` layer.
+root of every tree (ARCHITECTURE §2). They are framework classes, defined
+in `model.py` (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6), and are
+specified together because neither means much without the other: the
+`Session`'s `name` prefixes its trees' qualified names, and a tree's
+imports resolve against where the trees sit in the `Session` layer.
 
 A class's agent-facing wording — the `description` texts of its construct
-schema (PLUGIN_SYSTEM §3) — lives here, beside its attribute table.
+schema (PLUGIN_SYSTEM §3) — lives here, beside its attribute table, one
+fenced line per description; a field with no line has no description. A
+baseline test pins the lines the way RENDER_BASELINES.md's are pinned.
 
 ## 1. `Session`
+
+Kind: `session`.
 
 | Attribute | Type | |
 | --- | --- | --- |
@@ -23,34 +27,41 @@ schema (PLUGIN_SYSTEM §3) — lives here, beside its attribute table.
 | `description` | `str`, empty by default | authored |
 
 Its construct also declares `children`, `items` being `#/$defs/Theory`,
-so a session is created with its first theories in one call. Kind:
-`session`.
+so a session is created with its first theories in one call.
 
-| description of | wording |
-| --- | --- |
-| the class | `An Isabelle session: a group of theories built together.` |
-| `name` | `The Isabelle session name, such as \`Arith\` or \`My-Project\`.` |
-| `parent_session` | `The session this one builds on, such as \`HOL\` or \`HOL-Analysis\`.` |
-| `options` | `Isabelle session options.` |
-| `options[].name` | `An Isabelle session option, such as \`document\`.` |
-| `options[].value` | `Its value, such as \`false\`.` |
-| `description` | `The session's description.` |
-| `children` | `The session's theories, in order.` |
+`options`:
 
-A `Session` owns its ROOT entry: `session <name> in <name> = <parent_session> +
-…`, with `options` and `description` transcribed and the `sessions` and
-`theories` clauses derived from the trees under it (ARCHITECTURE §4). Its
-`name` prefixes its trees' qualified names (EVALUATOR_DESIGN §7). It runs no
-Isabelle commands: evaluation is transparent to it (ARCHITECTURE §3.5), and
-what it emits is the ROOT entry and the directory, not Isar. `parent_session`
-is transcribed and nothing else: the prover sits on the base heap regardless
-(ARCHITECTURE §8), and an import the heap lacks is loaded from source.
+```
+Session options, as in a ROOT entry
+```
 
-A `Session` lives directly under the forest root `Sessions` and nowhere
-else (`BadSessionNodeParent`). Its trees are not chained: no tree's state
-is the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
+`children`:
+
+```
+The session's theories
+```
+
+A `Session` owns its ROOT entry: `session <name> in <name> =
+<parent_session> + …`, with `options` and `description` transcribed and
+the `sessions` and `theories` clauses derived from the trees under it
+(ARCHITECTURE §4). Every option value is written quoted; a value the agent
+supplied in quotes is unquoted first. Its `name` prefixes its trees' qualified names
+(EVALUATOR_DESIGN §7). It runs no Isabelle commands: evaluation is
+transparent to it (ARCHITECTURE §3.5), and what it emits is the ROOT entry
+and the directory, not Isar. `parent_session` is transcribed and nothing
+else: the prover sits on the base heap regardless (ARCHITECTURE §8), and an
+import the heap lacks is loaded from source.
+
+`Session.gen` checks: the parent is the forest root `Sessions`
+(`BadSessionNodeParent`); `parent_session`, and every option's `name` and
+`value`, are non-empty (`InvalidField`); no option name appears twice
+(`InvalidField`, naming the option). Its trees are not chained: no tree's
+state is the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
+§6).
 
 ## 2. `Theory`
+
+Kind: `theory`.
 
 Every tree's root is a `Theory` node; it owns the theory header, the
 `imports` list and the `end` (ARCHITECTURE §2). Its evaluator runs
@@ -61,17 +72,28 @@ slot, and `end` through `end_theory`, writing the theory table
 | Attribute | Type | |
 | --- | --- | --- |
 | `name` | the theory's short name, `str`: an Isabelle identifier — a letter, then letters, digits, underscores and primes; no dot, no hyphen | authored |
-| `imports` | `list[str]`, non-empty; each item as written in the header's `imports` clause: `Main`, `HOL-Library.Multiset`, or a path such as `"lib/Rel"` | authored |
+| `imports` | `list[str]`, non-empty; each item as written in the header's `imports` clause | authored |
 
 No recorded field. Its construct declares `children`, `items` being
-`#/$defs/Construct`. Kind: `theory`.
+`#/$defs/Construct`.
 
-| description of | wording |
-| --- | --- |
-| the class | `An Isabelle theory: one file of declarations.` |
-| `name` | `The theory's short name, an Isabelle identifier such as \`Sorting\`.` |
-| `imports` | `The imported theories, as written in an \`imports\` clause: \`Main\`, \`HOL-Library.Multiset\`, or another theory of this forest.` |
-| `children` | `The theory's declarations, in order.` |
+`name`:
+
+```
+The theory's short name
+```
+
+`imports`:
+
+```
+Theories to import
+```
+
+`children`:
+
+```
+The theory's declarations
+```
 
 The qualified name is `<Session name>.<name>`, computed, never stored.
 `Theory.gen` checks: the parent is a `Session` (`BadTheoryNodeParent`); the

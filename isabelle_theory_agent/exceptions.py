@@ -40,8 +40,8 @@ class TAT_Error(Exception, ABC):
         super().__init__()
 
     def _set_operation(self, opr: str, target: str) -> None:
-        """Framework-only, at the tool entry.  `opr` is one of the five
-        operation names of TOOL_SCHEMAS.md §4; `target` is the operation's
+        """Framework-only, at the tool entry.  `opr` is one of the
+        forest-changing operation names (TOOL_SCHEMAS.md §4); `target` is the operation's
         target echoed from the call — for `move` including the destination
         phrase, e.g. "theory_Sorting to before theory_X.lemma_P"."""
         if self.opr is not None or opr not in _OPERATIONS:
@@ -273,7 +273,7 @@ class UnexpectedChildren(BadEdit):
         super().__init__()
         self.kind = kind
         # True: the class is a Leaf and can hold no children.  False: the
-        # class could, but the description is an amend's replacement, which
+        # class could, but the construct is an amend's replacement, which
         # inherits the replaced node's children instead.
         self.is_leaf = is_leaf
 
@@ -324,8 +324,7 @@ class HoldsNoChildren(BadEdit):
         self.kind = kind
 
     def _cause(self) -> str:
-        return (f"`{self.id}` is a `{self.kind}`, and you cannot add child"
-                " constructs to it.")
+        return f"`{self.id}` is a `{self.kind}`, and it cannot hold children."
 
 
 class ProtectedNode(BadEdit):
