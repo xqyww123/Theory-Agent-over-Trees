@@ -1,7 +1,8 @@
 # Plan: the first end-to-end run
 
-Status: in discussion. A section marked *(approved)* records the owner's
-decision; anything marked *(proposed)* or *(open)* is not settled. Once a
+Status: approved through §6 (three review rounds, the last READY_WITH_FIXES
+with every fix landed); §7 is the proposed order of work; the items
+marked *(open)* are deliberately left open and block nothing in it. Once a
 section is settled it moves into the design documents under `docs/`, and
 this file keeps only the implementation record.
 
@@ -10,9 +11,9 @@ this file keeps only the implementation record.
 One real tree, evaluated by Isabelle, through the MCP tools. That needs the
 `Session` and `Theory` node classes, the forest scheduling that evaluates
 imported trees first (ARCHITECTURE §3.5), a `Theorem` that emits only
-`sorry`, the `edit` tool, and the persistence everything sits on.
-`construct`, AoA, the other node classes, and compilation to `.thy` files
-(§1) are outside this plan.
+`sorry`, the `edit`, `move` and `delete` tools, and the persistence
+everything sits on. `construct`, AoA, the other node classes, and
+compilation to `.thy` files (§1) are outside this plan.
 
 ## 1. The working directory *(approved 2026-09-04)*
 
@@ -104,10 +105,10 @@ The forest is stored in one SQLite database, not pickled.
   `await`; nothing is awaited inside a transaction. Identities are handed
   out before the transaction exists, so `next_identity()` needs none:
   outside one it is its own write. An operation stores only what it
-  changed: `_store_subtree` for every new subtree and for a replaced
-  node, the parent's `children` row when that list changed, `delete_node`
-  for every node that left, and the one node whose recorded field an
-  evaluation hook wrote.
+  changed: `_store_subtree` for every new subtree, `_store_node` for a
+  replaced node, the parent's `children` row when that list changed,
+  `delete_node` for every node that left, and `_store_node` for the one
+  node whose recorded field an evaluation hook wrote.
 - The access layer is TAT's own, `Forest_Store` (one module, standard
   library `sqlite3`, WAL mode): `transaction()` is the only way to open a
   transaction, and `put`/`delete_node` outside one is an error; `get`,
@@ -291,8 +292,7 @@ a walk that reaches one is a framework bug. Three rules complete it:
   edit. The setter needs the forest and the graph, so the status setters
   become `async`; every caller already is. The recursion ends because a
   status leaves `ready` at most once per walk, so each tree is
-  invalidated at most once — not because the graph is acyclic, which
-  under the order constraint it need not be until the stop is reported.
+  invalidated at most once.
 - Every edit snapshots, per tree identity, the pair (qualified name,
   resolved import set) before and after itself; a tree whose pair changed —
   its `Session` renamed, itself renamed, moved into another `Session`, or
@@ -337,12 +337,14 @@ Each step lands with its tests, passes review, and is committed before the
 next begins. The ML end-to-end test (`test/run_ml_framework_test.py`) runs
 at every step that touches the ML side.
 
-1. **Persistence in the model** (§2): `Node_Rows`, `to_store`/`from_store`
-   on the hierarchy, `_store_subtree`/`_load_subtree` on `Forest`,
-   identities from `next_identity()`, root 0; the edit entries store what
-   they changed; `__getstate__`/`__setstate__` and the class counter go.
-   Tests: round trips through a real `Forest_Store`, and the edit suite's
-   fake classes gain `to_store`/`from_store`.
+1. **Persistence in the model** (§2): `Node_Rows` (in `store.py`),
+   `to_store`/`from_store` on the hierarchy, `node.kind`,
+   `_store_node`/`_store_subtree`/`_load_subtree` on `Forest`, identities
+   from `next_identity()`, root 0; the edit entries store what they
+   changed, each in one transaction after its commit step;
+   `__getstate__`/`__setstate__` and the class counter go. Tests: round
+   trips through a real `Forest_Store`, and the edit suite's fake classes
+   gain `to_store`/`from_store`.
 2. **The loader** (PLUGIN_SYSTEM.md): `construct_schema`, kinds from the
    schema, a bare `@TAT_node`, the checks of §5 with `CannotLoadPlugin`,
    `$defs` hoisting, `#/$defs/Construct`; `is_finished` final with
@@ -355,8 +357,11 @@ at every step that touches the ML side.
    SESSION_AND_THEORY.md): `Unchained_Node`, `Session` and `Theory` in
    `model.py`, `Theorem` in `theorem_node.py`; the ML evaluators of
    `Theory` and `Theorem` in `TAT_Common_Nodes.ML`; the description
-   baseline test over SESSION_AND_THEORY.md. Tests: the ML end-to-end test
-   drives a theory with two lemmas to `end`.
+   baseline test over SESSION_AND_THEORY.md. `Theorem`'s construct schema
+   (ARCHITECTURE §2.2: `kind`, `statement` as AoA's `LongStatement`, no
+   proof text) and its descriptions are proposed for approval at this
+   step, in a `docs/node_classes/THEOREM.md`. Tests: the ML end-to-end
+   test drives a theory with two lemmas to `end`.
 4. **The forest walk** (§6): the import graph, the order constraint's stop,
    transitive imports before `T`, stops across import edges, invalidation of
    importers, the pre/post graph comparison, `TAT.theory_delete`.
@@ -364,11 +369,14 @@ at every step that touches the ML side.
    order constraint's sentence from RENDER_BASELINES §3 the way the
    exception renderings are pinned.
 5. **The tools and the entry point**: `mcp.py` with `edit`, `move`,
-   `delete` (TOOL_SCHEMAS.md) and the `quickview` appended to every result
-   (PRINT.md, its default rendering only); `mcp_server.py`; `toplevel.py`'s
-   `launch_TAT` taking the working directory, `TAT_Framework.start` passing
-   it; `Dev/TAT_Dev.thy` starting a conversation. Test: an in-process
-   client calls the tools and evaluates one tree in Isabelle.
+   `delete` (TOOL_SCHEMAS.md — `insert_after` is `_insert_children` at
+   `index + 1`; `HoldsNoChildren` and `ProtectedNode` are refused here,
+   before the model is called) and the `quickview` appended to every
+   result (PRINT.md, its default rendering only); `mcp_server.py`;
+   `toplevel.py`'s `launch_TAT` taking the working directory,
+   `TAT_Framework.start` passing it; `Dev/TAT_Dev.thy` starting a
+   conversation. Test: an in-process client calls the tools and evaluates
+   one tree in Isabelle.
 
 Out of this plan, in the order they are likely needed afterwards: `recall`,
 `evaluate_to` and `status` as tools (TOOL_SCHEMAS.md §5); the renderings
