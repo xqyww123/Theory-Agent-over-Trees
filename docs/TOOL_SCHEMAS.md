@@ -25,8 +25,8 @@ Tool description: `Edit Isabelle theory constructs`.
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["append", "insert_before", "amend"],
-      "description": "append: add the constructs at the end of the target's children; insert_before: add them before the target, as its siblings; amend: replace the target with the given construct, inheriting the target's children."
+      "enum": ["append", "insert_before", "insert_after", "amend"],
+      "description": "append: add the constructs at the end of the target's children; insert_before: add them before the target, as its siblings; insert_after: add them after the target, as its siblings; amend: replace the target with the given construct, inheriting the target's children."
     },
     "target_id":  { "type": "string", "description": "The id of the target node." },
     "constructs": {
@@ -52,9 +52,10 @@ Under `amend` the first construct replaces the target, whose children it
 inherits and whose identity it takes (MCP_SPECIFICATION §3.1); any further
 constructs follow it.
 
-Beyond the schema, TAT checks: no `children` on `amend`'s first construct
-or on a leaf construct (`UnexpectedChildren`); and every construct's fields
-against its class's argument schema (`UnexpectedField`, `MissingField`,
+Beyond the schema, TAT checks: `append`'s target can hold children
+(`HoldsNoChildren`); no `children` on `amend`'s first construct or on a
+leaf construct (`UnexpectedChildren`); and every construct's fields against
+its class's argument schema (`UnexpectedField`, `MissingField`,
 `InvalidField`), which the schema already enforces for a client that
 validates it.
 
@@ -85,6 +86,11 @@ a **Location** (ARCHITECTURE §1) on the wire.
   "additionalProperties": false
 }
 ```
+
+Beyond the schema, TAT checks: `into`'s node can hold children
+(`HoldsNoChildren`); the destination is not inside the moved subtree
+(`MoveIntoOwnSubtree`); and the moved node's name is free among its new
+siblings (`DuplicateName`).
 
 ## 3. `delete` *(decided 2026-09-04)*
 
@@ -121,7 +127,7 @@ Cannot delete theory_X.section_Basics
 The lines after it are the cause, prefixed by its `raw_ast_path`
 (EXCEPTIONS.md §5) where one applies; the path indexes `constructs`. The
 `opr` field (EXCEPTIONS.md §4) takes exactly these operation names:
-`append`, `insert_before`, `amend`, `move`, `delete`.
+`append`, `insert_before`, `insert_after`, `amend`, `move`, `delete`.
 
 Any other tool's failure — `recall`, `construct`, `evaluate_to`, `status` —
 renders the cause alone: the forest's shape is untouched, and a first line

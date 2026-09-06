@@ -81,9 +81,9 @@ class TAT_StartupError(Exception):
     starts the conversation; never rendered to the agent (EXCEPTIONS.md §1)."""
 
 
-# The five forest-changing operations (TOOL_SCHEMAS.md §4).
+# The forest-changing operations (TOOL_SCHEMAS.md §4).
 _OPERATIONS = frozenset(
-    {"append", "insert_before", "amend", "move", "delete"})
+    {"append", "insert_before", "insert_after", "amend", "move", "delete"})
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ class AmbiguousId(ResolutionError):
 # RawASTError — a submitted RawAST is malformed
 
 class RawASTError(TAT_Error, ABC):
-    """Remediation direction: fix the node description you submitted
+    """Remediation direction: fix the construct you submitted
     (EXCEPTIONS.md §2)."""
 
 
@@ -141,7 +141,7 @@ class MalformedRawAST(RawASTError):
     def _cause(self) -> str:
         if self.missing_kind:
             return "The field `kind` is missing."
-        return "Expected a node description object."
+        return "Expected a construct object."
 
 
 class UnknownKind(RawASTError):
@@ -246,16 +246,21 @@ class InvalidName(BadEdit):
 
 
 class DuplicateTheoryShortName(BadEdit):
-    """Raised by `Theory.gen` (EXCEPTIONS.md §3)."""
+    """Raised by `Theory.gen` against the base heap, and by the framework's
+    claims registry against the forest and the batch (EXCEPTIONS.md §3)."""
 
     def __init__(self, short_name: str, holder: str):
         super().__init__()
         self.short_name = short_name
-        # The qualified name whose short name collides: a theory of the base
-        # heap, or another tree's.
+        # The qualified name whose short name collides — a theory of the
+        # base heap, or another tree's — or the colliding construct's
+        # coordinate in this call.
         self.holder = holder
 
     def _cause(self) -> str:
+        if _COORDINATE.match(self.holder):
+            return (f"The theory name `{self.short_name}` is also used by"
+                    f" `{self.holder}` of this call.")
         return (f"The theory name `{self.short_name}` conflicts with the"
                 f" short name of `{self.holder}`. No two theories can share"
                 " a short name.")
@@ -307,6 +312,20 @@ class MoveIntoOwnSubtree(BadEdit):
 
     def _cause(self) -> str:
         return f"`{self.id}` cannot move into its own subtree."
+
+
+class HoldsNoChildren(BadEdit):
+    """The target of an `append` or a `move … into` is a leaf
+    (TOOL_SCHEMAS.md §1, §2)."""
+
+    def __init__(self, id: str, kind: str):
+        super().__init__()
+        self.id = id
+        self.kind = kind
+
+    def _cause(self) -> str:
+        return (f"`{self.id}` is a `{self.kind}`, and you cannot add child"
+                " constructs to it.")
 
 
 class ProtectedNode(BadEdit):

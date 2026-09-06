@@ -11,12 +11,13 @@ identifier is backticked; opening lines echo the call and are not.
 
 ## 1. Opening lines
 
-Rendered for the six forest-changing operations (TOOL_SCHEMAS.md §5), above
+Rendered for every forest-changing operation (TOOL_SCHEMAS.md §4), above
 the cause:
 
 ```
 Cannot append theory_X.section_Basics
 Cannot insert_before theory_X.lemma_P
+Cannot insert_after theory_X.lemma_P
 Cannot amend theory_X.lemma_P
 Cannot move theory_Sorting to before theory_X.lemma_P
 Cannot move theory_Sorting to after theory_X.section_Basics
@@ -42,7 +43,7 @@ The id `lemma_P` matches more than one node: `theory_X.lemma_P`, `theory_Y.lemma
 `MalformedRawAST`, its two cases:
 
 ```
-Expected a node description object.
+Expected a construct object.
 The field `kind` is missing.
 ```
 
@@ -99,10 +100,30 @@ The name `lemma_assoc` is already taken by `theory_Sorting.lemma_assoc`. Amend t
 The name `lemma_assoc` is already used by `constructs[0]` of this call.
 ```
 
-`DuplicateTheoryShortName`:
+`DuplicateTheoryShortName`, against the base heap or another tree:
 
 ```
 The theory name `List` conflicts with the short name of `HOL.List`. No two theories can share a short name.
+```
+
+`DuplicateTheoryShortName`, colliding inside the submitted batch:
+
+```
+The theory name `Foo` is also used by `constructs[1].children[0]` of this call.
+```
+
+`HoldsNoChildren`:
+
+```
+`theory_X.lemma_P` is a `lemma`, and you cannot add child constructs to it.
+```
+
+The order constraint's stop (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6),
+a tree importing a forest tree placed after it; `S.C` as the agent wrote
+it in `imports`:
+
+```
+Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move it later.
 ```
 
 `UnexpectedChildren`, on an amend's replacement:

@@ -30,8 +30,9 @@ language. A concept that needs a name gets one here first.
 | **emit** | a node writing its own Isar text (§4) |
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
 | **conversation** | one run of TAT, from Isabelle's call into Python to its return (§9) |
-| **forest directory** | the directory the client names when saving or loading; the ROOT and every `Session`'s directory lie under it (§4) |
+| **working directory** | the one directory TAT is started on; it holds the forest's database, the ROOT, and one folder per `Session` for its trees' `.thy` files (§4) |
 | **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
+| **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
 
 Isabelle's build unit is always written **Isabelle session** in full; the
@@ -210,19 +211,23 @@ and the one question a class asks of another node is `finished`. The
 framework's walk does read them — that is how it knows what to run (§3.5).
 
 `finished` says whether the node still owes anything. It is derived, never
-stored, so it cannot drift from what it is derived from.
+stored, so it cannot drift from what it is derived from, and the framework
+owns the derivation: a node is `finished` when every operation of its own
+and of its subtree is `ready` and the node owes nothing of its own. The
+class supplies only the last part, `_owes_nothing()`, which is true by
+default.
 
-| node class | `finished` when |
+| node class | owes nothing when |
 | --- | --- |
 | `Theorem` | `proof` is `proven` |
 | `Define` | every command it emitted succeeded |
-| a nesting class (`Theory`, `Section`, `Locale`, `Context`) | its own commands succeeded and every child is `finished` |
-| `Session` | every tree under it is `finished`; it runs no operation and has no `evaluation_status` of its own |
-| a class with nothing to discharge | it has been evaluated |
+| a nesting class (`Theory`, `Section`, `Locale`, `Context`) | its own commands succeeded |
+| `Session` | always; it runs no operation and has no `evaluation_status` of its own |
+| a class with nothing to discharge | always |
 
-`finished` is true only where `evaluation_status` is `ready`. A forest is
-complete when every node is `finished`, and only `finished` answers that
-question: a `Theorem` that emitted `sorry` ran a command that succeeded.
+A forest is complete when every node is `finished`, and only `finished`
+answers that question: a `Theorem` that emitted `sorry` ran a command that
+succeeded.
 
 ### 3.3 Where evaluation stops
 
@@ -369,11 +374,11 @@ TAT is the compiler and owns the `.thy` files. Isabelle never reads them;
 every change reaches Isabelle by evaluation (§3), and the files exist for
 whoever builds the forest afterwards.
 
-Compilation writes under one directory, the **forest directory**, which the
-client names when saving or loading: at its top a ROOT holding every
-`Session`'s entry, and under each `Session`'s `directory` its trees' `.thy`
-files. The forest stores no absolute path — `directory` is relative to the
-forest directory — so a forest moves machines by being handed another one.
+Compilation writes under the working directory (§1): at its top a ROOT
+holding every `Session`'s entry, and under one folder per `Session`, named
+after it, its trees' `.thy` files. The forest stores no path, so it moves
+machines by being started on another directory. When the files are
+written is not yet decided (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §1).
 
 A node writes its own text through `emit_isar(indent, out)`, which writes to
 `out` and returns the indent in effect after it. The `indent` passed in is a
@@ -390,12 +395,14 @@ theory.
 ### 4.1 Persistence
 
 The `.thy` files are not the forest: what a node records is not in them. The
-forest itself is saved with `pickle`, and each node class decides through
-`__getstate__` what of its node is saved. State slot names are not: the state slot table does not outlive the
+forest lives in a database in the working directory, one row per node
+field, and each node class writes and reads its own fields through
+`to_store` and `from_store` (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §2).
+State slot names are not stored: the state slot table does not outlive the
 conversation (EVALUATOR_DESIGN §1.1), so a loaded forest is `not_evaluated`
 throughout and its slots are assigned afresh. The connection to Isabelle is
-not saved either; the conversation hands the loaded forest its current one. Work in
-flight is not saved, only its results.
+not stored either; the conversation hands the loaded forest its current one.
+Work in flight is not stored, only its results.
 
 ## 5. Segments *(decided)*
 

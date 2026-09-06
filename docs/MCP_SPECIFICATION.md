@@ -165,18 +165,18 @@ later from what the nodes emit (ARCHITECTURE §4).
 
 ### 3.1 What `edit` takes
 
-Its argument shape is TOOL_SCHEMAS.md §1: one of three actions, and a list
-of node descriptions. A node description is a JSON object whose `kind`
-field selects the node class — a class registers the kinds it answers to,
-so `Theorem` answers to `lemma`, `theorem` and `corollary` — and whose
-other fields are that class's own: the framework enforces their mechanical
-shape from the class's declared schema, and the class's `gen` is the
-authority on their meaning (MODULE_STRUCTURE §4.1). A nesting class takes
-its contents in a `children` field, a list of node descriptions again; the
-field belongs to the framework and its name is the same for every class.
+Its argument shape is TOOL_SCHEMAS.md §1: one of four actions, and a list
+of constructs. A construct (ARCHITECTURE §1) is a JSON object whose `kind`
+field selects the node class — a class answers to the kinds its schema
+names, so `Theorem` answers to `lemma`, `theorem` and `corollary` — and
+whose other fields are that class's own: the framework enforces their
+mechanical shape from the class's declared schema, and the class's `gen` is
+the authority on their meaning (MODULE_STRUCTURE §4.1). A nesting class
+takes its contents in a `children` field, a list of constructs again; the
+field's name is the same for every class.
 
-**Adding** — `append` and `insert_before` (TOOL_SCHEMAS.md §1) — links the
-descriptions, in order, at the destination.
+**Adding** — `append`, `insert_before` and `insert_after` (TOOL_SCHEMAS.md
+§1) — links the constructs, in order, at the destination.
 
 **Amending** replaces the addressed node with the first description. The
 node's children are inherited, never resupplied: a replacement carrying

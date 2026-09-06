@@ -12,7 +12,7 @@ import pytest
 from isabelle_theory_agent.exceptions import (
     AmbiguousId, BadEdit, ChildrenNotInheritable, ConstructFailed,
     ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
-    InvalidField, InvalidName, MalformedRawAST, MissingField,
+    HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
     ResolutionError, TAT_Error, TAT_InternalError, UnexpectedChildren,
     UnexpectedField, UnknownKind)
@@ -67,7 +67,7 @@ def test_ambiguous_id():
 
 def test_malformed_raw_ast():
     check(MalformedRawAST(missing_kind=False),
-          "Expected a node description object.")
+          "Expected a construct object.")
     check(MalformedRawAST(missing_kind=True),
           "The field `kind` is missing.")
 
@@ -132,6 +132,15 @@ def test_duplicate_theory_short_name():
     check(DuplicateTheoryShortName(short_name="List", holder="HOL.List"),
           "The theory name `List` conflicts with the short name of"
           " `HOL.List`. No two theories can share a short name.")
+    check(DuplicateTheoryShortName(short_name="Foo",
+                                   holder="constructs[1].children[0]"),
+          "The theory name `Foo` is also used by `constructs[1].children[0]`"
+          " of this call.")
+
+def test_holds_no_children():
+    check(HoldsNoChildren(id="theory_X.lemma_P", kind="lemma"),
+          "`theory_X.lemma_P` is a `lemma`, and you cannot add child"
+          " constructs to it.")
 
 def test_unexpected_children():
     check(UnexpectedChildren(kind="section", is_leaf=False),
@@ -171,6 +180,7 @@ def test_construct_not_supported():
 OPENINGS = [
     ("append", "theory_X.section_Basics"),
     ("insert_before", "theory_X.lemma_P"),
+    ("insert_after", "theory_X.lemma_P"),
     ("amend", "theory_X.lemma_P"),
     ("move", "theory_Sorting to before theory_X.lemma_P"),
     ("move", "theory_Sorting to after theory_X.section_Basics"),
@@ -192,7 +202,7 @@ def test_opening_line(opr, target):
 def test_set_operation_refuses_misuse():
     exc = ProtectedNode(id="Sessions")
     with pytest.raises(TAT_InternalError):
-        exc._set_operation("frobnicate", "x")        # not one of the six
+        exc._set_operation("frobnicate", "x")        # not an operation name
     exc._set_operation("delete", "theory_X")
     with pytest.raises(TAT_InternalError):
         exc._set_operation("delete", "theory_X")     # written once only
@@ -248,9 +258,12 @@ def test_group_bases_are_abstract():
 # --- completeness: runs last, after every check() above ---------------------
 
 # Bad<Class>NodeParent renderings belong to the node classes
-# (EXCEPTIONS.md §3); this list is the checklist that fails loudly when
-# those classes land.
+# (EXCEPTIONS.md §3), and the order constraint's stop to the forest walk
+# (the plan's §6); this list is the checklist that fails loudly when those
+# land.
 EXEMPT = {
+    "Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move"
+    " it later.",
     "A `lemma` cannot be placed under `session_Arith`; it belongs inside a"
     " theory.",
     "A `session` cannot be placed under `theory_X`; a session lives directly"

@@ -67,16 +67,17 @@ class Theorem(Leaf):
   from it.
 - A nesting class that lets the agent submit contents in one call
   declares `children` itself — `{"type": "array", "items": {"$ref":
-  "#/$defs/Construct"}, ...}`, or a narrower union such as `Session`'s
-  `{"$ref": "#/$defs/Theory"}`. One that does not declare it takes
-  contents only through later `edit` calls. The runtime rule that a leaf
-  holds no children (`UnexpectedChildren`) stands regardless.
+  "#/$defs/Construct"}, ...}`, or with a narrower `items`, such as
+  `Session`'s `{"type": "array", "items": {"$ref": "#/$defs/Theory"}}`.
+  One that does not declare it takes contents only through later `edit`
+  calls. A leaf class declares no `children`.
 - Shared structures go in the class's own `$defs` and are used through
   `$ref`; a `$ref` may name a key of that `$defs`, `Construct`, or another
   node class. Recursion is ordinary: a definition may refer to itself.
 - Every `description` is agent-facing text. For a class TAT ships, it is
-  approved wording (RENDER_BASELINES.md); for a class delivered separately,
-  it is its author's.
+  approved wording, kept in the class's document under `docs/node_classes/`
+  beside its attribute table; for a class delivered separately, it is its
+  author's.
 
 The class is written in Python rather than as a JSON string because the
 loader works on the structure — merging `$defs`, checking references — and
@@ -88,18 +89,22 @@ After every package is imported, the loader builds the `$defs` of the
 `edit` schema once:
 
 - `#/$defs/<class name>`: each class's `construct_schema`, in registration
-  order — the order `UnknownKind` lists kinds in (EXCEPTIONS.md §3);
-- every class's `$defs`, merged by name (§5);
+  order — the order `UnknownKind` lists kinds in (EXCEPTIONS.md §3) — less
+  its `$defs`, which the next item hoists; every `$ref` resolves at the
+  document root, so the nested copy would be dead weight sent on every
+  call;
+- every class's `$defs`, merged by name at the top level (§5);
 - `#/$defs/Construct`: `{"anyOf": [{"$ref": "#/$defs/Theory"}, {"$ref":
   "#/$defs/Theorem"}, ...]}` over the class entries, in the same order.
 
 `edit`'s hand-written file (TOOL_SCHEMAS.md §1) carries an empty `$defs`;
 the server fills it at start and never afterwards. A class registering
-after `load` has returned is refused.
+after `load` has returned is refused (a `TAT_InternalError`: the
+conversation is running, and a startup error has no reader).
 
 The assembled schema keeps its references. The loader never inlines a
-`$ref`; a client that cannot take references is the MCP server's concern,
-not this document's.
+`$ref`; a client that cannot take references is the MCP server's concern
+(MODULE_STRUCTURE §4.5), not this document's.
 
 ## 5. What the loader checks
 
@@ -109,16 +114,25 @@ carrying the package, the class, and the reason. At registration, per
 class:
 
 - `construct_schema` is a well-formed JSON schema
-  (`jsonschema.Draft202012Validator.check_schema`);
-- `properties.kind` is present with an `enum` or a `const`;
-- no kind it names is registered by another class;
+  (`jsonschema.Draft202012Validator.check_schema`), an object with
+  `additionalProperties: false` at the top;
+- `properties.kind` is present with an `enum` or a `const`, every value a
+  string, and `kind` is in `required`;
+- no kind it names is registered by another class, and no other class has
+  the same Python class name;
+- if `children` is declared, the class is not a `Leaf`, and the property
+  is `{"type": "array", "items": X, ...}` with `X` a `$ref` to `Construct`
+  or to a node class, or an `anyOf` of such;
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
-- `argument_schema` is within the closed annotation grammar
-  (MODULE_STRUCTURE §4.1);
+- the class does not override `is_finished`; it overrides
+  `_owes_nothing` (ARCHITECTURE §3.2);
+- `argument_schema` is a TypedDict — an empty one for a class with no
+  fields — within the closed annotation grammar (MODULE_STRUCTURE §4.1);
 - the two schemas agree: the keys of `properties`, less `kind` and
-  `children`, are exactly the TypedDict's keys, and `required`, less
-  `kind`, is exactly the TypedDict's required keys.
+  `children`, are exactly the TypedDict's keys less `kind`, and
+  `required`, less `kind` and `children`, is exactly the TypedDict's
+  required keys less `kind`.
 
 At assembly, once every class is known:
 

@@ -82,10 +82,10 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 The mechanism of EVALUATOR_DESIGN §1, for any node.
 
 - `begin_theory` — takes, alongside the header, the tree's Isabelle session
-  name and directory, read off its `Session` node
-  (node_classes/SESSION_AND_THEORY.md §1): the
-  name qualifies every import resolution (EVALUATOR_DESIGN §7), the directory
-  is the `master_dir`. It resolves each import through §2.3, merges the
+  name — its `Session` node's `name` (node_classes/SESSION_AND_THEORY.md
+  §1) — and the `master_dir`, which is that session's folder under the
+  working directory (ARCHITECTURE §1): the name qualifies every import
+  resolution (EVALUATOR_DESIGN §7). It resolves each import through §2.3, merges the
   parents' keywords, and runs the `theory … begin` span from
   `Toplevel.make_state NONE`.
 - `run_commands` — splits a node's text with `Outer_Syntax.parse_spans` and
@@ -231,8 +231,8 @@ framework checks submitted descriptions against (below), and which types
 `gen`'s `raw` for the static checker — `gen` (below), `emit_isar`, the name it gives the node and its two omissibility
 flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
 parent's `sub_nodes`, computed, never stored — an optional `construct`,
-`__getstate__` for persistence (ARCHITECTURE §4.1), and the event hooks
-(below).
+`to_store` and `from_store` for persistence (ARCHITECTURE §4.1), `_owes_nothing()`
+(ARCHITECTURE §3.2), and the event hooks (below).
 
 **Construction.** A node enters the forest from a `RawAST` — the JSON
 object the agent submitted, `Mapping[str, Any]`. Two of its fields belong
@@ -401,11 +401,14 @@ inside the third; the reason travels
 inside the value, so a `Ready` operation cannot carry a stale one. A `Leaf`
 has one, a `StdBlock` two — `evaluation_status_beginning` and
 `evaluation_status_ending` — and no node reads another's: the one question
-asked of a node from outside is `is_finished()`. Every status write goes
-through one setter per operation, which releases the operation's resulting
-state when the status goes from written to unwritten — never on a
-rewrite; the two singletons are the same instance across pickling, so `is`
-is always right, and a loaded forest's statuses are all `NotEvaluated`.
+asked of a node from outside is `is_finished()`, which the framework
+answers — every operation of the node and of its subtree `Ready`, and the
+class's `_owes_nothing()` true (ARCHITECTURE §3.2); a class overrides
+`_owes_nothing()` and never `is_finished()`, and the loader refuses one that
+does (PLUGIN_SYSTEM §5). Every status write goes through one setter per
+operation, which releases the operation's resulting state when the status
+goes from written to unwritten — never on a rewrite; a loaded forest's
+statuses are all `NotEvaluated`.
 
 **Hierarchy**, following AoA's (`class Leaf` :5333, `class NonLeaf_Node`
 :5449, `class StdBlock` :5836):
@@ -495,12 +498,10 @@ functions and never the wire.
 Imports every package in the list `launch_TAT` received (§2.6) — the
 `python_packages` the node class theories registered — and keeps the table
 from `kind` to Python class, which importing a package fills through the
-`@TAT_node` decorator; one class registers every kind it answers to —
-`Theorem` registers `lemma`, `theorem` and `corollary`. The table is what
-`edit` dispatches on; loading also rejects
-a class that is omissible on output but compulsory on input
-(MCP_SPECIFICATION §2.1), and an `argument_schema` outside the grammar of
-§4.1.
+`@TAT_node` decorator; the kinds a class answers to are read off its
+construct schema. The table is what `edit` dispatches on. What the loader
+checks at registration and at assembly, and how it completes the `edit`
+schema, is PLUGIN_SYSTEM.md.
 
 ### 4.4 `builtins.py` and `theorem_node.py`
 
@@ -513,9 +514,15 @@ result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
 ### 4.5 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
-`mcp.py` implements the eight tools of MCP_SPECIFICATION §1 and the queue of
+`mcp.py` implements the tools of MCP_SPECIFICATION §1 and the queue of
 pending messages; the future `query` tool (MCP_SPECIFICATION §1.1) will land
-here too. `mcp_server.py` builds the
-server from them. `toplevel.py` is the procedure Isabelle calls
+here too. `mcp_server.py` builds the server from them. It is also where
+the assembled `edit` schema reaches the client (PLUGIN_SYSTEM §4): TAT
+serves it as assembled, `$ref`s intact. Node classes may recurse
+(PLUGIN_SYSTEM §3), so the schema has no finite inlining; serving a client
+that drops references means choosing a different shape for it — a
+decision to take when such a client appears, on AoA's precedent
+(`contrib/Isa-Mini/IsaMini/AoA/mcp_http_server.py` serves several variants
+of one `edit` schema). `toplevel.py` is the procedure Isabelle calls
 (`@isabelle_remote_procedure("launch_TAT")`), which does not return for the life of
 the conversation and hands the loaded forest its connection.

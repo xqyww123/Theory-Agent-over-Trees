@@ -17,9 +17,10 @@ retried against. Bugs escape and crash loud.
 
 `TAT_StartupError` is the third kind, and the smallest: TAT cannot start in
 this environment — the working directory's database was written by another
-schema version, or is not a database. It is raised before any tool boundary
-or agent exists, to the client that starts the conversation, and is never
-rendered to the agent. It inherits from neither of the other two.
+schema version or is not a database, or a node class package cannot be
+loaded (PLUGIN_SYSTEM §5). It is raised before any tool boundary or agent
+exists, to the client that starts the conversation, and is never rendered
+to the agent. It inherits from neither of the other two.
 
 The same line sorts what node classes raise:
 
@@ -46,7 +47,7 @@ three classes for one cause — `NodeNotFound`, `CannotDelete_NodeNotFound`
 and `CannotEdit_NodeNotFound` (`contrib/Isa-Mini/IsaMini/AoA/model.py`).
 
 The groups under `TAT_Error` are the agent's four remediation directions:
-fix the id you gave (`ResolutionError`), fix the node description you
+fix the id you gave (`ResolutionError`), fix the construct you
 submitted (`RawASTError`), rethink the change (`BadEdit`), or — for
 `ConstructFailed` — the node's class does not offer the operation, so reach
 the goal another way. A failed forest-changing operation opens with the
@@ -94,9 +95,10 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  ├─ InvalidName             name — outside the name grammar of
 │  │                          MCP_SPECIFICATION §2; checked where
 │  │                          DuplicateName is                    [framework]
-│  ├─ DuplicateTheoryShortName  short_name, holder — the base heap or
-│  │                          another tree already uses the short name
-│  │                          (MCP_SPECIFICATION §2)              [Theory.gen]
+│  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
+│  │                          tree, or a construct of the same call
+│  │                          (its coordinate) already uses the short
+│  │                          name (MCP_SPECIFICATION §2)   [Theory.gen, framework]
 │  ├─ UnexpectedChildren      kind, is_leaf — `children` may not appear
 │  │                          here: a Leaf can hold none (is_leaf), and an
 │  │                          amend's replacement inherits them; never
@@ -117,6 +119,8 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          containment
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
+│  ├─ HoldsNoChildren         id, kind — the target of an `append` or a
+│  │                          `move … into` is a leaf              [framework]
 │  └─ ProtectedNode           id — the target is protected: the forest
 │                             root `Sessions`, which takes `append` and
 │                             nothing else (MCP_SPECIFICATION §2) [framework]
@@ -128,8 +132,12 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 TAT_InternalError             outside TAT_Error; never caught at the boundary
 
 TAT_StartupError              outside both; TAT cannot start here (§1)
-└─ IncompatibleStore          the database was written under another
-                              schema version                      [Forest_Store]
+├─ IncompatibleStore          the database was written under another
+│                             schema version                      [Forest_Store]
+└─ CannotLoadPlugin           package, node_class, reason — a node class
+                              failed a check of PLUGIN_SYSTEM §5;
+                              node_class is None for a check on the
+                              assembled schema                    [plugin]
 ```
 
 Every `TAT_Error` carries its facts as fields; `__str__` assembles the
@@ -140,8 +148,8 @@ touches the rendered string.
 
 ## 4. The `opr` field
 
-The five operations that change the forest — `append`, `insert_before`,
-`amend`, `move` and `delete` (TOOL_SCHEMAS.md) — write their
+The operations that change the forest — `append`, `insert_before`,
+`insert_after`, `amend`, `move` and `delete` (TOOL_SCHEMAS.md) — write their
 name into `opr` at the tool entry. `__str__` then opens with
 `Cannot {opr} {target}`, the target echoed from the call
 (TOOL_SCHEMAS.md §4). Any other tool
