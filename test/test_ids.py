@@ -4,7 +4,6 @@
 Run: python -m pytest test/test_ids.py
 """
 
-import pickle
 import sys
 import types
 import typing
@@ -21,6 +20,7 @@ import pytest
 from isabelle_theory_agent import model as M
 from isabelle_theory_agent.exceptions import AmbiguousId, NodeNotFound
 from isabelle_theory_agent.model import Isar_State_Slot, is_valid_name
+from isabelle_theory_agent.store import Forest_Store
 
 CONN = typing.cast(typing.Any, object())
 
@@ -32,14 +32,21 @@ def slot(): return Isar_State_Slot.assign(CONN)
 
 class Stub:
     def is_finished(self): return False
+    def to_store(self, rows): rows.put("name", self.name)
     def __repr__(self): return self.name
 
 class Thm(Stub, M.Leaf):                  # compulsory in both directions
+    @classmethod
+    def from_store(cls, config, rows):
+        n = cls(config.parent, config.state); n.name = rows.get("name"); return n
     async def _eval_opr(self): raise NotImplementedError
 
 class Sec(Stub, M.StdBlock):
     output_omissible = input_omissible = True
     drop_priority = 0
+    @classmethod
+    def from_store(cls, config, rows):
+        n = cls(config.parent, config.state, [], slot()); n.name = rows.get("name"); return n
     async def _eval_beginning_opr(self): raise NotImplementedError
 
 class Sess(Sec):
@@ -48,19 +55,34 @@ class Sess(Sec):
 class Thy(Sec):
     drop_priority = 2
 
+KINDS = {"thm": Thm, "sec": Sec, "sess": Sess, "thy": Thy}
+
+
+def enter(parent, n, kind):
+    """Set what the framework sets on a node entering the forest, and store it."""
+    f = parent.forest()
+    n.parent, n.kind, n.identity = parent, kind, f.store.next_identity()
+    parent.sub_nodes.append(n)
+    with f.store.transaction():
+        f._store_node(n); f._store_children(parent)
+    return n
 
 def mk_leaf(parent, name):
     n = Thm(parent, slot()); n.name = name
-    parent.sub_nodes.append(n); return n
+    return enter(parent, n, "thm")
 
 def mk_block(cls, parent, name):
     n = cls(parent, slot(), [], slot()); n.name = name
-    parent.sub_nodes.append(n); return n
+    return enter(parent, n, cls.__name__.lower())
+
+
+def new_forest(store=None):
+    return M.Forest(slot(), store if store is not None else Forest_Store(":memory:"), KINDS)
 
 
 @pytest.fixture
 def forest():
-    f = M.Forest(slot(), [])
+    f = new_forest()
     arith = mk_block(Sess, f, "session_Arith")
     x = mk_block(Thy, arith, "theory_X")
     basics = mk_block(Sec, x, "section_Basics")
@@ -173,13 +195,13 @@ def test_index_of_and_identity(forest):
     assert q.index_of() == 1
     assert q.identity > p.identity > x.identity     # creation order, opaque
 
-def test_identity_survives_pickling_and_counter_moves_past_it(forest, monkeypatch):
+def test_identity_and_ids_survive_a_reload(forest):
     f, arith, x, basics, p = forest
-    frozen = pickle.dumps(arith)
-    monkeypatch.setattr(M.Node, "_identity_counter", 0)   # a fresh process
-    thawed = pickle.loads(frozen)
-    reloaded_p = thawed.sub_nodes[0].sub_nodes[0].sub_nodes[0]
+    mk_leaf(x, "lemma_P")                    # the section can no longer be dropped
+    loaded = new_forest(f.store)             # the same database, read again
+    reloaded_p = loaded.sub_nodes[0].sub_nodes[0].sub_nodes[0].sub_nodes[0]
     assert reloaded_p.identity == p.identity
-    fresh = Thm(thawed.sub_nodes[0].sub_nodes[0], slot())
-    loaded = {n.identity for n in [thawed] + M._tree_order(thawed)}
-    assert fresh.identity not in loaded                   # no collision
+    assert loaded.id_of(reloaded_p) == f.id_of(p) == "section_Basics.lemma_P"
+    assert loaded.resolve("session_Arith.theory_X.lemma_P") is not reloaded_p
+    fresh = mk_leaf(loaded.sub_nodes[0].sub_nodes[0], "lemma_R")
+    assert fresh.identity not in {n.identity for n in loaded._all_nodes() if n is not fresh}

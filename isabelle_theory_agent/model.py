@@ -22,8 +22,9 @@ from . import isabelle_driver
 from .exceptions import (
     AmbiguousId, BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField,
     InvalidName, MalformedRawAST, MissingField, MoveIntoOwnSubtree,
-    NodeNotFound, TAT_Error, TAT_InternalError, UnexpectedChildren,
-    UnexpectedField, UnknownKind)
+    NodeNotFound, TAT_Error, TAT_InternalError, TAT_StartupError,
+    UnexpectedChildren, UnexpectedField, UnknownKind)
+from .store import Forest_Store, MissingRow, Node_Rows
 
 
 # ---------------------------------------------------------------------------
@@ -65,14 +66,6 @@ class Isar_State_Slot:
     async def copy_to(self, other: Isar_State_Slot) -> None:
         await isabelle_driver.state_copy(self.connection, self.name, other.name)
 
-    # Neither the connection nor the name survives persistence
-    # (ARCHITECTURE §4.1): the loader reassigns every slot of a loaded forest.
-    def __getstate__(self):
-        return {}
-
-    def __setstate__(self, _):
-        self.__dict__.update(connection=None, name=None)   # unassigned until the loader reassigns
-
     def __repr__(self) -> str:
         return f"Isar_State_Slot({self.name})"
 
@@ -81,7 +74,7 @@ class Isar_State_Slot:
 # Evaluation status (ARCHITECTURE §3.2, §3.3)
 
 class _Singleton:
-    """One instance per class, also across pickling, so `is` is always right."""
+    """One instance per class, so `is` is always right."""
 
     def __new__(cls) -> Self:
         inst = cls.__dict__.get("_instance")
@@ -89,9 +82,6 @@ class _Singleton:
             inst = super().__new__(cls)
             cls._instance = inst
         return inst
-
-    def __reduce__(self):
-        return (type(self), ())
 
     def __repr__(self) -> str:
         return type(self).__name__
@@ -218,7 +208,11 @@ class Node(ABC):
     parent: NonLeaf_Node | None
     state: Isar_State_Slot
     name: str            # the node's one id component (MCP_SPECIFICATION §2)
-    identity: int        # opaque; survives renaming and moving
+    # The framework's two fields, set by it when the node enters the forest
+    # (`_construct_element`) or is loaded (`Forest._load_subtree`); no class
+    # sets or stores them.
+    identity: int        # opaque; survives renaming, moving and restarts
+    kind: str            # the construct's `kind`, under which the class was registered
 
     # The three id properties a node class declares (MCP_SPECIFICATION §2.1).
     # Among droppable components the lowest `drop_priority` goes first;
@@ -244,18 +238,26 @@ class Node(ABC):
         prefixes the `raw_ast_path` (EXCEPTIONS.md §5)."""
         raise TAT_InternalError(f"{cls.__name__} has no gen")
 
-    _identity_counter: ClassVar[int] = 0
+    # --- Persistence (ARCHITECTURE §4.1, the plan's §2): each class writes
+    # and reads its own fields; `kind` and `children` are the framework's.
+
+    def to_store(self, rows: Node_Rows) -> None:
+        """Write the authored and recorded fields.  Every value must be
+        MessagePack-representable, and no recorded value may mean "work is
+        running": a loaded forest holds results, never work in flight."""
+        raise TAT_InternalError(f"{type(self).__name__} has no to_store")
+
+    @classmethod
+    def from_store(cls, config: NodeConfig, rows: Node_Rows) -> Self:
+        """Rebuild the node from what `to_store` wrote: `gen` with `rows` in
+        place of `raw` — `config.parent` the rebuilt parent, `config.state` a
+        fresh slot, `config.replacing` None.  Synchronous: nothing over the
+        wire.  Returns the node without children; the framework loads them."""
+        raise TAT_InternalError(f"{cls.__name__} has no from_store")
 
     def __init__(self, parent: NonLeaf_Node | None, state: Isar_State_Slot):
         self.parent = parent
         self.state = state
-        Node._identity_counter += 1
-        self.identity = Node._identity_counter
-
-    def __setstate__(self, d):
-        self.__dict__.update(d)
-        # A loaded node keeps its identity; fresh ones must not reuse it.
-        Node._identity_counter = max(Node._identity_counter, self.identity)
 
     def index_of(self) -> int:
         """The node's position in its parent's `sub_nodes` — computed, never
@@ -432,11 +434,6 @@ class Leaf(Node):
         await self._mark_not_evaluated(ev)                 # past the destination
         return EvaluationResult(None, INVALIDATING)
 
-    def __getstate__(self):
-        d = dict(self.__dict__)
-        d["_status"] = NOT_EVALUATED                      # a loaded forest is not evaluated
-        return d
-
 
 class NonLeaf_Node(Node):
 
@@ -494,9 +491,12 @@ class NonLeaf_Node(Node):
 
     # --- The four edit entries (MODULE_STRUCTURE §4.1).  The tool entry
     # holds the forest's lock across each; nothing before a commit has side
-    # effects on the forest, so an aborted call needs no undoing.  Each ends
-    # with the unconditional invalidation of MCP_SPECIFICATION §3.2; whether
-    # to also evaluate is the caller's, from the call's `evaluate` flag.
+    # effects on the forest, so an aborted call needs no undoing.  Right
+    # after the commit — the pointer surgery — each stores what it changed
+    # in one transaction, before the completed events and with no await in
+    # between (the plan's §2).  Each ends with the unconditional
+    # invalidation of MCP_SPECIFICATION §3.2; whether to also evaluate is
+    # the caller's, from the call's `evaluate` flag.
 
     async def _carry_forward(self, index: int, node: Node, ev: Evaluation) -> None:
         """The source side of removing `node` from position `index`: the
@@ -534,6 +534,10 @@ class NonLeaf_Node(Node):
         for node in nodes:
             node.parent = self
         self.sub_nodes[index:index] = nodes
+        with forest.store.transaction():
+            for node in nodes:
+                forest._store_subtree(node)
+            forest._store_children(self)
         for root in nodes:                    # tree order over what entered
             for n in _tree_order(root):
                 assert n.parent is not None
@@ -579,8 +583,7 @@ class NonLeaf_Node(Node):
                 and old.evaluation_status_beginning is READY):
             ev.release(old._state_after_beginning())
         index = old.index_of()
-        replacement.state = old.state
-        replacement.identity = old.identity
+        replacement.state = old.state          # its identity is already old's (_construct_element)
         if inherited:
             assert isinstance(replacement, NonLeaf_Node)
             replacement.sub_nodes[:] = inherited
@@ -593,6 +596,14 @@ class NonLeaf_Node(Node):
         for node in nodes[1:]:
             node.parent = self
         self.sub_nodes[index + 1:index + 1] = nodes[1:]
+        # The replacement's rows replace `old`'s: one identity.  The
+        # inherited children's rows do not change — no row names a parent.
+        with forest.store.transaction():
+            forest._store_node(replacement)
+            for node in nodes[1:]:
+                forest._store_subtree(node)
+            if nodes[1:]:
+                forest._store_children(self)
         # Completed events (MODULE_STRUCTURE §4.1's order).
         _completed(old.on_deleted, "amend")
         for child in inherited:
@@ -630,9 +641,14 @@ class NonLeaf_Node(Node):
             ev.release(s)
         del self.sub_nodes[index]
         node.parent = None
+        forest = self.forest()
+        with forest.store.transaction():
+            for n in _tree_order(node):
+                forest.store.delete_node(n.identity)
+            forest._store_children(self)
         for n in _children_first(node):
             _completed(n.on_deleted, "delete")
-        await self.forest()._run(ev, Seeking(Location(self, index)))
+        await forest._run(ev, Seeking(Location(self, index)))
 
     async def _move_child(self, node: Node, new_parent: NonLeaf_Node,
                           new_index: int) -> None:
@@ -687,6 +703,10 @@ class NonLeaf_Node(Node):
         del self.sub_nodes[old_index]
         node.parent = new_parent
         new_parent.sub_nodes.insert(new_index, node)
+        with forest.store.transaction():      # the subtree's own rows do not change
+            forest._store_children(self)
+            if new_parent is not self:
+                forest._store_children(new_parent)
         _completed(new_parent.on_added_child, node, "move")
         _completed(node.on_moved, old_location)
         # Both tails: from the source successor's final position, and from
@@ -849,12 +869,6 @@ class StdBlock(NonLeaf_Node):
         if isinstance(mode, Evaluating):                 # blocked: nothing ran here
             mode = replace(mode, rewritten=False)
         return EvaluationResult(None, mode)
-
-    def __getstate__(self):
-        d = dict(self.__dict__)
-        d["evaluation_status_beginning"] = NOT_EVALUATED
-        d["evaluation_status_ending"] = NOT_EVALUATED
-        return d
 
 
 # ---------------------------------------------------------------------------
@@ -1153,6 +1167,12 @@ async def _construct_element(raw: RawAST, kinds: Mapping[str, type[Node]],
     if isinstance(node, NonLeaf_Node) and node.sub_nodes:
         raise TAT_InternalError(
             f"{cls.__name__}.gen returned children; the framework builds them")
+    node.kind = kind
+    # A replacement keeps the identity of what it replaces (MCP_SPECIFICATION
+    # §3.1).  A fresh one is the store's own write, outside any transaction:
+    # nothing of this edit is in one until its commit (the plan's §2).
+    node.identity = (replacing.identity if replacing is not None
+                     else forest.store.next_identity())
     if "children" in raw:
         if not isinstance(node, NonLeaf_Node):
             raise TAT_InternalError(
@@ -1170,10 +1190,92 @@ class Forest(NonLeaf_Node):
     not the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6)."""
 
     lock: asyncio.Lock                         # held across every evaluation and tree change
+    store: Forest_Store                        # the working directory's database (the plan's §2)
 
-    def __init__(self, state, sub_nodes):
-        super().__init__(None, state, sub_nodes)
+    ROOT_IDENTITY: ClassVar[int] = 0           # `next_identity` starts at 1
+
+    def __init__(self, state: Isar_State_Slot, store: Forest_Store,
+                 kinds: Mapping[str, type[Node]]):
+        """The forest the store holds, loaded whole: its trees are the root's
+        `children` row, each rebuilt by `_load_subtree` with the classes of
+        `kinds`; a fresh database, one without a row, is the empty forest.
+        `not_evaluated` throughout, every slot fresh (ARCHITECTURE §4.1).
+        A database TAT could not have written is refused (`TAT_StartupError`)."""
+        super().__init__(None, state, [])
+        self.identity = self.ROOT_IDENTITY
+        self.store = store
         self.lock = asyncio.Lock()
+        try:
+            if store.nodes():
+                seen = {self.identity}
+                for identity in self._child_identities(self.identity, seen):
+                    self.sub_nodes.append(self._load_subtree(identity, self, kinds, seen))
+        except MissingRow as e:                # a framework row, or a field a class reads
+            raise TAT_StartupError(
+                f"the forest database has no field `{e.field}` for node {e.node}") from e
+
+    # --- persistence: what the framework stores of a node, and how it
+    # rebuilds one (the plan's §2).  Every write below needs an open
+    # transaction; the edit entries open one each.
+
+    def _store_node(self, node: Node) -> None:
+        """Rewrite one node's rows: `kind`, a nesting node's `children`,
+        then what the class writes.  Also how an evaluation hook stores a
+        recorded field it wrote."""
+        self.store.delete_node(node.identity)
+        self.store.put(node.identity, "kind", node.kind)
+        if isinstance(node, NonLeaf_Node):
+            self._store_children(node)
+        node.to_store(self.store.rows(node.identity))
+
+    def _store_subtree(self, node: Node) -> None:
+        for n in _tree_order(node):
+            self._store_node(n)
+
+    def _store_children(self, parent: NonLeaf_Node) -> None:
+        """The ordered identities of `parent`'s children — the root's one
+        row, the only one it has."""
+        self.store.put(parent.identity, "children",
+                       [c.identity for c in parent.sub_nodes])
+
+    def _child_identities(self, identity: int, seen: set[int]) -> list[int]:
+        """The `children` row of `identity`, checked before it is walked: a
+        list of identities, none seen before in this load — a damaged row
+        is refused, not recursed into or loaded twice."""
+        children = self.store.get(identity, "children")
+        if not isinstance(children, list) or not all(type(c) is int for c in children):
+            raise TAT_StartupError(
+                f"the forest database's `children` row of node {identity} is not a"
+                " list of identities")
+        for child in children:
+            if child in seen:
+                raise TAT_StartupError(
+                    f"the forest database names node {child} as a child, but it is"
+                    " already in the forest being loaded")
+            seen.add(child)
+        return children
+
+    def _load_subtree(self, identity: int, parent: NonLeaf_Node,
+                      kinds: Mapping[str, type[Node]], seen: set[int]) -> Node:
+        kind = self.store.get(identity, "kind")
+        cls = kinds.get(kind) if isinstance(kind, str) else None
+        if cls is None:
+            raise TAT_StartupError(
+                f"the forest database holds a node of kind `{kind}`, for which no"
+                " node class is loaded")
+        config = NodeConfig(state=Isar_State_Slot.assign(parent.state.connection),
+                            parent=parent, replacing=None)
+        node = cls.from_store(config, self.store.rows(identity))
+        if isinstance(node, NonLeaf_Node) and node.sub_nodes:
+            raise TAT_InternalError(
+                f"{cls.__name__}.from_store returned children; the framework loads them")
+        node.parent = parent                   # the framework owns placement
+        node.kind = kind
+        node.identity = identity
+        if isinstance(node, NonLeaf_Node):
+            for child_identity in self._child_identities(identity, seen):
+                node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))
+        return node
 
     def is_finished(self) -> bool:
         return all(t.is_finished() for t in self.sub_nodes)

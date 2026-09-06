@@ -168,6 +168,25 @@ def test_delete_node_removes_its_fields_and_nothing_else(store):
         store.delete_node(42)                   # absent: not an error
 
 
+def test_node_rows_keeps_the_framework_fields_read_only(store):
+    with store.transaction():
+        store.put(7, "kind", "lemma")
+        store.put(7, "children", [8, 9])
+        rows = store.rows(7)
+        rows.put("name", "P")
+        for field in ("kind", "children"):
+            with pytest.raises(TAT_InternalError, match="framework's field"):
+                rows.put(field, "x")
+    rows = store.rows(7)
+    assert rows.get("name") == "P"
+    assert rows.get("kind") == "lemma" and rows.get("children") == [8, 9]
+    assert rows.fields() == {"name": "P"}
+    with pytest.raises(KeyError):
+        rows.get("statement")
+    with pytest.raises(TAT_InternalError):      # a class's write needs the operation's transaction
+        rows.put("name", "Q")
+
+
 def test_identities_are_fresh_across_reopen(tmp_path):
     path = tmp_path / "f.sqlite"
     with Forest_Store(path) as s:
@@ -210,6 +229,21 @@ def test_a_corrupt_meta_blob_is_a_startup_error(tmp_path):
     conn.commit()
     conn.close()
     with pytest.raises(TAT_StartupError, match="meta is not readable"):
+        Forest_Store(path)
+
+
+@pytest.mark.parametrize("damage", [
+    "UPDATE meta SET value = X'A3616263' WHERE key = 'next_identity'",   # the string "abc"
+    "DELETE FROM meta WHERE key = 'next_identity'",
+])
+def test_a_damaged_identity_counter_is_a_startup_error(tmp_path, damage):
+    path = tmp_path / "f.sqlite"
+    Forest_Store(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute(damage)
+    conn.commit()
+    conn.close()
+    with pytest.raises(TAT_StartupError, match="`next_identity` is not an identity"):
         Forest_Store(path)
 
 

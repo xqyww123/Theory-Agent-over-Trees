@@ -9,8 +9,8 @@ from typing import NotRequired, TypedDict
 import pytest
 
 import test_model as tm
-from invariants import assert_invariants
-from test_model import Block, T, locked, run, slot, st
+from invariants import assert_invariants, assert_store_mirrors
+from test_model import Block, T, add, locked, run, slot, st
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent.exceptions import (
@@ -30,6 +30,7 @@ def table(monkeypatch):
 
 def inv(f):
     assert_invariants(f, tm.TABLE)
+    assert_store_mirrors(f, KINDS)
 
 
 def deletes():
@@ -78,17 +79,26 @@ class Nesting_RawAST(TypedDict):             # a declaration that nests itself
 def rbuild():
     """Theory > [Section > [a, b], c], every class recording."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = RBlock(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    sec = RBlock(thy, slot(), "Section", slot())
-    a = RT(sec, slot(), "a"); b = RT(sec, slot(), "b")
-    sec.sub_nodes += [a, b]
-    c = RT(thy, slot(), "c")
-    thy.sub_nodes += [sec, c]
+    thy = add(f, RBlock(f, slot(), "Theory", slot()))
+    sec = add(thy, RBlock(thy, slot(), "Section", slot()))
+    a = add(sec, RT(sec, slot(), "a")); b = add(sec, RT(sec, slot(), "b"))
+    c = add(thy, RT(thy, slot(), "c"))
     return f, thy, sec, a, b, c
 
 
 def events(*types):
     return [e for e in EVENTS if e[1] in types]
+
+
+def record(node, **fields):
+    """Change a node's fields outside an edit and store the node, standing
+    where an evaluation hook's write of a recorded field will go (the plan's
+    §2); the framework does not make that write yet (§7, step 3)."""
+    for field, value in fields.items():
+        setattr(node, field, value)
+    f = node.forest()
+    with f.store.transaction():
+        f._store_node(node)
 
 
 # --- insert -----------------------------------------------------------------
@@ -128,6 +138,7 @@ def test_batch_aborts_whole_with_the_path(  ):
     assert thy.sub_nodes == before and EVENTS == []      # forest untouched
     assert tm.TABLE.values == before_table               # and nothing remote
     assert tm.TABLE.deleted == before_deleted
+    inv(f)                                               # and nothing stored
 
 def test_duplicate_name_against_sibling_and_batch():
     f, thy, sec, a, b, c = rbuild()
@@ -414,6 +425,17 @@ def test_amend_batch_follows_the_replacement():
         KINDS)))
     assert thy.sub_nodes == [s9, u, c] and u.parent is thy
     assert u.state.name not in tm.TABLE.values    # its predecessor is fresh
+    inv(f)
+
+def test_amend_across_kinds_leaves_no_field_of_the_old_class():
+    f, thy, sec, a, b, c = rbuild()
+    (blk,) = run(locked(f, thy._insert_children(2, [{"kind": "block", "name": "B"}], KINDS)))
+    assert set(f.store.fields(blk.identity)) == {
+        "kind", "children", "name", "fail_beginning", "fail_ending"}
+    (leaf,) = run(locked(f, thy._amend_children(blk, [{"kind": "t", "name": "L"}], KINDS)))
+    assert leaf.identity == blk.identity
+    assert set(f.store.fields(leaf.identity)) == {"kind", "name", "fail"}
+    inv(f)
 
 def test_amend_replacement_refuses_children_and_leaves():
     f, thy, sec, a, b, c = rbuild()
@@ -457,12 +479,12 @@ class Stubborn(RT):
 
 def test_gate_veto_aborts_with_forest_untouched():
     f, thy, sec, a, b, c = rbuild()
-    s = Stubborn(sec, slot(), "s")
-    sec.sub_nodes.append(s)
+    s = add(sec, Stubborn(sec, slot(), "s"))
     with pytest.raises(Veto):
         run(locked(f, sec._delete_child(s)))
     assert s in sec.sub_nodes and s.parent is sec
     assert events("deleted") == []
+    inv(f)
 
 class Buggy(RT):
     def on_inserted(self):
@@ -473,6 +495,31 @@ def test_completed_hook_raise_is_the_class_bug():
     with pytest.raises(TAT_InternalError):
         run(locked(f, thy._insert_children(
             2, [{"kind": "t", "name": "u"}], {"t": Buggy})))
+    # the commit and its store transaction had happened; the two still agree
+    assert [n.name for n in thy.sub_nodes] == ["Section", "c", "u"]
+    inv(f)
+
+
+# --- one transaction per write operation, storing only what changed ----------
+
+def test_each_edit_is_one_transaction_touching_what_it_changed():
+    f, thy, sec, a, b, c = rbuild()
+    tm.TABLE.clear_writes()
+    (u,) = run(locked(f, sec._insert_children(1, [{"kind": "t", "name": "u"}], KINDS)))
+    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {u.identity, sec.identity}
+    tm.TABLE.clear_writes()
+    run(locked(f, thy._move_child(c, thy, 0)))                 # within one parent
+    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity}
+    tm.TABLE.clear_writes()
+    run(locked(f, thy._move_child(c, sec, 0)))                 # across parents
+    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity, sec.identity}
+    tm.TABLE.clear_writes()
+    (s9,) = run(locked(f, thy._amend_children(sec, [{"kind": "block", "name": "S9"}], KINDS)))
+    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {s9.identity}
+    tm.TABLE.clear_writes()
+    run(locked(f, s9._delete_child(a)))
+    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {a.identity, s9.identity}
+    inv(f)
 
 
 # --- move -------------------------------------------------------------------
@@ -548,11 +595,10 @@ def test_on_invalidated_fires_once_per_operation():
 
 def test_blocked_beginning_reruns_when_unblocked():
     f = tm.OneTreeForest(tm.CONN)
-    thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    d = T(thy, slot(), "d", fail=True)
-    sec = Block(thy, slot(), "Sec", slot())
-    a = T(sec, slot(), "a"); sec.sub_nodes.append(a)
-    thy.sub_nodes += [d, sec]
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    d = add(thy, T(thy, slot(), "d", fail=True))
+    sec = add(thy, Block(thy, slot(), "Sec", slot()))
+    a = add(sec, T(sec, slot(), "a"))
     r = run(a.evaluate_to(False))                # strict: d stops, sec blocked
     assert r.stopped_at is d
     assert st(sec)[0] == CannotEvaluate(d) and sec.begin_runs == 0
@@ -574,12 +620,11 @@ def test_failed_opening_repeated_pass_keeps_the_result():
 def build_x_sec_c():
     """Theory > [x, Section > [a, b], c]: a nesting node right after x."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    x = T(thy, slot(), "x")
-    sec = Block(thy, slot(), "Section", slot())
-    a = T(sec, slot(), "a"); b = T(sec, slot(), "b"); sec.sub_nodes += [a, b]
-    c = T(thy, slot(), "c")
-    thy.sub_nodes += [x, sec, c]
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    x = add(thy, T(thy, slot(), "x"))
+    sec = add(thy, Block(thy, slot(), "Section", slot()))
+    a = add(sec, T(sec, slot(), "a")); b = add(sec, T(sec, slot(), "b"))
+    c = add(thy, T(thy, slot(), "c"))
     return f, thy, x, sec, a, b, c
 
 def test_delete_before_a_nesting_successor_invalidates_it_whole():
@@ -604,12 +649,11 @@ def test_move_past_a_nesting_successor_invalidates_it_whole():
 
 def test_amend_with_a_nesting_first_child_invalidates_it_whole():
     f = tm.OneTreeForest(tm.CONN)
-    thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    sec = Block(thy, slot(), "Section", slot())
-    inner = Block(sec, slot(), "Inner", slot())
-    a = T(inner, slot(), "a"); inner.sub_nodes.append(a)
-    b = T(sec, slot(), "b"); sec.sub_nodes += [inner, b]
-    thy.sub_nodes.append(sec)
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    sec = add(thy, Block(thy, slot(), "Section", slot()))
+    inner = add(sec, Block(sec, slot(), "Inner", slot()))
+    a = add(inner, T(inner, slot(), "a"))
+    b = add(sec, T(sec, slot(), "b"))
     run(b.evaluate_to(False)); inv(f)
     (s9,) = run(locked(f, thy._amend_children(
         sec, [{"kind": "block", "name": "S9"}], {"block": Block, "t": T})))
@@ -621,17 +665,16 @@ def test_failed_opening_after_failed_ending_keeps_its_result():
     """Theory > [A(fails), B > [z], Y]; B's ending fails, then its beginning
     fails on its second run: the copy-through must not be released."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    a = T(thy, slot(), "A", fail=True)
-    b = Block(thy, slot(), "B", slot(), fail_ending=True)
-    z = T(b, slot(), "z"); b.sub_nodes.append(z)
-    y = T(thy, slot(), "Y")
-    thy.sub_nodes += [a, b, y]
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    a = add(thy, T(thy, slot(), "A", fail=True))
+    b = add(thy, Block(thy, slot(), "B", slot(), fail_ending=True))
+    z = add(b, T(b, slot(), "z"))
+    y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(True)); inv(f)
     assert st(b) == (READY, CannotEvaluate(None))
     run(y.evaluate_to(False)); inv(f)            # A stops; B's ending keeps its own stop
     assert st(b) == (CannotEvaluate(a), CannotEvaluate(None))
-    b.fail_beginning = True
+    record(b, fail_beginning=True)
     run(y.evaluate_to(True)); inv(f)             # B's beginning reruns and fails
     assert st(b) == (CannotEvaluate(None), READY) and st(y) is READY
     assert (tm.TABLE.values[b.resulting_state().name]
@@ -641,10 +684,9 @@ def test_own_stop_reruns_when_its_input_is_rewritten():
     """Theory > [A(fails), P, X(fails), Y]: P, blocked then unblocked, reruns
     and rewrites X's input — X, an own stop, must run again on it."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    a = T(thy, slot(), "A", fail=True); p = T(thy, slot(), "P")
-    x = T(thy, slot(), "X", fail=True); y = T(thy, slot(), "Y")
-    thy.sub_nodes += [a, p, x, y]
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    a = add(thy, T(thy, slot(), "A", fail=True)); p = add(thy, T(thy, slot(), "P"))
+    x = add(thy, T(thy, slot(), "X", fail=True)); y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(True)); inv(f)
     assert (p.runs, x.runs) == (1, 1)
     run(y.evaluate_to(False)); inv(f)            # A stops: P blocked, X keeps its own stop
@@ -660,12 +702,11 @@ def test_removing_an_own_stop_behind_a_blocked_predecessor_releases_its_copy():
     not leave B's copy-through in C's input, whose writer is now S."""
     def build():
         f = tm.OneTreeForest(tm.CONN)
-        thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-        a = T(thy, slot(), "A", fail=True)
-        s = Block(thy, slot(), "S", slot())
-        z = T(s, slot(), "z"); s.sub_nodes.append(z)
-        b = T(thy, slot(), "B", fail=True); c = T(thy, slot(), "C")
-        thy.sub_nodes += [a, s, b, c]
+        thy = add(f, Block(f, slot(), "Theory", slot()))
+        a = add(thy, T(thy, slot(), "A", fail=True))
+        s = add(thy, Block(thy, slot(), "S", slot()))
+        z = add(s, T(s, slot(), "z"))
+        b = add(thy, T(thy, slot(), "B", fail=True)); c = add(thy, T(thy, slot(), "C"))
         run(c.evaluate_to(True)); run(c.evaluate_to(False)); inv(f)
         assert st(s)[1] == CannotEvaluate(a) and st(b) == CannotEvaluate(None)
         return f, thy, s, b, c
@@ -685,10 +726,9 @@ def test_the_root_has_no_position():
 
 def test_own_stop_survives_being_blocked():
     f = tm.OneTreeForest(tm.CONN)
-    thy = Block(f, slot(), "Theory", slot()); f.sub_nodes.append(thy)
-    d = T(thy, slot(), "d", fail=True); e = T(thy, slot(), "e", fail=True)
-    g = T(thy, slot(), "g")
-    thy.sub_nodes += [d, e, g]
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    d = add(thy, T(thy, slot(), "d", fail=True)); e = add(thy, T(thy, slot(), "e", fail=True))
+    g = add(thy, T(thy, slot(), "g"))
     for ignore in (True, True, False, True, False, True):
         run(g.evaluate_to(ignore))
         assert e.runs == 1 and st(e) == CannotEvaluate(None)   # never rerun, never misreported
@@ -719,9 +759,9 @@ def test_random_interleavings_keep_the_invariants():
                 n = rng.choice(movable)      # tree root's, whose input nobody writes (the plan's §6)
                 if isinstance(n, Block):
                     which = rng.choice(["fail_beginning", "fail_ending"])
-                    setattr(n, which, not getattr(n, which))
                 else:
-                    n.fail = not n.fail
+                    which = "fail"
+                record(n, **{which: not getattr(n, which)})
             elif op == "insert":
                 p = rng.choice(blocks)
                 raws = [fresh(rng.choice(["t", "block"]))
@@ -734,9 +774,14 @@ def test_random_interleavings_keep_the_invariants():
                     await n.parent._delete_child(n)
             elif op == "amend" and movable:
                 n = rng.choice(movable)
-                kind = "block" if isinstance(n, M.NonLeaf_Node) else "t"
+                if isinstance(n, M.NonLeaf_Node) and n.sub_nodes:
+                    kind = "block"               # a leaf could not inherit them
+                else:
+                    kind = rng.choice(["t", "block"])
+                raws = [fresh(kind)] + [fresh(rng.choice(["t", "block"]))
+                                        for _ in range(rng.randint(0, 1))]
                 async with f.lock:
-                    await n.parent._amend_children(n, [fresh(kind)], kinds)
+                    await n.parent._amend_children(n, raws, kinds)
             elif op == "move" and movable:
                 n = rng.choice(movable)
                 dests = [b for b in blocks if b not in M._tree_order(n)]
@@ -761,7 +806,7 @@ def test_move_refusals():
         run(locked(f, thy._move_child(sec, sec, 0)))
     assert (e.value.id, e.value.destination) == \
         ("Theory.Section", "Theory.Section")
-    mk = RT(sec, slot(), "c"); sec.sub_nodes.append(mk)   # a second "c"
+    mk = add(sec, RT(sec, slot(), "c"))                      # a second "c"
     with pytest.raises(DuplicateName) as e:
         run(locked(f, sec._move_child(mk, thy, 2)))
     assert e.value.taken_by == "Theory.c"

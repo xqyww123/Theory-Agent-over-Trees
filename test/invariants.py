@@ -1,16 +1,20 @@
-"""The two invariants every edit path and every walk maintains, checked
-against the fake state slot table of `test_model.py` (not a pytest module).
+"""The invariants every edit path and every walk maintains, checked against
+the fake state slot table of `test_model.py` and the forest's real store
+(not a pytest module).
 
 - Release: a slot holds a value iff the operation that writes it is still
   current — `ready`, or an own stop, which copied its input through; a
   beginning writes only when `ready` (ARCHITECTURE §3.1, §3.4).
 - Provenance: every operation still `ready` consumed exactly what its input
   slot holds now (MCP_SPECIFICATION §3.2's "invalidates … unconditionally").
+- Mirror: the store loads back as this forest — same nodes in the same
+  order with the same identities, kinds, names and fields — and holds no
+  row of a node that has left (the plan's §2).
 """
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent.model import READY, StdBlock, Leaf
-from test_model import NOT_RUN
+from test_model import NOT_RUN, OneTreeForest, CONN, shape
 
 
 def _current(status, beginning=False):
@@ -71,3 +75,14 @@ def assert_invariants(forest, table):
                 else:
                     assert values.get(node._state_before_ending.name) == node.consumed_end, \
                         f"{node}: ending ready, consumed {node.consumed_end!r}"
+
+
+def assert_store_mirrors(forest, kinds):
+    store = forest.store
+    live = {n.identity for n in forest._all_nodes()}
+    assert set(store.nodes()) - {forest.identity} == live, "rows of nodes not in the forest"
+    assert set(store.fields(forest.identity)) <= {"children"}, "the root has one row"
+    twin = OneTreeForest(CONN, store, kinds)
+    assert shape(twin) == shape(forest)
+    for n in twin._all_nodes():
+        assert n.parent is not None and n in n.parent.sub_nodes
