@@ -10,10 +10,11 @@ import asyncio
 import difflib
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+import dataclasses
 from dataclasses import dataclass, replace
 from types import UnionType
-from typing import (Any, ClassVar, Literal, NamedTuple, Self, Union,
+from typing import (Any, ClassVar, Literal, NamedTuple, Self, TypeAlias, Union,
                     get_args, get_origin, get_type_hints, is_typeddict)
 
 from Isabelle_RPC_Host import Connection
@@ -25,6 +26,11 @@ from .exceptions import (
     NodeNotFound, TAT_Error, TAT_InternalError, TAT_StartupError,
     UnexpectedChildren, UnexpectedField, UnknownKind)
 from .store import Forest_Store, MissingRow, Node_Rows
+
+
+# A JSON schema, as `json` reads it.  (`TypeAlias` rather than the `type`
+# statement: the package supports Python 3.11.)
+JSON_Schema: TypeAlias = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -221,11 +227,18 @@ class Node(ABC):
     input_omissible: ClassVar[bool] = False
     drop_priority: ClassVar[int] = 0
 
-    # The class's declared argument schema (MODULE_STRUCTURE §4.1): a
-    # TypedDict.  The framework checks a submitted construct against it
-    # before `gen` is consulted, and it types `gen`'s `raw` for the static
-    # checker.  The JSON tool schemas are hand-written, as AoA's.
+    # The two schemas of a construct of this class (PLUGIN_SYSTEM §2): the
+    # complete JSON schema for the agent, and a TypedDict of the same fields
+    # the framework checks a submitted construct against before `gen` is
+    # consulted, and which types `gen`'s `raw` for the static checker.  The
+    # loader requires both and holds them to each other (PLUGIN_SYSTEM §5).
+    construct_schema: ClassVar[JSON_Schema | None] = None
     argument_schema: ClassVar[Any] = None
+
+    # The forest-wide namespace the node's name lives in, if any
+    # (PLUGIN_SYSTEM §2): `Theory`'s short names.  The framework checks the
+    # name against the forest and the call when the node is built.
+    namespace: ClassVar[Namespace | None] = None
 
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
@@ -282,11 +295,43 @@ class Node(ABC):
         assert isinstance(n, Forest)
         return n
 
-    @abstractmethod
+    # --- Subtree traversals.  Each appends to `out` and returns it, so a
+    # walk over many nodes fills one list instead of concatenating one per
+    # node; a nesting class extends them over its children.
+
+    def _tree_order(self, out: list[Node] | None = None) -> list[Node]:
+        """The node and its subtree: parents before children, siblings in
+        order (ARCHITECTURE §1)."""
+        if out is None:
+            out = []
+        out.append(self)
+        return out
+
+    def _children_first(self, out: list[Node] | None = None) -> list[Node]:
+        """The subtree with children before parents: the order of
+        `on_deleting` and `on_deleted` (MODULE_STRUCTURE §4.1)."""
+        if out is None:
+            out = []
+        out.append(self)
+        return out
+
     def is_finished(self) -> bool:
-        """Whether the node still owes anything (ARCHITECTURE §3.2).  The one
-        question asked of a node from outside; everything else it renders
-        itself."""
+        """Whether the node still owes anything (ARCHITECTURE §3.2): every
+        operation of the node and of its subtree `Ready`, and it and every
+        node below owing nothing.  The one question asked of a node from
+        outside, and the framework's derivation: a class overrides
+        `_owes_nothing`, never this (PLUGIN_SYSTEM §5)."""
+        return all(n._operations_ready() and n._owes_nothing() for n in self._tree_order())
+
+    def _owes_nothing(self) -> bool:
+        """The class's own part of `is_finished`: `Theorem` owes a proof
+        until it has one.  True by default (ARCHITECTURE §3.2)."""
+        return True
+
+    @abstractmethod
+    def _operations_ready(self) -> bool:
+        """Whether every operation of this node — not its subtree — is
+        `Ready`."""
 
     # --- Event hooks (MODULE_STRUCTURE §4.1), empty by default, driven by
     # the framework; two more, on_removing_child and on_added_child, live on
@@ -333,10 +378,11 @@ class Node(ABC):
         node is `is_finished()`."""
 
     @abstractmethod
-    def _states_inside(self) -> list[Isar_State_Slot]:
-        """Every state owned by this subtree: `state` and, under a nesting
-        node, its children's and the one after them.  The resulting state is
-        not among them — it is the successor's."""
+    def _states_inside(self, out: list[Isar_State_Slot] | None = None
+                       ) -> list[Isar_State_Slot]:
+        """Every state owned by this subtree, appended to `out`: `state` and,
+        under a nesting node, its children's and the one after them.  The
+        resulting state is not among them — it is the successor's."""
 
     @abstractmethod
     async def _evaluate(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
@@ -385,12 +431,17 @@ class Leaf(Node):
         super().__init__(parent, state)
         self._status = NOT_EVALUATED
 
-    def _states_inside(self):
-        return [self.state]
+    def _states_inside(self, out=None):
+        if out is None:
+            out = []
+        out.append(self.state)
+        return out
 
     def _last_status(self):
         return self._status
 
+    def _operations_ready(self):
+        return self._status is READY
 
     def _set_status(self, ev: Evaluation, new: EvaluationStatus) -> None:
         old = self._status
@@ -442,6 +493,20 @@ class NonLeaf_Node(Node):
     def __init__(self, parent, state, sub_nodes: list[Node]):
         super().__init__(parent, state)
         self.sub_nodes = sub_nodes
+
+    def _tree_order(self, out=None):
+        out = super()._tree_order(out)
+        for c in self.sub_nodes:
+            c._tree_order(out)
+        return out
+
+    def _children_first(self, out=None):
+        if out is None:
+            out = []
+        for c in self.sub_nodes:
+            c._children_first(out)
+        out.append(self)
+        return out
 
     def _resulting_state_of_child(self, child: Node) -> Isar_State_Slot:
         for i, c in enumerate(self.sub_nodes):
@@ -518,8 +583,8 @@ class NonLeaf_Node(Node):
         §3.2)."""
         forest = self.forest()
         taken: dict[str, Node | str] = {c.name: c for c in self.sub_nodes}
-        nodes = await _construct_siblings(self, raws, kinds, "constructs", taken,
-                                          forest)
+        nodes = await _construct_siblings(self, raws, "constructs", taken,
+                                          Edit_Call(forest, kinds))
         # Commit: pointer surgery plus the one copy of ARCHITECTURE §3.4
         # into the first new node's slot — only when the predecessor
         # operation wrote it, judged with no round trip; every other new
@@ -539,7 +604,7 @@ class NonLeaf_Node(Node):
                 forest._store_subtree(node)
             forest._store_children(self)
         for root in nodes:                    # tree order over what entered
-            for n in _tree_order(root):
+            for n in root._tree_order():
                 assert n.parent is not None
                 _completed(n.parent.on_added_child, n, "insert_or_delete")
                 _completed(n.on_inserted)
@@ -554,8 +619,8 @@ class NonLeaf_Node(Node):
         forest = self.forest()
         taken: dict[str, Node | str] = {c.name: c
                                         for c in self.sub_nodes if c is not old}
-        nodes = await _construct_siblings(self, raws, kinds, "constructs", taken,
-                                          forest, replacing_first=old)
+        nodes = await _construct_siblings(self, raws, "constructs", taken,
+                                          Edit_Call(forest, kinds, old), first_replaces=True)
         replacement = nodes[0]
         inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []
         # Gates.
@@ -613,7 +678,7 @@ class NonLeaf_Node(Node):
         _completed(self.on_added_child, replacement, "amend")
         _completed(replacement.on_inserted)
         for root in nodes[1:]:
-            for n in _tree_order(root):
+            for n in root._tree_order():
                 assert n.parent is not None
                 _completed(n.parent.on_added_child, n, "insert_or_delete")
                 _completed(n.on_inserted)
@@ -631,7 +696,7 @@ class NonLeaf_Node(Node):
         """`delete`: remove `node` with its subtree and invalidate from its
         successor on.  The predecessor's result, which lived under
         `node.state`, is copied under the state now at that position."""
-        for n in _children_first(node):
+        for n in node._children_first():
             _gate(n.on_deleting, "delete")
         _gate(self.on_removing_child, node, "insert_or_delete")
         index = node.index_of()
@@ -643,10 +708,10 @@ class NonLeaf_Node(Node):
         node.parent = None
         forest = self.forest()
         with forest.store.transaction():
-            for n in _tree_order(node):
+            for n in node._tree_order():
                 forest.store.delete_node(n.identity)
             forest._store_children(self)
-        for n in _children_first(node):
+        for n in node._children_first():
             _completed(n.on_deleted, "delete")
         await forest._run(ev, Seeking(Location(self, index)))
 
@@ -758,18 +823,23 @@ class StdBlock(NonLeaf_Node):
     def _beginning_status(self):
         return self.evaluation_status_beginning
 
+    def _operations_ready(self):
+        return (self.evaluation_status_beginning is READY
+                and self.evaluation_status_ending is READY)
 
     def _state_after_beginning(self) -> Isar_State_Slot:
         if self.sub_nodes:
             return self.sub_nodes[0].state
         return self._state_before_ending
 
-    def _states_inside(self):
-        inside = [self.state]
+    def _states_inside(self, out=None):
+        if out is None:
+            out = []
+        out.append(self.state)
         for c in self.sub_nodes:
-            inside += c._states_inside()
-        inside.append(self._state_before_ending)
-        return inside
+            c._states_inside(out)
+        out.append(self._state_before_ending)
+        return out
 
     def _set_beginning(self, ev: Evaluation, new: EvaluationStatus) -> None:
         old = self.evaluation_status_beginning
@@ -895,6 +965,59 @@ class NodeConfig(NamedTuple):
                              # Read-only; never mutate it
 
 
+class Namespace(NamedTuple):
+    """A forest-wide namespace a class's names live in (PLUGIN_SYSTEM §2):
+    its name, and the `BadEdit` raised when the name is taken, built as
+    `duplicate(name, holder)` with `holder` the holder's id or its full path
+    in the call (RENDER_BASELINES §2)."""
+    name: str
+    duplicate: Callable[[str, str], BadEdit]
+
+
+def _holder_id(holder: Node | str, forest: Forest) -> str:
+    """A taken name's holder as the agent sees it: a node's id, or the
+    coordinate of the construct that took it earlier in this call."""
+    return holder if isinstance(holder, str) else forest.id_of(holder)
+
+
+@dataclass(frozen=True)
+class Edit_Call:
+    """What every construct built in one edit call shares."""
+    forest: Forest
+    kinds: Mapping[str, type[Node]]
+    replacing: Node | None = None    # the node an amend takes out of the forest,
+                                     # left out of every uniqueness check of the
+                                     # call; `NodeConfig.replacing`, which only the
+                                     # amend's first construct sees, is its
+                                     # per-construct twin
+    taken: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
+                                     # the names the constructs built so far have
+                                     # taken in each forest-wide namespace:
+                                     # namespace name -> name -> the construct's
+                                     # full path
+
+
+def _take_name(node: Node, full_path: str, call: Edit_Call) -> None:
+    """For a class with a `namespace`: refuse the node's name if a node of
+    the forest (other than the one the call replaces) or an earlier
+    construct of the call already bears it in that namespace, else record
+    it for the rest of the call.  The forest's takers are found by walking
+    it, never recorded (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §3);
+    `DuplicateName` among siblings is `_construct_siblings`' own `taken`."""
+    namespace = type(node).namespace
+    if namespace is None:
+        return
+    for other in call.forest._all_nodes():
+        theirs = type(other).namespace
+        if (other is not call.replacing and other.name == node.name
+                and theirs is not None and theirs.name == namespace.name):
+            raise namespace.duplicate(node.name, call.forest.id_of(other))
+    taken = call.taken.setdefault(namespace.name, {})
+    if node.name in taken:
+        raise namespace.duplicate(node.name, taken[node.name])
+    taken[node.name] = full_path
+
+
 # The annotation grammar of an argument schema: `str`, `bool`, `int`,
 # `float`, `Any`, `list[X]`, a TypedDict, and unions of those holding at most
 # one TypedDict — closed, so every rendering stays within RENDER_BASELINES
@@ -905,9 +1028,9 @@ _JSON_NAMES = {str: "a string", bool: "a boolean", int: "a number",
 
 def validate_argument_schema(td: Any) -> None:
     """Refuse a declaration outside the grammar — loudly, at registration,
-    where the class's author sees it (MODULE_STRUCTURE §4.3)."""
-    if td is not None:
-        _validate_typeddict(td, top=True, enclosing=())
+    where the class's author sees it (PLUGIN_SYSTEM §5).  A TypedDict is
+    compulsory: an empty one for a class with no fields."""
+    _validate_typeddict(td, top=True, enclosing=())
 
 
 def _validate_typeddict(td: Any, top: bool, enclosing: tuple) -> None:
@@ -1005,10 +1128,8 @@ def _json_name(ann: Any) -> str:
 def _check_schema(cls: type[Node], kind: str, raw: RawAST) -> None:
     """The mechanical shape, before the class is consulted: no field the
     class does not declare, required fields present, types right — against
-    the class's `argument_schema` TypedDict.  None declared: nothing
-    checked."""
-    if cls.argument_schema is not None:
-        _check_fields(cls.argument_schema, kind, raw, prefix="")
+    the class's `argument_schema` TypedDict."""
+    _check_fields(cls.argument_schema, kind, raw, prefix="")
 
 
 def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
@@ -1075,45 +1196,31 @@ def _completed(hook, *args) -> None:
             f"completed hook {hook.__qualname__} raised") from e
 
 
-def _tree_order(node: Node) -> list[Node]:
-    """The node and its subtree: parents before children, siblings in
-    order (ARCHITECTURE §1)."""
-    out = [node]
-    if isinstance(node, NonLeaf_Node):
-        for c in node.sub_nodes:
-            out += _tree_order(c)
-    return out
-
-
-def _children_first(node: Node) -> list[Node]:
-    """The subtree with children before parents: the order of `on_deleting`
-    and `on_deleted` (MODULE_STRUCTURE §4.1)."""
-    out: list[Node] = []
-    if isinstance(node, NonLeaf_Node):
-        for c in node.sub_nodes:
-            out += _children_first(c)
-    out.append(node)
-    return out
-
-
-async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST],
-                              kinds: Mapping[str, type[Node]], listname: str,
-                              taken: dict[str, Node | str], forest: Forest,
-                              replacing_first: Node | None = None
-                              ) -> list[Node]:
+async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname: str,
+                              taken: dict[str, Node | str], call: Edit_Call,
+                              first_replaces: bool = False, path: str = "") -> list[Node]:
     """Step 1 of an edit: every construct in submission order, detached.
     `taken` maps each surviving sibling's name to the node, each batch
     element's to its coordinate — printed only at the raise — so
-    `DuplicateName` points either way.  The element's coordinate is
-    prefixed here, around everything done for it — the framework's own
+    `DuplicateName` points either way.  A class with a `namespace` is then
+    checked across the forest and the call (`_take_name`); that holder may
+    sit in another list of the call, so it is recorded under the element's
+    full path — `path`, the enclosing construct's, plus the coordinate
+    (RENDER_BASELINES §2).  The check comes after the sibling checks and
+    after the element's children are built, so a class nesting its own
+    namespace blames the enclosing construct.  `first_replaces`: this is
+    an amend's top-level list, whose first element replaces
+    `call.replacing`.  The element's coordinate is prefixed onto an
+    exception here, around everything done for it — the framework's own
     checks included (EXCEPTIONS.md §5)."""
     nodes = []
     for i, raw in enumerate(raws):
         coordinate = f"{listname}[{i}]"
+        full_path = f"{path}.{coordinate}" if path else coordinate
         try:
             node = await _construct_element(
-                raw, kinds, parent,
-                replacing_first if i == 0 else None, forest)
+                raw, parent, call.replacing if first_replaces and i == 0 else None,
+                call, full_path)
             name = getattr(node, "name", None)
             if not isinstance(name, str):
                 raise TAT_InternalError(
@@ -1121,10 +1228,9 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST],
             if not is_valid_name(name):
                 raise InvalidName(name)
             if name in taken:
-                holder = taken[name]
-                raise DuplicateName(name, holder if isinstance(holder, str)
-                                    else forest.id_of(holder))
+                raise DuplicateName(name, _holder_id(taken[name], call.forest))
             taken[name] = coordinate
+            _take_name(node, full_path, call)
             nodes.append(node)
         except TAT_Error as e:
             e._prefix_raw_ast_path(coordinate)
@@ -1132,9 +1238,9 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST],
     return nodes
 
 
-async def _construct_element(raw: RawAST, kinds: Mapping[str, type[Node]],
-                             parent: NonLeaf_Node, replacing: Node | None,
-                             forest: Forest) -> Node:
+async def _construct_element(raw: RawAST, parent: NonLeaf_Node, replacing: Node | None,
+                             call: Edit_Call, path: str) -> Node:
+    forest, kinds = call.forest, call.kinds
     if not isinstance(raw, Mapping):
         raise MalformedRawAST(missing_kind=False)
     if "kind" not in raw:
@@ -1178,7 +1284,7 @@ async def _construct_element(raw: RawAST, kinds: Mapping[str, type[Node]],
             raise TAT_InternalError(
                 f"{cls.__name__} took children but is no nesting class")
         children = await _construct_siblings(
-            node, raw["children"], kinds, "children", {}, forest)
+            node, raw["children"], "children", {}, call, path=path)
         for child in children:                # the framework owns placement
             child.parent = node
         node.sub_nodes.extend(children)
@@ -1229,7 +1335,7 @@ class Forest(NonLeaf_Node):
         node.to_store(self.store.rows(node.identity))
 
     def _store_subtree(self, node: Node) -> None:
-        for n in _tree_order(node):
+        for n in node._tree_order():
             self._store_node(n)
 
     def _store_children(self, parent: NonLeaf_Node) -> None:
@@ -1277,13 +1383,13 @@ class Forest(NonLeaf_Node):
                 node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))
         return node
 
-    def is_finished(self) -> bool:
-        return all(t.is_finished() for t in self.sub_nodes)
+    def _operations_ready(self):
+        return True                              # the root runs nothing
 
     def _resulting_state_of_all_children(self) -> Isar_State_Slot:
         raise NotImplementedError
 
-    def _states_inside(self):
+    def _states_inside(self, out=None):
         raise NotImplementedError
 
     def _last_status(self):
@@ -1303,7 +1409,10 @@ class Forest(NonLeaf_Node):
 
     def _all_nodes(self) -> list[Node]:
         """Every node below the root, in tree order."""
-        return [n for t in self.sub_nodes for n in _tree_order(t)]
+        out: list[Node] = []
+        for t in self.sub_nodes:
+            t._tree_order(out)
+        return out
 
     def _chain(self, node: Node) -> list[Node]:
         """The node's ancestors below the root and itself, outermost first."""
@@ -1412,3 +1521,9 @@ class Forest(NonLeaf_Node):
 
     async def _evaluate(self, ev, mode):
         raise NotImplementedError
+
+
+# The framework's own node classes — `Session` and `Theory` (the plan's §7,
+# step 3) — which `plugin.load` registers before any package (PLUGIN_SYSTEM
+# §1).
+FRAMEWORK_NODE_CLASSES: list[type[Node]] = []

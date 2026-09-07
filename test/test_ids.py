@@ -31,7 +31,6 @@ def slot(): return Isar_State_Slot.assign(CONN)
 # --- stub node classes: ids need no evaluation ------------------------------
 
 class Stub:
-    def is_finished(self): return False
     def to_store(self, rows): rows.put("name", self.name)
     def __repr__(self): return self.name
 

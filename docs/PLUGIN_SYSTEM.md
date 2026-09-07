@@ -37,7 +37,7 @@ arguments. Besides its hooks it declares, as class attributes:
 | `construct_schema` | the complete JSON schema of a construct of this class, hand-written (§3) |
 | `argument_schema` | a TypedDict of the same fields, which the framework checks a submitted construct against and which types `gen`'s `raw` (MODULE_STRUCTURE §4.1) |
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1 |
-| `namespace`, optional | the forest-wide namespace the node's name is claimed in through the claims registry (MODULE_STRUCTURE §4.1), and the `BadEdit` to raise on a second claim — `Theory`'s short names, `DuplicateTheoryShortName` |
+| `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.1), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
 
 The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5).
@@ -77,7 +77,9 @@ class Theorem(Leaf):
   calls. A leaf class declares no `children`.
 - Shared structures go in the class's own `$defs` and are used through
   `$ref`; a `$ref` may name a key of that `$defs`, `Construct`, or another
-  node class. Recursion is ordinary: a definition may refer to itself.
+  node class. Recursion is ordinary: a definition may refer to itself. The
+  argument schema's grammar has no recursion (MODULE_STRUCTURE §4.1), so
+  the TypedDict types such a field as `Any`.
 - Every `description` is agent-facing text. For a class TAT ships, it is
   approved wording, kept in the class's document under `docs/node_classes/`
   beside its attribute table; for a class delivered separately, it is its
@@ -125,12 +127,15 @@ class:
 - no kind it names is registered by another class, and no other class has
   the same Python class name;
 - if `children` is declared, the class is not a `Leaf`, and the property
-  is `{"type": "array", "items": X, ...}` with `X` a `$ref` to `Construct`
-  or to a node class, or an `anyOf` of such;
+  is `{"type": "array", "items": X, ...}` with `X` a `$ref` of the form
+  `#/$defs/<Name>`, or an `anyOf` of such;
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
 - the class does not override `is_finished` — `_owes_nothing` is the
   override point (ARCHITECTURE §3.2);
+- the class overrides `gen`, `to_store` and `from_store`: the framework's
+  defaults only raise, and a class missing one would fail at its first
+  edit or at the next start instead of here;
 - `argument_schema` is a TypedDict — an empty one for a class with no
   fields — within the closed annotation grammar (MODULE_STRUCTURE §4.1);
 - the two schemas agree: the keys of `properties`, less `kind` and
@@ -143,6 +148,9 @@ At assembly, once every class is known:
 - every `$ref` in every class's schema has the form `#/$defs/<Name>`, and
   `<Name>` is a key of that class's own `$defs`, `Construct`, or a node
   class name;
+- every `$ref` under a `children` property names `Construct` or a node
+  class, never a `$defs` entry of the class itself — a target only
+  judgeable once every class is registered;
 - no class's `$defs` uses a reserved name — `Construct` or any node class
   name;
 - two classes defining the same `$defs` name define it equally (`dict`
@@ -155,5 +163,6 @@ against the classes TAT ships.
 ## 6. Where
 
 Registration, the kind table and assembly live in `plugin.py`; `edit`'s
-schema file is `isabelle_theory_agent/tools/edit.jsonc`. `jsonschema` is a
-dependency of the package.
+schema file is `isabelle_theory_agent/tools/edit.jsonc`. `jsonschema` and
+`jsoncomment` (which reads the `.jsonc` files, as in AoA) are dependencies
+of the package.

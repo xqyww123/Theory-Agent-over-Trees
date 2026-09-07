@@ -113,7 +113,6 @@ class T(M.Leaf):                    # a leaf whose operation succeeds unless tol
     @classmethod
     def from_store(cls, config, rows):
         return cls(config.parent, config.state, rows.get("name"), rows.get("fail"))
-    def is_finished(self): return self._status is READY
     async def _eval_opr(self):
         self.runs += 1
         got = TABLE.values.get(self.state.name)
@@ -150,9 +149,6 @@ class Block(M.StdBlock):
                    Isar_State_Slot.assign(config.state.connection),
                    fail_beginning=rows.get("fail_beginning"),
                    fail_ending=rows.get("fail_ending"))
-    def is_finished(self):
-        return (self.evaluation_status_ending is READY and self.evaluation_status_beginning is READY
-                and all(c.is_finished() for c in self.sub_nodes))
     async def _eval_beginning_opr(self):
         self.begin_runs += 1
         self.consumed_begin = (NOT_RUN if self.fail_beginning
@@ -342,6 +338,26 @@ def test_insert_into_evaluated_tree():
     assert new2.state.name not in TABLE.values and sec.sub_nodes == [t1, new, t2, new2]
 
 
+def test_states_inside_gathers_the_subtree_into_the_accumulator():
+    f, thy, sec, t1, t2, t3, t4 = build()
+    assert sec._states_inside() == [sec.state, t1.state, t2.state, sec._state_before_ending]
+    out = ["x"]
+    assert t1._states_inside(out) is out and out == ["x", t1.state]   # extended in place
+
+
+def test_finished_is_derived_and_owes_nothing_is_the_classes_part():
+    f, thy, sec, t1, t2, t3, t4 = build()
+    assert not thy.is_finished() and not f.is_finished()
+    run(t4.evaluate_to(False))
+    assert sec.is_finished() and not thy.is_finished()   # the theory's ending has not run
+    run(thy.evaluate_to(False))
+    assert thy.is_finished() and f.is_finished()
+    t2._owes_nothing = lambda: False             # one leaf still owing something
+    assert t1.is_finished() and not t2.is_finished()
+    assert not sec.is_finished() and not thy.is_finished() and not f.is_finished()
+    assert t3.is_finished()                      # the debt does not spread sideways
+
+
 def test_failed_ending_is_a_stop():
     f, thy, sec, t1, t2, t3, t4 = build(Section="end")
     r = run(t4.evaluate_to(False))
@@ -457,7 +473,6 @@ class Bare(M.Leaf):                 # a class that wrote neither persistence met
     @classmethod
     async def gen(cls, config, raw):
         n = cls(config.parent, config.state); n.name = raw["name"]; return n
-    def is_finished(self): return False
     async def _eval_opr(self): return True
 
 class WriteOnly(Bare):              # ... and one that wrote only to_store

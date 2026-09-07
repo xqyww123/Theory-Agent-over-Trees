@@ -158,12 +158,14 @@ spelling); the short name against the base heap through
 `check_new_theory_short_name`; `imports` non-empty with non-empty strings
 (`InvalidField`). The short name's uniqueness **within the forest and the
 batch** is the framework's: `Theory` declares that its name lives in the
-forest-wide namespace of theory short names, and the framework's claims
-registry — the `taken` mechanism of `_construct_siblings`, extended to
-named namespaces, seeded from the pre-edit forest less `config.replacing`
-and accumulating the batch's claims, reachable from `NodeConfig` — refuses
-a second claim with `DuplicateTheoryShortName`, whose holder is then a
-sibling id or a coordinate of the same call (RENDER_BASELINES §2).
+forest-wide namespace of theory short names, and the framework — after
+the `taken` check of `_construct_siblings` — walks the pre-edit forest,
+less the node the amend replaces, which is leaving, for a node bearing the
+name in that namespace, and keeps the names the call's constructs have
+taken so far; either way it refuses the construct with
+`DuplicateTheoryShortName`, whose holder is then a node's id or the full
+path of a construct of the same call (RENDER_BASELINES §2). Nothing is
+kept across calls.
 
 ## 4. Creating a `Session` *(approved 2026-09-04)*
 
@@ -351,8 +353,8 @@ at every step that touches the ML side.
 2. **The loader** (PLUGIN_SYSTEM.md): `construct_schema`, kinds from the
    schema, a bare `@TAT_node`, the checks of §5 with `CannotLoadPlugin`,
    `$defs` hoisting, `#/$defs/Construct`; `is_finished` final with
-   `_owes_nothing`; the claims registry of §3 (`NodeConfig.claims` and the
-   class's `namespace`); `load` registering `Session` and `Theory` first;
+   `_owes_nothing`; the namespace check of §3 (the class's `namespace`);
+   `load` registering `Session` and `Theory` first;
    `jsonschema` as a dependency; `edit.jsonc`. (`UnexpectedField.takes`
    without `kind` at the top level is done.) Tests: the assembled schema
    validates, and constructs of every shipped kind validate against it.

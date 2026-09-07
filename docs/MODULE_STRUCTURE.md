@@ -16,6 +16,7 @@ Dev/TAT_Dev.thy               the development-time client, an Isa-REPL app (ARCH
 ROOT                          build checks only; nothing ever runs on these heaps
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT"
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
+isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
                               and their non-pytest helper modules
 docs/                         the design
@@ -222,6 +223,7 @@ isabelle_theory_agent/
   mcp.py               the tools, recall, the message queue
   mcp_server.py        the MCP server itself
   toplevel.py          the RPC entry point Isabelle calls into
+  tools/edit.jsonc     the edit tool's schema, its $defs filled at start (PLUGIN_SYSTEM §4)
 ```
 
 ### 4.1 `model.py`
@@ -268,11 +270,6 @@ class NodeConfig(NamedTuple):
                              # recorded fields the class judges still valid —
                              # Theorem keeps its proof when the statement is
                              # unchanged. Read-only; never mutate it
-    claims: Claims           # the batch's claims registry: names taken in a
-                             # forest-wide namespace by the pre-edit forest
-                             # (less `replacing`) and by the constructs built
-                             # so far in this call (ai-artifacts/
-                             # FIRST_END_TO_END_RUN_PLAN.md §3)
 
 @classmethod
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
@@ -301,10 +298,11 @@ An `edit` builds everything before it touches the forest:
    off the finished node: a name outside the grammar of
    MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
    surviving sibling or with the batch (`DuplicateName`), is refused; a
-   class may also claim a name in a forest-wide namespace — `Theory`'s
-   short names — through the claims registry on `NodeConfig`, seeded from
-   the pre-edit forest less `config.replacing`, which refuses a second
-   claim the same way (`DuplicateTheoryShortName`).
+   class may also declare that its names live in a forest-wide namespace
+   — `Theory`'s short names — and the framework then refuses a name a
+   node of the forest (less the node the amend replaces, which is
+   leaving) or an earlier construct of the call already bears there
+   (`DuplicateTheoryShortName`), finding the forest's by walking it.
    The amend loop walks the whole submitted list,
    `constructs[0]` built with `replacing` set; so every `raw_ast_path` indexes
    the agent's own list.

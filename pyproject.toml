@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "isabelle-rpc>=0.4.0",
     "msgpack>=1.1.2",
+    "jsonschema>=4.18",
+    "jsoncomment>=0.4.2",
 ]
 
 [project.urls]
@@ -34,3 +36,6 @@ version = { file = "VERSION" }
 
 [tool.setuptools.packages.find]
 include = ["isabelle_theory_agent", "isabelle_theory_agent.*"]
+
+[tool.setuptools.package-data]
+"isabelle_theory_agent" = ["tools/*.jsonc"]

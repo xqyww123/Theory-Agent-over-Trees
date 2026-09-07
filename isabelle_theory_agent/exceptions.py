@@ -221,7 +221,9 @@ class BadEdit(TAT_Error, ABC):
 
 
 # A coordinate into the submitted call ("constructs[0]", "children[2]"), which no
-# id can be: a name never contains a bracket (MCP_SPECIFICATION §2).
+# id can be: a name never contains a bracket (MCP_SPECIFICATION §2).  Used
+# with `match`, a prefix test, so a full path ("constructs[1].children[0]")
+# is recognised too.
 _COORDINATE = re.compile(r"(?:constructs|children)\[\d+\]")
 
 
@@ -254,14 +256,14 @@ class InvalidName(BadEdit):
 
 class DuplicateTheoryShortName(BadEdit):
     """Raised by `Theory.gen` against the base heap, and by the framework's
-    claims registry against the forest and the batch (EXCEPTIONS.md §3)."""
+    namespace check against the forest and the batch (EXCEPTIONS.md §3)."""
 
     def __init__(self, short_name: str, holder: str):
         super().__init__()
         self.short_name = short_name
         # The qualified name whose short name collides — a theory of the
-        # base heap, or another tree's — or the colliding construct's
-        # coordinate in this call.
+        # base heap, or another tree's — or the colliding construct's full
+        # path in this call.
         self.holder = holder
 
     def _cause(self) -> str:

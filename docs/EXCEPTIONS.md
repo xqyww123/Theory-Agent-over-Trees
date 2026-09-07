@@ -109,8 +109,9 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          DuplicateName is                    [framework]
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
-│  │                          (its coordinate) already uses the short
-│  │                          name (MCP_SPECIFICATION §2)   [Theory.gen, framework]
+│  │                          (its full path in the call) already uses
+│  │                          the short name (MCP_SPECIFICATION §2)
+│  │                                                  [Theory.gen, framework]
 │  ├─ UnexpectedChildren      kind, is_leaf — `children` may not appear
 │  │                          here: a Leaf can hold none (is_leaf), and an
 │  │                          amend's replacement inherits them; never

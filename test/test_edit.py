@@ -14,9 +14,10 @@ from test_model import Block, T, add, locked, run, slot, st
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent.exceptions import (
-    BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField,
-    InvalidName, MalformedRawAST, MissingField, MoveIntoOwnSubtree,
-    TAT_InternalError, UnexpectedChildren, UnexpectedField, UnknownKind)
+    BadEdit, ChildrenNotInheritable, DuplicateName, DuplicateTheoryShortName,
+    InvalidField, InvalidName, MalformedRawAST, MissingField,
+    MoveIntoOwnSubtree, TAT_InternalError, UnexpectedChildren,
+    UnexpectedField, UnknownKind)
 from isabelle_theory_agent.model import (
     NOT_EVALUATED, READY, CannotEvaluate, Location)
 
@@ -242,11 +243,15 @@ def test_schema_typed_dict_forms():
         M._check_schema(type("RK", (RT,), {"argument_schema": WithKind}),
                         "t", {"kind": "t", "nmae": "x"})
     assert e.value.takes == ["name"]
-    # no declaration, no check
-    class Loose(RT):
-        argument_schema = None
-    M._check_schema(Loose, "t", {"kind": "t", "whatever": 1})
-    M.validate_argument_schema(None)
+    # a declaration is compulsory (PLUGIN_SYSTEM §5); an empty one declares no field
+    with pytest.raises(TAT_InternalError, match="not a TypedDict"):
+        M.validate_argument_schema(None)
+    class Empty(TypedDict):
+        pass
+    M.validate_argument_schema(Empty)
+    with pytest.raises(UnexpectedField):
+        M._check_schema(type("RE", (RT,), {"argument_schema": Empty}),
+                        "t", {"kind": "t", "whatever": 1})
 
 
 def test_schema_grammar_is_closed_at_registration():
@@ -498,6 +503,67 @@ def test_completed_hook_raise_is_the_class_bug():
     # the commit and its store transaction had happened; the two still agree
     assert [n.name for n in thy.sub_nodes] == ["Section", "c", "u"]
     inv(f)
+
+
+# --- a name in a forest-wide namespace ---------------------------------------
+
+class Named(RT):
+    namespace = M.Namespace("theory short names", DuplicateTheoryShortName)
+
+class AlsoNamed(RT):                    # another class in the same namespace
+    namespace = M.Namespace("theory short names", DuplicateTheoryShortName)
+
+class Labelled(RT):                     # a class in a namespace of its own
+    namespace = M.Namespace("labels", DuplicateTheoryShortName)
+
+def test_a_namespaced_name_collides_across_the_forest_and_the_batch():
+    f, thy, sec, a, b, c = rbuild()
+    kinds = KINDS | {"named": Named, "also_named": AlsoNamed, "labelled": Labelled}
+    (n1,) = run(locked(f, sec._insert_children(0, [{"kind": "named", "name": "N"}], kinds)))
+    # the same name under another parent: no sibling collision, the namespace refuses
+    with pytest.raises(DuplicateTheoryShortName) as e:
+        run(locked(f, thy._insert_children(0, [{"kind": "named", "name": "N"}], kinds)))
+    assert (e.value.short_name, e.value.holder) == ("N", "Theory.Section.N")
+    assert e.value.raw_ast_path == "constructs[0]"
+    # it is the namespace that collides, not the class
+    with pytest.raises(DuplicateTheoryShortName):
+        run(locked(f, thy._insert_children(0, [{"kind": "also_named", "name": "N"}], kinds)))
+    run(locked(f, thy._insert_children(0, [{"kind": "labelled", "name": "N"}], kinds)))
+    # within one call, across different parents: the holder is a full path,
+    # whichever way round (RENDER_BASELINES §2)
+    with pytest.raises(DuplicateTheoryShortName) as e:
+        run(locked(f, thy._insert_children(0, [
+            {"kind": "named", "name": "M"},
+            {"kind": "block", "name": "S2", "children": [{"kind": "named", "name": "M"}]}],
+            kinds)))
+    assert e.value.holder == "constructs[0]"
+    assert e.value.raw_ast_path == "constructs[1].children[0]"
+    with pytest.raises(DuplicateTheoryShortName) as e:
+        run(locked(f, thy._insert_children(0, [
+            {"kind": "block", "name": "S2", "children": [{"kind": "named", "name": "M"}]},
+            {"kind": "named", "name": "M"}], kinds)))
+    assert e.value.holder == "constructs[0].children[0]"
+    assert e.value.raw_ast_path == "constructs[1]"
+    # under one parent the sibling check comes first: DuplicateName, not the namespace's
+    with pytest.raises(DuplicateName) as e:
+        run(locked(f, thy._insert_children(0, [
+            {"kind": "named", "name": "M"}, {"kind": "named", "name": "M"}], kinds)))
+    assert e.value.taken_by == "constructs[0]"
+    # a class without a namespace takes no forest-wide name, whatever its name
+    run(locked(f, thy._insert_children(0, [{"kind": "t", "name": "N2"}], kinds)))
+    # amend: the replaced node's name is not held against the call — not
+    # against its replacement, nor against a later construct of the same call
+    n2, n3 = run(locked(f, sec._amend_children(n1, [
+        {"kind": "named", "name": "N"},
+        {"kind": "block", "name": "S3", "children": [{"kind": "t", "name": "z"}]}], kinds)))
+    assert n2.identity == n1.identity
+    assert n3.sub_nodes[0].identity != n1.identity      # only the replacement takes the identity
+    # the name the replaced node gives up is free to a later construct of the same call
+    run(locked(f, sec._amend_children(n2, [
+        {"kind": "named", "name": "N_new"},
+        {"kind": "block", "name": "S4", "children": [{"kind": "named", "name": "N"}]}], kinds)))
+    assert_invariants(f, tm.TABLE)
+    assert_store_mirrors(f, kinds)
 
 
 # --- one transaction per write operation, storing only what changed ----------
@@ -784,7 +850,7 @@ def test_random_interleavings_keep_the_invariants():
                     await n.parent._amend_children(n, raws, kinds)
             elif op == "move" and movable:
                 n = rng.choice(movable)
-                dests = [b for b in blocks if b not in M._tree_order(n)]
+                dests = [b for b in blocks if b not in n._tree_order()]
                 if dests:
                     p = rng.choice(dests)
                     i = rng.randint(0, len(p.sub_nodes) - (1 if p is n.parent else 0))

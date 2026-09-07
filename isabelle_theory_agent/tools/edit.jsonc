@@ -1,0 +1,23 @@
+// The `edit` tool (TOOL_SCHEMAS.md §1).  `$defs` is filled at start with
+// one entry per node class and `Construct`, their union (PLUGIN_SYSTEM.md §4).
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["append", "insert_before", "insert_after", "amend"],
+      "description": "append: add the constructs at the end of the target's children; insert_before: add them before the target, as its siblings; insert_after: add them after the target, as its siblings; amend: replace the target with the given construct, inheriting the target's children."
+    },
+    "target_id":  { "type": "string", "description": "The id of the target node." },
+    "constructs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Construct" },
+      "description": "The constructs to add, in order."
+    },
+    "evaluate":   { "type": "boolean", "description": "Whether to evaluate the new nodes right away." }
+  },
+  "required": ["action", "target_id", "constructs", "evaluate"],
+  "additionalProperties": false,
+  "$defs": { }
+}
