@@ -35,9 +35,9 @@ arguments. Besides its hooks it declares, as class attributes:
 | attribute | what it is |
 | --- | --- |
 | `construct_schema` | the complete JSON schema of a construct of this class, hand-written (§3) |
-| `argument_schema` | a TypedDict of the same fields, which the framework checks a submitted construct against and which types `gen`'s `raw` (MODULE_STRUCTURE §4.1) |
+| `argument_schema` | a TypedDict of the same fields, which the framework checks a submitted construct against and which types `gen`'s `raw` (MODULE_STRUCTURE §4.4) |
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1 |
-| `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.1), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
+| `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.2), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
 
 The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5).
@@ -78,7 +78,7 @@ class Theorem(Leaf):
 - Shared structures go in the class's own `$defs` and are used through
   `$ref`; a `$ref` may name a key of that `$defs`, `Construct`, or another
   node class. Recursion is ordinary: a definition may refer to itself. The
-  argument schema's grammar has no recursion (MODULE_STRUCTURE §4.1), so
+  argument schema's grammar has no recursion (MODULE_STRUCTURE §4.4), so
   the TypedDict types such a field as `Any`.
 - Every `description` is agent-facing text. For a class TAT ships, it is
   approved wording, kept in the class's document under `docs/node_classes/`
@@ -110,7 +110,7 @@ conversation is running, and a startup error has no reader).
 
 The assembled schema keeps its references. The loader never inlines a
 `$ref`; a client that cannot take references is the MCP server's concern
-(MODULE_STRUCTURE §4.5), not this document's.
+(MODULE_STRUCTURE §4.6), not this document's.
 
 ## 5. What the loader checks
 
@@ -137,7 +137,7 @@ class:
   defaults only raise, and a class missing one would fail at its first
   edit or at the next start instead of here;
 - `argument_schema` is a TypedDict — an empty one for a class with no
-  fields — within the closed annotation grammar (MODULE_STRUCTURE §4.1);
+  fields — within the closed annotation grammar (MODULE_STRUCTURE §4.4);
 - the two schemas agree: the keys of `properties`, less `kind` and
   `children`, are exactly the TypedDict's keys less `kind`, and
   `required`, less `kind` and `children`, is exactly the TypedDict's
@@ -162,7 +162,8 @@ against the classes TAT ships.
 
 ## 6. Where
 
-Registration, the kind table and assembly live in `plugin.py`; `edit`'s
-schema file is `isabelle_theory_agent/tools/edit.jsonc`. `jsonschema` and
+Registration, the kind table, assembly and the argument schema grammar
+live in `plugin.py` (MODULE_STRUCTURE §4.4); `edit`'s schema file is
+`isabelle_theory_agent/tools/edit.jsonc`. `jsonschema` and
 `jsoncomment` (which reads the `.jsonc` files, as in AoA) are dependencies
 of the package.

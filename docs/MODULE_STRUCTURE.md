@@ -139,7 +139,7 @@ type env = {
 val register_callback :
   {python_packages : string list} ->    (*the class's Python half; imported at
                                           conversation start, filling the kind
-                                          table (§4.3)*)
+                                          table (§4.4)*)
   (env -> Remote_Procedure_Calling.callback') -> theory -> theory
 ```
 
@@ -179,7 +179,7 @@ whose ancestry names the node classes (§2.5):
    name), and `TAT.check_new_theory_short_name` (§2.3);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
-   procedure `launch_TAT` (§4.5) with the collected package list as an
+   procedure `launch_TAT` (§4.6) with the collected package list as an
    argument; `launch_TAT` does not return for the life of the conversation.
 
 The callbacks go in the `callback` field of that one command, as AoA's do
@@ -203,7 +203,7 @@ One section per predefined node class, each a client of §2.5.
 registers no evaluator: it runs no Isabelle commands — its evaluation is
 the forest's scheduling (ARCHITECTURE §3.5) and its emission the ROOT entry
 (ARCHITECTURE §4). The Python halves of both are framework classes in
-`model.py` (§4.4).
+`model.py` (§4.5).
 
 ## 4. Python side
 
@@ -215,9 +215,10 @@ starting the Isabelle process is the client's business.
 isabelle_theory_agent/
   exceptions.py        the TAT_Error hierarchy (EXCEPTIONS.md)
   model.py             Node, Forest, ids, evaluation and invalidation, compilation, persistence
+  edit.py              building nodes from constructs; the entries behind edit, move and delete
   store.py             Forest_Store and Node_Rows: the working directory's database (ARCHITECTURE §4.1)
   isabelle_driver.py   typed calls to the ML side's callbacks
-  plugin.py            loading node classes and their table
+  plugin.py            loading node classes and their table; the argument schema grammar
   builtins.py          the predefined node classes
   theorem_node.py      Theorem: construct, the AoA interface
   mcp.py               the tools, recall, the message queue
@@ -226,11 +227,14 @@ isabelle_theory_agent/
   tools/edit.jsonc     the edit tool's schema, its $defs filled at start (PLUGIN_SYSTEM §4)
 ```
 
+A leading underscore marks a framework-internal member: the framework's
+own modules use it across files; a node class and a plugin never touch it.
+
 ### 4.1 `model.py`
 
 `Node` is the Python half of the node class contract (ARCHITECTURE §6): the
 authored and recorded fields, the argument schema — a TypedDict the
-framework checks submitted constructs against (below), and which types
+framework checks submitted constructs against (§4.2, §4.4), and which types
 `gen`'s `raw` for the static checker — `gen` (below), `emit_isar`, the name it gives the node and its two omissibility
 flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
 parent's `sub_nodes`, computed, never stored — an optional `construct`,
@@ -238,21 +242,8 @@ parent's `sub_nodes`, computed, never stored — an optional `construct`,
 (ARCHITECTURE §3.2), and the event hooks (below).
 
 **Construction.** A node enters the forest from a `RawAST` — the JSON
-object the agent submitted, `Mapping[str, Any]`. Two of its fields belong
-to the framework: `kind` selects the node class (§4.3), and `children` —
-which no `gen` ever sees — holds a nesting node's contents. The framework
-also checks the construct's mechanical shape — no field the class does
-not declare, required fields present, types right — against the class's
-declared argument schema, raising `UnexpectedField` / `MissingField` /
-`InvalidField` before the class is consulted. A declaration's annotations
-come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
-`list[X]`, a TypedDict, and unions of those holding at most one
-TypedDict — so every check renders within RENDER_BASELINES §2's
-vocabulary; `@TAT_node` refuses anything else when the class is
-registered (§4.3), as it refuses a TypedDict that nests itself and an
-annotation Python cannot resolve. The JSON tool schemas are hand-written, as AoA's
-(`contrib/Isa-Mini/IsaMini/AoA/tools/`). Everything semantic lives in
-`gen`:
+object the agent submitted, `Mapping[str, Any]` — less `children`, which
+no `gen` ever sees (§4.2). Everything semantic lives in `gen`:
 
 ```python
 class NodeConfig(NamedTuple):
@@ -285,62 +276,6 @@ only `TAT_Error` subclasses,
 so a transport failure is never blamed on the class. It must not write:
 an aborted edit undoes nothing remotely. It raises `TAT_Error`s bare; the
 framework prefixes the `raw_ast_path` (EXCEPTIONS.md §5).
-
-An `edit` builds everything before it touches the forest:
-
-1. **Construct, detached.** Every construct, in submission order: the
-   `children`-legality checks (`UnexpectedChildren`,
-   `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
-   table alone, so they run before any `gen`), the class lookup, the
-   schema check, `gen`, then — for a nesting class — its `children`, built
-   by the framework onto the fresh, still-detached node the same way. The
-   framework assigns each new node a fresh state slot and reads the name
-   off the finished node: a name outside the grammar of
-   MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
-   surviving sibling or with the batch (`DuplicateName`), is refused; a
-   class may also declare that its names live in a forest-wide namespace
-   — `Theory`'s short names — and the framework then refuses a name a
-   node of the forest (less the node the amend replaces, which is
-   leaving) or an earlier construct of the call already bears there
-   (`DuplicateTheoryShortName`), finding the forest's by walking it.
-   The amend loop walks the whole submitted list,
-   `constructs[0]` built with `replacing` set; so every `raw_ast_path` indexes
-   the agent's own list.
-2. **Gates.** The hooks that may still veto (Events below), `BadEdit`
-   their only voice.
-3. **Commit** — pointer surgery, which cannot fail, then one store
-   transaction writing what changed (ARCHITECTURE §4.1). The batch is
-   linked in; on amend the replacement takes `old`'s position, state
-   slot, identity number and children. The one copy of ARCHITECTURE §3.4
-   lands in the first new node's slot — and only when the predecessor
-   operation has written it: `ready`, or an own stop, whose copy-through
-   counts — judged from the Python-side status, no round trip; every
-   other new slot stays empty, as befits `not_evaluated` nodes. A
-   transaction that fails raises `TAT_DisasterError` (EXCEPTIONS.md §1):
-   memory and the database have parted, and the conversation ends.
-4. **Completed events**, then the caller invalidates — and evaluates when
-   the call's `evaluate` says so (MCP_SPECIFICATION §3.2).
-
-A failure anywhere before the commit aborts the call with the forest
-untouched: there is no rollback, because nothing happened to roll back.
-
-**Entry points and the lock.** A tool entry takes the forest's lock and
-holds it across the whole call. `evaluate_to`'s entry is
-`Node.evaluate_to`, which takes it itself; an edit's tool entry takes it
-and calls `_insert_children`, `_amend_children`, `_delete_child` or
-`_move_child`, which assume it held, as does the walk each ends with. One
-ordering fact: `gen` awaits the ML side's loader lock (§2.3) while the
-forest lock is held; nothing on the ML side ever waits for the forest
-lock, and that order must stay one-way.
-
-`_move_child` is `move`'s entry: it re-homes a node with its subtree — a
-copy on the source side and a copy on the destination side (ARCHITECTURE
-§3.4). The subtree's slots travel with their nodes, whose names they
-remain (ARCHITECTURE §3.1); no slot is deleted. Two values may be
-released: the moved node's old input, when nothing wrote a value at the
-destination — its writer is still current, so no release would otherwise
-clear it — and the source successor's slot, when the predecessor there
-wrote nothing but the moved node had, which is `delete`'s rule too.
 
 **Events.** Ten hooks, empty by default, driven by the framework — a class
 only ever speaks for its own node. The tense is the contract:
@@ -404,7 +339,7 @@ computed, as in AoA (`contrib/Isa-Mini/IsaMini/AoA/model.py:4581`):
 `state`, or with the one it keeps for the position after all its children.
 So one node's result and the next node's input are one slot, and inserting
 or deleting a node moves a value between slots by one copy
-(`_insert_children`, `_delete_child`, `_move_child`; ARCHITECTURE §3.4).
+(`edit.insert`, `edit.delete`, `edit.move`; ARCHITECTURE §3.4).
 
 **Status.** A status is `NotEvaluated`, `Ready`, or
 `CannotEvaluate(blocked_by)` — the Python classes of ARCHITECTURE §3.2's
@@ -451,7 +386,7 @@ statuses are all `NotEvaluated`.
   changed one, and the running of a tree's imports to their `end`.
 
 An evaluation hook runs the class's own ML callback itself, through `isabelle_driver`
-(§4.2), and records what it likes on the node; the framework reads only the
+(§4.3), and records what it likes on the node; the framework reads only the
 boolean, and on False copies the operation's input into its resulting state
 itself (ARCHITECTURE §6.2). `Theory` and `Section` are `StdBlock`s,
 `Theorem` and `Define` `Leaf`s.
@@ -504,15 +439,85 @@ is released only when the status of the operation that writes it goes from
 written to unwritten; a rewrite releases nothing. A nesting node is reached
 at its ending.
 
+### 4.2 `edit.py`
 
-### 4.2 `isabelle_driver.py`
+Changing the forest: how a submitted construct becomes a node, and the
+four entries behind the `edit`, `move` and `delete` tools — `insert`,
+`amend`, `delete`, `move`.
+
+Two fields of a construct belong to the framework: `kind` selects the
+node class (§4.4), and `children` — which no `gen` ever sees — holds a
+nesting node's contents. The framework checks the construct's mechanical
+shape — no field the class does not declare, required fields present,
+types right — against the class's declared argument schema
+(`check_construct`, §4.4), raising `UnexpectedField` / `MissingField` /
+`InvalidField` before the class is consulted. The JSON tool schemas are
+hand-written, as AoA's (`contrib/Isa-Mini/IsaMini/AoA/tools/`).
+
+An `edit` builds everything before it touches the forest:
+
+1. **Construct, detached.** Every construct, in submission order: the
+   `children`-legality checks (`UnexpectedChildren`,
+   `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
+   table alone, so they run before any `gen`), the class lookup, the
+   schema check, `gen`, then — for a nesting class — its `children`, built
+   by the framework onto the fresh, still-detached node the same way. The
+   framework assigns each new node a fresh state slot and reads the name
+   off the finished node: a name outside the grammar of
+   MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
+   surviving sibling or with the batch (`DuplicateName`), is refused; a
+   class may also declare that its names live in a forest-wide namespace
+   — `Theory`'s short names — and the framework then refuses a name a
+   node of the forest (less the node the amend replaces, which is
+   leaving) or an earlier construct of the call already bears there
+   (`DuplicateTheoryShortName`), finding the forest's by walking it.
+   The amend loop walks the whole submitted list,
+   `constructs[0]` built with `replacing` set; so every `raw_ast_path` indexes
+   the agent's own list.
+2. **Gates.** The hooks that may still veto (§4.1's events), `BadEdit`
+   their only voice.
+3. **Commit** — pointer surgery, which cannot fail, then one store
+   transaction writing what changed (ARCHITECTURE §4.1). The batch is
+   linked in; on amend the replacement takes `old`'s position, state
+   slot, identity number and children. The one copy of ARCHITECTURE §3.4
+   lands in the first new node's slot — and only when the predecessor
+   operation has written it: `ready`, or an own stop, whose copy-through
+   counts — judged from the Python-side status, no round trip; every
+   other new slot stays empty, as befits `not_evaluated` nodes. A
+   transaction that fails raises `TAT_DisasterError` (EXCEPTIONS.md §1):
+   memory and the database have parted, and the conversation ends.
+4. **Completed events**, then the entry invalidates unconditionally; the
+   caller evaluates when the call's `evaluate` says so
+   (MCP_SPECIFICATION §3.2).
+
+A failure anywhere before the commit aborts the call with the forest
+untouched: there is no rollback, because nothing happened to roll back.
+
+**Entry points and the lock.** A tool entry takes the forest's lock and
+holds it across the whole call. `evaluate_to`'s entry is
+`Node.evaluate_to`, which takes it itself; an edit's tool entry takes it
+and calls `insert`, `amend`, `delete` or `move`, which assume it held, as
+does the walk each ends with. One ordering fact: `gen` awaits the ML
+side's loader lock (§2.3) while the forest lock is held; nothing on the
+ML side ever waits for the forest lock, and that order must stay one-way.
+
+`move` re-homes a node with its subtree — a copy on the source side and a
+copy on the destination side (ARCHITECTURE §3.4). The subtree's slots
+travel with their nodes, whose names they remain (ARCHITECTURE §3.1); no
+slot is deleted. Two values may be released: the moved node's old input,
+when nothing wrote a value at the destination — its writer is still
+current, so no release would otherwise clear it — and the source
+successor's slot, when the predecessor there wrote nothing but the moved
+node had, which is `delete`'s rule too.
+
+### 4.3 `isabelle_driver.py`
 
 One function per callback the ML side offers (MODULE_STRUCTURE §2.5, §2.6):
 each knows the callback's name and the MessagePack shape of its arguments and
 result, and nothing else does. `model.py` and the node classes call these
 functions and never the wire.
 
-### 4.3 `plugin.py`
+### 4.4 `plugin.py`
 
 Imports every package in the list `launch_TAT` received (§2.6) — the
 `python_packages` the node class theories registered — and keeps the table
@@ -522,7 +527,17 @@ construct schema. The table is what `edit` dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
 schema, is PLUGIN_SYSTEM.md.
 
-### 4.4 `builtins.py` and `theorem_node.py`
+The argument schema grammar lives here too. A declaration's annotations
+come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
+`list[X]`, a TypedDict, and unions of those holding at most one
+TypedDict — so every check renders within RENDER_BASELINES §2's
+vocabulary; `@TAT_node` refuses anything else when the class is
+registered, as it refuses a TypedDict that nests itself and an annotation
+Python cannot resolve. `check_construct` checks a submitted construct
+against the declaration; `edit.py` runs it before the class's `gen`
+(§4.2).
+
+### 4.5 `builtins.py` and `theorem_node.py`
 
 The predefined node classes of ARCHITECTURE §2.2, except `Session` and
 `Theory`, which carry the forest's structure and live in `model.py`
@@ -533,7 +548,7 @@ it drives AoA is designed here, on AoA's own precedent; it stores the method
 text AoA found on the node; it queues the message that rides on the next tool
 result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
-### 4.5 `mcp.py`, `mcp_server.py`, `toplevel.py`
+### 4.6 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
 `mcp.py` implements the tools of MCP_SPECIFICATION §1 and the queue of
 pending messages; the future `query` tool (MCP_SPECIFICATION §1.1) will land

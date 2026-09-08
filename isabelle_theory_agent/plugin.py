@@ -1,6 +1,8 @@
 """Loading node classes (PLUGIN_SYSTEM.md): registration under `@TAT_node`,
-the table from `kind` to class that `edit` dispatches on, and the `$defs`
-that complete the `edit` tool's schema at start.
+the table from `kind` to class that `edit` dispatches on, the `$defs` that
+complete the `edit` tool's schema at start, and the argument schema grammar
+— what a class's TypedDict may declare, and how a submitted construct is
+checked against it.
 
 Importing a plugin's package is what registers its classes; `load` imports
 every package `launch_TAT` received, after the framework's own classes, and
@@ -15,16 +17,20 @@ from __future__ import annotations
 import copy
 import importlib
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, get_type_hints
+from types import UnionType
+from typing import Any, Union, get_args, get_origin, get_type_hints, is_typeddict
 
 import jsoncomment
 import jsonschema
 
 from . import model
-from .exceptions import TAT_InternalError, TAT_StartupError
-from .model import JSON_Schema, Leaf, Node, validate_argument_schema
+from .exceptions import (
+    InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
+from .model import JSON_Schema, Leaf, Node, RawAST
+from .store import FRAMEWORK_FIELDS
 
 
 class CannotLoadPlugin(TAT_StartupError):
@@ -48,8 +54,6 @@ classes: list[type[Node]] = []
 _sealed = False
 
 CONSTRUCT = "Construct"                        # the union's reserved `$defs` name
-FRAMEWORK_FIELDS = ("kind", "children")        # the framework's construct fields, left out
-                                               # when the two schemas are held to each other
 _REF = re.compile(r"^#/\$defs/([^/]+)$")
 _EDIT_SCHEMA = Path(__file__).parent / "tools" / "edit.jsonc"
 
@@ -201,6 +205,166 @@ def _is_construct_array(prop: Any) -> bool:
 
 def _is_def_ref(x: Any) -> bool:
     return isinstance(x, dict) and isinstance(x.get("$ref"), str) and bool(_REF.match(x["$ref"]))
+
+
+# --- the argument schema grammar --------------------------------------------
+# `str`, `bool`, `int`, `float`, `Any`, `list[X]`, a TypedDict, and unions of
+# those holding at most one TypedDict — closed, so every rendering stays
+# within RENDER_BASELINES §2's vocabulary.  Validated once, at registration;
+# then every submitted construct is checked against the declaration before
+# its class's `gen` is consulted (MODULE_STRUCTURE §4.2).
+
+_JSON_NAMES = {str: "a string", bool: "a boolean", int: "a number",
+               float: "a number"}
+
+
+def validate_argument_schema(td: Any) -> None:
+    """Refuse a declaration outside the grammar — loudly, at registration,
+    where the class's author sees it (PLUGIN_SYSTEM §5).  A TypedDict is
+    compulsory: an empty one for a class with no fields."""
+    _validate_typeddict(td, top=True, enclosing=())
+
+
+def _validate_typeddict(td: Any, top: bool, enclosing: tuple) -> None:
+    if not is_typeddict(td):
+        raise TAT_InternalError(f"argument schema {td!r} is not a TypedDict")
+    if td in enclosing:
+        raise TAT_InternalError(f"{td.__name__} nests itself")
+    try:
+        hints = get_type_hints(td)
+    except NameError as e:
+        raise TAT_InternalError(f"{td.__name__}: unresolvable annotation") from e
+    if top and "children" in hints:
+        raise TAT_InternalError(
+            "`children` belongs to the framework, not an argument schema")
+    for field, ann in hints.items():
+        if top and field == "kind":        # the framework's; declared only
+            continue                       # for the static checker
+        _validate_annotation(ann, f"{td.__name__}.{field}", enclosing + (td,))
+
+
+def _validate_annotation(ann: Any, where: str, enclosing: tuple) -> None:
+    if ann is Any or ann in _JSON_NAMES:
+        return
+    if is_typeddict(ann):
+        _validate_typeddict(ann, top=False, enclosing=enclosing)
+        return
+    origin = get_origin(ann)
+    if origin is list and len(get_args(ann)) == 1:
+        _validate_annotation(get_args(ann)[0], where, enclosing)
+        return
+    if origin in (Union, UnionType):
+        arms = get_args(ann)
+        if any(a is Any for a in arms):
+            raise TAT_InternalError(f"{where}: `Any` makes the other arms moot")
+        if sum(_holds_object(a) for a in arms) > 1:
+            raise TAT_InternalError(
+                f"{where}: a union may reach one TypedDict")
+        for a in arms:
+            _validate_annotation(a, where, enclosing)
+        return
+    raise TAT_InternalError(
+        f"{where}: {ann!r} is outside the argument schema grammar")
+
+
+def _holds_object(ann: Any) -> bool:
+    """Whether an annotation reaches a TypedDict — directly, through lists,
+    or through a union inside them; two such arms in one union could not
+    be told apart."""
+    while get_origin(ann) is list:
+        ann = get_args(ann)[0]
+    if get_origin(ann) in (Union, UnionType):
+        return any(_holds_object(a) for a in get_args(ann))
+    return is_typeddict(ann)
+
+
+def _matches(value: Any, ann: Any) -> bool:
+    """Whether a JSON value fits a field annotation of the grammar; a
+    TypedDict is matched as an object here, its fields by `_check_value`."""
+    if ann is Any:
+        return True
+    if is_typeddict(ann):
+        return isinstance(value, Mapping)
+    origin = get_origin(ann)
+    if origin is list:
+        return isinstance(value, list) and all(
+            _matches(v, get_args(ann)[0]) for v in value)
+    if origin in (Union, UnionType):
+        return any(_matches(value, a) for a in get_args(ann))
+    if ann not in _JSON_NAMES:
+        raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
+    if isinstance(value, bool):            # a flag is not a number
+        return ann is bool
+    if ann is float:                       # JSON has one number type
+        return isinstance(value, (int, float))
+    return isinstance(value, ann)
+
+
+def _json_name(ann: Any) -> str:
+    """The approved rendering of a type (RENDER_BASELINES §2)."""
+    if is_typeddict(ann):
+        return "an object"
+    if get_origin(ann) is list:
+        return "a list"
+    if get_origin(ann) in (Union, UnionType):
+        names = []
+        for a in get_args(ann):
+            if _json_name(a) not in names:
+                names.append(_json_name(a))
+        return " or ".join(names)
+    if ann not in _JSON_NAMES:
+        raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
+    return _JSON_NAMES[ann]
+
+
+def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
+    """The mechanical shape of a submitted construct, before its class is
+    consulted: no field the class does not declare, required fields
+    present, types right — against the class's `argument_schema`."""
+    _check_fields(cls.argument_schema, kind, raw, prefix="")
+
+
+def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
+                  prefix: str) -> None:
+    hints = get_type_hints(td)
+    for field in mapping:                  # first: a typo beats its own hole
+        if not prefix and field in FRAMEWORK_FIELDS:
+            continue                       # the framework's own fields
+        if field not in hints:
+            # At the top level `kind` is the framework's field, not one the
+            # class "takes" (RENDER_BASELINES.md §2).
+            takes = [f for f in hints if prefix or f != "kind"]
+            raise UnexpectedField(prefix[:-1] if prefix else kind, field,
+                                  takes, holder_is_kind=not prefix)
+    for field in td.__required_keys__:
+        if field not in mapping:
+            raise MissingField(kind, prefix + field)
+    for field, value in mapping.items():
+        if not prefix and field in FRAMEWORK_FIELDS:
+            continue
+        _check_value(value, hints[field], kind, prefix + field)
+
+
+def _check_value(value: Any, ann: Any, kind: str, path: str) -> None:
+    """One value against its annotation, descending so that the field
+    reported is the innermost at fault: a list element by its index, a
+    TypedDict's field by its name, a union by the arm the value fits."""
+    if get_origin(ann) is list:
+        if not isinstance(value, list):
+            raise InvalidField(path, "must be a list")
+        for i, v in enumerate(value):
+            _check_value(v, get_args(ann)[0], kind, f"{path}[{i}]")
+    elif get_origin(ann) in (Union, UnionType):
+        arm = next((a for a in get_args(ann) if _matches(value, a)), None)
+        if arm is None:
+            raise InvalidField(path, f"must be {_json_name(ann)}")
+        _check_value(value, arm, kind, path)
+    elif is_typeddict(ann):
+        if not isinstance(value, Mapping):
+            raise InvalidField(path, "must be an object")
+        _check_fields(ann, kind, value, path + ".")
+    elif not _matches(value, ann):
+        raise InvalidField(path, f"must be {_json_name(ann)}")
 
 
 # --- assembly ----------------------------------------------------------------

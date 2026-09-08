@@ -237,6 +237,8 @@ class Forest_Store:
         self.close()
 
 
+# The framework's two fields of a node, never a class's: the two rows it
+# writes here, and the two names a construct reserves (the plan's §2).
 FRAMEWORK_FIELDS = ("kind", "children")
 
 

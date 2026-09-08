@@ -85,7 +85,7 @@ builds without complaint and then kills the first theory that imports it, one
 level downstream, with `Duplicate theory name` and no useful location.
 `Theory.gen` therefore rejects a name whose short name already appears in
 the base heap or in the forest (`DuplicateTheoryShortName`) — excluding, on
-an amend, the node being replaced (MODULE_STRUCTURE §4.1).
+an amend, the node being replaced (MODULE_STRUCTURE §4.2).
 
 ### 2.1 Which components appear
 
@@ -191,7 +191,7 @@ Constructs after the first are added after the replacement, so one call
 turns a lemma into a definition and two lemmas.
 
 An `edit` is atomic: nothing touches the forest until every construct
-has been built and checked (MODULE_STRUCTURE §4.1), so it applies whole
+has been built and checked (MODULE_STRUCTURE §4.2), so it applies whole
 or leaves the forest exactly as it was, and the error names the element
 and field at fault (EXCEPTIONS.md).
 

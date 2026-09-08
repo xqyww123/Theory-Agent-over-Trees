@@ -1,4 +1,4 @@
-"""Typed calls to the ML side's callbacks (MODULE_STRUCTURE §4.2).
+"""Typed calls to the ML side's callbacks (MODULE_STRUCTURE §4.3).
 
 One function per callback the framework offers.  A node class's own callback
 is called by that class, not from here.  The callback names are the ML side's

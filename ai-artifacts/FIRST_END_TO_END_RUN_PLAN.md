@@ -82,7 +82,7 @@ The forest is stored in one SQLite database, not pickled.
   MessagePack-representable. A recorded field must not hold a value
   meaning "work is running": `Theorem` stores a running search as
   `not_started`.
-- `kind` is the framework's: `_construct_element` sets `node.kind` from
+- `kind` is the framework's: `edit._construct_element` sets `node.kind` from
   the construct, `_load_subtree` sets it from the row, and no class keeps
   a copy — `Theorem` declares `kind` in its two schemas for the agent and
   the static checker and reads `node.kind` like everyone else.
@@ -97,7 +97,7 @@ The forest is stored in one SQLite database, not pickled.
   `(0, children)` — absent on a fresh database, and the forest is empty —
   and loads each child; `_store_subtree` never runs on the root, and only
   its `children` row is ever written. Identities are handed out by the
-  framework in `_construct_element`, from `next_identity()`.
+  framework in `edit._construct_element`, from `next_identity()`.
 - Every **write operation** is one transaction: `edit`, `move`, `delete`,
   and an evaluation hook writing a recorded field. Read operations
   (`recall`, `status`) do not touch the database. The transaction opens
@@ -159,7 +159,7 @@ spelling); the short name against the base heap through
 (`InvalidField`). The short name's uniqueness **within the forest and the
 batch** is the framework's: `Theory` declares that its name lives in the
 forest-wide namespace of theory short names, and the framework — after
-the `taken` check of `_construct_siblings` — walks the pre-edit forest,
+the `taken` check of `edit._construct_siblings` — walks the pre-edit forest,
 less the node the amend replaces, which is leaving, for a node bearing the
 name in that namespace, and keeps the names the call's constructs have
 taken so far; either way it refuses the construct with
@@ -326,7 +326,7 @@ child's input. One class between `NonLeaf_Node` and both of them,
 `_resulting_state_of_child(child)` is `child.state`, the child's own slot —
 a `Theory`'s ending writes it and nothing reads it (above), so the
 release invariants hold and a leaving child's `_states_inside` already
-covers it; `_predecessor_wrote` is false and `_carry_forward` does nothing;
+covers it; `_source_before` is None and `_carry_forward` does nothing;
 `_last_status` is `NOT_EVALUATED` — the container runs no operation, so it
 has written nothing, and the inherited edit paths that ask (an amend, a
 delete or a move of a `Session`) correctly release nothing;
@@ -374,7 +374,7 @@ at every step that touches the ML side.
    order constraint's sentence from RENDER_BASELINES §3 the way the
    exception renderings are pinned.
 5. **The tools and the entry point**: `mcp.py` with `edit`, `move`,
-   `delete` (TOOL_SCHEMAS.md — `insert_after` is `_insert_children` at
+   `delete` (TOOL_SCHEMAS.md — `insert_after` is `edit.insert` at
    `index + 1`; `HoldsNoChildren` and `ProtectedNode` are refused here,
    before the model is called) and the `quickview` appended to every
    result (PRINT.md, its default rendering only); `mcp_server.py`;

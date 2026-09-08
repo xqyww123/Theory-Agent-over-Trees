@@ -1,5 +1,6 @@
-"""The forest: nodes, state slots, evaluation and invalidation
-(ARCHITECTURE §3, MODULE_STRUCTURE §4.1).
+"""The forest: nodes, state slots, evaluation and invalidation, ids,
+persistence (ARCHITECTURE §3, MODULE_STRUCTURE §4.1).  Changing the forest
+is `edit.py`; what a node class may declare is `plugin.py`.
 
 Every method that touches Isabelle is async, since `Connection.callback` is.
 """
@@ -11,20 +12,14 @@ import difflib
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-import dataclasses
 from dataclasses import dataclass, replace
-from types import UnionType
-from typing import (Any, ClassVar, Literal, NamedTuple, Self, TypeAlias, Union,
-                    get_args, get_origin, get_type_hints, is_typeddict)
+from typing import Any, ClassVar, Literal, NamedTuple, Self, TypeAlias
 
 from Isabelle_RPC_Host import Connection
 
 from . import isabelle_driver
 from .exceptions import (
-    AmbiguousId, BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField,
-    InvalidName, MalformedRawAST, MissingField, MoveIntoOwnSubtree,
-    NodeNotFound, TAT_Error, TAT_InternalError, TAT_StartupError,
-    UnexpectedChildren, UnexpectedField, UnknownKind)
+    AmbiguousId, BadEdit, NodeNotFound, TAT_Error, TAT_InternalError, TAT_StartupError)
 from .store import Forest_Store, MissingRow, Node_Rows
 
 
@@ -215,7 +210,7 @@ class Node(ABC):
     state: Isar_State_Slot
     name: str            # the node's one id component (MCP_SPECIFICATION §2)
     # The framework's two fields, set by it when the node enters the forest
-    # (`_construct_element`) or is loaded (`Forest._load_subtree`); no class
+    # (`edit._construct_element`) or is loaded (`Forest._load_subtree`); no class
     # sets or stores them.
     identity: int        # opaque; survives renaming, moving and restarts
     kind: str            # the construct's `kind`, under which the class was registered
@@ -545,7 +540,7 @@ class NonLeaf_Node(Node):
     def _predecessor_wrote(self, index: int) -> bool:
         """Whether the predecessor operation — the one that writes the state
         at position `index` — has written it, judged with no round trip
-        (MODULE_STRUCTURE §4.1 step 3).  An own stop wrote too: it copied
+        (MODULE_STRUCTURE §4.2 step 3).  An own stop wrote too: it copied
         its input through, so whatever follows has something to run from
         (ARCHITECTURE §3.1).  A failed beginning wrote the block's resulting
         state instead, so at position 0 only `ready` counts."""
@@ -553,15 +548,16 @@ class NonLeaf_Node(Node):
             return _wrote(self.sub_nodes[index - 1]._last_status())
         return self._beginning_status() is READY
 
+    # The one copy of ARCHITECTURE §3.4, seen from the parent: a node
+    # arriving at a position takes the predecessor's result that already
+    # sits there (`_source_before`), and a node leaving one carries it into
+    # the successor's slot (`_carry_forward`).  A container whose children
+    # are not chained overrides both to do nothing.
 
-    # --- The four edit entries (MODULE_STRUCTURE §4.1).  The tool entry
-    # holds the forest's lock across each; nothing before a commit has side
-    # effects on the forest, so an aborted call needs no undoing.  Right
-    # after the commit — the pointer surgery — each stores what it changed
-    # in one transaction, before the completed events and with no await in
-    # between (the plan's §2).  Each ends with the unconditional
-    # invalidation of MCP_SPECIFICATION §3.2; whether to also evaluate is
-    # the caller's, from the call's `evaluate` flag.
+    def _source_before(self, index: int) -> Isar_State_Slot | None:
+        """The slot holding the predecessor's result at position `index`, for
+        a node arriving there to take — or None when nothing was written."""
+        return self._state_at(index) if self._predecessor_wrote(index) else None
 
     async def _carry_forward(self, index: int, node: Node, ev: Evaluation) -> None:
         """The source side of removing `node` from position `index`: the
@@ -573,213 +569,6 @@ class NonLeaf_Node(Node):
             await node.state.copy_to(self._state_at(index + 1))
         elif _wrote(node._last_status()):
             ev.release(self._state_at(index + 1))
-
-    async def _insert_children(self, index: int, raws: list[RawAST],
-                               kinds: Mapping[str, type[Node]]) -> list[Node]:
-        """`append`/`insert_before`: construct the batch detached — `gen` is
-        insertion's gate, there is no other — commit it before position
-        `index`, fire the completed events, invalidate.  Returns the batch;
-        its last element is the natural destination (MCP_SPECIFICATION
-        §3.2)."""
-        forest = self.forest()
-        taken: dict[str, Node | str] = {c.name: c for c in self.sub_nodes}
-        nodes = await _construct_siblings(self, raws, "constructs", taken,
-                                          Edit_Call(forest, kinds))
-        # Commit: pointer surgery plus the one copy of ARCHITECTURE §3.4
-        # into the first new node's slot — only when the predecessor
-        # operation wrote it, judged with no round trip; every other new
-        # slot stays empty, as befits `not_evaluated` nodes.  The value
-        # moves with the position: the slot it came from, now written by the
-        # last new node, is released.
-        ev = Evaluation(None, False)
-        if self._predecessor_wrote(index):
-            source = self._state_at(index)
-            await source.copy_to(nodes[0].state)
-            ev.release(source)
-        for node in nodes:
-            node.parent = self
-        self.sub_nodes[index:index] = nodes
-        with forest.store.transaction():
-            for node in nodes:
-                forest._store_subtree(node)
-            forest._store_children(self)
-        for root in nodes:                    # tree order over what entered
-            for n in root._tree_order():
-                assert n.parent is not None
-                _completed(n.parent.on_added_child, n, "insert_or_delete")
-                _completed(n.on_inserted)
-        await forest._run(ev, Seeking(Location(self, index)))
-        return nodes
-
-    async def _amend_children(self, old: Node, raws: list[RawAST],
-                              kinds: Mapping[str, type[Node]]) -> list[Node]:
-        """`amend`: `nodes[0]` is built with `replacing` set and takes
-        `old`'s position, state slot, identity number and children;
-        `nodes[1:]` follow it."""
-        forest = self.forest()
-        taken: dict[str, Node | str] = {c.name: c
-                                        for c in self.sub_nodes if c is not old}
-        nodes = await _construct_siblings(self, raws, "constructs", taken,
-                                          Edit_Call(forest, kinds, old), first_replaces=True)
-        replacement = nodes[0]
-        inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []
-        # Gates.
-        _gate(old.on_deleting, "amend")
-        _gate(self.on_removing_child, old, "amend")
-        for child in inherited:
-            assert isinstance(old, NonLeaf_Node)
-            _gate(old.on_removing_child, child, "inheritance")
-            _gate(child.on_inheriting, replacement)
-        # Commit.  Released, in one round trip with the walk's: `old`'s
-        # slots not travelling to the replacement or the inherited children,
-        # and the values `old`'s own operations wrote into travelling
-        # slots — its result in the successor's input, a beginning's output
-        # in the first child's input — all stale under the replacement.
-        ev = Evaluation(None, False)
-        travelling = {old.state.name} | {
-            s.name for c in inherited for s in c._states_inside()}
-        for s in old._states_inside():
-            if s.name not in travelling:
-                ev.release(s)
-        last = old._last_status()
-        if last is READY or _is_own_stop(last):
-            ev.release(old.resulting_state())
-        if (isinstance(old, StdBlock)
-                and old.evaluation_status_beginning is READY):
-            ev.release(old._state_after_beginning())
-        index = old.index_of()
-        replacement.state = old.state          # its identity is already old's (_construct_element)
-        if inherited:
-            assert isinstance(replacement, NonLeaf_Node)
-            replacement.sub_nodes[:] = inherited
-            old.sub_nodes = []
-            for child in inherited:
-                child.parent = replacement
-        old.parent = None
-        replacement.parent = self
-        self.sub_nodes[index] = replacement
-        for node in nodes[1:]:
-            node.parent = self
-        self.sub_nodes[index + 1:index + 1] = nodes[1:]
-        # The replacement's rows replace `old`'s: one identity.  The
-        # inherited children's rows do not change — no row names a parent.
-        with forest.store.transaction():
-            forest._store_node(replacement)
-            for node in nodes[1:]:
-                forest._store_subtree(node)
-            if nodes[1:]:
-                forest._store_children(self)
-        # Completed events (MODULE_STRUCTURE §4.1's order).
-        _completed(old.on_deleted, "amend")
-        for child in inherited:
-            assert isinstance(replacement, NonLeaf_Node)
-            _completed(child.on_inherited, old)
-            _completed(replacement.on_added_child, child, "inheritance")
-        _completed(self.on_added_child, replacement, "amend")
-        _completed(replacement.on_inserted)
-        for root in nodes[1:]:
-            for n in root._tree_order():
-                assert n.parent is not None
-                _completed(n.parent.on_added_child, n, "insert_or_delete")
-                _completed(n.on_inserted)
-        # A nesting replacement invalidates from its first child: the
-        # children precede its own commands in the walk (MCP §3.2).
-        if inherited:
-            assert isinstance(replacement, NonLeaf_Node)
-            position = Location(replacement, 0)
-        else:
-            position = Location(self, index)
-        await forest._run(ev, Seeking(position))
-        return nodes
-
-    async def _delete_child(self, node: Node) -> None:
-        """`delete`: remove `node` with its subtree and invalidate from its
-        successor on.  The predecessor's result, which lived under
-        `node.state`, is copied under the state now at that position."""
-        for n in node._children_first():
-            _gate(n.on_deleting, "delete")
-        _gate(self.on_removing_child, node, "insert_or_delete")
-        index = node.index_of()
-        ev = Evaluation(None, False)
-        await self._carry_forward(index, node, ev)   # the one remote step, before any pointer moves
-        for s in node._states_inside():   # released with the walk's: one round trip
-            ev.release(s)
-        del self.sub_nodes[index]
-        node.parent = None
-        forest = self.forest()
-        with forest.store.transaction():
-            for n in node._tree_order():
-                forest.store.delete_node(n.identity)
-            forest._store_children(self)
-        for n in node._children_first():
-            _completed(n.on_deleted, "delete")
-        await forest._run(ev, Seeking(Location(self, index)))
-
-    async def _move_child(self, node: Node, new_parent: NonLeaf_Node,
-                          new_index: int) -> None:
-        """`move`, `self` the parent it leaves: re-home `node` with its
-        subtree — a copy on the source side and one on the destination
-        side; the subtree's slots travel with their nodes, none is deleted
-        (ARCHITECTURE §3.4).  `new_index` is the position in
-        `new_parent.sub_nodes` after the removal."""
-        forest = self.forest()
-        p: Node | None = new_parent
-        while p is not None:
-            if p is node:
-                raise MoveIntoOwnSubtree(forest.id_of(node),
-                                         forest.id_of(new_parent))
-            p = p.parent
-        for c in new_parent.sub_nodes:
-            if c is not node and c.name == node.name:
-                raise DuplicateName(node.name, forest.id_of(c))
-        limit = len(new_parent.sub_nodes) - (1 if new_parent is self else 0)
-        if not 0 <= new_index <= limit:
-            raise TAT_InternalError(
-                f"move destination index {new_index} out of range")
-        old_index = node.index_of()
-        old_location = Location(self, old_index)
-        new_location = Location(new_parent, new_index)
-        _gate(node.on_moving, new_location)
-        _gate(self.on_removing_child, node, "move")
-        # Judge the destination side against the post-removal shape, with
-        # no await in between: remove, look, put back.
-        del self.sub_nodes[old_index]
-        successor = (self.sub_nodes[old_index]
-                     if old_index < len(self.sub_nodes) else None)
-        destination_wrote = new_parent._predecessor_wrote(new_index)
-        destination_source = (new_parent._state_at(new_index)
-                              if destination_wrote else None)
-        self.sub_nodes.insert(old_index, node)
-        # Commit: the remote steps first, then pointer surgery with no await
-        # between.  The source-side copy carries the predecessor's result
-        # forward; the destination side gives `node` its new input — the
-        # value moves with the position, so the slot it came from is
-        # released — or, when nothing was written there, releases the stale
-        # old input, which its still-current writer never would.  (Two
-        # remote copies: a failure between them leaves the forest untouched
-        # but the slot table half-moved.)
-        ev = Evaluation(None, False)
-        await self._carry_forward(old_index, node, ev)
-        if destination_source is not None:
-            await destination_source.copy_to(node.state)
-            ev.release(destination_source)
-        else:
-            ev.release(node.state)
-        del self.sub_nodes[old_index]
-        node.parent = new_parent
-        new_parent.sub_nodes.insert(new_index, node)
-        with forest.store.transaction():      # the subtree's own rows do not change
-            forest._store_children(self)
-            if new_parent is not self:
-                forest._store_children(new_parent)
-        _completed(new_parent.on_added_child, node, "move")
-        _completed(node.on_moved, old_location)
-        # Both tails: from the source successor's final position, and from
-        # the moved node's — which takes its whole subtree.
-        source_position = (Location(self, successor.index_of()) if successor
-                           else Location(self, len(self.sub_nodes)))
-        await forest._run(ev, Seeking(source_position))
-        await forest._invalidate_from(new_location)
 
     async def _evaluate_children(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
         """The children in order.  A seeking walk turns `Invalidating` on
@@ -942,7 +731,8 @@ class StdBlock(NonLeaf_Node):
 
 
 # ---------------------------------------------------------------------------
-# Building nodes from RawASTs (MODULE_STRUCTURE §4.1)
+# The shared types of the node class contract (MODULE_STRUCTURE §4.1), and
+# the firing of a completed hook
 
 # The JSON object the agent submitted.  `kind` and `children` belong to the
 # framework; the other fields are the node class's own.
@@ -974,217 +764,6 @@ class Namespace(NamedTuple):
     duplicate: Callable[[str, str], BadEdit]
 
 
-def _holder_id(holder: Node | str, forest: Forest) -> str:
-    """A taken name's holder as the agent sees it: a node's id, or the
-    coordinate of the construct that took it earlier in this call."""
-    return holder if isinstance(holder, str) else forest.id_of(holder)
-
-
-@dataclass(frozen=True)
-class Edit_Call:
-    """What every construct built in one edit call shares."""
-    forest: Forest
-    kinds: Mapping[str, type[Node]]
-    replacing: Node | None = None    # the node an amend takes out of the forest,
-                                     # left out of every uniqueness check of the
-                                     # call; `NodeConfig.replacing`, which only the
-                                     # amend's first construct sees, is its
-                                     # per-construct twin
-    taken: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
-                                     # the names the constructs built so far have
-                                     # taken in each forest-wide namespace:
-                                     # namespace name -> name -> the construct's
-                                     # full path
-
-
-def _take_name(node: Node, full_path: str, call: Edit_Call) -> None:
-    """For a class with a `namespace`: refuse the node's name if a node of
-    the forest (other than the one the call replaces) or an earlier
-    construct of the call already bears it in that namespace, else record
-    it for the rest of the call.  The forest's takers are found by walking
-    it, never recorded (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §3);
-    `DuplicateName` among siblings is `_construct_siblings`' own `taken`."""
-    namespace = type(node).namespace
-    if namespace is None:
-        return
-    for other in call.forest._all_nodes():
-        theirs = type(other).namespace
-        if (other is not call.replacing and other.name == node.name
-                and theirs is not None and theirs.name == namespace.name):
-            raise namespace.duplicate(node.name, call.forest.id_of(other))
-    taken = call.taken.setdefault(namespace.name, {})
-    if node.name in taken:
-        raise namespace.duplicate(node.name, taken[node.name])
-    taken[node.name] = full_path
-
-
-# The annotation grammar of an argument schema: `str`, `bool`, `int`,
-# `float`, `Any`, `list[X]`, a TypedDict, and unions of those holding at most
-# one TypedDict — closed, so every rendering stays within RENDER_BASELINES
-# §2's vocabulary.  Checked once, when the class is registered.
-_JSON_NAMES = {str: "a string", bool: "a boolean", int: "a number",
-               float: "a number"}
-
-
-def validate_argument_schema(td: Any) -> None:
-    """Refuse a declaration outside the grammar — loudly, at registration,
-    where the class's author sees it (PLUGIN_SYSTEM §5).  A TypedDict is
-    compulsory: an empty one for a class with no fields."""
-    _validate_typeddict(td, top=True, enclosing=())
-
-
-def _validate_typeddict(td: Any, top: bool, enclosing: tuple) -> None:
-    if not is_typeddict(td):
-        raise TAT_InternalError(f"argument schema {td!r} is not a TypedDict")
-    if td in enclosing:
-        raise TAT_InternalError(f"{td.__name__} nests itself")
-    try:
-        hints = get_type_hints(td)
-    except NameError as e:
-        raise TAT_InternalError(f"{td.__name__}: unresolvable annotation") from e
-    if top and "children" in hints:
-        raise TAT_InternalError(
-            "`children` belongs to the framework, not an argument schema")
-    for field, ann in hints.items():
-        if top and field == "kind":        # the framework's; declared only
-            continue                       # for the static checker
-        _validate_annotation(ann, f"{td.__name__}.{field}", enclosing + (td,))
-
-
-def _validate_annotation(ann: Any, where: str, enclosing: tuple) -> None:
-    if ann is Any or ann in _JSON_NAMES:
-        return
-    if is_typeddict(ann):
-        _validate_typeddict(ann, top=False, enclosing=enclosing)
-        return
-    origin = get_origin(ann)
-    if origin is list and len(get_args(ann)) == 1:
-        _validate_annotation(get_args(ann)[0], where, enclosing)
-        return
-    if origin in (Union, UnionType):
-        arms = get_args(ann)
-        if any(a is Any for a in arms):
-            raise TAT_InternalError(f"{where}: `Any` makes the other arms moot")
-        if sum(_holds_object(a) for a in arms) > 1:
-            raise TAT_InternalError(
-                f"{where}: a union may reach one TypedDict")
-        for a in arms:
-            _validate_annotation(a, where, enclosing)
-        return
-    raise TAT_InternalError(
-        f"{where}: {ann!r} is outside the argument schema grammar")
-
-
-def _holds_object(ann: Any) -> bool:
-    """Whether an annotation reaches a TypedDict — directly, through lists,
-    or through a union inside them; two such arms in one union could not
-    be told apart."""
-    while get_origin(ann) is list:
-        ann = get_args(ann)[0]
-    if get_origin(ann) in (Union, UnionType):
-        return any(_holds_object(a) for a in get_args(ann))
-    return is_typeddict(ann)
-
-
-def _matches(value: Any, ann: Any) -> bool:
-    """Whether a JSON value fits a field annotation of the grammar; a
-    TypedDict is matched as an object here, its fields by `_check_value`."""
-    if ann is Any:
-        return True
-    if is_typeddict(ann):
-        return isinstance(value, Mapping)
-    origin = get_origin(ann)
-    if origin is list:
-        return isinstance(value, list) and all(
-            _matches(v, get_args(ann)[0]) for v in value)
-    if origin in (Union, UnionType):
-        return any(_matches(value, a) for a in get_args(ann))
-    if ann not in _JSON_NAMES:
-        raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
-    if isinstance(value, bool):            # a flag is not a number
-        return ann is bool
-    if ann is float:                       # JSON has one number type
-        return isinstance(value, (int, float))
-    return isinstance(value, ann)
-
-
-def _json_name(ann: Any) -> str:
-    """The approved rendering of a type (RENDER_BASELINES §2)."""
-    if is_typeddict(ann):
-        return "an object"
-    if get_origin(ann) is list:
-        return "a list"
-    if get_origin(ann) in (Union, UnionType):
-        names = []
-        for a in get_args(ann):
-            if _json_name(a) not in names:
-                names.append(_json_name(a))
-        return " or ".join(names)
-    if ann not in _JSON_NAMES:
-        raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
-    return _JSON_NAMES[ann]
-
-
-def _check_schema(cls: type[Node], kind: str, raw: RawAST) -> None:
-    """The mechanical shape, before the class is consulted: no field the
-    class does not declare, required fields present, types right — against
-    the class's `argument_schema` TypedDict."""
-    _check_fields(cls.argument_schema, kind, raw, prefix="")
-
-
-def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
-                  prefix: str) -> None:
-    hints = get_type_hints(td)
-    for field in mapping:                  # first: a typo beats its own hole
-        if not prefix and field in ("kind", "children"):
-            continue                       # the framework's own fields
-        if field not in hints:
-            # At the top level `kind` is the framework's field, not one the
-            # class "takes" (RENDER_BASELINES.md §2).
-            takes = [f for f in hints if prefix or f != "kind"]
-            raise UnexpectedField(prefix[:-1] if prefix else kind, field,
-                                  takes, holder_is_kind=not prefix)
-    for field in td.__required_keys__:
-        if field not in mapping:
-            raise MissingField(kind, prefix + field)
-    for field, value in mapping.items():
-        if not prefix and field in ("kind", "children"):
-            continue
-        _check_value(value, hints[field], kind, prefix + field)
-
-
-def _check_value(value: Any, ann: Any, kind: str, path: str) -> None:
-    """One value against its annotation, descending so that the field
-    reported is the innermost at fault: a list element by its index, a
-    TypedDict's field by its name, a union by the arm the value fits."""
-    if get_origin(ann) is list:
-        if not isinstance(value, list):
-            raise InvalidField(path, "must be a list")
-        for i, v in enumerate(value):
-            _check_value(v, get_args(ann)[0], kind, f"{path}[{i}]")
-    elif get_origin(ann) in (Union, UnionType):
-        arm = next((a for a in get_args(ann) if _matches(value, a)), None)
-        if arm is None:
-            raise InvalidField(path, f"must be {_json_name(ann)}")
-        _check_value(value, arm, kind, path)
-    elif is_typeddict(ann):
-        if not isinstance(value, Mapping):
-            raise InvalidField(path, "must be an object")
-        _check_fields(ann, kind, value, path + ".")
-    elif not _matches(value, ann):
-        raise InvalidField(path, f"must be {_json_name(ann)}")
-
-def _gate(hook, *args) -> None:
-    """Fire a progressive hook: `BadEdit` vetoes the call; anything else it
-    raises is the class's bug (MODULE_STRUCTURE §4.1)."""
-    try:
-        hook(*args)
-    except BadEdit:
-        raise
-    except TAT_Error as e:
-        raise TAT_InternalError(f"gate {hook.__qualname__} raised") from e
-
-
 def _completed(hook, *args) -> None:
     """Fire a completed hook: raising anything is the class's bug — in
     particular a `TAT_Error` must not escape dressed as agent-actionable
@@ -1194,101 +773,6 @@ def _completed(hook, *args) -> None:
     except TAT_Error as e:
         raise TAT_InternalError(
             f"completed hook {hook.__qualname__} raised") from e
-
-
-async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname: str,
-                              taken: dict[str, Node | str], call: Edit_Call,
-                              first_replaces: bool = False, path: str = "") -> list[Node]:
-    """Step 1 of an edit: every construct in submission order, detached.
-    `taken` maps each surviving sibling's name to the node, each batch
-    element's to its coordinate — printed only at the raise — so
-    `DuplicateName` points either way.  A class with a `namespace` is then
-    checked across the forest and the call (`_take_name`); that holder may
-    sit in another list of the call, so it is recorded under the element's
-    full path — `path`, the enclosing construct's, plus the coordinate
-    (RENDER_BASELINES §2).  The check comes after the sibling checks and
-    after the element's children are built, so a class nesting its own
-    namespace blames the enclosing construct.  `first_replaces`: this is
-    an amend's top-level list, whose first element replaces
-    `call.replacing`.  The element's coordinate is prefixed onto an
-    exception here, around everything done for it — the framework's own
-    checks included (EXCEPTIONS.md §5)."""
-    nodes = []
-    for i, raw in enumerate(raws):
-        coordinate = f"{listname}[{i}]"
-        full_path = f"{path}.{coordinate}" if path else coordinate
-        try:
-            node = await _construct_element(
-                raw, parent, call.replacing if first_replaces and i == 0 else None,
-                call, full_path)
-            name = getattr(node, "name", None)
-            if not isinstance(name, str):
-                raise TAT_InternalError(
-                    f"{type(node).__name__}.gen set no name")
-            if not is_valid_name(name):
-                raise InvalidName(name)
-            if name in taken:
-                raise DuplicateName(name, _holder_id(taken[name], call.forest))
-            taken[name] = coordinate
-            _take_name(node, full_path, call)
-            nodes.append(node)
-        except TAT_Error as e:
-            e._prefix_raw_ast_path(coordinate)
-            raise
-    return nodes
-
-
-async def _construct_element(raw: RawAST, parent: NonLeaf_Node, replacing: Node | None,
-                             call: Edit_Call, path: str) -> Node:
-    forest, kinds = call.forest, call.kinds
-    if not isinstance(raw, Mapping):
-        raise MalformedRawAST(missing_kind=False)
-    if "kind" not in raw:
-        raise MalformedRawAST(missing_kind=True)
-    kind = raw["kind"]
-    if not isinstance(kind, str):
-        raise InvalidField("kind", "must be a string")
-    if kind not in kinds:
-        raise UnknownKind(kind, list(kinds))
-    cls = kinds[kind]
-    # The children-legality checks run before any gen (MODULE_STRUCTURE
-    # §4.1): a Leaf holds no children, an amend's replacement inherits them.
-    if "children" in raw:
-        if issubclass(cls, Leaf):
-            raise UnexpectedChildren(kind, is_leaf=True)
-        if replacing is not None:
-            raise UnexpectedChildren(kind, is_leaf=False)
-        if not isinstance(raw["children"], list):
-            raise InvalidField("children", "must be a list")
-    if (replacing is not None and isinstance(replacing, NonLeaf_Node)
-            and replacing.sub_nodes and issubclass(cls, Leaf)):
-        raise ChildrenNotInheritable(forest.id_of(replacing), kind,
-                                     len(replacing.sub_nodes))
-    _check_schema(cls, kind, raw)
-    config = NodeConfig(
-        state=Isar_State_Slot.assign(parent.state.connection),
-        parent=parent, replacing=replacing)
-    node = await cls.gen(config, {k: v for k, v in raw.items()
-                                  if k != "children"})
-    if isinstance(node, NonLeaf_Node) and node.sub_nodes:
-        raise TAT_InternalError(
-            f"{cls.__name__}.gen returned children; the framework builds them")
-    node.kind = kind
-    # A replacement keeps the identity of what it replaces (MCP_SPECIFICATION
-    # §3.1).  A fresh one is the store's own write, outside any transaction:
-    # nothing of this edit is in one until its commit (the plan's §2).
-    node.identity = (replacing.identity if replacing is not None
-                     else forest.store.next_identity())
-    if "children" in raw:
-        if not isinstance(node, NonLeaf_Node):
-            raise TAT_InternalError(
-                f"{cls.__name__} took children but is no nesting class")
-        children = await _construct_siblings(
-            node, raw["children"], "children", {}, call, path=path)
-        for child in children:                # the framework owns placement
-            child.parent = node
-        node.sub_nodes.extend(children)
-    return node
 
 
 class Forest(NonLeaf_Node):
@@ -1395,8 +879,8 @@ class Forest(NonLeaf_Node):
     def _last_status(self):
         raise NotImplementedError                # the forest is nobody's sibling
 
-    def _predecessor_wrote(self, index):
-        return False                             # trees are not chained
+    def _source_before(self, index):
+        return None                              # trees are not chained
 
     async def _carry_forward(self, index, node, ev):
         pass                                     # trees are not chained

@@ -25,7 +25,7 @@ to the agent. It inherits from neither of the other two.
 `TAT_DisasterError` is the fourth: the forest in memory and the forest in
 the working directory's database (ARCHITECTURE §4.1) have parted. A write
 operation stores what it changed in one transaction opened only after the
-change is committed in memory (MODULE_STRUCTURE §4.1), so a transaction
+change is committed in memory (MODULE_STRUCTURE §4.2), so a transaction
 that fails — a class's
 `to_store` raising, a value MessagePack cannot hold, a full disk, another
 process holding the write lock — leaves the two apart with no way to
@@ -207,7 +207,7 @@ Two rules keep this sound:
   wrapping, no substitution — whether the frame is the framework's or a
   nesting class's. The annotation accumulates on one exception, and an
   outer `except UnknownKind` still catches.
-- **Nothing before the commit has side effects** (MODULE_STRUCTURE §4.1),
+- **Nothing before the commit has side effects** (MODULE_STRUCTURE §4.2),
   so an aborted call needs no undoing: there is no rollback code for an
   exception to interrupt.
 
@@ -227,5 +227,5 @@ writes it.
 This is why the hierarchy is small where AoA's is large: AoA's edit admits
 partial success, so it needs `EditOutcome.failure` and the whole
 `CannotEdit` family to carry failure as data. TAT's edit applies whole or
-not at all (MODULE_STRUCTURE §4.1), so there is no partially-applied
+not at all (MODULE_STRUCTURE §4.2), so there is no partially-applied
 outcome to describe.

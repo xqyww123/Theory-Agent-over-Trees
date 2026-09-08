@@ -439,7 +439,7 @@ A node class is delivered as an Isabelle theory together with a Python package.
 The theory is primary: it registers the class's evaluator on the ML side —
 into its own theory data (MODULE_STRUCTURE §2.5) — and the registration names
 the Python packages carrying the rest, which the conversation collects and
-hands to `plugin.py` to import (MODULE_STRUCTURE §2.6, §4.3). Installing a
+hands to `plugin.py` to import (MODULE_STRUCTURE §2.6, §4.4). Installing a
 node class means having the theory the conversation starts from import it;
 the conversation loads it from source at start (§8).
 
@@ -542,7 +542,7 @@ is a synchronous loop (§3.6), driven through that one call's callbacks. The one
 asynchronous activity, `construct` (§3.6), is a node class's own affair: the
 class arranges it and the running work hangs on its node. How `Theorem`'s
 `construct` drives AoA is designed with its Python half (MODULE_STRUCTURE
-§4.4), on AoA's own precedent.
+§4.5), on AoA's own precedent.
 
 What the framework contributes to such work is thread safety where it can
 reach shared state: the state slot table and the theory table are locked, and

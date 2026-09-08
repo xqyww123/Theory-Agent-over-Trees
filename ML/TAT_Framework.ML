@@ -47,7 +47,7 @@ sig
   val register_callback :
     {python_packages : string list} ->    (*the class's Python half; imported at
                                             conversation start, filling the kind
-                                            table (§4.3)*)
+                                            table (§4.4)*)
     (env -> Remote_Procedure_Calling.callback') -> theory -> theory
 
   (*** Conversation (§2.6) ***)
