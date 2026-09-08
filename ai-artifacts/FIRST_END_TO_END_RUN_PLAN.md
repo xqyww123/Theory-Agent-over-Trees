@@ -32,7 +32,8 @@ and its layout is fixed:
 - The client hands the directory to `TAT_Framework.start`, which passes it
   to `launch_TAT` as an argument. Both sides read the same string: the ML
   side's `begin_theory` takes `<working directory>/<session name>` as the
-  `master_dir`; the Python side writes the files and the forest there.
+  `master_dir`; the Python side keeps it in the `Conversation`
+  (MODULE_STRUCTURE §4.1) and writes the files and the forest there.
 - TAT owns the files: deleting a tree deletes its `.thy`, deleting a
   `Session` deletes its folder.
 
@@ -99,7 +100,9 @@ The forest is stored in one SQLite database, not pickled.
   its `children` row is ever written. Identities are handed out by the
   framework in `edit._construct_element`, from `next_identity()`.
 - Every **write operation** is one transaction: `edit`, `move`, `delete`,
-  and an evaluation hook writing a recorded field. Read operations
+  and an evaluation hook writing a recorded field that is stored — one
+  held only for the life of the conversation, such as `Theory`'s error
+  messages (SESSION_AND_THEORY.md §2), needs none. Read operations
   (`recall`, `status`) do not touch the database. The transaction opens
   once the operation has succeeded in memory and closes before the next
   `await`; nothing is awaited inside a transaction. A transaction that
@@ -123,16 +126,20 @@ The forest is stored in one SQLite database, not pickled.
   MODULE_STRUCTURE §4.1. `test_model.py` and `test_ids.py` pickle nodes
   today; they round-trip through the store instead.
 
-## 3. `Theory`'s attribute table *(approved 2026-09-04)*
+## 3. `Theory`'s attribute table *(approved 2026-09-04; revised 2026-09-08)*
+
+The table of record is SESSION_AND_THEORY.md §2, which since 2026-09-08
+also carries the two recorded, never stored fields `beginning_errors` and
+`ending_errors`, and notes that the framework's name grammar refuses a
+trailing underscore. In brief:
 
 | Attribute | Type | |
 | --- | --- | --- |
 | `name` | the theory's short name, `str`: an Isabelle identifier — a letter, then letters, digits, underscores and primes; no dot, no hyphen | authored |
 | `imports` | `list[str]`, non-empty; each item as it would be written in the header's `imports` clause: `Main`, `HOL-Library.Multiset`, or a path such as `"lib/Rel"` | authored |
 
-No recorded field. Its construct declares `children`, `items` being
-`#/$defs/Construct`, so a theory is created with its first declarations
-in one call.
+Its construct declares `children`, `items` being `#/$defs/Construct`, so
+a theory is created with its first declarations in one call.
 
 - The qualified name is `<Session name>.<name>`, computed on demand, never
   stored. The ML side derives the same string through
@@ -172,8 +179,9 @@ kept across calls.
 There is no `new_session` tool. The forest root has the id `Sessions`;
 `edit` with `action: "append"` and `target_id: "Sessions"` creates a
 `Session`, and `amend` and `delete` address one by id like any node. Every
-other action on the root is refused (`ProtectedNode`), and `Sessions` is a
-reserved node name. The first layer is ordered like any other.
+other action on the root is refused (`ProtectedNode`); `Sessions` is the
+root's id, which no node's id component `<kind>_<name>` can be
+(MCP_SPECIFICATION §2). The first layer is ordered like any other.
 
 `Session` is an ordinary node class. Its construct carries `name`;
 `parent_session` (the parent Isabelle session of the ROOT entry; required,
@@ -272,8 +280,10 @@ checks of PLUGIN_SYSTEM §5 apply to them and they head the registration
 order. Their ML evaluators stay in `TAT_Common_Nodes.ML`.
 
 **A stop crossing an import edge.** Before a tree runs, the forest looks
-at the `Theory` nodes of its direct imports. If any is not `ready` at its
-ending, the tree is not run but walked in the blocked mode already
+at the `Theory` nodes of its direct imports. If any does not have both its
+operations `ready` — the ending alone does not do: after a failed header
+the ending is `ready` and no theory value exists (the `Theory` root's slot
+chain, below) — the tree is not run but walked in the blocked mode already
 defined for a failed opening — `Evaluating(blocked_by=X)`, `X` the
 stopped node — so every node in it becomes `cannot_evaluate` with the
 same `blocked_by`, and the result reports `X`. Trees that do not import
@@ -312,21 +322,30 @@ a walk that reaches one is a framework bug. Three rules complete it:
   theory value of a tree that no longer exists. EVALUATOR_DESIGN §3
   changes accordingly.
 
-**The `Theory` root's slot chain.** `Theory.state`, its input slot, is
-never written: `begin_theory` starts from `Toplevel.make_state NONE`, and
-`Theory`'s beginning ignores the slot. Its ending runs `end`, writes the
-resulting state into its resulting slot like any `StdBlock` — so the
-release invariants hold unchanged — and puts the theory value into the
-theory table through `end_theory`. Nothing reads that resulting slot.
+**The `Theory` root's slot chain** *(revised 2026-09-08)*. `Theory.state`,
+its input slot, is written by nobody: `begin_theory` starts from
+`Toplevel.make_state NONE`, and `Theory`'s beginning ignores the slot. Its
+resulting slot is its own — `_state_after_ending`, which `resulting_state()`
+returns and `_states_inside` includes, so a leaving tree releases it — since
+under an unchained container no successor's input is there to be it. Its
+ending runs `end` into that slot and puts the theory value into the theory
+table through `end_theory`. Nothing reads the slot. The release invariant
+therefore reads, for a tree: the resulting slot holds a value exactly when
+the ending's write is still current and its source held something — held
+after a successful `end`, and after a failed `end`, whose copy-through
+copies the open theory's state; empty after a failed header, whose
+copy-through copies an input nobody wrote, so that the ending is `ready`
+(ARCHITECTURE §3.2) with an empty slot and no theory value in the table.
+This is why the import-edge rule above asks for
+both of the `Theory`'s operations `ready`, never the ending alone.
 
 **`Unchained_Node`, `Session` and `Forest`.** A `Session`'s trees, and the
 root's `Session`s, are not chained: no child's resulting state is the next
 child's input. One class between `NonLeaf_Node` and both of them,
 `Unchained_Node`, carries every consequence once, and mints no slot:
-`_resulting_state_of_child(child)` is `child.state`, the child's own slot —
-a `Theory`'s ending writes it and nothing reads it (above), so the
-release invariants hold and a leaving child's `_states_inside` already
-covers it; `_source_before` is None and `_carry_forward` does nothing;
+`_resulting_state_of_child` is refused — a child that has a result owns the
+slot for it (above); `_predecessor_wrote` is False, `_source_before` is None
+and `_carry_forward` does nothing;
 `_last_status` is `NOT_EVALUATED` — the container runs no operation, so it
 has written nothing, and the inherited edit paths that ask (an amend, a
 delete or a move of a `Session`) correctly release nothing;
@@ -358,15 +377,16 @@ at every step that touches the ML side.
    `jsonschema` as a dependency; `edit.jsonc`. (`UnexpectedField.takes`
    without `kind` at the top level is done.) Tests: the assembled schema
    validates, and constructs of every shipped kind validate against it.
-3. **`Session`, `Theory`, and `Theorem` emitting `sorry`** (§3, §4,
-   SESSION_AND_THEORY.md): `Unchained_Node`, `Session` and `Theory` in
-   `model.py`, `Theorem` in `theorem_node.py`; the ML evaluators of
-   `Theory` and `Theorem` in `TAT_Common_Nodes.ML`; the description
-   baseline test over SESSION_AND_THEORY.md. `Theorem`'s construct schema
-   (ARCHITECTURE §2.2: `kind`, `statement` as AoA's `LongStatement`, no
-   proof text) and its descriptions are proposed for approval at this
-   step, in a `docs/node_classes/THEOREM.md`. Tests: the ML end-to-end
-   test drives a theory with two lemmas to `end`.
+3. **`Session` and `Theory`** (§3, §4, SESSION_AND_THEORY.md):
+   `Unchained_Node`, `Session` and `Theory` in `model.py`; the ML
+   evaluator of `Theory` in `TAT_Common_Nodes.ML`; the description
+   baseline test over SESSION_AND_THEORY.md. Tests: the ML end-to-end
+   test drives an empty theory, and a second one importing it, to `end`.
+   *(2026-09-08: `Theorem`, first planned for this step, follows as its
+   own step once these two are in — its construct schema, ARCHITECTURE
+   §2.2's `kind` and `statement` as AoA's `LongStatement` with no proof
+   text, and its descriptions are proposed for approval then, in a
+   `docs/node_classes/THEOREM.md`.)*
 4. **The forest walk** (§6): the import graph, the order constraint's stop,
    transitive imports before `T`, stops across import edges, invalidation of
    importers, the pre/post graph comparison, `TAT.theory_delete`.

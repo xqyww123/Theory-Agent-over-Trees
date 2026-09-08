@@ -5,36 +5,22 @@ verbatim in docs/RENDER_BASELINES.md, so the code and the approved wording
 cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 """
 
-from pathlib import Path
-
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadEdit, ChildrenNotInheritable, ConstructFailed,
+    AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
+    ChildrenNotInheritable, ConstructFailed,
     ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
     ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
     TAT_StartupError, UnexpectedChildren, UnexpectedField, UnknownKind)
 
-DOC = (Path(__file__).resolve().parent.parent
-       / "docs" / "RENDER_BASELINES.md").read_text()
-
-
-def _fenced_lines(*section_prefixes):
-    lines, in_section, in_fence = [], False, False
-    for line in DOC.splitlines():
-        if line.startswith("## "):
-            in_section = line.removeprefix("## ").startswith(section_prefixes)
-        elif in_section and line.startswith("```"):
-            in_fence = not in_fence
-        elif in_section and in_fence and line:
-            lines.append(line)
-    return lines
+from baselines import DOCS, fenced_lines
 
 # §3 is evaluation text, not exception renderings; the forest walk's test
 # pins its Python-side line (the plan's §7, step 4).
-BASELINES = set(_fenced_lines("1.", "2."))
+BASELINES = set(fenced_lines(DOCS / "RENDER_BASELINES.md", "1.", "2."))
 COVERED = set()
 
 
@@ -111,23 +97,28 @@ def test_unexpected_field():
           "`facts[1]` has no field `nmae`; it takes `name`.")
 
 def test_duplicate_name():
-    check(DuplicateName(name="lemma_assoc",
+    check(DuplicateName(id_component="lemma_assoc",
                         taken_by="theory_Sorting.lemma_assoc"),
-          "The name `lemma_assoc` is already taken by"
-          " `theory_Sorting.lemma_assoc`. Amend that node, or pick another"
-          " name.")
-    check(DuplicateName(name="lemma_assoc", taken_by="constructs[0]"),
-          "The name `lemma_assoc` is already used by `constructs[0]` of this"
-          " call.")
+          "The id component `lemma_assoc` is already taken by"
+          " `theory_Sorting.lemma_assoc`. Amend that node, or give this one"
+          " another name.")
+    check(DuplicateName(id_component="lemma_assoc", taken_by="constructs[0]"),
+          "The id component `lemma_assoc` is already used by `constructs[0]`"
+          " of this call.")
     # A nested collision coordinate takes the batch rendering too.
-    assert (str(DuplicateName(name="x", taken_by="children[2]"))
-            == "The name `x` is already used by `children[2]` of this call.")
+    assert (str(DuplicateName(id_component="t_x", taken_by="children[2]"))
+            == "The id component `t_x` is already used by `children[2]` of this call.")
 
 def test_invalid_name():
-    check(InvalidName(name="Ch. 2 lemmas"),
-          "`Ch. 2 lemmas` is not a valid name: a name starts with a letter"
-          " and continues with letters, digits, underscores and primes ('),"
-          " and does not end with an underscore.")
+    check(InvalidName(name="Ch 2"),
+          "`Ch 2` is not a valid name: a name starts with a letter and"
+          " continues with letters, digits, underscores, primes (') and"
+          " interior hyphens, and does not end with a hyphen or an"
+          " underscore.")
+    check(InvalidName(name="Foo-Bar", theory_name=True),
+          "`Foo-Bar` is not a valid theory name: a theory name starts with a"
+          " letter and continues with letters, digits, underscores and"
+          " primes ('), with no hyphen and no dot.")
 
 def test_duplicate_theory_short_name():
     check(DuplicateTheoryShortName(short_name="List", holder="HOL.List"),
@@ -160,6 +151,14 @@ def test_children_not_inheritable():
                                  new_kind="lemma", children_count=1),
           "`theory_X.section_Basics` has 1 child, which a `lemma` cannot"
           " hold. Move or delete it first.")
+
+def test_bad_node_parent():
+    check(BadSessionNodeParent(kind="session", parent_id="theory_X"),
+          "A `session` cannot be placed under `theory_X`; a session lives"
+          " directly under `Sessions`.")
+    check(BadTheoryNodeParent(kind="theory", parent_id="section_Basics"),
+          "A `theory` cannot be placed under `section_Basics`; a theory lives"
+          " directly under a session.")
 
 def test_move_into_own_subtree():
     check(MoveIntoOwnSubtree(id="theory_X.section_Basics",
@@ -246,6 +245,8 @@ def test_groups():
     assert issubclass(NodeNotFound, ResolutionError)
     assert issubclass(MalformedRawAST, RawASTError)
     assert issubclass(DuplicateTheoryShortName, BadEdit)
+    assert issubclass(BadSessionNodeParent, BadEdit)
+    assert issubclass(BadTheoryNodeParent, BadEdit)
     assert issubclass(ConstructNotSupported, ConstructFailed)
     for group in (ResolutionError, RawASTError, BadEdit, ConstructFailed):
         assert issubclass(group, TAT_Error)
@@ -265,10 +266,6 @@ def test_group_bases_are_abstract():
 EXEMPT = {
     "A `lemma` cannot be placed under `session_Arith`; it belongs inside a"
     " theory.",
-    "A `session` cannot be placed under `theory_X`; a session lives directly"
-    " under `Sessions`.",
-    "A `theory` cannot be placed under `section_Basics`; a theory lives"
-    " directly under a session.",
 }
 
 def test_every_baseline_is_covered():

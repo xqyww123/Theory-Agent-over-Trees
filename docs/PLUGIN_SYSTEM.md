@@ -30,7 +30,11 @@ quietly.
 
 A node class derives from `Leaf`, `StdBlock` or `Unchained_Node`
 (MODULE_STRUCTURE §4.1) and is registered with `@TAT_node`, which takes no
-arguments. Besides its hooks it declares, as class attributes:
+arguments. An `Unchained_Node` chains no children, so a child class that
+has a result owns the slot for it, as `Theory` does: it mints the slot in
+`gen` and `from_store`, returns it from `resulting_state()`, and appends it
+in `_states_inside()`, so it is released when the node leaves.
+Besides its hooks a class declares, as class attributes:
 
 | attribute | what it is |
 | --- | --- |
@@ -41,6 +45,12 @@ arguments. Besides its hooks it declares, as class attributes:
 
 The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5).
+
+A class sets `name` in its `gen` to the name the agent supplied; the
+framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
+§2). Besides its own node, a class may read `forest().conversation` — the
+connection to the Isabelle side and the working directory (MODULE_STRUCTURE
+§4.1) — and nothing with a leading underscore.
 
 ## 3. The construct schema
 
@@ -123,7 +133,8 @@ class:
   (`jsonschema.Draft202012Validator.check_schema`), an object with
   `additionalProperties: false` at the top;
 - `properties.kind` is present with an `enum` or a `const`, every value a
-  string, and `kind` is in `required`;
+  string within the name grammar of MCP_SPECIFICATION §2 — it heads every
+  id component `<kind>_<name>` — and `kind` is in `required`;
 - no kind it names is registered by another class, and no other class has
   the same Python class name;
 - if `children` is declared, the class is not a `Leaf`, and the property
@@ -137,7 +148,9 @@ class:
   defaults only raise, and a class missing one would fail at its first
   edit or at the next start instead of here;
 - `argument_schema` is a TypedDict — an empty one for a class with no
-  fields — within the closed annotation grammar (MODULE_STRUCTURE §4.4);
+  fields — within the closed annotation grammar (MODULE_STRUCTURE §4.4),
+  a field optionally wrapped in `NotRequired[X]` or `Required[X]`, which
+  the loader reads off the annotation itself;
 - the two schemas agree: the keys of `properties`, less `kind` and
   `children`, are exactly the TypedDict's keys less `kind`, and
   `required`, less `kind` and `children`, is exactly the TypedDict's

@@ -13,11 +13,15 @@ state instead of mirroring the source would be caught.
 """
 
 import os
+from pathlib import Path
 
 from Isabelle_RPC_Host import Connection, IsabelleError, isabelle_remote_procedure
 
-from isabelle_theory_agent import isabelle_driver
-from isabelle_theory_agent.model import Isar_State_Slot
+from isabelle_theory_agent import edit, isabelle_driver, model as M
+from isabelle_theory_agent.exceptions import DuplicateTheoryShortName
+from isabelle_theory_agent.model import READY, CannotEvaluate, Isar_State_Slot, Session, Theory
+from isabelle_theory_agent.store import Forest_Store
+from routing_forest import Routing_Forest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -323,3 +327,73 @@ async def drive(packages: list[str], connection: Connection) -> None:
         'tat_hello')
     assert len(recs) == 2 and not errors(recs), recs
     assert ["writeln", "tat-hello-cmd"] in recs[1][2], recs
+
+    # --- the Theory node class, end to end (SESSION_AND_THEORY §2) ---
+
+    # a forest on an in-memory store, this directory its working directory
+    kinds = {"session": Session, "theory": Theory}
+    forest = Routing_Forest(M.Conversation(connection, Path(HERE)),
+                            Forest_Store(":memory:"), kinds)
+
+    async def insert(parent, index, raws):
+        async with forest.lock:
+            return await edit.insert(parent, index, raws, kinds)
+
+    def theory(name, *imports):
+        return {"kind": "theory", "name": name, "imports": list(imports)}
+
+    (sess,) = await insert(forest, 0, [
+        {"kind": "session", "name": "TAT_E2E", "parent_session": "HOL",
+         "children": [theory("TAT_E2E_A", "Main")]}])
+    (ta,) = sess.sub_nodes
+    assert (sess.name, ta.name) == ("TAT_E2E", "TAT_E2E_A")
+    assert (forest.id_of(sess), forest.id_of(ta)) == ("session_TAT_E2E", "theory_TAT_E2E_A")
+
+    # the base-heap half of the short-name check, in gen, over the wire
+    try:
+        await insert(sess, 1, [theory("List", "Main")])
+        raise AssertionError("a heap short name was not refused")
+    except DuplicateTheoryShortName as e:
+        assert (e.short_name, e.holder) == ("List", "HOL.List"), str(e)
+
+    # an empty theory to its end: the header from a fresh toplevel state
+    # into the slot before the ending, `end` into the resulting slot the
+    # tree owns, and the theory value into the theory table; the input
+    # slot stays what nobody wrote
+    r = await ta.evaluate_to(False)
+    assert r == M.EvaluationResult(None, M.INVALIDATING), r
+    assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)
+    assert ta.beginning_errors == [] and ta.ending_errors == []
+    assert ta.is_finished() and sess.is_finished() and forest.is_finished()
+    assert not await ta.state.is_initialized()
+    assert await is_toplevel(ta._state_before_ending) is False    # the theory, open
+    assert ta.resulting_state() is ta._state_after_ending
+    assert await is_toplevel(ta._state_after_ending) is True      # after `end`
+    assert await short_name_holder("TAT_E2E_A") is None           # the table, not Thy_Info
+
+    # a second tree importing the first by its bare name: resolved through
+    # the conversation's theory table, under the session's name
+    (tb,) = await insert(sess, 1, [theory("TAT_E2E_B", "TAT_E2E_A")])
+    r = await tb.evaluate_to(False)
+    assert r == M.EvaluationResult(None, M.INVALIDATING), r
+    assert tb.is_finished() and tb.beginning_errors == []
+
+    # a header that fails -- an import found nowhere -- is the node's own
+    # stop at its beginning, with the message; the ending is the framework's
+    # copy-through of an input that holds nothing, so the owned resulting
+    # slot stays empty under a `ready` ending (the plan's §6)
+    (tc,) = await insert(sess, 2, [theory("TAT_E2E_C", "TAT_E2E_Nowhere")])
+    r = await tc.evaluate_to(False)
+    assert r == M.EvaluationResult(None, M.INVALIDATING), r   # its successors are not blocked
+    assert tc.evaluation_status_beginning == CannotEvaluate(None)
+    assert any("TAT_E2E_Nowhere" in m for m in tc.beginning_errors), tc.beginning_errors
+    assert tc.evaluation_status_ending is READY and not tc.is_finished()
+    for sl in (tc.state, tc._state_before_ending, tc._state_after_ending):
+        assert not await sl.is_initialized()
+
+    # deleting a tree releases what its operations wrote, in one round trip
+    async with forest.lock:
+        await edit.delete(ta)
+    assert sess.sub_nodes == [tb, tc]
+    assert not await ta._state_before_ending.is_initialized()
+    assert not await ta._state_after_ending.is_initialized()

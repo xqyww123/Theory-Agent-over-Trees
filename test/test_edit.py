@@ -147,7 +147,7 @@ def test_duplicate_name_against_sibling_and_batch():
     with pytest.raises(DuplicateName) as e:
         run(locked(f, edit.insert(thy,
             2, [{"kind": "t", "name": "c"}], KINDS)))
-    assert e.value.taken_by == "Theory.c" and e.value.raw_ast_path == "constructs[0]"
+    assert e.value.taken_by == "block_Theory.t_c" and e.value.raw_ast_path == "constructs[0]"
     with pytest.raises(DuplicateName) as e:
         run(locked(f, edit.insert(thy,
             2, [{"kind": "t", "name": "z"}, {"kind": "t", "name": "z"}], KINDS)))
@@ -454,7 +454,7 @@ def test_amend_replacement_refuses_children_and_leaves():
         run(locked(f, edit.amend(
             sec, [{"kind": "t", "name": "L"}], KINDS)))
     assert (e.value.old_id, e.value.new_kind, e.value.children_count) == \
-        ("Theory.Section", "t", 2)
+        ("block_Theory.block_Section", "t", 2)
 
 
 # --- delete -----------------------------------------------------------------
@@ -524,7 +524,7 @@ def test_a_namespaced_name_collides_across_the_forest_and_the_batch():
     # the same name under another parent: no sibling collision, the namespace refuses
     with pytest.raises(DuplicateTheoryShortName) as e:
         run(locked(f, edit.insert(thy,0, [{"kind": "named", "name": "N"}], kinds)))
-    assert (e.value.short_name, e.value.holder) == ("N", "Theory.Section.N")
+    assert (e.value.short_name, e.value.holder) == ("N", "block_Theory.block_Section.named_N")
     assert e.value.raw_ast_path == "constructs[0]"
     # it is the namespace that collides, not the class
     with pytest.raises(DuplicateTheoryShortName):
@@ -877,8 +877,8 @@ def test_move_refusals():
     with pytest.raises(MoveIntoOwnSubtree) as e:
         run(locked(f, edit.move(sec, sec, 0)))
     assert (e.value.id, e.value.destination) == \
-        ("Theory.Section", "Theory.Section")
+        ("block_Theory.block_Section", "block_Theory.block_Section")
     mk = add(sec, RT(sec, slot(), "c"))                      # a second "c"
     with pytest.raises(DuplicateName) as e:
         run(locked(f, edit.move(mk, thy, 2)))
-    assert e.value.taken_by == "Theory.c"
+    assert e.value.taken_by == "block_Theory.t_c"

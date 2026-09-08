@@ -99,14 +99,18 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 ├─ BadEdit                    the request is well formed, but the change
 │  │                          would break a standing rule; "edit" in the
 │  │                          broad sense of the glossary (ARCHITECTURE §1)
-│  ├─ DuplicateName           name; taken_by — an existing sibling's id, or
+│  ├─ DuplicateName           id_component — the `<kind>_<name>` two
+│  │                          siblings would share (MCP_SPECIFICATION §2);
+│  │                          taken_by — an existing sibling's id, or
 │  │                          the colliding element's coordinate in its own
 │  │                          list (`constructs[0]`, `children[2]`; the
 │  │                          exception's raw_ast_path names that list):
 │  │                          the two ask for opposite remedies   [framework]
-│  ├─ InvalidName             name — outside the name grammar of
-│  │                          MCP_SPECIFICATION §2; checked where
-│  │                          DuplicateName is                    [framework]
+│  ├─ InvalidName             name, theory_name — outside the name grammar
+│  │                          of MCP_SPECIFICATION §2, checked where
+│  │                          DuplicateName is [framework]; or, with
+│  │                          theory_name, outside the Isabelle identifier
+│  │                          a theory name must be         [Theory.gen]
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
 │  │                          (its full path in the call) already uses
@@ -160,8 +164,13 @@ TAT_DisasterError             outside all three; memory and the database
 Every `TAT_Error` carries its facts as fields; `__str__` assembles the
 agent-facing sentence from them. Logic tests assert on the fields; each
 concrete class keeps one **render baseline** — the owner-approved
-agent-facing wording, collected in RENDER_BASELINES.md — and no other test
-touches the rendered string.
+agent-facing wording, collected in RENDER_BASELINES.md. A reason a node
+class's `gen` supplies to a framework exception — `InvalidField`'s
+`<reason>`, whose shape alone is RENDER_BASELINES §2's — is approved in
+that class's document under docs/node_classes/ and pinned by that class's
+test, as `Session`'s and `Theory`'s two reasons are in SESSION_AND_THEORY
+§3 and test_session_theory.py. No test outside those homes touches a
+rendered string.
 
 ## 4. The `opr` field
 

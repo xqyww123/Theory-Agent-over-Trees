@@ -4,16 +4,8 @@
 Run: python -m pytest test/test_ids.py
 """
 
-import sys
-import types
 import typing
-
-try:
-    import Isabelle_RPC_Host  # noqa: F401
-except ImportError:                       # the test needs no Isabelle
-    m = types.ModuleType("Isabelle_RPC_Host")
-    m.Connection = object  # type: ignore[attr-defined]
-    sys.modules["Isabelle_RPC_Host"] = m
+from pathlib import Path
 
 import pytest
 
@@ -54,7 +46,9 @@ class Sess(Sec):
 class Thy(Sec):
     drop_priority = 2
 
-KINDS = {"thm": Thm, "sec": Sec, "sess": Sess, "thy": Thy}
+# the kinds of the doc's example; a kind prefixes the name in the id
+KINDS = {"lemma": Thm, "section": Sec, "session": Sess, "theory": Thy}
+KIND_OF = {cls: kind for kind, cls in KINDS.items()}
 
 
 def enter(parent, n, kind):
@@ -68,28 +62,34 @@ def enter(parent, n, kind):
 
 def mk_leaf(parent, name):
     n = Thm(parent, slot()); n.name = name
-    return enter(parent, n, "thm")
+    return enter(parent, n, "lemma")
 
 def mk_block(cls, parent, name):
     n = cls(parent, slot(), [], slot()); n.name = name
-    return enter(parent, n, cls.__name__.lower())
+    return enter(parent, n, KIND_OF[cls])
 
 
 def new_forest(store=None):
-    return M.Forest(slot(), store if store is not None else Forest_Store(":memory:"), KINDS)
+    return M.Forest(M.Conversation(CONN, Path(".")),       # nothing here touches the directory
+                    store if store is not None else Forest_Store(":memory:"), KINDS)
 
 
 @pytest.fixture
 def forest():
     f = new_forest()
-    arith = mk_block(Sess, f, "session_Arith")
-    x = mk_block(Thy, arith, "theory_X")
-    basics = mk_block(Sec, x, "section_Basics")
-    p = mk_leaf(basics, "lemma_P")
+    arith = mk_block(Sess, f, "Arith")
+    x = mk_block(Thy, arith, "X")
+    basics = mk_block(Sec, x, "Basics")
+    p = mk_leaf(basics, "P")
     return f, arith, x, basics, p
 
 
 # --- printing ---------------------------------------------------------------
+
+def test_the_id_component_is_the_kind_and_the_name(forest):
+    f, arith, x, basics, p = forest
+    assert p.name == "P" and p.id_component() == "lemma_P"
+    assert arith.id_component() == "session_Arith"
 
 def test_shortest_form_when_unique(forest):
     f, arith, x, basics, p = forest
@@ -101,8 +101,8 @@ def test_shortest_form_when_unique(forest):
 
 def test_printing_stops_at_the_first_collision(forest):
     f, arith, x, basics, p = forest
-    y = mk_block(Thy, arith, "theory_Y")
-    mk_leaf(y, "lemma_P")
+    y = mk_block(Thy, arith, "Y")
+    mk_leaf(y, "P")
     # Section (priority 0) and Session (1) go; Theory (2) can no longer.
     assert f.id_of(p) == "theory_X.lemma_P"
 
@@ -111,7 +111,7 @@ def test_drop_order_is_by_priority_then_outermost(forest):
     # A second lemma_P under theory_X itself: dropping section_Basics from
     # p's id is now ambiguous, so the section stays while Session and
     # Theory — droppable in priority order — both go.
-    mk_leaf(x, "lemma_P")
+    mk_leaf(x, "P")
     assert f.id_of(p) == "section_Basics.lemma_P"
 
 
@@ -131,7 +131,7 @@ def test_reading_accepts_every_omissible_drop(forest):
 
 def test_exact_full_id_wins_over_a_drop_match(forest):
     f, arith, x, basics, p = forest
-    q = mk_leaf(x, "lemma_P")
+    q = mk_leaf(x, "P")
     # "session_Arith.theory_X.lemma_P" is q's full id and also p's
     # section-dropped form: the exact match wins (MCP_SPECIFICATION §2.1),
     # so every id TAT prints resolves back to the node it was printed for.
@@ -143,8 +143,8 @@ def test_exact_full_id_wins_over_a_drop_match(forest):
 
 def test_ambiguous_id_lists_candidates_in_tree_order(forest):
     f, arith, x, basics, p = forest
-    y = mk_block(Thy, arith, "theory_Y")
-    mk_leaf(y, "lemma_P")
+    y = mk_block(Thy, arith, "Y")
+    mk_leaf(y, "P")
     with pytest.raises(AmbiguousId) as e:
         f.resolve("lemma_P")
     assert e.value.id == "lemma_P"
@@ -165,7 +165,7 @@ def test_a_dropped_component_must_be_input_omissible(forest):
 
 def test_nested_same_name(forest):
     f, arith, x, basics, p = forest
-    inner = mk_block(Sec, basics, "section_Basics")
+    inner = mk_block(Sec, basics, "Basics")
     with pytest.raises(AmbiguousId):
         f.resolve("section_Basics")
     assert f.resolve("section_Basics.section_Basics") is inner
@@ -178,10 +178,9 @@ def test_nested_same_name(forest):
 # --- the name grammar -------------------------------------------------------
 
 def test_name_grammar():
-    for good in ("lemma_P", "HOL-Library", "x'", "a_b", "T2", "a'b-c_d'"):
-        assert is_valid_name(good), good
-    for bad in ("Ch. 2 lemmas", "", "a_", "a-", "-a", "_a", "1a", "a.b",
-                "Sessions", "a b"):
+    for good in ("P", "HOL-Library", "x'", "a_b", "T2", "a'b-c_d'", "Sessions"):
+        assert is_valid_name(good), good      # `Sessions` too: an id component always has an underscore
+    for bad in ("Ch. 2 lemmas", "", "a_", "a-", "-a", "_a", "1a", "a.b", "a b"):
         assert not is_valid_name(bad), bad
 
 
@@ -190,17 +189,17 @@ def test_name_grammar():
 def test_index_of_and_identity(forest):
     f, arith, x, basics, p = forest
     assert basics.index_of() == 0 and x.index_of() == 0
-    q = mk_leaf(basics, "lemma_Q")
+    q = mk_leaf(basics, "Q")
     assert q.index_of() == 1
     assert q.identity > p.identity > x.identity     # creation order, opaque
 
 def test_identity_and_ids_survive_a_reload(forest):
     f, arith, x, basics, p = forest
-    mk_leaf(x, "lemma_P")                    # the section can no longer be dropped
+    mk_leaf(x, "P")                          # the section can no longer be dropped
     loaded = new_forest(f.store)             # the same database, read again
     reloaded_p = loaded.sub_nodes[0].sub_nodes[0].sub_nodes[0].sub_nodes[0]
     assert reloaded_p.identity == p.identity
     assert loaded.id_of(reloaded_p) == f.id_of(p) == "section_Basics.lemma_P"
     assert loaded.resolve("session_Arith.theory_X.lemma_P") is not reloaded_p
-    fresh = mk_leaf(loaded.sub_nodes[0].sub_nodes[0], "lemma_R")
+    fresh = mk_leaf(loaded.sub_nodes[0].sub_nodes[0], "R")
     assert fresh.identity not in {n.identity for n in loaded._all_nodes() if n is not fresh}

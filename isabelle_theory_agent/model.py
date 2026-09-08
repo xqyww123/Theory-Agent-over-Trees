@@ -1,6 +1,8 @@
 """The forest: nodes, state slots, evaluation and invalidation, ids,
-persistence (ARCHITECTURE §3, MODULE_STRUCTURE §4.1).  Changing the forest
-is `edit.py`; what a node class may declare is `plugin.py`.
+persistence, the `Conversation`, and the two node classes that carry the
+forest's structure, `Session` and `Theory` (ARCHITECTURE §3,
+MODULE_STRUCTURE §4.1).  Changing the forest is `edit.py`; what a node
+class may declare is `plugin.py`.
 
 Every method that touches Isabelle is async, since `Connection.callback` is.
 """
@@ -13,13 +15,16 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, ClassVar, Literal, NamedTuple, Self, TypeAlias
+from pathlib import Path
+from typing import Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TypeAlias, TypedDict
 
 from Isabelle_RPC_Host import Connection
 
 from . import isabelle_driver
 from .exceptions import (
-    AmbiguousId, BadEdit, NodeNotFound, TAT_Error, TAT_InternalError, TAT_StartupError)
+    AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
+    DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, TAT_Error,
+    TAT_InternalError, TAT_StartupError)
 from .store import Forest_Store, MissingRow, Node_Rows
 
 
@@ -185,9 +190,12 @@ def is_valid_name(name: str) -> bool:
     """The name grammar of MCP_SPECIFICATION §2: a letter followed by
     letters, digits, underscores, primes and interior hyphens — a hyphen or
     underscore may not end a name, and a hyphen cannot begin one, since a
-    name starts with a letter."""
-    return (bool(_NAME_GRAMMAR.fullmatch(name)) and not name.endswith(("-", "_"))
-            and name != "Sessions")                  # the forest root's id (MCP_SPECIFICATION §2)
+    name starts with a letter.  Judged on both halves of an id component
+    `<kind>_<name>`: the agent's name by `edit._construct_siblings`, a
+    class's kinds by `plugin._check_class`.  The forest root's id
+    `Sessions` needs no reservation: an id component always carries an
+    underscore."""
+    return bool(_NAME_GRAMMAR.fullmatch(name)) and not name.endswith(("-", "_"))
 
 
 @dataclass(frozen=True)
@@ -201,14 +209,17 @@ class Location:
 class Node(ABC):
     """The Python half of a node class (ARCHITECTURE §6).
 
-    `state` is the state before the node.  The state after it is not stored:
-    it is the next sibling's `state`, or the parent's state after all
-    children (`resulting_state`).
+    `state` is the state before the node.  The state after it,
+    `resulting_state()`, is under a chaining parent the next sibling's
+    `state` or the parent's state after all children, and under an
+    `Unchained_Node` a slot the node owns (`Theory`).
     """
 
     parent: NonLeaf_Node | None
     state: Isar_State_Slot
-    name: str            # the node's one id component (MCP_SPECIFICATION §2)
+    name: str            # the name as the agent supplied it, set by `gen`: the `P`
+                         # of `lemma_P` (MCP_SPECIFICATION §2); `id_component` is
+                         # what the id shows
     # The framework's two fields, set by it when the node enters the forest
     # (`edit._construct_element`) or is loaded (`Forest._load_subtree`); no class
     # sets or stores them.
@@ -230,9 +241,10 @@ class Node(ABC):
     construct_schema: ClassVar[JSON_Schema | None] = None
     argument_schema: ClassVar[Any] = None
 
-    # The forest-wide namespace the node's name lives in, if any
+    # The forest-wide namespace the node's `name` lives in, if any
     # (PLUGIN_SYSTEM §2): `Theory`'s short names.  The framework checks the
-    # name against the forest and the call when the node is built.
+    # name against the forest and the call when the node is built
+    # (`edit._take_name`).
     namespace: ClassVar[Namespace | None] = None
 
     @classmethod
@@ -250,9 +262,11 @@ class Node(ABC):
     # and reads its own fields; `kind` and `children` are the framework's.
 
     def to_store(self, rows: Node_Rows) -> None:
-        """Write the authored and recorded fields.  Every value must be
-        MessagePack-representable, and no recorded value may mean "work is
-        running": a loaded forest holds results, never work in flight."""
+        """Write the authored fields, and the recorded fields the class keeps
+        across a restart — not one held only for the life of the
+        conversation, such as `Theory`'s error messages.  Every value must
+        be MessagePack-representable, and no recorded value may mean "work
+        is running": a loaded forest holds results, never work in flight."""
         raise TAT_InternalError(f"{type(self).__name__} has no to_store")
 
     @classmethod
@@ -266,6 +280,11 @@ class Node(ABC):
     def __init__(self, parent: NonLeaf_Node | None, state: Isar_State_Slot):
         self.parent = parent
         self.state = state
+
+    def id_component(self) -> str:
+        """The node's one component of an id, `<kind>_<name>`
+        (MCP_SPECIFICATION §2): `lemma_P`, `theory_X`, `session_Arith`."""
+        return f"{self.kind}_{self.name}"
 
     def index_of(self) -> int:
         """The node's position in its parent's `sub_nodes` — computed, never
@@ -372,12 +391,16 @@ class Node(ABC):
         resulting state.  Framework-only: what a node class asks of another
         node is `is_finished()`."""
 
-    @abstractmethod
     def _states_inside(self, out: list[Isar_State_Slot] | None = None
                        ) -> list[Isar_State_Slot]:
         """Every state owned by this subtree, appended to `out`: `state` and,
         under a nesting node, its children's and the one after them.  The
-        resulting state is not among them — it is the successor's."""
+        resulting state is not among them — it is the successor's — unless
+        the node owns it, as a `Theory` does."""
+        if out is None:
+            out = []
+        out.append(self.state)
+        return out
 
     @abstractmethod
     async def _evaluate(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
@@ -425,12 +448,6 @@ class Leaf(Node):
     def __init__(self, parent, state):
         super().__init__(parent, state)
         self._status = NOT_EVALUATED
-
-    def _states_inside(self, out=None):
-        if out is None:
-            out = []
-        out.append(self.state)
-        return out
 
     def _last_status(self):
         return self._status
@@ -501,6 +518,12 @@ class NonLeaf_Node(Node):
         for c in self.sub_nodes:
             c._children_first(out)
         out.append(self)
+        return out
+
+    def _states_inside(self, out=None):
+        out = super()._states_inside(out)
+        for c in self.sub_nodes:
+            c._states_inside(out)
         return out
 
     def _resulting_state_of_child(self, child: Node) -> Isar_State_Slot:
@@ -622,11 +645,7 @@ class StdBlock(NonLeaf_Node):
         return self._state_before_ending
 
     def _states_inside(self, out=None):
-        if out is None:
-            out = []
-        out.append(self.state)
-        for c in self.sub_nodes:
-            c._states_inside(out)
+        out = super()._states_inside(out)
         out.append(self._state_before_ending)
         return out
 
@@ -730,6 +749,40 @@ class StdBlock(NonLeaf_Node):
         return EvaluationResult(None, mode)
 
 
+class Unchained_Node(NonLeaf_Node):
+    """A container whose children are not chained — a `Session`'s trees,
+    the root's `Session`s: no child's result is the next child's input, and
+    the container runs no operation of its own
+    (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).  It mints no slot: a
+    child that has a result owns the slot for it, as a `Theory` does."""
+
+    def _resulting_state_of_child(self, child) -> Isar_State_Slot:
+        raise TAT_InternalError(
+            f"{type(self).__name__} chains no children: a child owns its resulting state")
+
+    def _resulting_state_of_all_children(self) -> Isar_State_Slot:
+        raise TAT_InternalError(
+            f"{type(self).__name__} keeps no slot after its children")
+
+    def _last_status(self):
+        return NOT_EVALUATED                     # no operation: nothing written
+
+    def _operations_ready(self):
+        return True                              # no operation: nothing owed
+
+    def _predecessor_wrote(self, index) -> bool:
+        return False                             # no child writes another's input
+
+    def _source_before(self, index) -> Isar_State_Slot | None:
+        return None                              # no predecessor's result to take
+
+    async def _carry_forward(self, index, node, ev):
+        pass                                     # nor to carry
+
+    async def _mark_not_evaluated(self, ev):
+        pass                                     # no ending to mark
+
+
 # ---------------------------------------------------------------------------
 # The shared types of the node class contract (MODULE_STRUCTURE §4.1), and
 # the firing of a completed hook
@@ -775,23 +828,35 @@ def _completed(hook, *args) -> None:
             f"completed hook {hook.__qualname__} raised") from e
 
 
-class Forest(NonLeaf_Node):
-    """The root above every tree.  Trees are not chained: a tree's result is
-    not the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6)."""
+@dataclass(frozen=True)
+class Conversation:
+    """One run of TAT (ARCHITECTURE §1, §9): what the run is given and the
+    forest does not store — the connection to the Isabelle side, and the
+    working directory (ARCHITECTURE §4).  A node reaches it through
+    `forest().conversation`."""
+    connection: Connection
+    working_directory: Path
 
+
+class Forest(Unchained_Node):
+    """The root above every `Session` (MODULE_STRUCTURE §4.1): holds the
+    lock, the store and the `Conversation`, resolves and prints ids."""
+
+    conversation: Conversation
     lock: asyncio.Lock                         # held across every evaluation and tree change
     store: Forest_Store                        # the working directory's database (the plan's §2)
 
     ROOT_IDENTITY: ClassVar[int] = 0           # `next_identity` starts at 1
 
-    def __init__(self, state: Isar_State_Slot, store: Forest_Store,
+    def __init__(self, conversation: Conversation, store: Forest_Store,
                  kinds: Mapping[str, type[Node]]):
         """The forest the store holds, loaded whole: its trees are the root's
         `children` row, each rebuilt by `_load_subtree` with the classes of
         `kinds`; a fresh database, one without a row, is the empty forest.
         `not_evaluated` throughout, every slot fresh (ARCHITECTURE §4.1).
         A database TAT could not have written is refused (`TAT_StartupError`)."""
-        super().__init__(None, state, [])
+        super().__init__(None, Isar_State_Slot.assign(conversation.connection), [])
+        self.conversation = conversation
         self.identity = self.ROOT_IDENTITY
         self.store = store
         self.lock = asyncio.Lock()
@@ -867,27 +932,6 @@ class Forest(NonLeaf_Node):
                 node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))
         return node
 
-    def _operations_ready(self):
-        return True                              # the root runs nothing
-
-    def _resulting_state_of_all_children(self) -> Isar_State_Slot:
-        raise NotImplementedError
-
-    def _states_inside(self, out=None):
-        raise NotImplementedError
-
-    def _last_status(self):
-        raise NotImplementedError                # the forest is nobody's sibling
-
-    def _source_before(self, index):
-        return None                              # trees are not chained
-
-    async def _carry_forward(self, index, node, ev):
-        pass                                     # trees are not chained
-
-    async def _mark_not_evaluated(self, ev):
-        pass                                    # no ending
-
     # --- ids: resolution and shortest-form printing (MCP_SPECIFICATION §2.1).
     # Ambiguity is judged across the whole forest, so both live here.
 
@@ -917,7 +961,7 @@ class Forest(NonLeaf_Node):
         if not parts:
             return []
         def admits(chain: list[Node]) -> bool:
-            if chain[-1].name != parts[-1]:
+            if chain[-1].id_component() != parts[-1]:
                 return False
             memo: dict[tuple[int, int], bool] = {}
             def match(ci: int, pi: int) -> bool:   # chain[ci:-1] vs parts[pi:-1]
@@ -930,7 +974,7 @@ class Forest(NonLeaf_Node):
                         memo[key] = False
                     else:
                         memo[key] = (
-                            (chain[ci].name == parts[pi]
+                            (chain[ci].id_component() == parts[pi]
                              and match(ci + 1, pi + 1))
                             or (chain[ci].input_omissible
                                 and match(ci + 1, pi)))
@@ -952,7 +996,7 @@ class Forest(NonLeaf_Node):
         matches = self._read(parts)
         if len(matches) > 1:
             for n in matches:
-                if [c.name for c in self._chain(n)] == parts:
+                if [c.id_component() for c in self._chain(n)] == parts:
                     return n
         if len(matches) == 1:
             return matches[0]
@@ -961,9 +1005,9 @@ class Forest(NonLeaf_Node):
             # would be quadratic in the forest.
             nodes = self._all_nodes()
             close = set(difflib.get_close_matches(
-                parts[-1], sorted({n.name for n in nodes})))
+                parts[-1], sorted({n.id_component() for n in nodes})))
             near = [self.id_of(n)
-                    for n in [n for n in nodes if n.name in close][:3]]
+                    for n in [n for n in nodes if n.id_component() in close][:3]]
             raise NodeNotFound(id, near)
         raise AmbiguousId(id, [self.id_of(m) for m in matches])
 
@@ -982,13 +1026,13 @@ class Forest(NonLeaf_Node):
                 c = chain[pos]
                 if not c.output_omissible:
                     continue
-                candidate = [chain[p].name for p in kept if p != pos]
+                candidate = [chain[p].id_component() for p in kept if p != pos]
                 if self._read(candidate) == [node]:
                     key = (c.drop_priority, pos)
                     if best is None or key < best[0]:
                         best = (key, pos)
             if best is None:
-                return ".".join(chain[p].name for p in kept)
+                return ".".join(chain[p].id_component() for p in kept)
             kept.remove(best[1])
 
     async def _run(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
@@ -1007,7 +1051,251 @@ class Forest(NonLeaf_Node):
         raise NotImplementedError
 
 
-# The framework's own node classes — `Session` and `Theory` (the plan's §7,
-# step 3) — which `plugin.load` registers before any package (PLUGIN_SYSTEM
-# §1).
-FRAMEWORK_NODE_CLASSES: list[type[Node]] = []
+# ---------------------------------------------------------------------------
+# The framework's own node classes (node_classes/SESSION_AND_THEORY.md): the
+# two that carry the forest's structure — a `Session` groups trees, a
+# `Theory` roots one — which is why they live here and not in `builtins.py`
+# (the plan's §6).  `plugin.load` registers them before any package
+# (PLUGIN_SYSTEM §1).
+
+def _parent_id(config: NodeConfig) -> str:
+    """The parent as the agent sees it, for a `Bad<Class>NodeParent`.  A
+    parent still under construction in the same call prints its full id."""
+    return config.parent.forest().id_of(config.parent)
+
+
+class Session_Option(TypedDict):
+    name: str
+    value: str
+
+
+class Session_RawAST(TypedDict):
+    kind: Literal["session"]
+    name: str
+    parent_session: str
+    options: NotRequired[list[Session_Option]]
+    description: NotRequired[str]
+
+
+class Session(Unchained_Node):
+    """One Isabelle session under construction (SESSION_AND_THEORY §1): the
+    ROOT entry's fields, and the trees under it.  It runs no Isabelle
+    commands and is not on the evaluation path — the forest works on the
+    trees directly, so a walk reaching a `Session` is a framework bug (the
+    plan's §6)."""
+
+    construct_schema = {
+        "type": "object",
+        "description": "Isabelle session",
+        "properties": {
+            "kind": {"const": "session"},
+            "name": {"type": "string"},
+            "parent_session": {"type": "string"},
+            "options": {"type": "array", "items": {"$ref": "#/$defs/Session_Option"},
+                        "description": "Session options, as in a ROOT entry"},
+            "description": {"type": "string"},
+            "children": {"type": "array", "items": {"$ref": "#/$defs/Theory"},
+                         "description": "The session's theories"},
+        },
+        "required": ["kind", "name", "parent_session"],
+        "additionalProperties": False,
+        "$defs": {
+            "Session_Option": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
+                "required": ["name", "value"],
+                "additionalProperties": False,
+            },
+        },
+    }
+    argument_schema = Session_RawAST
+    output_omissible = input_omissible = True
+    drop_priority = 1                   # after `Section`, before `Theory` (MCP_SPECIFICATION §2.1)
+
+    name: str                           # the Isabelle session name
+    parent_session: str
+    options: list[Session_Option]
+    description: str
+
+    def __init__(self, parent, state, name: str, parent_session: str,
+                 options: list[Session_Option], description: str):
+        super().__init__(parent, state, [])
+        self.name = name
+        self.parent_session = parent_session
+        self.options = options
+        self.description = description
+
+    @classmethod
+    async def gen(cls, config, raw: Session_RawAST):
+        if not isinstance(config.parent, Forest):
+            raise BadSessionNodeParent(raw["kind"], _parent_id(config))
+        if not raw["parent_session"]:
+            raise InvalidField("parent_session", "must not be empty")
+        options = raw.get("options", [])
+        seen: set[str] = set()
+        for i, option in enumerate(options):
+            for field in ("name", "value"):
+                if not option[field]:
+                    raise InvalidField(f"options[{i}].{field}", "must not be empty")
+            if option["name"] in seen:
+                raise InvalidField(f"options[{i}].name",
+                                   f"sets the option `{option['name']}` a second time")
+            seen.add(option["name"])
+        return cls(config.parent, config.state, raw["name"], raw["parent_session"],
+                   list(options), raw.get("description", ""))
+
+    def on_moving(self, new_location):
+        if not isinstance(new_location.parent, Forest):
+            raise BadSessionNodeParent(self.kind, self.forest().id_of(new_location.parent))
+
+    def to_store(self, rows):
+        rows.put("name", self.name)
+        rows.put("parent_session", self.parent_session)
+        rows.put("options", self.options)
+        rows.put("description", self.description)
+
+    @classmethod
+    def from_store(cls, config, rows):
+        return cls(config.parent, config.state, rows.get("name"), rows.get("parent_session"),
+                   rows.get("options"), rows.get("description"))
+
+    async def _evaluate(self, ev, mode):
+        raise TAT_InternalError(
+            "a walk reached a Session: evaluation is transparent to the Session layer")
+
+
+class Theory_RawAST(TypedDict):
+    kind: Literal["theory"]
+    name: str
+    imports: list[str]
+
+
+# An Isabelle identifier: no hyphen, no dot (SESSION_AND_THEORY §2).  A
+# trailing underscore, legal here, is the framework's name grammar to
+# refuse, with the rendering that says so.
+_ISABELLE_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_']*")
+
+
+class Theory(StdBlock):
+    """The root of every tree (SESSION_AND_THEORY §2): the header, the
+    imports and the `end`.  Its beginning runs the header through the
+    framework's `begin_theory`, from a fresh toplevel state — its input
+    slot `state` is written by nobody; its ending runs `end` into a
+    resulting slot of its own, which nothing reads, and puts the theory
+    value into the theory table (the plan's §6).  The ML half is
+    `TAT_Common_Nodes.ML`'s `Theory` section."""
+
+    construct_schema = {
+        "type": "object",
+        "properties": {
+            "kind": {"const": "theory"},
+            "name": {"type": "string", "description": "The theory's short name"},
+            "imports": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                        "description": "Theories to import"},
+            "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},
+                         "description": "The theory's declarations"},
+        },
+        "required": ["kind", "name", "imports"],
+        "additionalProperties": False,
+    }
+    argument_schema = Theory_RawAST
+    output_omissible = input_omissible = True
+    drop_priority = 2
+    namespace = Namespace("theory short names", DuplicateTheoryShortName)
+
+    name: str                           # the short name; the qualified name is computed
+    imports: list[str]
+    _state_after_ending: Isar_State_Slot    # the resulting slot: owned, since no successor's
+                                            # input is (`Unchained_Node`); nothing reads it
+    # Recorded, and held only for the life of the conversation, never stored
+    # (SESSION_AND_THEORY §2): what the last run of each operation reported,
+    # empty when it passed.
+    beginning_errors: list[str]
+    ending_errors: list[str]
+
+    def __init__(self, parent, state, name: str, imports: list[str],
+                 state_before_ending: Isar_State_Slot, state_after_ending: Isar_State_Slot):
+        super().__init__(parent, state, [], state_before_ending)
+        self.name = name
+        self.imports = imports
+        self._state_after_ending = state_after_ending
+        self.beginning_errors = []
+        self.ending_errors = []
+
+    @classmethod
+    async def gen(cls, config, raw: Theory_RawAST):
+        if not isinstance(config.parent, Session):
+            raise BadTheoryNodeParent(raw["kind"], _parent_id(config))
+        name = raw["name"]
+        if not _ISABELLE_IDENTIFIER.fullmatch(name):
+            raise InvalidName(name, theory_name=True)
+        # The base-heap half of the short-name check; the forest half is the
+        # framework's, through `namespace` (the plan's §3).
+        connection = config.parent.forest().conversation.connection
+        holder = await isabelle_driver.check_new_theory_short_name(connection, name)
+        if holder is not None:
+            raise DuplicateTheoryShortName(name, holder)
+        if not raw["imports"]:
+            raise InvalidField("imports", "must not be empty")
+        for i, item in enumerate(raw["imports"]):
+            if not item:
+                raise InvalidField(f"imports[{i}]", "must not be empty")
+        return cls(config.parent, config.state, name, list(raw["imports"]),
+                   Isar_State_Slot.assign(connection), Isar_State_Slot.assign(connection))
+
+    def on_moving(self, new_location):
+        if not isinstance(new_location.parent, Session):
+            raise BadTheoryNodeParent(self.kind, self.forest().id_of(new_location.parent))
+
+    def to_store(self, rows):
+        rows.put("name", self.name)
+        rows.put("imports", self.imports)
+
+    @classmethod
+    def from_store(cls, config, rows):
+        connection = config.parent.forest().conversation.connection
+        return cls(config.parent, config.state, rows.get("name"), rows.get("imports"),
+                   Isar_State_Slot.assign(connection), Isar_State_Slot.assign(connection))
+
+    def resulting_state(self):
+        return self._state_after_ending
+
+    def _states_inside(self, out=None):
+        out = super()._states_inside(out)
+        out.append(self._state_after_ending)
+        return out
+
+    def session(self) -> Session:
+        assert isinstance(self.parent, Session)     # gen and on_moving admit no other parent
+        return self.parent
+
+    def header(self) -> str:
+        """The `theory … begin` span, as the tree's file will open."""
+        return f"theory {self.name}\n  imports {' '.join(self.imports)}\nbegin"
+
+    # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
+    # operation's errors, empty when it passed (ARCHITECTURE §6.2).  The
+    # previous run's messages go before the call, so a failed call leaves
+    # none standing.
+
+    async def _eval_beginning_opr(self):
+        session = self.session()
+        conversation = self.forest().conversation
+        self.beginning_errors = []
+        self.beginning_errors = await conversation.connection.callback(
+            "TAT.Theory.begin",
+            (self._state_after_beginning().to_msgpack(),
+             (session.name,
+              str(conversation.working_directory / session.name),   # the plan's §1
+              self.header())))
+        return not self.beginning_errors
+
+    async def _eval_ending_opr(self):
+        self.ending_errors = []
+        self.ending_errors = await self.forest().conversation.connection.callback(
+            "TAT.Theory.end",
+            (self._state_before_ending.to_msgpack(), self._state_after_ending.to_msgpack()))
+        return not self.ending_errors
+
+
+FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]

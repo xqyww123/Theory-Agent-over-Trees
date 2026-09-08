@@ -4,15 +4,7 @@ Run: python -m pytest test/test_plugin.py
 """
 
 import sys
-import types
-from typing import Any, Literal, NotRequired, TypedDict
-
-try:
-    import Isabelle_RPC_Host  # noqa: F401
-except ImportError:                       # the test needs no Isabelle
-    m = types.ModuleType("Isabelle_RPC_Host")
-    m.Connection = object  # type: ignore[attr-defined]
-    sys.modules["Isabelle_RPC_Host"] = m
+from typing import Any, Literal, NotRequired, Required, TypedDict
 
 import jsonschema
 import pytest
@@ -175,7 +167,11 @@ def test_a_kind_and_a_class_name_are_taken_once():
     plugin.TAT_node(Thm)
     refused(leaf("Other", ["lemma"]), "kind `lemma` is already registered by Thm")
     refused(leaf("Thm", ["corollary"]), "another node class has this name")
+    # a kind heads every id component, so it keeps to the name grammar
+    for bad in ("my.leaf", "my leaf", "1st", "leaf_"):
+        refused(leaf("Odd", [bad]), f"kind `{bad}` is outside the name grammar")
     assert list(plugin.kinds) == ["lemma", "theorem"]     # nothing half-registered
+    plugin.TAT_node(leaf("Hyphenated", ["my-leaf"]))      # an interior hyphen is within it
 
 
 def test_children_only_on_a_nesting_class_and_only_as_refs():
@@ -247,6 +243,16 @@ def test_the_two_schemas_must_agree():
     plugin.TAT_node(leaf("M3", ["m3"],
                          construct_schema=leaf_schema(["m3"], {"name": {"type": "string"}}),
                          argument_schema=Optional_))
+    # `Required` inside a `total=False` declaration is read off the annotation too
+    class Mostly_Optional(TypedDict, total=False):
+        name: Required[str]
+        note: str
+    fields = {"name": {"type": "string"}, "note": {"type": "string"}}
+    plugin.TAT_node(leaf("M4", ["m4"], argument_schema=Mostly_Optional,
+                         construct_schema=leaf_schema(["m4"], fields, required=["name"])))
+    refused(leaf("M5", ["m5"], argument_schema=Mostly_Optional,
+                 construct_schema=leaf_schema(["m5"], fields)),
+            r"requires \[\], argument_schema requires \['name'\]")
 
 
 # --- assembly ----------------------------------------------------------------
@@ -372,7 +378,14 @@ def test_the_completed_edit_schema_validates_constructs():
 # One construct of every kind TAT ships, validated against the assembled
 # schema (the plan's §7 step 2): a class registering a kind without an
 # example here fails this test.
-SHIPPED_EXAMPLES: dict[str, dict] = {}
+SHIPPED_EXAMPLES: dict[str, dict] = {
+    "session": {"kind": "session", "name": "Arith", "parent_session": "HOL",
+                "options": [{"name": "document", "value": "pdf"}],
+                "description": "Arithmetic, from scratch",
+                "children": [{"kind": "theory", "name": "X", "imports": ["Main"]}]},
+    "theory": {"kind": "theory", "name": "Y",
+               "imports": ["Arith.X", "HOL-Library.Multiset", '"lib/Rel"']},
+}
 
 
 def test_a_construct_of_every_shipped_kind_validates():

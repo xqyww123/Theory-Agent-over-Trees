@@ -194,7 +194,7 @@ One section per predefined node class, each a client of §2.5.
 
 | section | what its evaluator runs |
 | --- | --- |
-| `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot; `end` through `end_theory`, writing the theory table |
+| `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot; `end` through `run_commands`, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
 | `Theorem` | the statement, then `sorry` or `by` with the stored proof (ARCHITECTURE §3.6) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
@@ -214,7 +214,7 @@ starting the Isabelle process is the client's business.
 ```
 isabelle_theory_agent/
   exceptions.py        the TAT_Error hierarchy (EXCEPTIONS.md)
-  model.py             Node, Forest, ids, evaluation and invalidation, compilation, persistence
+  model.py             Node, Forest, Conversation, ids, evaluation and invalidation, persistence; Session and Theory
   edit.py              building nodes from constructs; the entries behind edit, move and delete
   store.py             Forest_Store and Node_Rows: the working directory's database (ARCHITECTURE §4.1)
   isabelle_driver.py   typed calls to the ML side's callbacks
@@ -319,7 +319,7 @@ may hold nothing; the only code that may assume its slot holds a state is
 an evaluation hook — `_eval_opr`, `_eval_beginning_opr`,
 `_eval_ending_opr` — because the recursion runs a node only after
 everything before it is `ready` (ARCHITECTURE §3.5). The one exception is
-a `Theory` root's own `state`, which nothing writes
+a `Theory` root's own `state`, which nothing ever writes
 (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 Everything that needs the prover — fetching facts, checking terms,
 recording results — therefore belongs in the evaluation hooks, not in
@@ -333,13 +333,16 @@ each a round trip; nothing about the table is mirrored on
 the Python side. Persistence keeps neither the name nor the connection: a
 loaded forest is reassigned its slots.
 
-Every node holds one, `state`, the state before it. The state after it is
-computed, as in AoA (`contrib/Isa-Mini/IsaMini/AoA/model.py:4581`):
-`resulting_state()` asks the parent, which answers with the next sibling's
-`state`, or with the one it keeps for the position after all its children.
-So one node's result and the next node's input are one slot, and inserting
-or deleting a node moves a value between slots by one copy
-(`edit.insert`, `edit.delete`, `edit.move`; ARCHITECTURE §3.4).
+Every node holds one, `state`, the state before it. The state after it,
+`resulting_state()`, is computed, as in AoA
+(`contrib/Isa-Mini/IsaMini/AoA/model.py:4581`): under a chaining parent it
+asks the parent, which answers with the next sibling's `state`, or with the
+one it keeps for the position after all its children — so one node's result
+and the next node's input are one slot, and inserting or deleting a node
+moves a value between slots by one copy (`edit.insert`, `edit.delete`,
+`edit.move`; ARCHITECTURE §3.4); under an `Unchained_Node`, which chains
+nothing, a node that has a result owns the slot for it, as `Theory` does
+with `_state_after_ending` (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 
 **Status.** A status is `NotEvaluated`, `Ready`, or
 `CannotEvaluate(blocked_by)` — the Python classes of ARCHITECTURE §3.2's
@@ -372,24 +375,37 @@ statuses are all `NotEvaluated`.
   `_eval_ending_opr() -> bool` (from `_state_before_ending` into
   `resulting_state()`); the default ending copies.
 - `Unchained_Node(NonLeaf_Node)` — a container whose children are not
-  chained: a child's resulting slot is its own slot, which nothing reads,
-  and no child's result is the next child's input; it runs no operation
-  of its own (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
+  chained: no child's result is the next child's input, it mints no slot
+  and runs no operation of its own; a child that has a result owns the
+  slot for it (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 - `Session(Unchained_Node)` — groups trees and carries the ROOT entry's
   fields (node_classes/SESSION_AND_THEORY.md §1); not on the evaluation
   path — the forest works on the theories directly (ARCHITECTURE §3.5),
   and a walk reaching a `Session` is a framework bug.
-- `Forest(Unchained_Node)` — the root above every `Session`; holds the
-  lock, and overrides id resolution and shortest-form printing, the import
-  graph (recomputed whenever needed, never stored), the routing of a walk
-  to the tree it concerns, invalidation of every tree that imports a
-  changed one, and the running of a tree's imports to their `end`.
+- `Theory(StdBlock)` — the root of a tree (node_classes/SESSION_AND_THEORY.md
+  §2); owns its resulting slot, `_state_after_ending`, which nothing reads.
+- `Forest(Unchained_Node)` — the root above every `Session`. Holds the
+  lock, the store (ARCHITECTURE §4.1) and the `Conversation`; resolves ids
+  and prints their shortest form; and, in the walk, keeps the import graph
+  (recomputed whenever needed, never stored), routes a walk to the tree it
+  concerns, invalidates every tree that imports a changed one, and runs a
+  tree's imports to their `end`.
 
-An evaluation hook runs the class's own ML callback itself, through `isabelle_driver`
-(§4.3), and records what it likes on the node; the framework reads only the
-boolean, and on False copies the operation's input into its resulting state
-itself (ARCHITECTURE §6.2). `Theory` and `Section` are `StdBlock`s,
-`Theorem` and `Define` `Leaf`s.
+`Conversation` is what one run of TAT is given and the forest does not
+store: the connection to the Isabelle side, and the working directory
+(ARCHITECTURE §4). A node reaches it through `forest().conversation`
+(PLUGIN_SYSTEM §2).
+
+An evaluation hook runs the class's own ML callback (§2.5) itself — once
+per hook: `_eval_opr` once, `_eval_beginning_opr` and `_eval_ending_opr`
+once each — so that one operation is one round trip and the ML side
+completes the whole operation inside that one call; it records what it likes
+on the node, and the framework reads only the boolean, copying the
+operation's input into its resulting state itself on False (ARCHITECTURE
+§6.2). `construct` is exempt: a class that has one designs its own use of
+the wire. `gen` and the event hooks never call a class's own callback;
+`gen` reads only through the framework's query functions (§4.3).
+`Theory` and `Section` are `StdBlock`s, `Theorem` and `Define` `Leaf`s.
 
 **The recursion** (ARCHITECTURE §3.5), entered through
 `Node.evaluate_to(ignore_error, evaluate)` and, for an edit's unconditional
@@ -464,8 +480,9 @@ An `edit` builds everything before it touches the forest:
    by the framework onto the fresh, still-detached node the same way. The
    framework assigns each new node a fresh state slot and reads the name
    off the finished node: a name outside the grammar of
-   MCP_SPECIFICATION §2 (`InvalidName`), or one that collides with a
-   surviving sibling or with the batch (`DuplicateName`), is refused; a
+   MCP_SPECIFICATION §2 (`InvalidName`), or an id component
+   `<kind>_<name>` that collides with a surviving sibling's or with the
+   batch's (`DuplicateName`), is refused; a
    class may also declare that its names live in a forest-wide namespace
    — `Theory`'s short names — and the framework then refuses a name a
    node of the forest (less the node the amend replaces, which is
@@ -512,10 +529,13 @@ node had, which is `delete`'s rule too.
 
 ### 4.3 `isabelle_driver.py`
 
-One function per callback the ML side offers (MODULE_STRUCTURE §2.5, §2.6):
-each knows the callback's name and the MessagePack shape of its arguments and
-result, and nothing else does. `model.py` and the node classes call these
-functions and never the wire.
+One function per callback the framework's ML side offers (§2.6): each knows
+the callback's name and the MessagePack shape of its arguments and result,
+and nothing else does; the framework's modules, and a `gen` reading over the
+wire, call these functions and never the wire. A node class's own callback
+(§2.5) is not here: the class calls it itself, from its evaluation hooks
+(§4.1), the shape being between the class and its own ML half
+(ARCHITECTURE §6.2).
 
 ### 4.4 `plugin.py`
 
@@ -530,7 +550,9 @@ schema, is PLUGIN_SYSTEM.md.
 The argument schema grammar lives here too. A declaration's annotations
 come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
 `list[X]`, a TypedDict, and unions of those holding at most one
-TypedDict — so every check renders within RENDER_BASELINES §2's
+TypedDict, each field optionally wrapped in `NotRequired[X]` or
+`Required[X]`, which the loader reads off the annotation itself — so every
+check renders within RENDER_BASELINES §2's
 vocabulary; `@TAT_node` refuses anything else when the class is
 registered, as it refuses a TypedDict that nests itself and an annotation
 Python cannot resolve. `check_construct` checks a submitted construct
@@ -561,4 +583,5 @@ decision to take when such a client appears, on AoA's precedent
 (`contrib/Isa-Mini/IsaMini/AoA/mcp_http_server.py` serves several variants
 of one `edit` schema). `toplevel.py` is the procedure Isabelle calls
 (`@isabelle_remote_procedure("launch_TAT")`), which does not return for the life of
-the conversation and hands the loaded forest its connection.
+the conversation; it builds the `Conversation` (§4.1) from its connection
+and the working directory, and the `Forest` on it.

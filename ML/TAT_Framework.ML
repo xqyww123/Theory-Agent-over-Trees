@@ -320,6 +320,8 @@ fun run_span tr st =
         val _ = Output_Routing.new_buffer id
         val _ = Execution.running Document_ID.none exec [] orelse
                   raise Fail ("Failed to register execution " ^ id)
+                  (*a framework bug; inside a node class's operation it reaches the
+                    agent as that operation's error message (TAT_Common_Nodes.ML)*)
         val (errors, st') =
           Position.setmp_thread_data (Position.id_only id)
             (fn () => Toplevel.command_errors true (Toplevel.exec_id exec tr) st) ()
@@ -413,9 +415,11 @@ end
 fun begin_theory theories (context as {session_name, master_dir}) (header : Thy_Header.header) =
   let
     val (name, name_pos) = #name header
-    (*node names carry no dot (MCP_SPECIFICATION §2), so a qualified name
+    (*theory names carry no dot (MCP_SPECIFICATION §2), so a qualified name
       here is a framework bug -- and letting it through would unhook the
-      theory-table key from (session, tree)*)
+      theory-table key from (session, tree).  Raised inside a node class's
+      operation it reaches the agent as that operation's error message
+      (TAT_Common_Nodes.ML, `operation`).*)
     val _ =
       if Long_Name.is_qualified name
       then raise Fail ("Theory header names a qualified theory: " ^ quote name)

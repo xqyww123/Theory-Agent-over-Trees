@@ -228,30 +228,45 @@ _COORDINATE = re.compile(r"(?:constructs|children)\[\d+\]")
 
 
 class DuplicateName(BadEdit):
-    def __init__(self, name: str, taken_by: str):
+    """Two siblings would share an id component `<kind>_<name>`
+    (MCP_SPECIFICATION §2) — what must be unique, since ids are made of
+    them; a name alone need not be."""
+
+    def __init__(self, id_component: str, taken_by: str):
         super().__init__()
-        self.name = name
+        self.id_component = id_component
         # An existing sibling's id, or the coordinate of the colliding
         # element of the same call: the two ask for opposite remedies.
         self.taken_by = taken_by
 
     def _cause(self) -> str:
         if _COORDINATE.match(self.taken_by):
-            return (f"The name `{self.name}` is already used by"
+            return (f"The id component `{self.id_component}` is already used by"
                     f" `{self.taken_by}` of this call.")
-        return (f"The name `{self.name}` is already taken by"
-                f" `{self.taken_by}`. Amend that node, or pick another name.")
+        return (f"The id component `{self.id_component}` is already taken by"
+                f" `{self.taken_by}`. Amend that node, or give this one another name.")
 
 
 class InvalidName(BadEdit):
-    def __init__(self, name: str):
+    """Raised by the framework against the name grammar of
+    MCP_SPECIFICATION §2, and by `Theory.gen` against the Isabelle
+    identifier a theory name must be (`theory_name`); each renders its own
+    grammar, so the agent can correct the name from the message."""
+
+    def __init__(self, name: str, theory_name: bool = False):
         super().__init__()
         self.name = name
+        self.theory_name = theory_name
 
     def _cause(self) -> str:
+        if self.theory_name:
+            return (f"`{self.name}` is not a valid theory name: a theory name"
+                    " starts with a letter and continues with letters, digits,"
+                    " underscores and primes ('), with no hyphen and no dot.")
         return (f"`{self.name}` is not a valid name: a name starts with a"
-                " letter and continues with letters, digits, underscores and"
-                " primes ('), and does not end with an underscore.")
+                " letter and continues with letters, digits, underscores,"
+                " primes (') and interior hyphens, and does not end with a"
+                " hyphen or an underscore.")
 
 
 class DuplicateTheoryShortName(BadEdit):
@@ -311,6 +326,34 @@ class ChildrenNotInheritable(BadEdit):
                 f" {'1 child' if one else f'{self.children_count} children'},"
                 f" which a `{self.new_kind}` cannot hold."
                 f" Move or delete {'it' if one else 'them'} first.")
+
+
+class BadSessionNodeParent(BadEdit):
+    """`Session`'s parent check (EXCEPTIONS.md §3): raised by its gen and
+    its `on_moving` for every parent but the forest root."""
+
+    def __init__(self, kind: str, parent_id: str):
+        super().__init__()
+        self.kind = kind
+        self.parent_id = parent_id
+
+    def _cause(self) -> str:
+        return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
+                " a session lives directly under `Sessions`.")
+
+
+class BadTheoryNodeParent(BadEdit):
+    """`Theory`'s parent check (EXCEPTIONS.md §3): raised by its gen and
+    its `on_moving` for every parent but a `Session`."""
+
+    def __init__(self, kind: str, parent_id: str):
+        super().__init__()
+        self.kind = kind
+        self.parent_id = parent_id
+
+    def _cause(self) -> str:
+        return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
+                " a theory lives directly under a session.")
 
 
 class MoveIntoOwnSubtree(BadEdit):

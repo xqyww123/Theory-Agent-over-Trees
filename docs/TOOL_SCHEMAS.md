@@ -46,7 +46,8 @@ Tool description: `Edit Isabelle theory constructs`.
 The forest root has the id `Sessions`, and `append` on it creates a
 `Session`; every other action on it is refused (`ProtectedNode`). The
 first layer is ordered like any other, so `insert_before` a session is an
-ordinary insertion. `Sessions` is a reserved name: no node may bear it.
+ordinary insertion. `Sessions` is the root's id, which no node's id
+component can be (MCP_SPECIFICATION §2).
 
 Under `amend` the first construct replaces the target, whose children it
 inherits and whose identity it takes (MCP_SPECIFICATION §3.1); any further
@@ -89,8 +90,8 @@ a **Location** (ARCHITECTURE §1) on the wire.
 
 Beyond the schema, TAT checks: `into`'s node can hold children
 (`HoldsNoChildren`); the destination is not inside the moved subtree
-(`MoveIntoOwnSubtree`); and the moved node's name is free among its new
-siblings (`DuplicateName`).
+(`MoveIntoOwnSubtree`); and the moved node's id component is free among
+its new siblings (`DuplicateName`).
 
 ## 3. `delete` *(decided 2026-09-04)*
 

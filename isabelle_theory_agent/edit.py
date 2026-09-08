@@ -51,7 +51,7 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     Returns the batch; its last element is the natural destination
     (MCP_SPECIFICATION §3.2)."""
     forest = parent.forest()
-    taken: dict[str, Node | str] = {c.name: c for c in parent.sub_nodes}
+    taken: dict[str, Node | str] = {c.id_component(): c for c in parent.sub_nodes}
     nodes = await _construct_siblings(parent, raws, "constructs", taken,
                                       Edit_Call(forest, kinds))
     # Commit: pointer surgery plus the one copy of ARCHITECTURE §3.4 into
@@ -87,7 +87,7 @@ async def amend(old: Node, raws: list[RawAST],
     it."""
     parent = _parent_of(old)
     forest = parent.forest()
-    taken: dict[str, Node | str] = {c.name: c
+    taken: dict[str, Node | str] = {c.id_component(): c
                                     for c in parent.sub_nodes if c is not old}
     nodes = await _construct_siblings(parent, raws, "constructs", taken,
                                       Edit_Call(forest, kinds, old), first_replaces=True)
@@ -201,8 +201,8 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
                                      forest.id_of(new_parent))
         p = p.parent
     for c in new_parent.sub_nodes:
-        if c is not node and c.name == node.name:
-            raise DuplicateName(node.name, forest.id_of(c))
+        if c is not node and c.id_component() == node.id_component():
+            raise DuplicateName(node.id_component(), forest.id_of(c))
     limit = len(new_parent.sub_nodes) - (1 if new_parent is parent else 0)
     if not 0 <= new_index <= limit:
         raise TAT_InternalError(
@@ -310,9 +310,11 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname
                               taken: dict[str, Node | str], call: Edit_Call,
                               first_replaces: bool = False, path: str = "") -> list[Node]:
     """Step 1 of an edit: every construct in submission order, detached.
-    `taken` maps each surviving sibling's name to the node, each batch
-    element's to its coordinate — printed only at the raise — so
-    `DuplicateName` points either way.  A class with a `namespace` is then
+    The framework checks the name the class set against the grammar and
+    the id component against the siblings: `taken` maps each surviving
+    sibling's id component to the node, each batch element's to its
+    coordinate — printed only at the raise — so `DuplicateName` points
+    either way.  A class with a `namespace` is then
     checked across the forest and the call (`_take_name`); that holder may
     sit in another list of the call, so it is recorded under the element's
     full path — `path`, the enclosing construct's, plus the coordinate
@@ -337,9 +339,10 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname
                     f"{type(node).__name__}.gen set no name")
             if not is_valid_name(name):
                 raise InvalidName(name)
-            if name in taken:
-                raise DuplicateName(name, _holder_id(taken[name], call.forest))
-            taken[name] = coordinate
+            component = node.id_component()
+            if component in taken:
+                raise DuplicateName(component, _holder_id(taken[component], call.forest))
+            taken[component] = coordinate
             _take_name(node, full_path, call)
             nodes.append(node)
         except TAT_Error as e:

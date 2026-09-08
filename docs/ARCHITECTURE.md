@@ -173,9 +173,9 @@ the slot its parent keeps for the position after all its children. The
 resulting slot of one node and the input slot of the next are therefore the
 same slot, and re-evaluating a node writes into slots that already exist.
 The one exception is a container whose children are not chained — a
-`Session`'s trees, the root's `Session`s: there a child's resulting slot is
-its own slot, which nothing reads (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
-§6).
+`Session`'s trees, the root's `Session`s: there a child that has a result
+owns a slot for it, which nothing reads, and the container keeps no slot
+of its own (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 
 A nesting node's beginning command writes its first child's slot. After the
 last child, the nesting node's ending command reads the slot it keeps for the
@@ -408,7 +408,8 @@ field, and each node class writes and reads its own fields through
 State slot names are not stored: the state slot table does not outlive the
 conversation (EVALUATOR_DESIGN §1.1), so a loaded forest is `not_evaluated`
 throughout and its slots are assigned afresh. The connection to Isabelle is
-not stored either; the conversation hands the loaded forest its current one.
+not stored either; the loaded forest is given the conversation's current one
+(MODULE_STRUCTURE §4.1, `Conversation`).
 Work in flight is not stored, only its results.
 
 ## 5. Segments *(decided)*

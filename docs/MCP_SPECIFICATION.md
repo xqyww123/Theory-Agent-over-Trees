@@ -49,34 +49,35 @@ tool, not yet designed; its errors are designed with it.
 Every node has a **name** and an **id**. The agent addresses nodes by id.
 
 A node's identity is an opaque number that survives renaming and moving; the
-id renders its position and name, not that identity, so a rename never
-disturbs results already in flight.
+id renders its position and id component, not that identity, so a rename
+never disturbs results already in flight.
 
-The name comes from the node class, which assembles it from what the agent
-supplied. A `Theorem`'s name is its `kind` joined to its theorem name —
-`lemma_P`, `theorem_Q`, `corollary_R`. A `Section` and a `Text` prefix their
-kind to a name the agent chooses — `section_Basics`, `text_intro`. The tree
-root is a `Theory` node named `theory_<name>` after its theory, and it owns
-the theory header, the `imports` list and the `end`.
+The name is what the agent supplied, as the node class's `gen` set it: a
+`Theorem`'s theorem name, a `Section`'s or a `Text`'s title, a `Theory`'s
+short name, a `Session`'s Isabelle session name. The framework makes the
+node's **id component** from it, the kind joined to the name —
+`lemma_P`, `theorem_Q`, `corollary_R`, `section_Basics`, `text_intro`,
+`theory_X`, `session_Arith`; a kind keeps to the name grammar below, which
+the loader checks when the class registers (PLUGIN_SYSTEM §5). The tree
+root is a `Theory` node, and it owns
+the theory header, the `imports` list and the `end`; above the trees, the
+forest's first layer is its `Session` nodes (ARCHITECTURE §2), omissible in
+both directions (§2.1).
 
-Above the trees, the forest's first layer is its `Session` nodes
-(ARCHITECTURE §2): a `Session` is named `session_<name>` after its Isabelle
-session name, and omissible in both directions (§2.1).
-
-The id is the dotted sequence of the names of a node's ancestors and its own —
-`theory_X.section_Basics.lemma_P`. A name is therefore one id component: a
+The id is the dotted sequence of the id components of a node's ancestors
+and its own — `theory_X.section_Basics.lemma_P`. A name is therefore a
 letter followed by letters, digits, underscores, primes (`'`) and interior
 hyphens — a hyphen or underscore may not end a name, and a hyphen may not
-begin one (`InvalidName` otherwise). Hyphens exist for `Session` names like
-`HOL-Library`; a class whose names must be Isabelle identifiers, such as
-`Theorem`, rejects them in its `gen`. A class judges the part the agent
-supplied in its `gen`, so an `InvalidName` it raises renders the agent's own
-spelling; the framework then checks the assembled name against this grammar.
-TAT refuses a name that would give two nodes the same id.
+begin one — and the framework refuses one outside this grammar
+(`InvalidName`, rendering the agent's own spelling). Hyphens exist for
+`Session` names like `HOL-Library`; a class whose names must be Isabelle
+identifiers, such as `Theory` and `Theorem`, rejects them in its `gen`
+first, with its own rendering of `InvalidName`. TAT refuses a name that
+would give two nodes the same id.
 
-The forest root has the id **`Sessions`**, a reserved name no node may
-bear. `edit`'s `append` on it creates a `Session`; every other action on it
-is refused (`ProtectedNode`).
+The forest root has the id **`Sessions`**, which no node's id component can
+be, an id component always carrying an underscore. `edit`'s `append` on it
+creates a `Session`; every other action on it is refused (`ProtectedNode`).
 
 A theory's name must also be unique against everything already loaded. Isabelle
 compares theory identities by **short name** — the part after the last dot
@@ -84,14 +85,15 @@ compares theory identities by **short name** — the part after the last dot
 builds without complaint and then kills the first theory that imports it, one
 level downstream, with `Duplicate theory name` and no useful location.
 `Theory.gen` therefore rejects a name whose short name already appears in
-the base heap or in the forest (`DuplicateTheoryShortName`) — excluding, on
-an amend, the node being replaced (MODULE_STRUCTURE §4.2).
+the base heap, and the framework one already borne in the forest or in the
+same call, through the class's `namespace` (`DuplicateTheoryShortName`) —
+excluding, on an amend, the node being replaced (MODULE_STRUCTURE §4.2).
 
 ### 2.1 Which components appear
 
-Each **node class** declares three id properties: whether its name may
-be omitted from an id TAT **prints**, whether it may be omitted from an id the
-agent **supplies**, and its **drop priority** — which output-omissible
+Each **node class** declares three id properties: whether its id component
+may be omitted from an id TAT **prints**, whether it may be omitted from an
+id the agent **supplies**, and its **drop priority** — which output-omissible
 component goes first when several could go.
 
 `Session`, `Theory` and `Section` are omissible in both directions; their drop
@@ -124,8 +126,8 @@ lemma_P
 
 When more than one node matches, TAT rejects the call and lists the candidates
 rather than choosing one — unless the id equals one candidate's full id,
-component for component with nothing dropped: the exact match wins. Sibling
-names are unique, so at most one node matches exactly; a full id therefore
+component for component with nothing dropped: the exact match wins. Siblings'
+id components are unique, so at most one node matches exactly; a full id therefore
 always designates its node, and every id TAT prints resolves back to the node
 it was printed for.
 
@@ -135,8 +137,8 @@ external name.
 
 ### 2.2 The id and Isabelle's qualified name
 
-The id is TAT's name for a node: its ancestors' names and its own, joined
-(§2). The qualified name is Isabelle's name for what the node declares:
+The id is TAT's name for a node: its ancestors' id components and its own,
+joined (§2). The qualified name is Isabelle's name for what the node declares:
 `theory_X.lemma_P` declares `X.P`, and under `locale foo` it declares `foo.P`.
 A `Section` is in the id, being an ancestor, and not in the qualified name,
 being no scope to Isabelle.

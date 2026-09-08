@@ -82,22 +82,27 @@ A `lemma` has no field `statment`; it takes `statement`, `name`, `facts`.
 `facts[1]` has no field `nmae`; it takes `name`.
 ```
 
-`InvalidName`:
+`InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
+framework's check), and against the Isabelle identifier a theory name must
+be (`Theory.gen`'s check, `theory_name`):
 
 ```
-`Ch. 2 lemmas` is not a valid name: a name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+`Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.
+`Foo-Bar` is not a valid theory name: a theory name starts with a letter and continues with letters, digits, underscores and primes ('), with no hyphen and no dot.
 ```
 
-`DuplicateName`, colliding with an existing sibling:
+`DuplicateName` — two siblings would share an id component
+`<kind>_<name>` (MCP_SPECIFICATION §2) — colliding with an existing
+sibling:
 
 ```
-The name `lemma_assoc` is already taken by `theory_Sorting.lemma_assoc`. Amend that node, or pick another name.
+The id component `lemma_assoc` is already taken by `theory_Sorting.lemma_assoc`. Amend that node, or give this one another name.
 ```
 
 `DuplicateName`, colliding inside the submitted batch:
 
 ```
-The name `lemma_assoc` is already used by `constructs[0]` of this call.
+The id component `lemma_assoc` is already used by `constructs[0]` of this call.
 ```
 
 `DuplicateTheoryShortName`, against the base heap or another tree:

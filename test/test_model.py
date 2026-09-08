@@ -4,18 +4,10 @@ round trip through the store.  Run: python -m pytest test/test_model.py
 """
 
 import asyncio
-import sys
-import types
 import typing
 from contextlib import contextmanager
+from pathlib import Path
 from typing import NotRequired, TypedDict
-
-try:
-    import Isabelle_RPC_Host  # noqa: F401
-except ImportError:                       # the test needs no Isabelle
-    m = types.ModuleType("Isabelle_RPC_Host")
-    m.Connection = object  # type: ignore[attr-defined]
-    sys.modules["Isabelle_RPC_Host"] = m
 
 import pytest
 
@@ -175,11 +167,19 @@ class Block(M.StdBlock):
 KINDS = {"t": T, "block": Block}
 
 
-class OneTreeForest(M.Forest):      # enough of `Forest` to drive one tree
+class OneTreeForest(M.Forest):
+    """Enough of `Forest` to drive one tree.  Unlike the real root it chains
+    its children — `NonLeaf_Node`'s slot chain, into a slot after them,
+    `_end` — so the fake `Block` at the top, whose beginning reads its
+    input as a `Theory`'s never does, is an ordinary chained block."""
     def __init__(self, conn, store=None, kinds=KINDS):
-        super().__init__(Isar_State_Slot.assign(conn),
+        super().__init__(M.Conversation(conn, Path(".")),      # nothing here touches the directory
                          store if store is not None else Forest_Store(":memory:"), kinds)
         self._end = Isar_State_Slot.assign(conn)
+    _resulting_state_of_child = M.NonLeaf_Node._resulting_state_of_child
+    _predecessor_wrote = M.NonLeaf_Node._predecessor_wrote
+    _source_before = M.NonLeaf_Node._source_before
+    _carry_forward = M.NonLeaf_Node._carry_forward
     def _resulting_state_of_all_children(self): return self._end
     async def _evaluate(self, ev, mode): return await self._evaluate_children(ev, mode)
 
@@ -465,7 +465,7 @@ def test_the_loader_places_the_node_whatever_from_store_passed():
     f2 = OneTreeForest(CONN, store, kinds={"block": Block, "t": Careless})
     a = f2.sub_nodes[0].sub_nodes[0]
     assert isinstance(a, Careless) and a.parent is f2.sub_nodes[0]
-    assert f2.id_of(a) == "B.a"
+    assert f2.id_of(a) == "block_B.t_a"
 
 
 class Bare(M.Leaf):                 # a class that wrote neither persistence method

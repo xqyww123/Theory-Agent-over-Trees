@@ -21,7 +21,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
-from typing import Any, Union, get_args, get_origin, get_type_hints, is_typeddict
+from typing import (
+    Any, NotRequired, Required, Union, get_args, get_origin, get_type_hints, is_typeddict)
 
 import jsoncomment
 import jsonschema
@@ -29,7 +30,7 @@ import jsonschema
 from . import model
 from .exceptions import (
     InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
-from .model import JSON_Schema, Leaf, Node, RawAST
+from .model import JSON_Schema, Leaf, Node, RawAST, is_valid_name
 from .store import FRAMEWORK_FIELDS
 
 
@@ -147,6 +148,9 @@ def _check_class(cls: type[Node]) -> list[str]:
     required = schema.get("required", [])
     own_kinds = _kinds_of(cls)
     for kind in own_kinds:
+        if not is_valid_name(kind):
+            # the kind heads every id component `<kind>_<name>` (MCP_SPECIFICATION §2)
+            raise _refuse(cls, f"kind `{kind}` is outside the name grammar")
         if kind in kinds:
             raise _refuse(cls, f"kind `{kind}` is already registered by {kinds[kind].__name__}")
     if "kind" not in required:
@@ -171,14 +175,14 @@ def _check_class(cls: type[Node]) -> list[str]:
         validate_argument_schema(cls.argument_schema)
     except TAT_InternalError as e:
         raise _refuse(cls, f"argument_schema: {e}") from e
-    hints = get_type_hints(cls.argument_schema)
+    hints, typed_required = _declared(cls.argument_schema)
     schema_fields = set(properties) - set(FRAMEWORK_FIELDS)
     typed_fields = set(hints) - {"kind"}
     if schema_fields != typed_fields:
         raise _refuse(cls, f"construct_schema declares the fields {sorted(schema_fields)},"
                            f" argument_schema the fields {sorted(typed_fields)}")
     schema_required = set(required) - set(FRAMEWORK_FIELDS)
-    typed_required = set(cls.argument_schema.__required_keys__) - {"kind"}
+    typed_required = typed_required - {"kind"}
     if schema_required != typed_required:
         raise _refuse(cls, f"construct_schema requires {sorted(schema_required)},"
                            f" argument_schema requires {sorted(typed_required)}")
@@ -189,8 +193,9 @@ def _defined_by(cls: type, name: str) -> type:
     """The class in `cls`'s MRO whose body defines `name` — read off the
     class dicts, since a classmethod binds afresh on every access.  The
     override checks compare it with `Node`: a framework class between
-    `Node` and the plugin's (`Leaf`, `StdBlock`) must not define these
-    methods itself, or the check goes blind for its subclasses."""
+    `Node` and the plugin's (`Leaf`, `StdBlock`, `Unchained_Node`) must not
+    define these methods itself, or the check goes blind for its
+    subclasses."""
     return next(c for c in cls.__mro__ if name in c.__dict__)
 
 
@@ -209,13 +214,35 @@ def _is_def_ref(x: Any) -> bool:
 
 # --- the argument schema grammar --------------------------------------------
 # `str`, `bool`, `int`, `float`, `Any`, `list[X]`, a TypedDict, and unions of
-# those holding at most one TypedDict — closed, so every rendering stays
+# those holding at most one TypedDict, each field optionally wrapped in
+# `NotRequired[X]` or `Required[X]` — closed, so every rendering stays
 # within RENDER_BASELINES §2's vocabulary.  Validated once, at registration;
 # then every submitted construct is checked against the declaration before
 # its class's `gen` is consulted (MODULE_STRUCTURE §4.2).
 
 _JSON_NAMES = {str: "a string", bool: "a boolean", int: "a number",
                float: "a number"}
+
+
+def _declared(td: Any) -> tuple[dict[str, Any], frozenset[str]]:
+    """A TypedDict's fields — each annotation with its `Required` or
+    `NotRequired` wrapper removed — and which of them are required.  The
+    wrappers are read here rather than trusted to `__required_keys__`,
+    which under postponed annotations (`from __future__ import
+    annotations`) cannot see them and calls every key required."""
+    hints = get_type_hints(td, include_extras=True)
+    required = set()
+    fields = {}
+    for field, ann in hints.items():
+        wrapper = get_origin(ann)
+        if wrapper is Required or wrapper is NotRequired:
+            fields[field] = get_args(ann)[0]
+        else:
+            fields[field] = ann
+        if wrapper is Required or (wrapper is not NotRequired
+                                   and field in td.__required_keys__):
+            required.add(field)
+    return fields, frozenset(required)
 
 
 def validate_argument_schema(td: Any) -> None:
@@ -231,7 +258,7 @@ def _validate_typeddict(td: Any, top: bool, enclosing: tuple) -> None:
     if td in enclosing:
         raise TAT_InternalError(f"{td.__name__} nests itself")
     try:
-        hints = get_type_hints(td)
+        hints, _ = _declared(td)
     except NameError as e:
         raise TAT_InternalError(f"{td.__name__}: unresolvable annotation") from e
     if top and "children" in hints:
@@ -326,7 +353,7 @@ def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
 
 def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
                   prefix: str) -> None:
-    hints = get_type_hints(td)
+    hints, required = _declared(td)
     for field in mapping:                  # first: a typo beats its own hole
         if not prefix and field in FRAMEWORK_FIELDS:
             continue                       # the framework's own fields
@@ -336,8 +363,8 @@ def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
             takes = [f for f in hints if prefix or f != "kind"]
             raise UnexpectedField(prefix[:-1] if prefix else kind, field,
                                   takes, holder_is_kind=not prefix)
-    for field in td.__required_keys__:
-        if field not in mapping:
+    for field in hints:                    # in declaration order
+        if field in required and field not in mapping:
             raise MissingField(kind, prefix + field)
     for field, value in mapping.items():
         if not prefix and field in FRAMEWORK_FIELDS:
