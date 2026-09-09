@@ -387,6 +387,19 @@ at every step that touches the ML side.
    §2.2's `kind` and `statement` as AoA's `LongStatement` with no proof
    text, and its descriptions are proposed for approval then, in a
    `docs/node_classes/THEOREM.md`.)*
+3a. **An exception escaping an ML callback is a bug** *(added 2026-09-08;
+   EXCEPTIONS.md §1, MODULE_STRUCTURE §2.5, §4.3)*: `TAT_Framework.Bug`
+   and `TAT_Common_Nodes.operation` letting it and an interrupt through;
+   `TAT_IsabelleError(TAT_InternalError)` and `isabelle_driver.call`, the
+   one door to the wire, which every framework function and every node
+   class's hook goes through. Tests: `call`'s conversion against a fake
+   connection; the ML end-to-end test registers callbacks that raise a
+   `Bug`, raise a user-level error, and answer nothing, and checks what
+   each becomes on the Python side. An interrupt is left to the RPC
+   framework for now: the owner plans to extend `Isabelle_RPC` so that each
+   callback says how it handles one, Python always notified through an
+   `IsabelleInterrupt`; TAT will then treat it as a failure under
+   `TAT_Error`, not a bug (decided 2026-09-09).
 4. **The forest walk** (§6): the import graph, the order constraint's stop,
    transitive imports before `T`, stops across import edges, invalidation of
    importers, the pre/post graph comparison, `TAT.theory_delete`.

@@ -15,6 +15,21 @@ line of the whole design: the tool boundary catches `TAT_Error` and nothing
 else, so a bug can never dress up as an agent-facing error and be quietly
 retried against. Bugs escape and crash loud.
 
+An exception escaping an ML callback is a bug of this kind, by rule: a
+callback answers every failure of its operation as data — the messages of a
+failed header or `end`, a record per command — so whatever it lets through
+is either the ML side's `TAT_Framework.Bug`, raised on purpose where TAT
+caught itself out, or something the callback did not foresee; neither is
+the agent's to act on. Every round trip goes through `isabelle_driver.call`,
+which raises `TAT_IsabelleError`, a `TAT_InternalError`, from the RPC
+library's `IsabelleError` — an escaped exception, or a failure of the wire
+contract such as no callback registered under the name (MODULE_STRUCTURE
+§2.5, §4.3). An interrupt is neither: the RPC library does not answer it,
+it unwinds the ML call and with it the conversation. A node class's
+callback follows the same rule, and `TAT_Common_Nodes.operation` is the
+helper that keeps it: an exception under the operation becomes its
+messages, a `Bug` and an interrupt propagate as they arrived.
+
 `TAT_StartupError` is the third kind: TAT cannot start in this
 environment — the working directory's database was written by another
 schema version or is not a database, or a node class package cannot be
@@ -36,9 +51,10 @@ other three.
 
 The same line sorts what node classes raise:
 
-- the framework's query callbacks raise only `TAT_Error` subclasses across
-  the `gen` boundary, so a transport failure is never mistaken for a class's
-  bug;
+- a `gen` reading over the wire through the framework's query functions
+  gets data or a `TAT_IsabelleError`, never a `TAT_Error` it did not raise
+  itself, so a failure on the Isabelle side is never mistaken for a
+  class's bug, nor rendered to the agent;
 - anything else a `gen` raises that is not a `TAT_Error` is not caught at
   the tool boundary;
 - the event hooks split by tense (MODULE_STRUCTURE §4.1): a gate may raise
@@ -147,6 +163,10 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │                             overrides it (MCP_SPECIFICATION §1)
 
 TAT_InternalError             outside TAT_Error; never caught at the boundary
+└─ TAT_IsabelleError          an ML callback failed: it let an exception
+                              escape, or no callback bears the name;
+                              __cause__ is the RPC library's IsabelleError
+                                                          [isabelle_driver]
 
 TAT_StartupError              outside both; TAT cannot start here (§1)
 ├─ IncompatibleStore          the database was written under another

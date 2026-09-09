@@ -37,10 +37,13 @@ divided by Isabelle's sectioning comments — `(*** section ***)`,
 `contrib/Isabelle2025-2/src/Doc/Implementation/ML.thy:60-97`.
 
 `TAT_Framework` knows no node class. `TAT_Common_Nodes` is its first client and
-carries the predefined node classes; a node class delivered separately
-(ARCHITECTURE §6) is another client of the same interface and never depends on
-`TAT_Common_Nodes`. The test for where something belongs: if a node class
-outside `TAT_Common_Nodes` would need it, it is in `TAT_Framework`.
+carries the predefined node classes, and the helpers a node class writes its
+callbacks with (`operation`, §3); a node class delivered separately
+(ARCHITECTURE §6) is another client of the same interface, free to use
+`TAT_Common_Nodes` as well *(relaxed 2026-09-09; before, it never depended on
+it)*. The test for where something belongs: what the conversation itself
+needs — its tables, its loader, its callbacks — is in `TAT_Framework`; what
+only a node class needs is in `TAT_Common_Nodes`.
 
 ## 2. `TAT_Framework`
 
@@ -124,7 +127,7 @@ local callback of `Isabelle_RPC` (`Remote_Procedure_Calling.callback'`):
 
 ```sml
 type slot = {
-  get : unit -> Toplevel.state,           (*§2.1's get; an error when the slot holds nothing*)
+  get : unit -> Toplevel.state,           (*§2.1's get; a Bug when the slot holds nothing*)
   put : Toplevel.state option -> unit     (*§2.1's put; NONE deletes*)
 }
 type env = {
@@ -163,7 +166,19 @@ is no other table of node classes.
 
 What the callback takes and returns is the class's own affair, agreed with its
 Python half (ARCHITECTURE §6.2); the per-command records of §2.4 are there
-for it to return if it so chooses.
+for it to return if it so chooses. One thing is not its own affair: a
+callback answers every failure of its operation as data, and an exception
+it lets escape is a bug (EXCEPTIONS.md §1) — `TAT_Framework.Bug`, the
+exception TAT raises where it caught itself out, or something the callback
+did not foresee. An interrupt is neither a failure of the operation nor a
+bug: it unwinds the ML call and with it the conversation.
+`TAT_Common_Nodes.operation`
+keeps the rule for a callback whose success is a state: the run answers a
+state and no message, or no state and at least one message — anything else
+is a `Bug` — and `operation` writes the state into the slot, turns any
+other exception into the operation's messages the way
+`Toplevel.command_errors` reads one, and lets a `Bug` and an interrupt
+through as they arrived.
 
 ### 2.6 Conversation
 
@@ -190,10 +205,12 @@ conversation rejects a duplicated name instead.
 
 ## 3. `TAT_Common_Nodes`
 
-One section per predefined node class, each a client of §2.5.
+`operation`, the helper a node class writes its callbacks against (§2.5),
+then one section per predefined node class, each a client of §2.5.
 
-| section | what its evaluator runs |
+| section | what it runs |
 | --- | --- |
+| `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot; `end` through `run_commands`, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
 | `Theorem` | the statement, then `sorry` or `by` with the stored proof (ARCHITECTURE §3.6) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
@@ -270,10 +287,10 @@ async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
 may live is the node's own judgement: its `gen` refuses a parent its class
 cannot live under — `Bad<Class>NodeParent`, EXCEPTIONS.md §3 — and on a
 move its `on_moving` does; the framework checks no containment. It may read
-over the wire through the framework's query callbacks — `Theory.gen`
-checks its short name against the base heap — and those callbacks raise
-only `TAT_Error` subclasses,
-so a transport failure is never blamed on the class. It must not write:
+over the wire through the framework's query functions (§4.3) — `Theory.gen`
+checks its short name against the base heap — and those functions answer
+data or raise `TAT_IsabelleError`, a bug (EXCEPTIONS.md §1), so a failure
+on the Isabelle side is never blamed on the class. It must not write:
 an aborted edit undoes nothing remotely. It raises `TAT_Error`s bare; the
 framework prefixes the `raw_ast_path` (EXCEPTIONS.md §5).
 
@@ -396,14 +413,16 @@ store: the connection to the Isabelle side, and the working directory
 (ARCHITECTURE §4). A node reaches it through `forest().conversation`
 (PLUGIN_SYSTEM §2).
 
-An evaluation hook runs the class's own ML callback (§2.5) itself — once
-per hook: `_eval_opr` once, `_eval_beginning_opr` and `_eval_ending_opr`
-once each — so that one operation is one round trip and the ML side
-completes the whole operation inside that one call; it records what it likes
+An evaluation hook runs the class's own ML callback (§2.5) itself, through
+`isabelle_driver.call` (§4.3) — once per hook: `_eval_opr` once,
+`_eval_beginning_opr` and `_eval_ending_opr` once each — so that one
+operation is one round trip and the ML side completes the whole operation
+inside that one call; it records what it likes
 on the node, and the framework reads only the boolean, copying the
 operation's input into its resulting state itself on False (ARCHITECTURE
-§6.2). `construct` is exempt: a class that has one designs its own use of
-the wire. `gen` and the event hooks never call a class's own callback;
+§6.2). `construct` is exempt from the cadence: a class that has one designs
+its own use of the wire, still through `call`. `gen` and the event hooks
+never call a class's own callback;
 `gen` reads only through the framework's query functions (§4.3).
 `Theory` and `Section` are `StdBlock`s, `Theorem` and `Define` `Leaf`s.
 
@@ -529,13 +548,16 @@ node had, which is `delete`'s rule too.
 
 ### 4.3 `isabelle_driver.py`
 
-One function per callback the framework's ML side offers (§2.6): each knows
-the callback's name and the MessagePack shape of its arguments and result,
-and nothing else does; the framework's modules, and a `gen` reading over the
-wire, call these functions and never the wire. A node class's own callback
-(§2.5) is not here: the class calls it itself, from its evaluation hooks
-(§4.1), the shape being between the class and its own ML half
-(ARCHITECTURE §6.2).
+`call`, the one door to the wire, and one function per callback the
+framework's ML side offers (§2.6): each knows the callback's name and the
+MessagePack shape of its arguments and result, and nothing else does; the
+framework's modules, and a `gen` reading over the wire, call these
+functions. A node class's own callback (§2.5) is not here: the class calls
+it itself, through `call`, from its evaluation hooks (§4.1), the shape
+being between the class and its own ML half (ARCHITECTURE §6.2). `call`
+raises `TAT_IsabelleError` from an exception the callback let escape, or
+from a failure of the wire contract such as no callback registered under
+the name — a bug either way (EXCEPTIONS.md §1).
 
 ### 4.4 `plugin.py`
 

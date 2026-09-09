@@ -14,9 +14,16 @@ registered function.
 
 signature TAT_FRAMEWORK =
 sig
+  (*** Bugs (docs/EXCEPTIONS.md §1) ***)
+  exception Bug of string             (*an invariant TAT broke -- the framework's or
+                                        a node class's; a callback never turns it
+                                        into data*)
+
   (*** State slots (§2.1) ***)
   type slot = {
-    get : unit -> Toplevel.state,           (*error when the slot holds nothing*)
+    get : unit -> Toplevel.state,           (*a Bug when the slot holds nothing: a
+                                              node runs only after its input is
+                                              written (ARCHITECTURE §3.5)*)
     put : Toplevel.state option -> unit     (*NONE deletes*)
   }
 
@@ -59,6 +66,14 @@ end
 structure TAT_Framework : TAT_FRAMEWORK =
 struct
 
+(*** Bugs ***)
+
+(*A callback answers every failure of its operation as data, so an exception
+  escaping one is a bug by definition (docs/EXCEPTIONS.md §1); this is the
+  one TAT raises on purpose -- the framework or a node class -- which a
+  callback's exception handling lets through.*)
+exception Bug of string
+
 (*** State slots ***)
 
 type slot = {get : unit -> Toplevel.state, put : Toplevel.state option -> unit}
@@ -76,7 +91,7 @@ fun create () : T = Synchronized.var "TAT.slots" Symtab.empty
 fun get (slots : T) name =
   (case Symtab.lookup (Synchronized.value slots) name of
     SOME st => st
-  | NONE => error ("State slot " ^ quote name ^ " holds no state"))
+  | NONE => raise Bug ("State slot " ^ quote name ^ " holds no state"))
 
 fun put' name (SOME st) = Symtab.update (name, st)
   | put' name NONE = Symtab.delete_safe name
@@ -319,9 +334,7 @@ fun run_span tr st =
       let
         val _ = Output_Routing.new_buffer id
         val _ = Execution.running Document_ID.none exec [] orelse
-                  raise Fail ("Failed to register execution " ^ id)
-                  (*a framework bug; inside a node class's operation it reaches the
-                    agent as that operation's error message (TAT_Common_Nodes.ML)*)
+                  raise Bug ("Failed to register execution " ^ id)
         val (errors, st') =
           Position.setmp_thread_data (Position.id_only id)
             (fn () => Toplevel.command_errors true (Toplevel.exec_id exec tr) st) ()
@@ -417,12 +430,10 @@ fun begin_theory theories (context as {session_name, master_dir}) (header : Thy_
     val (name, name_pos) = #name header
     (*theory names carry no dot (MCP_SPECIFICATION §2), so a qualified name
       here is a framework bug -- and letting it through would unhook the
-      theory-table key from (session, tree).  Raised inside a node class's
-      operation it reaches the agent as that operation's error message
-      (TAT_Common_Nodes.ML, `operation`).*)
+      theory-table key from (session, tree)*)
     val _ =
       if Long_Name.is_qualified name
-      then raise Fail ("Theory header names a qualified theory: " ^ quote name)
+      then raise Bug ("Theory header names a qualified theory: " ^ quote name)
       else ()
     val qualified = #theory_name (Resources.import_name session_name master_dir name)
     val parents = map (Loader.resolve theories context) (#imports header)

@@ -49,7 +49,8 @@ end
 \<close>
 
 setup \<open>
-(*reads the slot's discriminator; on an empty slot this is the table's error*)
+(*reads the slot's discriminator; on an empty slot the table raises a Bug,
+  which escapes the callback unconverted (docs/EXCEPTIONS.md §1)*)
 let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
@@ -131,6 +132,30 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
           val fb = Future.fork (fn () => TAT_Framework.run_commands stb tb)
           val (ra, _) = Future.join fa and (rb, _) = Future.join fb
         in (TAT_Test_Lib.serialize ra, TAT_Test_Lib.serialize rb) end,
+      timeout = NONE})
+end
+\<close>
+
+setup \<open>
+(*TAT_Common_Nodes.operation under each of its outcomes (docs/EXCEPTIONS.md
+  §1): a state written and no message; a user-level error as messages; a
+  Bug, a run answering nothing, and a run answering both a state and a
+  message, all three escaping the callback*)
+let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
+  TAT_Framework.register_callback {python_packages = []} (fn env =>
+    Remote_Procedure_Calling.mk_callback {
+      name = "TAT_test.operation",
+      arg_schema = unpackPair (#slot_unpacker env, unpackString),
+      ret_schema = packList packString,
+      function = fn (slot, outcome) =>
+        TAT_Common_Nodes.operation slot (fn () =>
+          (case outcome of
+            "ok" => (SOME (Toplevel.make_state NONE), [])
+          | "error" => error "tat-user-error"
+          | "bug" => raise TAT_Framework.Bug "tat-bug"
+          | "nothing" => (NONE, [])
+          | "both" => (SOME (Toplevel.make_state NONE), ["tat-both"])
+          | _ => raise Fail ("unknown outcome " ^ outcome))),
       timeout = NONE})
 end
 \<close>

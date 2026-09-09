@@ -254,8 +254,9 @@ class Node(ABC):
         TypedDict (MODULE_STRUCTURE §4.1): judge the fields' meaning, refuse
         a parent the class cannot live under, and build the node from
         `config`.  May read over the wire through the framework's query
-        callbacks; must not write.  Raises `TAT_Error`s bare — the framework
-        prefixes the `raw_ast_path` (EXCEPTIONS.md §5)."""
+        functions (MODULE_STRUCTURE §4.3); must not write.  Raises
+        `TAT_Error`s bare — the framework prefixes the `raw_ast_path`
+        (EXCEPTIONS.md §5)."""
         raise TAT_InternalError(f"{cls.__name__} has no gen")
 
     # --- Persistence (ARCHITECTURE §4.1, the plan's §2): each class writes
@@ -1274,7 +1275,8 @@ class Theory(StdBlock):
         return f"theory {self.name}\n  imports {' '.join(self.imports)}\nbegin"
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
-    # operation's errors, empty when it passed (ARCHITECTURE §6.2).  The
+    # operation's errors, empty when it passed (ARCHITECTURE §6.2), and
+    # whatever it lets escape is a bug (`isabelle_driver.call`).  The
     # previous run's messages go before the call, so a failed call leaves
     # none standing.
 
@@ -1282,8 +1284,8 @@ class Theory(StdBlock):
         session = self.session()
         conversation = self.forest().conversation
         self.beginning_errors = []
-        self.beginning_errors = await conversation.connection.callback(
-            "TAT.Theory.begin",
+        self.beginning_errors = await isabelle_driver.call(
+            conversation.connection, "TAT.Theory.begin",
             (self._state_after_beginning().to_msgpack(),
              (session.name,
               str(conversation.working_directory / session.name),   # the plan's §1
@@ -1292,8 +1294,8 @@ class Theory(StdBlock):
 
     async def _eval_ending_opr(self):
         self.ending_errors = []
-        self.ending_errors = await self.forest().conversation.connection.callback(
-            "TAT.Theory.end",
+        self.ending_errors = await isabelle_driver.call(
+            self.forest().conversation.connection, "TAT.Theory.end",
             (self._state_before_ending.to_msgpack(), self._state_after_ending.to_msgpack()))
         return not self.ending_errors
 

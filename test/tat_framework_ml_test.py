@@ -10,6 +10,11 @@ so the theory fails to evaluate exactly when the test fails.
 toplevel state, `top=False` a theory state — and `TAT_test.is_toplevel`
 reads the stored state's discriminator back, so a copy that fabricated a
 state instead of mirroring the source would be caught.
+
+The `TAT_test.*` probes of the framework's primitives are called on the wire
+directly, so that an exception escaping one is seen unconverted; only
+`TAT_test.operation` goes through `isabelle_driver.call`, since the rule it
+pins is EXCEPTIONS.md §1's — an escaping exception is a bug.
 """
 
 import os
@@ -18,7 +23,7 @@ from pathlib import Path
 from Isabelle_RPC_Host import Connection, IsabelleError, isabelle_remote_procedure
 
 from isabelle_theory_agent import edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import DuplicateTheoryShortName
+from isabelle_theory_agent.exceptions import DuplicateTheoryShortName, TAT_IsabelleError
 from isabelle_theory_agent.model import READY, CannotEvaluate, Isar_State_Slot, Session, Theory
 from isabelle_theory_agent.store import Forest_Store
 from routing_forest import Routing_Forest
@@ -58,10 +63,11 @@ async def drive(packages: list[str], connection: Connection) -> None:
     assert await b.is_initialized()
     assert await is_toplevel(b) is False
 
-    # get on an empty slot is an error, and it travels back as an exception
+    # get on an empty slot is a bug (EXCEPTIONS.md §1): it escapes the callback
+    # unconverted, and this raw probe sees it as the RPC library's exception
     try:
         await is_toplevel(c)
-        raise AssertionError("get on an empty slot did not error")
+        raise AssertionError("get on an empty slot did not raise")
     except IsabelleError as e:
         assert "holds no state" in str(e), str(e)
 
@@ -327,6 +333,30 @@ async def drive(packages: list[str], connection: Connection) -> None:
         'tat_hello')
     assert len(recs) == 2 and not errors(recs), recs
     assert ["writeln", "tat-hello-cmd"] in recs[1][2], recs
+
+    # --- an exception escaping a callback is a bug (EXCEPTIONS.md §1) ---
+
+    async def operation(outcome: str) -> tuple[Isar_State_Slot, list]:
+        sl = slot()
+        msgs = await isabelle_driver.call(
+            connection, "TAT_test.operation", (sl.to_msgpack(), outcome))
+        return sl, msgs
+
+    async def escapes(outcome: str, expect: str) -> None:
+        try:
+            await operation(outcome)
+            raise AssertionError(f"{outcome}: nothing escaped")
+        except TAT_IsabelleError as e:
+            assert expect in str(e), str(e)
+            assert isinstance(e.__cause__, IsabelleError)
+
+    sl, msgs = await operation("ok")                  # success: the state, no message
+    assert msgs == [] and await is_toplevel(sl) is True
+    sl, msgs = await operation("error")               # a user-level error: messages, no state
+    assert msgs == ["tat-user-error"] and not await sl.is_initialized()
+    await escapes("bug", "tat-bug")                   # a framework Bug propagates
+    await escapes("nothing", "a state and no message, or messages and no state")
+    await escapes("both", "a state and no message, or messages and no state")
 
     # --- the Theory node class, end to end (SESSION_AND_THEORY §2) ---
 

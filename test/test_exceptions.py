@@ -14,7 +14,8 @@ from isabelle_theory_agent.exceptions import (
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
     ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
-    TAT_StartupError, UnexpectedChildren, UnexpectedField, UnknownKind)
+    TAT_IsabelleError, TAT_StartupError, UnexpectedChildren, UnexpectedField,
+    UnknownKind)
 
 from baselines import DOCS, fenced_lines
 
@@ -240,6 +241,9 @@ def test_the_four_kinds_are_disjoint():
     kinds = (TAT_Error, TAT_InternalError, TAT_StartupError, TAT_DisasterError)
     for kind in kinds:
         assert not issubclass(kind, tuple(k for k in kinds if k is not kind))
+    # an exception escaping an ML callback is a bug (EXCEPTIONS.md §1)
+    assert issubclass(TAT_IsabelleError, TAT_InternalError)
+    assert not issubclass(TAT_IsabelleError, TAT_Error)
 
 def test_groups():
     assert issubclass(NodeNotFound, ResolutionError)
