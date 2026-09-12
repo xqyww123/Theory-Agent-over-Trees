@@ -72,28 +72,31 @@ class TAT_Error(Exception, ABC):
 
 class TAT_InternalError(Exception):
     """A bug: an invariant TAT itself broke.  Deliberately outside
-    `TAT_Error`, so the tool boundary never catches it (EXCEPTIONS.md §1)."""
+    `TAT_Error`, so the tool boundary never answers the agent with it
+    (EXCEPTIONS.md §1)."""
 
 
 class TAT_IsabelleError(TAT_InternalError):
     """An ML callback failed (EXCEPTIONS.md §1): it let an exception escape
     — the ML side's `Bug`, or anything it did not foresee, a callback
-    answering every failure of its operation as data — or the wire contract
-    broke, no callback being registered under the name.  Raised by
+    answering every failure of its operation as data — or it was
+    interrupted, or the wire contract broke, no callback being registered
+    under the name.  Raised by
     `isabelle_driver.call`, the one door to the wire; `__cause__` is the
     RPC library's `IsabelleError`."""
 
 
 class TAT_StartupError(Exception):
     """TAT cannot start in this environment -- the working directory, its
-    database.  Raised before any tool boundary exists, to the client that
-    starts the conversation; never rendered to the agent (EXCEPTIONS.md §1)."""
+    database.  Raised before any tool boundary exists, out of `launch_TAT`
+    into the ML call that started the conversation; never rendered to the
+    agent (EXCEPTIONS.md §1)."""
 
 
 class TAT_DisasterError(Exception):
     """The forest in memory and the forest in the database have parted: a
     store transaction failed after the operation had been committed in
-    memory.  Not caught at the tool boundary; the conversation ends
+    memory.  Never answered to the agent; the conversation ends
     (EXCEPTIONS.md §1).  `__cause__` is what failed."""
 
 

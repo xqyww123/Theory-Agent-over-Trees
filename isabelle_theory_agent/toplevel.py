@@ -1,11 +1,10 @@
 """The RPC entry point Isabelle calls into (MODULE_STRUCTURE §4.6).
 
-`TAT_Framework.start` on the ML side calls the procedure `launch_TAT` and
-does not return for the life of the conversation (ARCHITECTURE §9);
-everything the conversation does, it does through this call's callbacks.
-The argument is the node classes' Python halves — the `python_packages` of
-every registration, deduplicated (MODULE_STRUCTURE §2.6) — for the plugin
-loader to import (MODULE_STRUCTURE §4.4).
+`TAT_Framework.start` on the ML side calls the procedure `launch_TAT`, which
+does not return (ARCHITECTURE §9); everything the conversation does, it does
+through this call's callbacks.  The entry contract is MODULE_STRUCTURE §4.6;
+the signature lands with it (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §7,
+step 5).
 """
 
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure

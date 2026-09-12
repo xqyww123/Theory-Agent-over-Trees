@@ -483,16 +483,24 @@ local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
 fun framework_callbacks (slots : Slots.T) = [
   Remote_Procedure_Calling.mk_callback
-    {name = "TAT.state_copy", arg_schema = unpackPair (unpackString, unpackString),
+    {name = "TAT.state_copy",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackPair (unpackString, unpackString),
      ret_schema = packUnit, function = Slots.copy slots, timeout = NONE},
   Remote_Procedure_Calling.mk_callback
-    {name = "TAT.state_delete", arg_schema = unpackList unpackString,
+    {name = "TAT.state_delete",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackList unpackString,
      ret_schema = packUnit, function = Slots.delete slots, timeout = NONE},
   Remote_Procedure_Calling.mk_callback
-    {name = "TAT.state_exists", arg_schema = unpackString,
+    {name = "TAT.state_exists",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackString,
      ret_schema = packBool, function = Slots.exists slots, timeout = NONE},
   Remote_Procedure_Calling.mk_callback
-    {name = "TAT.check_new_theory_short_name", arg_schema = unpackString,
+    {name = "TAT.check_new_theory_short_name",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackString,
      ret_schema = packOption packString, function = Loader.check_new_theory_short_name,
      timeout = NONE}
 ]
@@ -503,8 +511,8 @@ fun start' procedure thy =
     val slots = Slots.create ()
     val theories = Theories.create ()
     (*This unpacker must not raise: mk_callback advances the input stream only
-      after a successful unpack (contrib/Isabelle_RPC/Tools/RPC.ML:446-449), so
-      an exception here leaves the connection mid-message and every later
+      after a successful unpack (contrib/Isabelle_RPC/Tools/RPC.ML), so an
+      exception here leaves the message pending on the connection and every later
       callback misparses.  It is safe because Slots.slot only builds two
       closures and touches no table -- do not "validate the slot exists" here.*)
     val env : env = {

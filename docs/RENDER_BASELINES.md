@@ -204,3 +204,16 @@ Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move it later.
 ```
 Fail to load `TAT_Nowhere.Nope` because it is not found.
 ```
+
+## 4. Server text
+
+The one answer the server gives while the conversation is ending
+(MODULE_STRUCTURE §4.6), to every call it cancels whose client is still
+waiting, and every call that arrives meanwhile — one line per reason the
+server gives, and never an exception's own text:
+
+```
+TAT has stopped: an internal error; this call did not complete.
+TAT has stopped: the forest could not be saved; this call did not complete.
+TAT has stopped: Isabelle is gone; this call did not complete.
+```

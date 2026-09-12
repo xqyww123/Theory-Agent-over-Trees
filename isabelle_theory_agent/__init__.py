@@ -1,4 +1,5 @@
-"""TAT: an agent that writes Isabelle theories by editing a forest of trees.
+"""TAT: a server that lets an agent write Isabelle theories by editing a
+forest of trees.
 
 Importing the package registers the RPC entry point (`toplevel.launch_TAT`),
 which is what `Remote_Procedure_Calling.load ["isabelle_theory_agent"]` on

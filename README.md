@@ -1,7 +1,7 @@
 # Theory-Agent-over-Trees (TAT)
 
-An agent that writes Isabelle theories by editing a **forest of trees** rather
-than text. Each tree is one Isabelle theory; each node is a declaration — a
+A server that lets an agent write Isabelle theories by editing a **forest of
+trees** rather than text. Each tree is one Isabelle theory; each node is a declaration — a
 theorem, a definition, a datatype, a section heading. The forest compiles to
 ordinary `.thy` files, and each command's result is routed back to the node that
 emitted it.

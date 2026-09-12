@@ -70,6 +70,7 @@ local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   Remote_Procedure_Calling.mk_callback {
     name = "TAT.Theory.begin",
+    on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackPair (#slot_unpacker env,
                    unpackTuple3 (unpackString, unpackString, unpackString)),
     ret_schema = packList packString,
@@ -86,6 +87,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   Remote_Procedure_Calling.mk_callback {
     name = "TAT.Theory.end",
+    on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackPair (#slot_unpacker env, #slot_unpacker env),
     ret_schema = packList packString,
     function = fn (src, dst) =>

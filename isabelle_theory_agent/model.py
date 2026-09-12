@@ -831,8 +831,8 @@ def _completed(hook, *args) -> None:
 
 @dataclass(frozen=True)
 class Conversation:
-    """One run of TAT (ARCHITECTURE §1, §9): what the run is given and the
-    forest does not store — the connection to the Isabelle side, and the
+    """What one conversation is given and the forest does not store
+    (ARCHITECTURE §1, §9): the connection to the Isabelle side, and the
     working directory (ARCHITECTURE §4).  A node reaches it through
     `forest().conversation`."""
     connection: Connection

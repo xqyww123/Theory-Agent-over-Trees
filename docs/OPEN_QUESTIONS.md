@@ -36,10 +36,13 @@ real import of every tree that uses it.
 
 ## 5. The entry point in production
 
-A conversation begins with Isabelle calling into Python (ARCHITECTURE §9),
-and something has to make Isabelle do that. TAT is a library and that something is
-a client of it (MODULE_STRUCTURE §4); an `isabelle` subcommand through a Scala
-component is one form. During development an Isa-REPL app serves.
+TAT is an Isabelle component (MODULE_STRUCTURE §1) and a pure MCP server
+(ARCHITECTURE §9); open is the production launcher: what starts the Isabelle
+process and calls `TAT_Framework.start` with a working directory and a port,
+and in which order — Isabelle first, or a long-lived Python RPC host that
+Isabelle processes join, each starting a conversation of its own. An
+`isabelle` subcommand through a Scala component is one form. During
+development the Isa-REPL app of `Dev/TAT_Dev.thy` serves.
 
 ## 6. Whether to check completeness against Isabelle's own record
 

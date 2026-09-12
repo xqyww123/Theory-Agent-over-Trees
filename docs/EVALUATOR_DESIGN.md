@@ -6,8 +6,8 @@ paths are relative to `contrib/Isa-REPL/library/`, except `IsaREPL.py`
 
 TAT drives Isabelle itself, command by command. Isa-REPL (`contrib/Isa-REPL`)
 has done this for years and is the reference: its shape is evidence, and §4
-lists the hazards its review exposed. It serves only as the development-time
-client (ARCHITECTURE §9).
+lists the hazards its review exposed. It serves only as the development
+launcher (ARCHITECTURE §9).
 
 ## 1. The mechanism
 
@@ -70,8 +70,8 @@ conversation.
 A node class's asynchronous work can reach this table while evaluation runs
 (ARCHITECTURE §9), so it is locked: a pure table under one
 `Synchronized.var`, every compound operation one atomic change over it
-(`contrib/Isabelle_RPC/Tools/RPC.ML:429-437` is the mutable-hash-table
-variant of the same shape).
+(`contrib/Isabelle_RPC/Tools/RPC.ML`'s global callback registry is the
+mutable-hash-table variant of the same shape).
 
 ## 2. One prover, and what resolution becomes
 

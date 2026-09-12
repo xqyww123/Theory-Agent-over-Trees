@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "isabelle_theory_agent"
 # Read from ./VERSION: one number for the wheel and the conda recipe.
 dynamic = ["version"]
-description = "An agent that writes Isabelle theories by editing a forest of trees"
+description = "A server that lets an agent write Isabelle theories by editing a forest of trees"
 readme = "README.md"
 license = "LGPL-2.1-or-later"
 license-files = ["COPYING", "COPYING.LIB", "COPYRIGHT"]

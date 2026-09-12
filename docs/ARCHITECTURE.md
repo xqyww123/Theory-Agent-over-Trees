@@ -24,13 +24,14 @@ language. A concept that needs a name gets one here first.
 | **segment** | one Isabelle span in an emitted file |
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
 | **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per conversation (EVALUATOR_DESIGN §1.1) |
-| **base heap** | the heap TAT's prover runs on, chosen by the client, with nothing of TAT in it (§8) |
+| **base heap** | the heap TAT's prover runs on, chosen by the launcher, with nothing of TAT in it (§8, §9) |
 | **tree order** | depth-first, a node before its children, children in their own order |
 | **evaluate** | running a node's commands in Isabelle and recording what happened (§3) |
 | **emit** | a node writing its own Isar text (§4) |
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
-| **conversation** | one run of TAT, from Isabelle's call into Python to its return (§9) |
-| **working directory** | the one directory TAT is started on; it holds the forest's database, the ROOT, and one folder per `Session` for its trees' `.thy` files (§4) |
+| **conversation** | one run of TAT, from Isabelle's call into Python until either process stops, the connection between them closes, or a bug or a `TAT_DisasterError` ends it from inside; one per working directory (§9) |
+| **launcher** | what starts the Isabelle process, chooses the base heap and calls `TAT_Framework.start` (§9) |
+| **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation (§9), the ROOT, and one folder per `Session` for its trees' `.thy` files (§4) |
 | **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
@@ -514,8 +515,8 @@ The evaluator holds an explicit `Toplevel.state` and runs one command at a time
 through `Toplevel.command_errors`, which recovers from a failing command instead
 of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md).
 
-The prover runs on one **base heap** — launched and chosen by the client
-(§9), with nothing of TAT in it — and the forest sits on top of it, no tree
+The prover runs on one **base heap** — chosen by the launcher (§9), with
+nothing of TAT in it — and the forest sits on top of it, no tree
 in any heap
 (EVALUATOR_DESIGN §2). A `Session`'s `parent_session` is ROOT metadata, not a
 constraint on the heap: a library theory the base heap lacks is loaded from
@@ -533,13 +534,70 @@ TAT is a Python process and an Isabelle process. The Python side owns the forest
 serves the MCP tools and writes the `.thy` files. The Isabelle side runs the
 evaluators.
 
-Isabelle opens the connection. An ML entry calls a Python procedure over
-`contrib/Isabelle_RPC` and does not return for the life of the conversation;
-Python drives Isabelle through that call's callbacks. AoA is built the same way
-(`contrib/Isa-Mini/IsaMini/AoA/toplevel.py:164`).
+Isabelle opens the connection. The ML entry, `TAT_Framework.start`, is given
+the working directory and the port to serve on (MODULE_STRUCTURE §2.6) and
+calls the Python procedure `launch_TAT` over `contrib/Isabelle_RPC`; Python
+drives Isabelle through that call's callbacks, and the call does not return:
+the conversation ends when either process stops, when the connection
+between them closes, or when a bug or a `TAT_DisasterError` ends it from
+inside (MODULE_STRUCTURE §4.6), the call then returning only by raising.
+AoA's entry has the same shape
+(`contrib/Isa-Mini/IsaMini/AoA/toplevel.py:174`). A conversation is bound to
+its Isabelle process, whose state slots hold everything evaluated: when that
+process goes, the conversation ends, and the next one on the same working
+directory starts from the database, `not_evaluated` throughout (§4.1). One
+conversation per working directory: a second conversation on a directory
+whose lock file another holds is refused with a `TAT_StartupError`. A
+Python process may host conversations one after another, or several at
+once on different working directories, each with its own Isabelle, port,
+forest and database, lock, `Conversation`, and table of node classes; the
+imported modules — the node classes themselves, and any module-level state
+a plugin keeps — are the process's, shared by every conversation in it.
 
-The framework starts, schedules and tracks no concurrent activity: evaluation
-is a synchronous loop (§3.6), driven through that one call's callbacks. The one
+What a conversation is given — the connection and the working directory —
+is the `Conversation`, held by the forest's root, which a node reaches as
+`forest().conversation` (MODULE_STRUCTURE §4.1).
+
+**A pure MCP server.** TAT knows no agent. A conversation serves one
+Streamable HTTP endpoint, `http://127.0.0.1:<port>/mcp`, on the loopback
+interface, and whoever connects — one Claude Code, one Codex, several of
+either, their subagents — is the same to it. Starting agents, their prompts,
+retries and budgets, and what a subagent may do are the client's business,
+arranged in the client's own configuration. Two facts about the clients fix
+this shape. Codex starts a fresh stdio server process for every subagent, so
+a stdio TAT would mean one Isabelle process and one open database per
+subagent; hence HTTP. Both clients read their MCP configuration once, when a
+session starts, so TAT is running before the client is launched and the
+client is handed TAT's URL then (`claude --mcp-config`, `codex -c
+mcp_servers.…`). The clients' tool-call timeouts are theirs to raise — an
+`evaluate_to` can run long: Claude Code's `MCP_TIMEOUT` and per-server
+`timeout`, Codex's per-server `startup_timeout_sec` and `tool_timeout_sec`.
+
+**Launching.** The launcher starts the Isabelle process, chooses the base
+heap (§8) and calls `TAT_Framework.start`; either order works. Isabelle
+first: it opens the RPC connection and calls into Python, which starts the
+server. Or the Python RPC host first, on a port an environment variable
+hands to the Isabelle process started next, which makes the same call. The
+development launcher is the first: the Isa-REPL server launches Isabelle on
+a chosen heap, and the app of `Dev/TAT_Dev.thy`, a theory nothing shipped
+imports, makes the call — so Isa-REPL is a development dependency and never
+a shipped one. The production launcher is still to be chosen
+(OPEN_QUESTIONS §5).
+
+**Concurrency.** The calls that hold the forest's lock — `edit`, `move`,
+`delete` and `evaluate_to` — hold it across the whole call
+(MODULE_STRUCTURE §4.2), so they serialise: a parent and its subagents run
+at once, and one client may send several calls at once, but while one
+`evaluate_to` runs the other edits wait, as in AoA. `recall` and `status`,
+and the future `query`, take no lock: they read the forest in memory as it
+stands and answer meanwhile (MCP_SPECIFICATION §5), so several calls are
+working at once. A tool call is cancelled only by the conversation's
+ending (MODULE_STRUCTURE §4.6): a client that gives up on a call loses its
+answer, and the call finishes and releases what it holds; the ending
+cancels every working call and answers it (MODULE_STRUCTURE §4.6). The
+framework starts,
+schedules and tracks no other concurrent activity: evaluation is a
+synchronous loop (§3.6), driven through that one call's callbacks. The one
 asynchronous activity, `construct` (§3.6), is a node class's own affair: the
 class arranges it and the running work hangs on its node. How `Theorem`'s
 `construct` drives AoA is designed with its Python half (MODULE_STRUCTURE
@@ -548,13 +606,10 @@ class arranges it and the running work hangs on its node. How `Theorem`'s
 What the framework contributes to such work is thread safety where it can
 reach shared state: the state slot table and the theory table are locked, and
 the tools a proof search reaches — AoA's proof store and `auto_sledgehammer`'s
-cache — are thread-safe.
-
-TAT is a library; whatever starts a conversation is a client of it, and the
-production client is undecided (OPEN_QUESTIONS §5). During development an
-Isa-REPL app is the client, registered from a theory nothing shipped imports
-(`Dev/TAT_Dev.thy`), so Isa-REPL is a development dependency and never a
-shipped one.
+cache — are thread-safe. Evaluating several trees at once is not designed
+for; it would be a change on the ML side — the loader's conditions
+(EVALUATOR_DESIGN §6) and the one-operation-per-round-trip cadence
+(MODULE_STRUCTURE §4.1) — not to this shape.
 
 ## 10. Directory and module structure
 

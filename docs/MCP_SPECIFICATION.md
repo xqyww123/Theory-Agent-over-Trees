@@ -235,15 +235,24 @@ evaluated because of another node — which one (ARCHITECTURE §3.3).
 ## 5. Messages
 
 Evaluation is synchronous, so a result arrives as the return of the call that
-caused it. There is no window in which a result can be mistaken for one
-belonging to an earlier version of the forest.
+caused it. The result of a call that holds the forest's lock — `edit`,
+`move`, `delete`, `evaluate_to` — describes the forest as of the moment the
+call released it; another agent's call may have changed it since
+(ARCHITECTURE §9). A read — `recall`, `status`, the future `query` — takes
+no lock and reads the forest in memory, never the database, as it stands
+at that instant: whole (MODULE_STRUCTURE §4.2), and with evaluation
+possibly under way, since an evaluating call changes statuses one node at
+a time. Collecting the pending messages is `status`'s one write; how that
+queue is kept whole when several calls are working at once is settled
+with `construct`.
 
 `construct` is the exception: it starts a proof search that outlives the call.
 
 MCP has no channel that reliably delivers a server-initiated message to the
 model, so TAT attaches such messages to tool results: when a search finishes, the
-node's new state rides on the next tool result. `status` returns the pending
-messages on demand, for an agent that wants them before its next edit.
+node's new state rides on the next tool result, whoever's call that is — the
+node's state is the record, the message a notification. `status` returns the
+pending messages on demand, for an agent that wants them before its next edit.
 
 ## 6. Undecided
 

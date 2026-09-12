@@ -6,8 +6,9 @@ through `call`, since an exception escaping any callback is a bug
 (EXCEPTIONS.md §1): the ML side answers every failure of an operation as
 data, so what it lets through — or a failure of the wire contract, such as
 no callback registered under the name — is raised here as
-`TAT_IsabelleError`.  The callback names are the ML side's and are decided
-nowhere else.
+`TAT_IsabelleError`.  An interrupt of the callback (the RPC library's
+`IsabelleInterrupt`, an `IsabelleError`) is treated the same for now.  The
+callback names are the ML side's and are decided nowhere else.
 """
 
 from typing import Any

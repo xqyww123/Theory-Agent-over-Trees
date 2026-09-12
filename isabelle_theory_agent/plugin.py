@@ -7,9 +7,10 @@ checked against it.
 Importing a plugin's package is what registers its classes; `load` imports
 every package `launch_TAT` received, after the framework's own classes, and
 then assembles and seals.  Every check failure is a `CannotLoadPlugin`
-(EXCEPTIONS.md §1): a plugin's bug fails the conversation start.  One
-conversation per process, so the table, the class list and the seal are
-module state.
+(EXCEPTIONS.md §1): a plugin's bug fails the conversation start.  `kinds`,
+`classes` and `_sealed` are module state; the first two are filled as
+classes register, the seal is set when `load` finishes (MODULE_STRUCTURE
+§4.4).
 """
 
 from __future__ import annotations

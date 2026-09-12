@@ -19,8 +19,14 @@ deduplicates them at conversation start and hands the list to `launch_TAT`;
 what registers: a node class is defined at module top level under
 `@TAT_node`, and the decorator runs as the class statement executes. The
 two framework classes, `Session` and `Theory` (`model.py`), are registered
-by `load` itself, first, through the same `TAT_node`. There is no other
-table of node classes.
+by `load` itself, first, through the same `TAT_node`. Registration has no
+other path. What a class registers into is a process-wide registry, filled
+once per process — the framework's two classes by the first `load`, a
+plugin's the first time its package is imported; what `load` returns is
+this conversation's kind table — those two plus the classes of the listed
+packages — and the assembled `edit` schema, so a second conversation in
+the same process reads the registry rather than registering again
+(MODULE_STRUCTURE §4.4).
 
 A package that fails to import — a syntax error, a registration check
 below — fails the conversation start: a plugin's bug is never skipped
@@ -115,8 +121,8 @@ After every package is imported, the loader builds the `$defs` of the
 
 `edit`'s hand-written file (TOOL_SCHEMAS.md §1) carries an empty `$defs`;
 the server fills it at start and never afterwards. A class registering
-after `load` has returned is refused (a `TAT_InternalError`: the
-conversation is running, and a startup error has no reader).
+outside a `load` — from an import no `load` is performing — is refused (a
+`TAT_InternalError`: registration belongs to a conversation's start).
 
 The assembled schema keeps its references. The loader never inlines a
 `$ref`; a client that cannot take references is the MCP server's concern
@@ -125,7 +131,8 @@ The assembled schema keeps its references. The loader never inlines a
 ## 5. What the loader checks
 
 Every failure is a `CannotLoadPlugin` (EXCEPTIONS.md §1: a
-`TAT_StartupError`, reported to the client that starts the conversation),
+`TAT_StartupError`, raised out of `launch_TAT` into the ML call that
+started the conversation),
 carrying the package, the class, and the reason. At registration, per
 class:
 

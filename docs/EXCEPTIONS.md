@@ -11,9 +11,12 @@ boundary catch only to annotate and re-raise (§5).
 
 `TAT_InternalError` is a bug: an invariant TAT itself broke. It does **not**
 inherit from `TAT_Error`, and that absent inheritance is the load-bearing
-line of the whole design: the tool boundary catches `TAT_Error` and nothing
+line of the whole design: the tool boundary renders `TAT_Error` and nothing
 else, so a bug can never dress up as an agent-facing error and be quietly
-retried against. Bugs escape and crash loud.
+retried against. Bugs crash loud: the boundary catches one only to put it
+where no agent can answer it — the conversation ends, and the exception
+leaves `launch_TAT` into the ML call that started it, the door a
+`TAT_StartupError` uses (MODULE_STRUCTURE §4.6).
 
 An exception escaping an ML callback is a bug of this kind, by rule: a
 callback answers every failure of its operation as data — the messages of a
@@ -24,18 +27,23 @@ the agent's to act on. Every round trip goes through `isabelle_driver.call`,
 which raises `TAT_IsabelleError`, a `TAT_InternalError`, from the RPC
 library's `IsabelleError` — an escaped exception, or a failure of the wire
 contract such as no callback registered under the name (MODULE_STRUCTURE
-§2.5, §4.3). An interrupt is neither: the RPC library does not answer it,
-it unwinds the ML call and with it the conversation. A node class's
+§2.5, §4.3); the connection going away answers a round trip with a
+connection error instead, which is the conversation's ending and not a bug
+(MODULE_STRUCTURE §4.3). An interrupt of the callback is answered by the RPC library
+as `IsabelleInterrupt`, an `IsabelleError`, and is treated the same for
+now; TAT's callbacks all re-raise it afterwards, so it then unwinds the ML
+call and with it the conversation. A node class's
 callback follows the same rule, and `TAT_Common_Nodes.operation` is the
 helper that keeps it: an exception under the operation becomes its
 messages, a `Bug` and an interrupt propagate as they arrived.
 
 `TAT_StartupError` is the third kind: TAT cannot start in this
 environment — the working directory's database was written by another
-schema version or is not a database, or a node class package cannot be
-loaded (PLUGIN_SYSTEM §5). It is raised before any tool boundary or agent
-exists, to the client that starts the conversation, and is never rendered
-to the agent. It inherits from neither of the other two.
+schema version or is not a database, a node class package cannot be
+loaded (PLUGIN_SYSTEM §5), another conversation holds the working directory
+(ARCHITECTURE §9), or the port cannot be bound (MODULE_STRUCTURE §4.6). It is raised before any tool boundary or agent
+exists, out of `launch_TAT` into the ML call that started the conversation,
+and is never rendered to the agent. It inherits from neither of the other two.
 
 `TAT_DisasterError` is the fourth: the forest in memory and the forest in
 the working directory's database (ARCHITECTURE §4.1) have parted. A write
@@ -45,7 +53,7 @@ that fails — a class's
 `to_store` raising, a value MessagePack cannot hold, a full disk, another
 process holding the write lock — leaves the two apart with no way to
 rejoin them. `Forest_Store.transaction` raises it, from the failure, and
-nothing catches it: the conversation ends, and the database holds the last
+nothing answers it to the agent: the conversation ends, and the database holds the last
 committed forest, which the next start loads. It inherits from none of the
 other three.
 
@@ -55,8 +63,8 @@ The same line sorts what node classes raise:
   gets data or a `TAT_IsabelleError`, never a `TAT_Error` it did not raise
   itself, so a failure on the Isabelle side is never mistaken for a
   class's bug, nor rendered to the agent;
-- anything else a `gen` raises that is not a `TAT_Error` is not caught at
-  the tool boundary;
+- anything else a `gen` raises that is not a `TAT_Error` is never answered
+  to the agent;
 - the event hooks split by tense (MODULE_STRUCTURE §4.1): a gate may raise
   `BadEdit` to veto the change while nothing has happened; a completed hook
   fires after the change, so rendering "Cannot …" for what it raises would
@@ -162,10 +170,11 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │                             implementation; a class with a `construct`
 │                             overrides it (MCP_SPECIFICATION §1)
 
-TAT_InternalError             outside TAT_Error; never caught at the boundary
+TAT_InternalError             outside TAT_Error; never answered to the agent
 └─ TAT_IsabelleError          an ML callback failed: it let an exception
-                              escape, or no callback bears the name;
-                              __cause__ is the RPC library's IsabelleError
+                              escape, was interrupted, or no callback bears
+                              the name; __cause__ is the RPC library's
+                              IsabelleError
                                                           [isabelle_driver]
 
 TAT_StartupError              outside both; TAT cannot start here (§1)

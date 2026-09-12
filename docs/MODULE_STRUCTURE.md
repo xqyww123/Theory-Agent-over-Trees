@@ -12,7 +12,7 @@ repository, one version number for both.
 Theory_Agent_over_Trees.thy   ML_file "ML/TAT_Framework.ML"; ML_file "ML/TAT_Common_Nodes.ML"
 ML/TAT_Framework.ML           structure TAT_Framework (§2)
 ML/TAT_Common_Nodes.ML        structure TAT_Common_Nodes (§3)
-Dev/TAT_Dev.thy               the development-time client, an Isa-REPL app (ARCHITECTURE §9)
+Dev/TAT_Dev.thy               the development launcher's app: an Isa-REPL app that starts one conversation (ARCHITECTURE §9)
 ROOT                          build checks only; nothing ever runs on these heaps
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT"
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
@@ -171,7 +171,11 @@ callback answers every failure of its operation as data, and an exception
 it lets escape is a bug (EXCEPTIONS.md §1) — `TAT_Framework.Bug`, the
 exception TAT raises where it caught itself out, or something the callback
 did not foresee. An interrupt is neither a failure of the operation nor a
-bug: it unwinds the ML call and with it the conversation.
+bug: the RPC library answers it to Python as `IsabelleInterrupt`, which
+`isabelle_driver.call` classifies as `TAT_IsabelleError`, a
+`TAT_InternalError`, for now (EXCEPTIONS.md §1), and every TAT callback
+re-raises it afterwards, so it unwinds the ML call and with it the
+conversation.
 `TAT_Common_Nodes.operation`
 keeps the rule for a callback whose success is a state: the run answers a
 state and no message, or no state and at least one message — anything else
@@ -182,8 +186,10 @@ through as they arrived.
 
 ### 2.6 Conversation
 
-The entry point of ARCHITECTURE §9. Starting a conversation, from the theory
-whose ancestry names the node classes (§2.5):
+The entry point of ARCHITECTURE §9. `start` takes the theory whose ancestry
+names the node classes (§2.5), the working directory
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §1) and the port to serve on —
+`0` for one the system picks — and starts the conversation:
 
 1. create the state slot table and the environment of §2.5;
 2. call every function registered in that theory's data, collecting the node
@@ -194,11 +200,11 @@ whose ancestry names the node classes (§2.5):
    name), and `TAT.check_new_theory_short_name` (§2.3);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
-   procedure `launch_TAT` (§4.6) with the collected package list as an
-   argument; `launch_TAT` does not return for the life of the conversation.
+   procedure `launch_TAT` (§4.6) with the collected package list, the
+   working directory and the port; `launch_TAT` does not return.
 
-The callbacks go in the `callback` field of that one command, as AoA's do
-(`contrib/Isa-Mini/Agent/agent_server.ML:1740-1772`); none enters
+The callbacks go in the `callback` field of that one command, as AoA's
+`aoa_cmd` does (`contrib/Isa-Mini/Agent/agent_server.ML`); none enters
 `Isabelle_RPC`'s global callback table. Two callbacks under one name would
 silently shadow each other in that command's dispatch table, so starting the
 conversation rejects a duplicated name instead.
@@ -224,9 +230,10 @@ the forest's scheduling (ARCHITECTURE §3.5) and its emission the ROOT entry
 
 ## 4. Python side
 
-TAT is a library. Whatever starts a conversation — during development an
-Isa-REPL app, later some Isabelle component — is a client built on it, and
-starting the Isabelle process is the client's business.
+TAT is an Isabelle component (§1) and a pure MCP server (ARCHITECTURE §9).
+Launching the Isabelle process is the launcher's business — during
+development the Isa-REPL server's, with the app of `Dev/TAT_Dev.thy` making
+the call.
 
 ```
 isabelle_theory_agent/
@@ -238,9 +245,9 @@ isabelle_theory_agent/
   plugin.py            loading node classes and their table; the argument schema grammar
   builtins.py          the predefined node classes
   theorem_node.py      Theorem: construct, the AoA interface
-  mcp.py               the tools, recall, the message queue
-  mcp_server.py        the MCP server itself
-  toplevel.py          the RPC entry point Isabelle calls into
+  mcp.py               the tools, recall, the queue of pending messages
+  mcp_server.py        the Streamable HTTP MCP server
+  toplevel.py          the RPC entry point Isabelle calls into: the Conversation, the Forest, the server
   tools/edit.jsonc     the edit tool's schema, its $defs filled at start (PLUGIN_SYSTEM §4)
 ```
 
@@ -352,7 +359,7 @@ loaded forest is reassigned its slots.
 
 Every node holds one, `state`, the state before it. The state after it,
 `resulting_state()`, is computed, as in AoA
-(`contrib/Isa-Mini/IsaMini/AoA/model.py:4581`): under a chaining parent it
+(`contrib/Isa-Mini/IsaMini/AoA/model.py`'s `Node.resulting_state`): under a chaining parent it
 asks the parent, which answers with the next sibling's `state`, or with the
 one it keeps for the position after all its children — so one node's result
 and the next node's input are one slot, and inserting or deleting a node
@@ -408,7 +415,7 @@ statuses are all `NotEvaluated`.
   concerns, invalidates every tree that imports a changed one, and runs a
   tree's imports to their `end`.
 
-`Conversation` is what one run of TAT is given and the forest does not
+`Conversation` is what one conversation is given and the forest does not
 store: the connection to the Isabelle side, and the working directory
 (ARCHITECTURE §4). A node reaches it through `forest().conversation`
 (PLUGIN_SYSTEM §2).
@@ -513,7 +520,9 @@ An `edit` builds everything before it touches the forest:
 2. **Gates.** The hooks that may still veto (§4.1's events), `BadEdit`
    their only voice.
 3. **Commit** — pointer surgery, which cannot fail, then one store
-   transaction writing what changed (ARCHITECTURE §4.1). The batch is
+   transaction writing what changed (ARCHITECTURE §4.1), with nothing
+   awaited between them, so a call holding no lock never sees a
+   part-changed forest (MCP_SPECIFICATION §5). The batch is
    linked in; on amend the replacement takes `old`'s position, state
    slot, identity number and children. The one copy of ARCHITECTURE §3.4
    lands in the first new node's slot — and only when the predecessor
@@ -529,8 +538,11 @@ An `edit` builds everything before it touches the forest:
 A failure anywhere before the commit aborts the call with the forest
 untouched: there is no rollback, because nothing happened to roll back.
 
-**Entry points and the lock.** A tool entry takes the forest's lock and
-holds it across the whole call. `evaluate_to`'s entry is
+**Entry points and the lock.** The tool entries that hold the forest's
+lock — `edit`, `move`, `delete`, `evaluate_to` — hold it across the whole
+call; `recall`, `status` and the future `query` take none
+(MCP_SPECIFICATION §5). A call is cancelled only by the conversation's
+ending (ARCHITECTURE §9). `evaluate_to`'s entry is
 `Node.evaluate_to`, which takes it itself; an edit's tool entry takes it
 and calls `insert`, `amend`, `delete` or `move`, which assume it held, as
 does the walk each ends with. One ordering fact: `gen` awaits the ML
@@ -557,15 +569,22 @@ it itself, through `call`, from its evaluation hooks (§4.1), the shape
 being between the class and its own ML half (ARCHITECTURE §6.2). `call`
 raises `TAT_IsabelleError` from an exception the callback let escape, or
 from a failure of the wire contract such as no callback registered under
-the name — a bug either way (EXCEPTIONS.md §1).
+the name — a bug either way (EXCEPTIONS.md §1). The connection going away
+answers a round trip with a connection error instead, not an
+`IsabelleError`; that is the conversation's ending (§4.6), not a bug.
+`call` shields the round trip: a callback is a two-phase exchange on the
+RPC connection that must not be interrupted, so a cancellation of the
+caller unwinds it at once while the round trip in flight completes on its
+own and its result is dropped.
 
 ### 4.4 `plugin.py`
 
 Imports every package in the list `launch_TAT` received (§2.6) — the
-`python_packages` the node class theories registered — and keeps the table
-from `kind` to Python class, which importing a package fills through the
-`@TAT_node` decorator; the kinds a class answers to are read off its
-construct schema. The table is what `edit` dispatches on. What the loader
+`python_packages` the node class theories registered. `@TAT_node` fills a
+process-wide registry as classes register; `load` returns this
+conversation's kind table — the framework's two classes and the listed
+packages' — and the assembled `edit` schema from it (PLUGIN_SYSTEM §1).
+The table is what `edit` dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
 schema, is PLUGIN_SYSTEM.md.
 
@@ -596,7 +615,69 @@ result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
 `mcp.py` implements the tools of MCP_SPECIFICATION §1 and the queue of
 pending messages; the future `query` tool (MCP_SPECIFICATION §1.1) will land
-here too. `mcp_server.py` builds the server from them. It is also where
+here too. `mcp_server.py` builds the server: one Streamable HTTP server on
+`127.0.0.1:<port>`, one endpoint `/mcp`, a low-level `mcp.server.Server`
+from the Python `mcp` SDK — TAT's own transport code, with no dependency on
+Isa-Mini; two lessons from AoA's
+(`contrib/Isa-Mini/IsaMini/AoA/mcp_http_server.py`): the session manager's
+lifetime stays inside one asyncio task, and — unlike that file, which
+sleeps — the port is waited on deterministically. The server is given the
+SDK's transport security settings — the allowed host is `127.0.0.1` with
+the bound port, or `127.0.0.1:*` when the port is system-chosen, the
+spelling the printed URL uses too — so a request whose `Host` or `Origin`
+header is not TAT's own is refused before dispatch; without them the SDK
+checks nothing.
+
+The tool handler TAT registers is the tool boundary of EXCEPTIONS.md §1.
+Three things about it hold the design's invariants against the SDK's
+defaults.
+
+- It is registered with the SDK's input validation off
+  (`validate_input=False`): the framework checks a submitted construct
+  against the class's declared argument schema itself and answers
+  `UnknownKind`, `MissingField`, `UnexpectedField` and `InvalidField`
+  (EXCEPTIONS.md §3); the SDK's jsonschema message never reaches the agent.
+- It renders a `TAT_Error` into the result and renders nothing else. Any
+  other exception starts the conversation's ending (below): the handler
+  records it and hands it to `launch_TAT`, which raises it out of the RPC
+  call as an ordinary `Exception`, the only kind the RPC host reports to
+  the ML side. The hand-off is out of band because the SDK turns any
+  ordinary exception a handler lets escape, and any value it returns, into
+  a result the agent would retry against.
+- It runs the call's body as a task outside the request's cancel scope and
+  waits for that task shielded, so neither a client's
+  `notifications/cancelled` — its per-tool timeout expiring — nor the SDK's
+  unwind reaches a body mid-edit: the client loses its answer, and the body
+  finishes and releases what it holds. After the body the handler takes a
+  checkpoint, letting a pending cancellation through instead of answering,
+  since the SDK's responder has by then answered the client itself.
+
+**The conversation's ending** is the server's one state besides serving.
+The server enters it when a handler catches anything that is not a
+`TAT_Error` — a bug, a `TAT_DisasterError`, or the connection error a dead
+wire answers a round trip with (§4.3) — or when `launch_TAT` finds the
+connection gone, the connection going ending its RPC call; whichever door
+is reached first enters it. In it the server
+cancels every working call's body, and each handler answers its own call —
+the one that ended the conversation included — with the message of
+RENDER_BASELINES §4, taking no lock and touching no forest. The ending's
+cancellation reaches a working call's handler as its own wait failing,
+which the handler answers rather than passes on — a handler that passes it
+on answers nobody; a call whose client has already given up stays on the
+handler's checkpoint path and is answered by nobody. A call that arrives
+while the conversation is ending is answered the same message. A round
+trip a cancelled body was in finishes on its own, or fails with the
+connection; either way nothing reads its result (§4.3). The forest in
+memory goes with the conversation, and the database holds its last commit
+(ARCHITECTURE §4.1). Then the server stops and `launch_TAT` leaves.
+
+```
+TAT has stopped: an internal error; this call did not complete.
+TAT has stopped: the forest could not be saved; this call did not complete.
+TAT has stopped: Isabelle is gone; this call did not complete.
+```
+
+`mcp_server.py` is also where
 the assembled `edit` schema reaches the client (PLUGIN_SYSTEM §4): TAT
 serves it as assembled, `$ref`s intact. Node classes may recurse
 (PLUGIN_SYSTEM §3), so the schema has no finite inlining; serving a client
@@ -604,6 +685,19 @@ that drops references means choosing a different shape for it — a
 decision to take when such a client appears, on AoA's precedent
 (`contrib/Isa-Mini/IsaMini/AoA/mcp_http_server.py` serves several variants
 of one `edit` schema). `toplevel.py` is the procedure Isabelle calls
-(`@isabelle_remote_procedure("launch_TAT")`), which does not return for the life of
-the conversation; it builds the `Conversation` (§4.1) from its connection
-and the working directory, and the `Forest` on it.
+(`@isabelle_remote_procedure("launch_TAT")`) with the package list, the
+working directory and the port (§2.6); it does not return. In order: it
+takes the working directory's lock, `tat.lock` — a non-blocking exclusive
+`flock` on a descriptor it keeps open for the life of the conversation, so
+the kernel releases it when the process dies and it is released in the
+call's `finally` when the conversation ends any other way; `flock`, not a
+POSIX record lock, because only `flock` conflicts between two open
+descriptors in one process, and that is what refuses a second conversation
+in this host as well as in another; a directory another conversation holds
+is refused with a `TAT_StartupError` — builds the
+`Conversation` (§4.1) from its connection and the working directory; opens
+the `Forest_Store` on `<working directory>/theory_forest.sqlite`; loads the
+plugins (§4.4); builds the `Forest`; starts the server, a port that cannot
+be bound being a `TAT_StartupError` too, and prints its URL to the Isabelle
+side; then serves until the conversation's ending (above), after which the
+lock is released.

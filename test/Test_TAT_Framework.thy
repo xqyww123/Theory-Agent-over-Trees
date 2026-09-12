@@ -40,6 +40,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = ["tat_framework_ml_test"]} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.make",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env, unpackBool),
       ret_schema = packUnit,
       function = fn (slot, top) =>
@@ -55,6 +56,7 @@ let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.is_toplevel",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packBool,
       function = fn slot => Toplevel.is_toplevel (#get slot ()),
@@ -68,6 +70,7 @@ let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.clear",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packUnit,
       function = fn slot => #put slot NONE,
@@ -83,6 +86,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = ["tat_framework_ml_test"]} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.begin",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env,
                      unpackTuple3 (unpackString, unpackString, unpackString)),
       ret_schema = packUnit,
@@ -101,6 +105,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.run",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env,
                      unpackPair (#slot_unpacker env, unpackString)),
       ret_schema = TAT_Test_Lib.pack_records,
@@ -122,6 +127,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.run_parallel",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env,
                      unpackPair (#slot_unpacker env, unpackPair (unpackString, unpackString))),
       ret_schema = packPair (TAT_Test_Lib.pack_records, TAT_Test_Lib.pack_records),
@@ -145,6 +151,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.operation",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env, unpackString),
       ret_schema = packList packString,
       function = fn (slot, outcome) =>
@@ -167,6 +174,7 @@ let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.end",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packUnit,
       function = fn slot => #end_theory env (#get slot ()),
@@ -180,7 +188,9 @@ let
   fun reg name =
     TAT_Framework.register_callback {python_packages = []} (fn _ =>
       Remote_Procedure_Calling.mk_callback {
-        name = name, arg_schema = MessagePackBinIO.Unpack.unpackUnit,
+        name = name,
+        on_interrupt = Remote_Procedure_Calling.Reraise,
+        arg_schema = MessagePackBinIO.Unpack.unpackUnit,
         ret_schema = MessagePackBinIO.Pack.packUnit, function = I, timeout = NONE})
   val thy' = \<^theory> |> reg "TAT_test.dup" |> reg "TAT_test.dup"
 in

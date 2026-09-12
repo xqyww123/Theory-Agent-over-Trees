@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from Isabelle_RPC_Host import IsabelleError
+from Isabelle_RPC_Host import IsabelleError, IsabelleInterrupt
 
 import isabelle_theory_agent
 from isabelle_theory_agent import isabelle_driver
@@ -21,12 +21,15 @@ from isabelle_theory_agent.exceptions import TAT_Error, TAT_InternalError, TAT_I
 
 
 class Fake_Connection:
-    """Answers one callback and lets another raise, as the RPC library does
-    when the ML side let an exception escape: one entry per message, a
-    message spanning lines."""
+    """Answers one callback, interrupts one under a name no ML callback
+    bears, and lets every other raise as the RPC library does when the ML
+    side let an exception escape: one entry per message, a message spanning
+    lines."""
     async def callback(self, name, args):
         if name == "TAT.state_exists":
             return args == "held"
+        if name == "TAT.interrupted":
+            raise IsabelleInterrupt(["Interrupt"], None)
         raise IsabelleError([f'exception Bug "{name}: tat-bug" raised (line 94)\nAt command "theory"',
                              "second message"], None)
 
@@ -42,6 +45,14 @@ def test_a_result_comes_back_and_an_escaped_exception_is_a_bug():
         "the ML callback TAT.Theory.begin failed:\n"
         'exception Bug "TAT.Theory.begin: tat-bug" raised (line 94)\nAt command "theory"\n'
         "second message")
+
+
+def test_an_interrupt_is_treated_like_any_isabelle_error_for_now():
+    conn = cast(Any, Fake_Connection())
+    with pytest.raises(TAT_IsabelleError) as e:
+        asyncio.run(isabelle_driver.call(conn, "TAT.interrupted", ()))
+    assert isinstance(e.value.__cause__, IsabelleInterrupt)
+    assert str(e.value) == "the ML callback TAT.interrupted failed:\nInterrupt"
 
 
 def test_call_is_the_one_door_to_the_wire():

@@ -23,17 +23,19 @@ and its layout is fixed:
 ```
 <working directory>/
   theory_forest.sqlite     the forest (§2); read at start, created empty if absent
+  tat.lock                 held by the conversation on this directory (MODULE_STRUCTURE §4.6)
   ROOT                     every Session's entry (ARCHITECTURE §4)
   <session name>/          one folder per Session, named after it
     <theory name>.thy      one file per tree, named after the theory's short name
 ```
 
 - A `Session`'s directory is its name, not an attribute.
-- The client hands the directory to `TAT_Framework.start`, which passes it
-  to `launch_TAT` as an argument. Both sides read the same string: the ML
-  side's `begin_theory` takes `<working directory>/<session name>` as the
-  `master_dir`; the Python side keeps it in the `Conversation`
-  (MODULE_STRUCTURE §4.1) and writes the files and the forest there.
+- The launcher (ARCHITECTURE §9) hands the directory to
+  `TAT_Framework.start`, which passes it to `launch_TAT` as an argument.
+  Both sides read the same string: the ML side's `begin_theory` takes
+  `<working directory>/<session name>` as the `master_dir`; the Python side
+  keeps it in the `Conversation` (MODULE_STRUCTURE §4.1) and writes the files
+  and the forest there.
 - TAT owns the files: deleting a tree deletes its `.thy`, deleting a
   `Session` deletes its folder.
 
@@ -395,11 +397,14 @@ at every step that touches the ML side.
    class's hook goes through. Tests: `call`'s conversion against a fake
    connection; the ML end-to-end test registers callbacks that raise a
    `Bug`, raise a user-level error, and answer nothing, and checks what
-   each becomes on the Python side. An interrupt is left to the RPC
-   framework for now: the owner plans to extend `Isabelle_RPC` so that each
-   callback says how it handles one, Python always notified through an
-   `IsabelleInterrupt`; TAT will then treat it as a failure under
-   `TAT_Error`, not a bug (decided 2026-09-09).
+   each becomes on the Python side. An interrupt is the RPC library's
+   business *(extended 2026-09-09)*: every callback declares `on_interrupt`,
+   `Reraise` or `Swallow`, and Python is always told through
+   `IsabelleInterrupt`, an `IsabelleError`; TAT's callbacks all `Reraise`,
+   and `isabelle_driver.call` treats the interrupt like any other
+   `IsabelleError` for now, i.e. as `TAT_IsabelleError` (decided
+   2026-09-09, superseding the earlier intention to put it under
+   `TAT_Error`).
 4. **The forest walk** (§6): the import graph, the order constraint's stop,
    transitive imports before `T`, stops across import edges, invalidation of
    importers, the pre/post graph comparison, `TAT.theory_delete`.
@@ -410,11 +415,23 @@ at every step that touches the ML side.
    `delete` (TOOL_SCHEMAS.md — `insert_after` is `edit.insert` at
    `index + 1`; `HoldsNoChildren` and `ProtectedNode` are refused here,
    before the model is called) and the `quickview` appended to every
-   result (PRINT.md, its default rendering only); `mcp_server.py`;
-   `toplevel.py`'s `launch_TAT` taking the working directory,
-   `TAT_Framework.start` passing it; `Dev/TAT_Dev.thy` starting a
-   conversation. Test: an in-process client calls the tools and evaluates
-   one tree in Isabelle.
+   result (PRINT.md, its default rendering only); `mcp_server.py`, one
+   Streamable HTTP server with the tool boundary and the conversation's
+   ending (MODULE_STRUCTURE §4.6), landing with the `mcp` SDK and the ASGI
+   server it runs added to `pyproject.toml`'s dependencies;
+   `isabelle_driver.call` shielding its round trip (MODULE_STRUCTURE
+   §4.3), needed as soon as anything can cancel a call's body;
+   `toplevel.py`'s `launch_TAT` taking the working directory and the port
+   and holding the directory's lock file, `TAT_Framework.start` passing
+   them; `plugin.py` splitting the process-wide registry — the framework's
+   two classes and every imported plugin class, registered once per
+   process — from the per-conversation table `load` returns, so a second
+   `load` in one process re-registers nothing already in the registry and
+   imports only packages the process has not imported yet
+   (MODULE_STRUCTURE §4.4); `Dev/TAT_Dev.thy` starting a conversation.
+   Test: the tools are called and one tree is evaluated in Isabelle; how
+   the test suite reaches the tools is decided when this step starts, and
+   `test/routing_forest.py` retires with step 4.
 
 Out of this plan, in the order they are likely needed afterwards: `recall`,
 `evaluate_to` and `status` as tools (TOOL_SCHEMAS.md §5); the renderings
