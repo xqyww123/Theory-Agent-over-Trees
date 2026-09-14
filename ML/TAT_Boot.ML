@@ -13,10 +13,17 @@ val _ =
   Protocol_Command.define_bytes "TAT.boot" (fn args =>
     let
       (*the launcher's answer on a failure before the hand-off; TAT.start
-        answers every later path (TAT_Framework.ML)*)
+        answers every later path, rendering the exception the same way
+        (TAT_Framework.ML)*)
+      fun messages exn =
+        if Exn.is_interrupt exn then ["Interrupt"]
+        else
+          (case Exn.capture Runtime.exn_message_list exn of
+            Exn.Res msgs => msgs
+          | Exn.Exn _ (*sic!*) => ["CRASHED"])
       fun finished exn =
         Output.protocol_message [Markup.function "TAT.finished"]
-          [let open XML.Encode in pair int (list string) (1, Runtime.exn_message_list exn) end]
+          [let open XML.Encode in pair int (list string) (1, messages exn) end]
       fun boot () =
        ((*the isabelle.Session's handshake, Prover.options, set it to 3 for any
           positive option value (Pure/System/isabelle_process.ML,

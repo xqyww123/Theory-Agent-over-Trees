@@ -31,7 +31,8 @@ COPYING, COPYING.LIB, COPYRIGHT   LGPL-2.1-or-later, as in Isa-Mini
 The `ROOT` declares one Isabelle session, `Theory_Agent_over_Trees`.
 Nothing ever runs on its heap: the entry exists so that the launcher can
 load `Theory_Agent_over_Trees.Theory_Agent_over_Trees` by that name (§5),
-and as a compile check of the sources. A running conversation never sits
+and as a compile check of the sources — the boot excepted, which only a
+starting process compiles (§5). A running conversation never sits
 on that heap: `Theory_Agent_over_Trees.thy`, and the theory defining each
 plugin the working directory records, are loaded from source on the base
 heap when the process starts (ARCHITECTURE §8).
@@ -234,10 +235,10 @@ a code and messages in the shape `build_session_finished` uses: `0` when
 the conversation ended by `start` returning, `1` with the exception's
 messages when an exception ended it — a plugin that does not load or is
 not found, a bug, a `TAT_DisasterError`, a `TAT_StartupError`, the Python
-side going away before `launch_TAT` answered. The code is decided where
-the distinction is known: `start'` no longer flattens the RPC library's
-failure into one `error`; the launcher reads the code and never parses
-text.
+side going away before `launch_TAT` answered, an interrupt at the
+terminal, whose message is `Interrupt`; `CRASHED` stands for the messages
+when they could not be rendered. The launcher reads the code and never
+parses text.
 
 ## 3. `TAT_Common_Nodes`
 
@@ -770,7 +771,11 @@ order:
    and last the two TAT sets itself, which therefore win —
    `isabelle_rpc_dialogue=absent` and `editor_tracing_messages=0`, since
    no dialogue can be answered in a headless process, and the second is
-   Isabelle's own tracing limiter, which asks one;
+   Isabelle's own tracing limiter, which asks one; refuses
+   `parallel_proofs` at 3 or above, with
+   `TAT requires parallel_proofs below 3, but the options give <n>`,
+   exiting `2` — the boot restores the option's value, and every load
+   asserts it below 3 (§2.3);
 3. under a `Console_Progress` and its interrupt handler, `Build.build_logic`
    on `BASE` — default `ISABELLE_LOGIC` — with the `-d` directories and
    `build_heap`, which builds and stores a missing or outdated base heap
@@ -783,19 +788,31 @@ order:
    `TAT.finished` — with `ML/TAT_Boot.ML` as `use_prelude` and Isabelle's own
    `Command_Line.ML_tool(List("Isabelle_Process.init_build ()"))` as
    `eval_main`; then waits for the process to be ready, reporting a failed
-   start with the process's own syslog;
+   start with the process's own syslog and exiting `2`;
 4. sends `TAT.boot` with the working directory, the port, default 8191,
    and the plugins' theory names;
 5. waits for `TAT.finished` (§2.6) or for the Isabelle process to
-   terminate, whichever comes first, stops the process, prints the
-   messages `TAT.finished` carried, and exits with its code: `0` when the
+   terminate, whichever comes first, prints the messages `TAT.finished`
+   carried, stops the process, and exits with its code: `0` when the
    conversation ended by `start` returning; `1` when an exception ended
    it — a bug, a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that
    did not load, the Python side going away before `launch_TAT`
-   answered; and `1` when the process terminated without `TAT.finished`. The
-   launcher prints and exits itself rather than letting the failure out
-   of the tool. An interrupt at the terminal terminates the Isabelle
-   process, as `isabelle console` and the build job do.
+   answered, an interrupt at the terminal, whose message is `Interrupt`
+   when the answer outruns the process's termination; `1` when the
+   process terminated without `TAT.finished`, with
+   `Isabelle process terminated:` and Isabelle's own wording of the
+   return code; and `2` when `TAT.finished` arrived but could not be
+   decoded, the launcher's own error, with
+   `TAT.finished could not be decoded:` and the failure. The launcher prints and exits
+   itself rather than letting the failure out of the tool. Once the
+   Isabelle process is started, an interrupt at the terminal terminates
+   it, and the conversation ends as above; before that, the interrupt is
+   Isabelle's: outside `Build.build_logic` it ends the tool with `130`
+   and nothing printed; inside it stops a build under way, the tool
+   exiting with the build's own code, and a check that finds the heap in
+   place ignores it. Earlier still, `Getopts` ends the tool as it ends
+   every Isabelle tool: an unknown option or a wrong number of arguments
+   exits `1`, an option argument it rejects `2`.
 
 `ML/TAT_Boot.ML` is the boot: the one ML file the launcher loads before
 TAT's theory exists. A `--use` file is compiled by Poly/ML's own compiler,

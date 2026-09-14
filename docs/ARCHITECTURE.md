@@ -32,6 +32,7 @@ language. A concept that needs a name gets one here first.
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
 | **conversation** | one run of TAT, from Isabelle's call into Python until either process stops, the connection between them closes, or a bug or a `TAT_DisasterError` ends it from inside; one per working directory (§9) |
 | **launcher** | `isabelle TAT`, the command that starts the Isabelle process on the chosen base heap and calls `TAT_Framework.start` (§9) |
+| **boot** | `ML/TAT_Boot.ML`, the one ML file the launcher loads into the Isabelle process before TAT's theory exists; it defines the protocol command `TAT.boot` (MODULE_STRUCTURE §5) |
 | **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation (§9), the ROOT, and one folder per `Session` for its trees' `.thy` files (§4) |
 | **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |

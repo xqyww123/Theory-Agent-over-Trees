@@ -203,9 +203,10 @@ fun load options qualifier import =
 
 Four conditions, all required together:
 
-- **`parallel_proofs` below 3**, set from the option by the boot before its
-  first load and asserted at the conversation's start (MODULE_STRUCTURE §5,
-  §2.3). Measured on Isabelle2025-2 with `Thy_Info.use_theories` on a theory
+- **`parallel_proofs` below 3**, refused by the launcher when the options
+  give more, set from the option by the boot before its first load, and
+  asserted by every load and at the conversation's start (MODULE_STRUCTURE
+  §5, §2.3). Measured on Isabelle2025-2 with `Thy_Info.use_theories` on a theory
   whose proof fails, terminal or structured: at 0, 1 and 2 the call raises
   and the theory is not committed; at 3 — the value
   `init_options_interactive` sets (`Pure/System/isabelle_process.ML:212`) —

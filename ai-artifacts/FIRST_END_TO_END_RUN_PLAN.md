@@ -433,9 +433,8 @@ at every step that touches the ML side.
    the classpath (MODULE_STRUCTURE §5, §1) — the tools `TAT_new` and
    `TAT`; the boot `ML/TAT_Boot.ML` with its protocol command `TAT.boot`,
    and `TAT.start` that `TAT_Framework.ML` defines; `TAT_Framework.start`
-   taking the theories, the working directory and the port,
-   `check_parallel_proofs` asserting below 3, and `start'` no longer
-   flattening the RPC library's failure (MODULE_STRUCTURE §2.6).
+   taking the theories, the working directory and the port, and
+   `check_parallel_proofs` asserting below 3 (MODULE_STRUCTURE §2.6).
    Test: the tools are called and one tree is evaluated in Isabelle. The
    test suite starts one Python RPC host, then one `isabelle TAT` per run
    with that host's address exported as `RPC_Host` in its environment,

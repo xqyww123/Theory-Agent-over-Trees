@@ -551,9 +551,8 @@ fun start' procedure theories working_directory port =
       {name = procedure, arg_schema = packTuple3 (packList packString, packString, packInt),
        ret_schema = unpackUnit, callback = callbacks, timeout = NONE}
   in
-    (*a failure of the call is left as it is raised: TAT.start below tells
-      the connection's closing from a failure Python reported*)
     Remote_Procedure_Calling.call_command conversation (packages, working_directory, port)
+      handle Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => error message
   end
 
 end
@@ -569,20 +568,29 @@ fun start theories working_directory port =
   Isabelle thread, inside no theory, interruptible as build_session's is
   (Pure/Build/build.ML); every path ends in TAT.finished, in
   build_session_finished's shape: 0 when the conversation ended by start
-  returning, 1 with the exception's messages otherwise.*)
+  returning, 1 with the exception's messages otherwise -- "Interrupt" for
+  an interrupt, "CRASHED" when the messages could not be rendered.*)
 val _ =
   Protocol_Command.define "TAT.start" (fn args =>
     let
       val (working_directory, port, plugins) =
         (case args of wd :: port :: plugins => (wd, port, plugins) | _ => raise Match)
-      val own_theory = Context.theory_long_name \<^theory>
+      (*by name: \<^theory> here is this theory before TAT_Common_Nodes registers
+        its node classes; Thy_Info holds the finished value*)
+      val own_theory_name = Context.theory_long_name \<^theory>
       fun conversation () =
-        start (map Loader.fetch_named (own_theory :: plugins))
+        start (map Loader.fetch_named (own_theory_name :: plugins))
           working_directory (Value.parse_int port)
+      (*a terminal interrupt arrives as Interrupt_Breakdown, which
+        exn_message_list does not name; the sic arm is build_session's*)
+      fun messages exn =
+        if Exn.is_interrupt exn then ["Interrupt"]
+        else
+          (case Exn.capture Runtime.exn_message_list exn of
+            Exn.Res msgs => msgs
+          | Exn.Exn _ (*sic!*) => ["CRASHED"])
       fun finished result =
-        (case result of
-          Exn.Res () => (0, [])
-        | Exn.Exn exn => (1, Runtime.exn_message_list exn))
+        (case result of Exn.Res () => (0, []) | Exn.Exn exn => (1, messages exn))
         |> let open XML.Encode in pair int (list string) end
         |> single
         |> Output.protocol_message [Markup.function "TAT.finished"]

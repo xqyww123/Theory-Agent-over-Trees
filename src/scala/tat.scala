@@ -27,10 +27,8 @@ object TAT {
     def add(db: SQL.Database, plugins: List[String]): Unit =
       db.transaction {
         db.create_table(table)
-        for (plugin <- plugins) {
-          db.execute_statement(table.insert_cmd("INSERT OR IGNORE"),
-            body = { stmt => stmt.string(1) = plugin })
-        }
+        db.execute_batch_statement(db.insert_permissive(table),
+          batch = plugins.map(plugin => (stmt: SQL.Statement) => stmt.string(1) = plugin))
       }
 
     def read(db: SQL.Database): List[String] =
@@ -136,6 +134,13 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
           options.string.update("isabelle_rpc_dialogue", "absent").
             int.update("editor_tracing_messages", 0)
 
+        // the boot restores this option's value, and every load asserts it
+        // below 3 (docs/EVALUATOR_DESIGN.md §6)
+        val parallel_proofs = tat_options.int("parallel_proofs")
+        if (parallel_proofs >= 3) {
+          error("TAT requires parallel_proofs below 3, but the options give " + parallel_proofs)
+        }
+
 
         /* 3. the Isabelle process */
 
@@ -175,22 +180,22 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
                   }
                   (rc, errs.map(Pretty.string_of(_, metric = Symbol.Metric, pure = true)))
                 }
-                catch { case ERROR(err) => (Process_Result.RC.failure, List(err)) }
+                // wider than build_job's clause: XML.Decode throws XML.Error, not
+                // ERROR, and this message is the launcher's only ending
+                catch {
+                  case exn: Throwable =>
+                    (Process_Result.RC.failure,
+                      List("TAT.finished could not be decoded: " + Exn.message(exn)))
+                }
               finish(rc, messages)
               true
             }))
         })
 
-        // nothing the process prints is echoed: what ends the conversation
-        // arrives in TAT.finished
-        session.all_messages += Session.Consumer[Prover.Message]("TAT") {
-          case output: Prover.Output if output.is_exit =>
-            val result =
-              output.properties match {
-                case Markup.Process_Result(result) => ": " + result.print_rc
-                case _ => ""
-              }
-            finish(1, List("Isabelle process terminated" + result))
+        // the process ending before it answers is an ending too
+        session.phase_changed += Session.Consumer[Session.Phase]("TAT") {
+          case Session.Terminated(result) =>
+            finish(Process_Result.RC.error, List("Isabelle process terminated: " + result.print_rc))
           case _ =>
         }
 
@@ -213,8 +218,8 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
             /* 5. the ending */
 
             val (rc, messages) = finished.guarded_access(st => st.map(x => (x, st)))
-            session.stop()
             messages.foreach(progress.echo_error_message(_))
+            session.stop()
             rc
           }
         if (rc != Process_Result.RC.ok) sys.exit(rc)

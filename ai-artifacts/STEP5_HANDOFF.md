@@ -5,7 +5,9 @@ MODULE_STRUCTURE §2.6 and §5 (the launcher `isabelle TAT_new` / `isabelle
 TAT`, the boot `ML/TAT_Boot.ML`, the protocol commands `TAT.boot` and
 `TAT.start`, `TAT.finished` and the exit codes), ARCHITECTURE §9,
 EVALUATOR_DESIGN §6 (measured; data in PARALLEL_PROOFS_MEASUREMENT.md),
-FIRST_END_TO_END_RUN_PLAN §7 step 5. Nothing of step 5 is implemented yet.
+FIRST_END_TO_END_RUN_PLAN §7 step 5. The ML and Scala halves of step 5
+(items 1 and 2 below) are implemented, reviewed and committed; the Python
+half and the test harness (items 3 and 4) are not started.
 
 ## Owner's standing permissions for this work
 
@@ -18,8 +20,7 @@ FIRST_END_TO_END_RUN_PLAN §7 step 5. Nothing of step 5 is implemented yet.
 ## Implementation order
 
 1. ML: `ML/TAT_Boot.ML`; `TAT.start` in `TAT_Framework.ML`; `start` taking
-   a list of theories (registrations deduplicated by serial); `start'` not
-   flattening `Remote_Calling_Failure` into one `error`;
+   a list of theories (registrations deduplicated by serial);
    `check_parallel_proofs` asserting `< 3`; `TAT.finished (rc, messages)`
    on every path.
 2. Scala: `src/scala/tat.scala` (`TAT_new`, `TAT`), `etc/build.props`,
