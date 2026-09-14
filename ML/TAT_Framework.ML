@@ -58,9 +58,12 @@ sig
     (env -> Remote_Procedure_Calling.callback') -> theory -> theory
 
   (*** Conversation (§2.6) ***)
-  val start' : string -> theory -> unit  (*the Python procedure that is the conversation,
-                                           and the theory whose ancestry names the node classes*)
-  val start : theory -> unit             (*loads the Python package, then start' "launch_TAT"*)
+  val start' : string -> theory list -> string -> int -> unit
+                      (*the Python procedure that is the conversation; the theories
+                        whose ancestries name the node classes; the working
+                        directory; the port to serve on*)
+  val start : theory list -> string -> int -> unit
+                      (*loads the Python package, then start' "launch_TAT"*)
 end
 
 structure TAT_Framework : TAT_FRAMEWORK =
@@ -139,6 +142,17 @@ structure Loader = struct
   call).*)
 val lock = Synchronized.var "TAT.thy_load" ()
 
+(*EVALUATOR_DESIGN §6, measured: at 3 -- the interactive default -- a theory
+  whose proof fails commits, and the error surfaces later; below 3 a failing
+  load raises and commits nothing.  Checked by every load and at conversation
+  start.*)
+fun check_parallel_proofs () =
+  let val n = ! Multithreading.parallel_proofs
+  in if n < 3 then ()
+     else error ("TAT requires parallel_proofs below 3, but this process runs at " ^
+                 string_of_int n)
+  end
+
 (*The Thy_Info.use_theories wrapper of EVALUATOR_DESIGN §6, one theory per
   call by signature.
 
@@ -165,6 +179,7 @@ val lock = Synchronized.var "TAT.thy_load" ()
 fun load qualifier import =
   Synchronized.change lock (fn () =>
     let
+      val _ = check_parallel_proofs ()
       val result =
         Exn.capture_body (fn () => Thy_Info.use_theories (Options.default ()) qualifier [import])
       val residue =
@@ -193,21 +208,33 @@ fun load_target theory_name node_name =
       then Path.implode (Path.drop_ext node_name)
       else error ("Fail to load `" ^ theory_name ^ "` because it is not found."))
 
+(*The last two steps of EVALUATOR_DESIGN §2's order: the base heap, then a
+  load from source.  Also how a theory named to the launcher (§5) is
+  fetched, before any conversation -- so no theory table here.*)
+fun fetch qualifier pos {node_name, theory_name, ...} =
+  (case Thy_Info.lookup_theory theory_name of
+    SOME thy => thy
+  | NONE =>
+      (load qualifier (load_target theory_name node_name, pos);
+       Thy_Info.get_theory theory_name))
+
 (*Import resolution in the order of EVALUATOR_DESIGN §2, behind one
   Resources.import_name call (§7).*)
 fun resolve theories {session_name, master_dir} (import, pos) =
-  let
-    val {node_name, theory_name, ...} = Resources.import_name session_name master_dir import
-  in
-    (case Theories.lookup theories theory_name of
+  let val node = Resources.import_name session_name master_dir import in
+    (case Theories.lookup theories (#theory_name node) of
       SOME thy => thy
-    | NONE =>
-        (case Thy_Info.lookup_theory theory_name of
-          SOME thy => thy
-        | NONE =>
-            (load session_name (load_target theory_name node_name, pos);
-             Thy_Info.get_theory theory_name)))
+    | NONE => fetch session_name pos node)
   end
+
+(*a theory the launcher names (§5): a session-qualified name, resolved
+  against no session and no directory -- an unqualified one would resolve
+  to a file under the process's current directory*)
+fun fetch_named name =
+  if Long_Name.is_qualified name
+  then fetch "" Position.none (Resources.import_name "" Path.current name)
+  else error ("The plugin theory must be fully qualified (SESSION.THEORY), but provided " ^
+              quote name)
 
 (*The base-heap half of the short-name check (§2.3): the long name of the
   theory whose short name `name` takes, or NONE when the name is free.  The
@@ -215,15 +242,6 @@ fun resolve theories {session_name, master_dir} (import, pos) =
 fun check_new_theory_short_name name =
   let val short = Long_Name.base_name name
   in List.find (fn n => Long_Name.base_name n = short) (Thy_Info.get_names ()) end
-
-(*EVALUATOR_DESIGN §6: at 3 -- the interactive default -- a theory whose
-  structured proof fails commits successfully and the error surfaces later.*)
-fun check_parallel_proofs () =
-  let val n = ! Multithreading.parallel_proofs
-  in if n = 1 then ()
-     else error ("TAT requires parallel_proofs = 1, but this process runs at " ^
-                 string_of_int n)
-  end
 
 end
 
@@ -505,11 +523,11 @@ fun framework_callbacks (slots : Slots.T) = [
      timeout = NONE}
 ]
 
-fun start' procedure thy =
+fun start' procedure theories working_directory port =
   let
     val _ = Loader.check_parallel_proofs ()
     val slots = Slots.create ()
-    val theories = Theories.create ()
+    val theory_table = Theories.create ()
     (*This unpacker must not raise: mk_callback advances the input stream only
       after a successful unpack (contrib/Isabelle_RPC/Tools/RPC.ML), so an
       exception here leaves the message pending on the connection and every later
@@ -518,9 +536,10 @@ fun start' procedure thy =
     val env : env = {
       slot_unpacker = fn src =>
         let val (name, src') = unpackString src in (Slots.slot slots name, src') end,
-      begin_theory = begin_theory theories,
-      end_theory = end_theory theories}
-    val regs = rev (Registrations.get thy)
+      begin_theory = begin_theory theory_table,
+      end_theory = end_theory theory_table}
+    (*a registration reached through several ancestries counts once (§2.6)*)
+    val regs = distinct (eq_fst op =) (maps (rev o Registrations.get) theories)
     val callbacks = map (fn (_, {make, ...}) => make env) regs @ framework_callbacks slots
     (*the dispatch table would silently keep one of two same-named callbacks*)
     val _ = (case duplicates (op =) (map #name callbacks)
@@ -528,17 +547,48 @@ fun start' procedure thy =
                | names => error ("Callback registered twice: " ^ commas_quote names))
     val packages = distinct (op =) (maps (#python_packages o #2) regs)
     val _ = Output_Routing.install ()
-    val conversation : (string list, unit) Remote_Procedure_Calling.command =
-      {name = procedure, arg_schema = packList packString, ret_schema = unpackUnit,
-       callback = callbacks, timeout = NONE}
+    val conversation : (string list * string * int, unit) Remote_Procedure_Calling.command =
+      {name = procedure, arg_schema = packTuple3 (packList packString, packString, packInt),
+       ret_schema = unpackUnit, callback = callbacks, timeout = NONE}
   in
-    Remote_Procedure_Calling.call_command conversation packages
-      handle Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => error message
+    (*a failure of the call is left as it is raised: TAT.start below tells
+      the connection's closing from a failure Python reported*)
+    Remote_Procedure_Calling.call_command conversation (packages, working_directory, port)
   end
 
 end
 
-fun start thy =
-  (Remote_Procedure_Calling.load ["isabelle_theory_agent"]; start' "launch_TAT" thy)
+fun start theories working_directory port =
+  (Remote_Procedure_Calling.load ["isabelle_theory_agent"];
+   start' "launch_TAT" theories working_directory port)
+
+(*The protocol command the boot runs once this theory is loaded (§2.6, §5):
+  arguments the working directory, the port, then the plugins' theory names.
+  Forked off the protocol loop -- which reads one message at a time, and
+  answers the Scala.function calls of a loading theory -- as a plain
+  Isabelle thread, inside no theory, interruptible as build_session's is
+  (Pure/Build/build.ML); every path ends in TAT.finished, in
+  build_session_finished's shape: 0 when the conversation ended by start
+  returning, 1 with the exception's messages otherwise.*)
+val _ =
+  Protocol_Command.define "TAT.start" (fn args =>
+    let
+      val (working_directory, port, plugins) =
+        (case args of wd :: port :: plugins => (wd, port, plugins) | _ => raise Match)
+      val own_theory = Context.theory_long_name \<^theory>
+      fun conversation () =
+        start (map Loader.fetch_named (own_theory :: plugins))
+          working_directory (Value.parse_int port)
+      fun finished result =
+        (case result of
+          Exn.Res () => (0, [])
+        | Exn.Exn exn => (1, Runtime.exn_message_list exn))
+        |> let open XML.Encode in pair int (list string) end
+        |> single
+        |> Output.protocol_message [Markup.function "TAT.finished"]
+    in
+      ignore (Isabelle_Thread.fork (Isabelle_Thread.params "TAT.start") (fn () =>
+        finished (Exn.capture_body (Future.interruptible_task conversation))))
+    end)
 
 end

@@ -32,10 +32,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 @isabelle_remote_procedure("TAT_test.drive")
-async def drive(packages: list[str], connection: Connection) -> None:
-    # the registrations' python_packages, collected and deduplicated
-    # (MODULE_STRUCTURE §2.6): two of them name this module, the rest none
+async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None:
+    # what start' sends: the registrations' python_packages, collected and
+    # deduplicated (MODULE_STRUCTURE §2.6) -- two of them name this module,
+    # the rest none -- then the working directory and the port, which the
+    # test theory leaves empty
+    packages, working_directory, port = arg
     assert packages == ["tat_framework_ml_test"], packages
+    assert (working_directory, port) == ("", 0), (working_directory, port)
 
     a = Isar_State_Slot.assign(connection)
     b = Isar_State_Slot.assign(connection)

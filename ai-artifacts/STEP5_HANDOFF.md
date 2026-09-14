@@ -34,16 +34,13 @@ FIRST_END_TO_END_RUN_PLAN §7 step 5. Nothing of step 5 is implemented yet.
 
 ## To propose to the owner when reached
 
-- Isabelle_RPC: a distinct ML exception for the connection closing, so
-  `TAT.finished`'s code is decided without parsing the library's message
-  text (`Tools/RPC.ML:571-572` vs `:594-596` differ only in the message).
 - `docs/node_classes/THEOREM.md`: untracked draft, to discuss before the
   `Theorem` class.
 
 ## To verify at the first run (from the reviews)
 
 `parallel_proofs` inside the loader after the boot's restore; a missing
-base heap is built and found; the served line reaches the terminal; the
+base heap is built and found; the
 exit codes (clean ending, exception, each pre-flight refusal, Ctrl-C,
 process death without `TAT.finished`); a mistyped `-P` ends with a message
 naming the theory; `editor_tracing_messages=0` is load-bearing; a plugin

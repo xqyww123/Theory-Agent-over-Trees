@@ -1,2 +1,3 @@
 # -*- shell-script -*- :mode=shellscript:
 TAT_HOME="$COMPONENT"
+classpath "$TAT_HOME/lib/tat.jar"

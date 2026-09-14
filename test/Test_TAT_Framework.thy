@@ -194,7 +194,7 @@ let
         ret_schema = MessagePackBinIO.Pack.packUnit, function = I, timeout = NONE})
   val thy' = \<^theory> |> reg "TAT_test.dup" |> reg "TAT_test.dup"
 in
-  case Exn.capture_body (fn () => TAT_Framework.start' "never_called" thy') of
+  case Exn.capture_body (fn () => TAT_Framework.start' "never_called" [thy'] "" 0) of
     Exn.Exn (ERROR msg) =>
       if String.isSubstring "Callback registered twice" msg then ()
       else raise Fail ("wrong rejection: " ^ msg)
@@ -204,12 +204,12 @@ end
 \<close>
 
 ML \<open>
-(*parallel_proofs <> 1 is rejected at conversation start, before anything
-  is created (EVALUATOR_DESIGN §6: 3 is the interactive default)*)
+(*parallel_proofs at 3 -- the interactive default -- is rejected at
+  conversation start, before anything is created (EVALUATOR_DESIGN §6)*)
 let
   val orig = ! Multithreading.parallel_proofs
   val _ = Multithreading.parallel_proofs := 3
-  val outcome = Exn.capture_body (fn () => TAT_Framework.start' "never_called" \<^theory>)
+  val outcome = Exn.capture_body (fn () => TAT_Framework.start' "never_called" [\<^theory>] "" 0)
   val _ = Multithreading.parallel_proofs := orig
 in
   case outcome of
@@ -223,6 +223,6 @@ end
 
 ML \<open>Remote_Procedure_Calling.load ["tat_framework_ml_test"]\<close>
 
-ML \<open>TAT_Framework.start' "TAT_test.drive" \<^theory>\<close>
+ML \<open>TAT_Framework.start' "TAT_test.drive" [\<^theory>] "" 0\<close>
 
 end

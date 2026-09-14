@@ -1,0 +1,12 @@
+# lib/tat.jar is committed; no_build keeps every `isabelle` invocation from
+# rebuilding it on the user's machine.  To rebuild after a change: remove the
+# no_build line, run isabelle scala_build, restore it.
+title = Isabelle/Scala/TAT
+module = lib/tat.jar
+no_build = true
+requirements = \
+  env:ISABELLE_SCALA_JAR
+sources = \
+  src/scala/tat.scala
+services = \
+  isabelle.tat.TAT_Tools

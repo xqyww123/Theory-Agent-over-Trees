@@ -77,11 +77,13 @@ own long name — the same string §2.3's resolution produces.
 Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 `Resources.import_name` call (EVALUATOR_DESIGN §7):
 
-- `resolve` — the theory table, then the base heap, then a load from source;
+- `resolve` — the theory table, then `fetch`;
+- `fetch` — the base heap, then a load from source; also how the theories
+  the launcher names are fetched (§5), before any conversation exists;
 - `load` — the `Thy_Info.use_theories` wrapper of EVALUATOR_DESIGN §6, under
   one lock, one theory per call, with `parallel_proofs` below 3, which the
-  boot sets from the option before its first load and the conversation's
-  start asserts (§5);
+  boot sets from the option before its first load (§5) and every load and
+  the conversation's start assert (`check_parallel_proofs`);
 - `check_new_theory_short_name` — rejects a new theory name whose short name —
   the part after the last dot, which is what Isabelle compares
   (EVALUATOR_DESIGN §7) — the base heap already uses; the forest side of that
@@ -221,21 +223,21 @@ conversation rejects a duplicated name instead.
 `start` is reached through the protocol command `TAT.start`, which
 `TAT_Framework.ML` defines as it is loaded (`Protocol_Command.define`, a
 Pure API) and the boot runs once TAT's theory is loaded (§5). Its
-arguments are the plugins' theory names, the working directory and the
-port. Its handler forks a plain Isabelle thread — no Future worker, and
+arguments are the working directory, the port, then the plugins' theory
+names. Its handler forks a plain Isabelle thread — no Future worker, and
 inside no theory — whose whole body is captured with `Exn.capture_body`:
-it loads each plugin's theory through `Loader.load` (§2.3), fetches the
-theories from `Thy_Info`, asserts `parallel_proofs` below 3
-(`check_parallel_proofs`, §2.3), and calls `start`; then, on every path,
+it fetches TAT's own theory and each plugin's through `Loader.fetch`
+(§2.3) — a load asserting `parallel_proofs` below 3, as `start` does —
+and calls `start`; then, on every path,
 it answers the launcher with the protocol message `TAT.finished`, carrying
 a code and messages in the shape `build_session_finished` uses: `0` when
-the conversation ended by the connection closing or by `start` returning,
-`1` with the exception's messages when an exception ended it — a plugin
-that does not load or is not found, a bug, a `TAT_DisasterError`, a
-`TAT_StartupError`. The code is decided where the distinction is known:
-`start'` no longer flattens the RPC library's failure into one `error`,
-and the connection's closing is told apart from a failure Python reported;
-the launcher reads the code and never parses text.
+the conversation ended by `start` returning, `1` with the exception's
+messages when an exception ended it — a plugin that does not load or is
+not found, a bug, a `TAT_DisasterError`, a `TAT_StartupError`, the Python
+side going away before `launch_TAT` answered. The code is decided where
+the distinction is known: `start'` no longer flattens the RPC library's
+failure into one `error`; the launcher reads the code and never parses
+text.
 
 ## 3. `TAT_Common_Nodes`
 
@@ -726,7 +728,7 @@ the `Forest_Store` on `<working directory>/TAT.sqlite`; loads the
 plugins (§4.4); builds the `Forest`; starts the server, a port that cannot
 be bound being a `TAT_StartupError` too, and prints
 `TAT is serving on http://127.0.0.1:<port>/mcp` to the Isabelle side, a
-line the launcher echoes to its terminal (§5) and nothing depends on; then
+line nothing depends on and the launcher does not echo (§5); then
 serves until the conversation's ending (above), after which the lock is
 released.
 
@@ -735,7 +737,10 @@ released.
 `src/scala/tat.scala` defines the Isabelle tools `TAT_new` and `TAT`
 (ARCHITECTURE §9), registered through `etc/build.props` the way
 `contrib/Isabelle_RPC` registers its Scala functions; `lib/tat.jar` is
-committed and rebuilt with `isabelle scala_build` after a change. Both
+committed, and `etc/build.props` sets `no_build`, so no `isabelle`
+invocation on a user's machine rebuilds it; after a change the jar is
+rebuilt by removing that line, running `isabelle scala_build`, and
+restoring it. Both
 tools run in the JVM that `isabelle` starts, like every Isabelle/Scala
 tool.
 
@@ -773,24 +778,21 @@ order:
    (`contrib/Isabelle2025-2/src/Pure/ML/ml_console.scala`); then the
    `Sessions.Background` for `BASE` over the `-d` directories, checked for
    errors, and `Store.session_heaps` on it; then `Isabelle_Process.start`
-   on those heaps with an `isabelle.Session` whose `all_messages`
-   consumer echoes the process's `writeln`, `warning` and error messages
-   to the terminal through the `Console_Progress`, hung on
-   `session.all_messages` as `isabelle process_theories` hangs its own
-   (`contrib/Isabelle2025-2/src/Pure/Tools/process_theories.scala`), with
-   `ML/TAT_Boot.ML` as `use_prelude` and Isabelle's own
+   on those heaps with an `isabelle.Session` that echoes nothing the
+   process prints — whatever ends the conversation arrives in
+   `TAT.finished` — with `ML/TAT_Boot.ML` as `use_prelude` and Isabelle's own
    `Command_Line.ML_tool(List("Isabelle_Process.init_build ()"))` as
    `eval_main`; then waits for the process to be ready, reporting a failed
    start with the process's own syslog;
-4. sends `TAT.boot` with the plugins' theory names, the working directory
-   and the port, default 8191;
+4. sends `TAT.boot` with the working directory, the port, default 8191,
+   and the plugins' theory names;
 5. waits for `TAT.finished` (§2.6) or for the Isabelle process to
    terminate, whichever comes first, stops the process, prints the
    messages `TAT.finished` carried, and exits with its code: `0` when the
-   conversation ended by the connection closing — the Python side went
-   away — or by `start` returning; `1` when an exception ended it — a bug,
-   a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that did not
-   load; and `1` when the process terminated without `TAT.finished`. The
+   conversation ended by `start` returning; `1` when an exception ended
+   it — a bug, a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that
+   did not load, the Python side going away before `launch_TAT`
+   answered; and `1` when the process terminated without `TAT.finished`. The
    launcher prints and exits itself rather than letting the failure out
    of the tool. An interrupt at the terminal terminates the Isabelle
    process, as `isabelle console` and the build job do.
