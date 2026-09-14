@@ -137,7 +137,7 @@ def test_a_session_with_its_theories_in_one_call():
 
 
 def test_the_fields_are_kept_and_stored(tmp_path):
-    store = Forest_Store(tmp_path / "theory_forest.sqlite")
+    store = Forest_Store(tmp_path / "TAT.sqlite")
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session(
         "Arith", theory("X", "Main", "HOL-Library.Multiset", '"lib/Rel"'),
@@ -148,7 +148,7 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     assert s.sub_nodes[0].header() == 'theory X\n  imports Main HOL-Library.Multiset "lib/Rel"\nbegin'
     before = shape(f)
     store.close()
-    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "theory_forest.sqlite"))
+    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite"))
     assert shape(f2) == before
     s2 = f2.sub_nodes[0]
     assert isinstance(s2, Session) and s2.parent is f2

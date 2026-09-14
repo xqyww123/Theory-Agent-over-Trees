@@ -21,6 +21,7 @@ language. A concept that needs a name gets one here first.
 | **tree** | one Isabelle theory; the root's name is the short name of the theory |
 | **node** | one semantic unit in a tree |
 | **node class** | the kind of a node — `Theorem`, `Define`, … — extensible |
+| **plugin** | a node class as delivered: the Isabelle theory carrying its evaluator and the Python package carrying the rest (§6); TAT's own are always loaded, any other is named to `isabelle TAT_new` (§9) |
 | **segment** | one Isabelle span in an emitted file |
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
 | **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per conversation (EVALUATOR_DESIGN §1.1) |
@@ -30,7 +31,7 @@ language. A concept that needs a name gets one here first.
 | **emit** | a node writing its own Isar text (§4) |
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
 | **conversation** | one run of TAT, from Isabelle's call into Python until either process stops, the connection between them closes, or a bug or a `TAT_DisasterError` ends it from inside; one per working directory (§9) |
-| **launcher** | what starts the Isabelle process, chooses the base heap and calls `TAT_Framework.start` (§9) |
+| **launcher** | `isabelle TAT`, the command that starts the Isabelle process on the chosen base heap and calls `TAT_Framework.start` (§9) |
 | **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation (§9), the ROOT, and one folder per `Session` for its trees' `.thy` files (§4) |
 | **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |
@@ -441,9 +442,11 @@ A node class is delivered as an Isabelle theory together with a Python package.
 The theory is primary: it registers the class's evaluator on the ML side —
 into its own theory data (MODULE_STRUCTURE §2.5) — and the registration names
 the Python packages carrying the rest, which the conversation collects and
-hands to `plugin.py` to import (MODULE_STRUCTURE §2.6, §4.4). Installing a
-node class means having the theory the conversation starts from import it;
-the conversation loads it from source at start (§8).
+hands to `plugin.py` to import (MODULE_STRUCTURE §2.6, §4.4). Every node
+class is a plugin; TAT's own are always loaded, and any other is recorded
+in the working directory (§9) and loaded from source when the process
+starts (§8), by the name `SESSION.THEORY` of its theory, so that theory
+must live in an Isabelle session some ROOT declares.
 
 | part | side | |
 | --- | --- | --- |
@@ -521,9 +524,11 @@ in any heap
 (EVALUATOR_DESIGN §2). A `Session`'s `parent_session` is ROOT metadata, not a
 constraint on the heap: a library theory the base heap lacks is loaded from
 source. TAT's own theories
-(§6.3) are never in the base heap: the conversation loads them from source
-when it starts, which is quick because they are small. The same goes for
-`Isabelle_RPC`'s theory, which they import, when the base heap lacks it.
+(§6.3) are never in the base heap: they are loaded from source when the
+process starts, and so are `Isabelle_RPC`'s theory, which they import, and
+the theories of `Performant_Isabelle_ML` it rests on — found through the
+Isabelle session of that name — when the base heap lacks them. A base heap
+that holds `Isabelle_RPC` spares that loading at every start.
 
 No node class emits `oops`: it leaves no trace in Isabelle's output and so
 could not be accounted for.
@@ -535,7 +540,8 @@ serves the MCP tools and writes the `.thy` files. The Isabelle side runs the
 evaluators.
 
 Isabelle opens the connection. The ML entry, `TAT_Framework.start`, is given
-the working directory and the port to serve on (MODULE_STRUCTURE §2.6) and
+the theories whose ancestries name the node classes, the working directory
+and the port to serve on (MODULE_STRUCTURE §2.6) and
 calls the Python procedure `launch_TAT` over `contrib/Isabelle_RPC`; Python
 drives Isabelle through that call's callbacks, and the call does not return:
 the conversation ends when either process stops, when the connection
@@ -573,16 +579,34 @@ mcp_servers.…`). The clients' tool-call timeouts are theirs to raise — an
 `evaluate_to` can run long: Claude Code's `MCP_TIMEOUT` and per-server
 `timeout`, Codex's per-server `startup_timeout_sec` and `tool_timeout_sec`.
 
-**Launching.** The launcher starts the Isabelle process, chooses the base
-heap (§8) and calls `TAT_Framework.start`; either order works. Isabelle
-first: it opens the RPC connection and calls into Python, which starts the
-server. Or the Python RPC host first, on a port an environment variable
-hands to the Isabelle process started next, which makes the same call. The
-development launcher is the first: the Isa-REPL server launches Isabelle on
-a chosen heap, and the app of `Dev/TAT_Dev.thy`, a theory nothing shipped
-imports, makes the call — so Isa-REPL is a development dependency and never
-a shipped one. The production launcher is still to be chosen
-(OPEN_QUESTIONS §5).
+**Launching.** The launcher is `isabelle TAT`, an Isabelle tool the
+component adds (MODULE_STRUCTURE §5), the same in development and in
+production; a working directory is first made by `isabelle TAT_new`:
+
+```
+isabelle TAT_new [-P PLUGIN]... WORKING_DIRECTORY
+isabelle TAT [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY
+```
+
+`TAT_new` creates the directory's database and records in it the plugins
+the forest will use, each named by the theory that defines it,
+`SESSION.THEORY`; on an existing directory it adds the plugins given and
+changes nothing else. The record is names only, so a working directory
+opens on any host on which those plugins' Isabelle sessions are declared,
+by a registered component or by a ROOT under a `-d` given at each launch.
+`TAT` starts the Isabelle process on the base heap `BASE` (§8; the default
+is Isabelle's `ISABELLE_LOGIC`; a base heap that is missing or outdated is
+built first), loads TAT's theory and the recorded plugins' theories into
+it from source, and calls `TAT_Framework.start` with those theories, the
+working directory and the port; the port defaults to 8191, and one that
+cannot be bound is a `TAT_StartupError` (MODULE_STRUCTURE §4.6). The call
+does not return, so the Isabelle process lives as long as the
+conversation; how it ends decides the launcher's exit code (MODULE_STRUCTURE
+§5). Either order of the two processes
+works: Isabelle first, which opens an RPC host of its own, or a Python RPC
+host first, on an address the environment variable `RPC_Host` hands to the
+Isabelle process started next (`contrib/Isabelle_RPC`); the launcher does
+nothing for either.
 
 **Concurrency.** The calls that hold the forest's lock — `edit`, `move`,
 `delete` and `evaluate_to` — hold it across the whole call

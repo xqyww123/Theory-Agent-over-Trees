@@ -43,5 +43,38 @@ TAT is a Python process and an Isabelle process. The Python side owns the forest
 and serves the Model Context Protocol (MCP) tools; the Isabelle side runs an evaluator that TAT provides,
 driving Isabelle one command at a time.
 
-Node classes are extensible: a node class is installed by having the theory
-the conversation starts from import it, and is loaded from source at start.
+Node classes are extensible: every node class is a plugin — an Isabelle
+theory and a Python package — and one beyond TAT's own is named to
+`isabelle TAT_new` by the full name (SESSION.THEORY) of the theory that
+defines it, and loaded from source when the conversation starts.
+
+Register this directory, `contrib/Isabelle_RPC` and
+`contrib/Performant_Isabelle_ML` as Isabelle components
+(`isabelle components -u <directory>`). Two commands follow:
+
+```
+Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
+
+  Options are:
+    -P PLUGIN    a plugin to load in this working directory. Give the full
+                 name (SESSION.THEORY) of the theory that defines the plugin.
+                 Example: -P My_Nodes.Locale_Node
+
+  Create WORKING_DIRECTORY for TAT. TAT's own node classes are always loaded.
+  On an existing working directory, TAT_new adds the given plugins and
+  changes nothing else.
+
+Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
+
+  Options are:
+    -l BASE      the base heap (default: ISABELLE_LOGIC)
+    -p PORT      the port of the MCP server (default: 8191)
+    -d DIR       as Isabelle's -d: a further directory whose ROOT declares
+                 Isabelle sessions
+    -o OPTION    as Isabelle's -o: override an Isabelle system option
+
+  Start a TAT conversation on WORKING_DIRECTORY: Isabelle on the base heap,
+  and the MCP server on http://127.0.0.1:PORT/mcp.
+```
+
+Hand that URL to the agent's client when launching it.

@@ -16,7 +16,7 @@ from isabelle_theory_agent.store import SCHEMA_VERSION, Forest_Store, Incompatib
 
 @pytest.fixture
 def store(tmp_path):
-    with Forest_Store(tmp_path / "theory_forest.sqlite") as s:
+    with Forest_Store(tmp_path / "TAT.sqlite") as s:
         yield s
 
 

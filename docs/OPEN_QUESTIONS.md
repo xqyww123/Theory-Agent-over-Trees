@@ -34,17 +34,7 @@ path through the AoA agent.
 If it is defined in a theory, that theory must be in the base heap, and it is a
 real import of every tree that uses it.
 
-## 5. The entry point in production
-
-TAT is an Isabelle component (MODULE_STRUCTURE §1) and a pure MCP server
-(ARCHITECTURE §9); open is the production launcher: what starts the Isabelle
-process and calls `TAT_Framework.start` with a working directory and a port,
-and in which order — Isabelle first, or a long-lived Python RPC host that
-Isabelle processes join, each starting a conversation of its own. An
-`isabelle` subcommand through a Scala component is one form. During
-development the Isa-REPL app of `Dev/TAT_Dev.thy` serves.
-
-## 6. Whether to check completeness against Isabelle's own record
+## 5. Whether to check completeness against Isabelle's own record
 
 `sorry` leaves a `skip_proof` oracle on the theorem, and
 `Thm_Deps.has_skip_proof`
@@ -53,7 +43,7 @@ whether any theorem in a forest carries that oracle is an account of
 completeness independent of TAT's own, and the two disagreeing would mean TAT
 has a bug.
 
-## 7. Two loose ends in `Define`
+## 6. Two loose ends in `Define`
 
 Small enough to be forgotten, big enough to bite.
 

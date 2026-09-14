@@ -12,9 +12,12 @@ repository, one version number for both.
 Theory_Agent_over_Trees.thy   ML_file "ML/TAT_Framework.ML"; ML_file "ML/TAT_Common_Nodes.ML"
 ML/TAT_Framework.ML           structure TAT_Framework (§2)
 ML/TAT_Common_Nodes.ML        structure TAT_Common_Nodes (§3)
-Dev/TAT_Dev.thy               the development launcher's app: an Isa-REPL app that starts one conversation (ARCHITECTURE §9)
-ROOT                          build checks only; nothing ever runs on these heaps
-etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT"
+ML/TAT_Boot.ML                the boot: the protocol command `TAT.boot`, loaded before TAT's theory (§5)
+src/scala/tat.scala           the launcher: the Isabelle tools `TAT_new` and `TAT` (§5)
+lib/tat.jar                   the launcher compiled by `isabelle scala_build`; committed, as Isabelle_RPC's jar is
+etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the class that registers the tools
+ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5); its heap is a compile check nothing runs on
+etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -25,13 +28,16 @@ conda/recipe.yaml             the conda package
 COPYING, COPYING.LIB, COPYRIGHT   LGPL-2.1-or-later, as in Isa-Mini
 ```
 
-The `ROOT` exists because registering the repository as an Isabelle session
-root requires one; its Isabelle sessions are compile checks of the sources. A running
-conversation never sits on those heaps: it loads `Theory_Agent_over_Trees.thy` —
-and every node class theory the starting theory imports — from source on the
-base heap when it starts (ARCHITECTURE §8), finding it through `$TAT_HOME`.
+The `ROOT` declares one Isabelle session, `Theory_Agent_over_Trees`.
+Nothing ever runs on its heap: the entry exists so that the launcher can
+load `Theory_Agent_over_Trees.Theory_Agent_over_Trees` by that name (§5),
+and as a compile check of the sources. A running conversation never sits
+on that heap: `Theory_Agent_over_Trees.thy`, and the theory defining each
+plugin the working directory records, are loaded from source on the base
+heap when the process starts (ARCHITECTURE §8).
 
-One structure per file, and two structures in all. Inside a file the body is
+One structure per file except the boot, which defines none, and two
+structures in all. Inside a file the body is
 divided by Isabelle's sectioning comments — `(*** section ***)`,
 `(** subsection **)`, `(* subsubsection *)` — following
 `contrib/Isabelle2025-2/src/Doc/Implementation/ML.thy:60-97`.
@@ -40,8 +46,7 @@ divided by Isabelle's sectioning comments — `(*** section ***)`,
 carries the predefined node classes, and the helpers a node class writes its
 callbacks with (`operation`, §3); a node class delivered separately
 (ARCHITECTURE §6) is another client of the same interface, free to use
-`TAT_Common_Nodes` as well *(relaxed 2026-09-09; before, it never depended on
-it)*. The test for where something belongs: what the conversation itself
+`TAT_Common_Nodes` as well. The test for where something belongs: what the conversation itself
 needs — its tables, its loader, its callbacks — is in `TAT_Framework`; what
 only a node class needs is in `TAT_Common_Nodes`.
 
@@ -74,8 +79,9 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 
 - `resolve` — the theory table, then the base heap, then a load from source;
 - `load` — the `Thy_Info.use_theories` wrapper of EVALUATOR_DESIGN §6, under
-  one lock, one theory per call, with `parallel_proofs = 1` checked at
-  conversation start;
+  one lock, one theory per call, with `parallel_proofs` below 3, which the
+  boot sets from the option before its first load and the conversation's
+  start asserts (§5);
 - `check_new_theory_short_name` — rejects a new theory name whose short name —
   the part after the last dot, which is what Isabelle compares
   (EVALUATOR_DESIGN §7) — the base heap already uses; the forest side of that
@@ -159,10 +165,10 @@ enter it (EVALUATOR_DESIGN §4's one-producer rule).
 The environment is bound to one conversation's tables, so it exists only
 once the conversation has started; the registered function is called then.
 Until then the registration rides on the theory (`Theory_Data`, applied with
-`setup`), so a conversation's node classes are exactly the classes whose theories
-the starting theory imports, and re-evaluating a registering theory cannot
-register twice — the fresh theory value carries the registration once. There
-is no other table of node classes.
+`setup`), so a conversation's node classes are exactly the classes registered
+in the ancestries of the theories `start` is given (§2.6), and re-evaluating
+a registering theory cannot register twice — the fresh theory value carries
+the registration once. There is no other table of node classes.
 
 What the callback takes and returns is the class's own affair, agreed with its
 Python half (ARCHITECTURE §6.2); the per-command records of §2.4 are there
@@ -186,14 +192,17 @@ through as they arrived.
 
 ### 2.6 Conversation
 
-The entry point of ARCHITECTURE §9. `start` takes the theory whose ancestry
-names the node classes (§2.5), the working directory
-(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §1) and the port to serve on —
-`0` for one the system picks — and starts the conversation:
+The entry point of ARCHITECTURE §9. `start` takes the theories whose
+ancestries name the node classes (§2.5) — TAT's own and the one defining
+each plugin — the working directory
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §1) and the port to serve on,
+and starts the conversation:
 
 1. create the state slot table and the environment of §2.5;
-2. call every function registered in that theory's data, collecting the node
-   classes' callbacks and their `python_packages`, deduplicated;
+2. call every function registered in those theories' data — a registration
+   carries a serial, so one reached through several ancestries counts
+   once — collecting the node classes' callbacks and their
+   `python_packages`, deduplicated;
 3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
@@ -208,6 +217,25 @@ The callbacks go in the `callback` field of that one command, as AoA's
 `Isabelle_RPC`'s global callback table. Two callbacks under one name would
 silently shadow each other in that command's dispatch table, so starting the
 conversation rejects a duplicated name instead.
+
+`start` is reached through the protocol command `TAT.start`, which
+`TAT_Framework.ML` defines as it is loaded (`Protocol_Command.define`, a
+Pure API) and the boot runs once TAT's theory is loaded (§5). Its
+arguments are the plugins' theory names, the working directory and the
+port. Its handler forks a plain Isabelle thread — no Future worker, and
+inside no theory — whose whole body is captured with `Exn.capture_body`:
+it loads each plugin's theory through `Loader.load` (§2.3), fetches the
+theories from `Thy_Info`, asserts `parallel_proofs` below 3
+(`check_parallel_proofs`, §2.3), and calls `start`; then, on every path,
+it answers the launcher with the protocol message `TAT.finished`, carrying
+a code and messages in the shape `build_session_finished` uses: `0` when
+the conversation ended by the connection closing or by `start` returning,
+`1` with the exception's messages when an exception ended it — a plugin
+that does not load or is not found, a bug, a `TAT_DisasterError`, a
+`TAT_StartupError`. The code is decided where the distinction is known:
+`start'` no longer flattens the RPC library's failure into one `error`,
+and the connection's closing is told apart from a failure Python reported;
+the launcher reads the code and never parses text.
 
 ## 3. `TAT_Common_Nodes`
 
@@ -231,9 +259,8 @@ the forest's scheduling (ARCHITECTURE §3.5) and its emission the ROOT entry
 ## 4. Python side
 
 TAT is an Isabelle component (§1) and a pure MCP server (ARCHITECTURE §9).
-Launching the Isabelle process is the launcher's business — during
-development the Isa-REPL server's, with the app of `Dev/TAT_Dev.thy` making
-the call.
+Launching the Isabelle process is the launcher's business, `isabelle TAT`
+(§5).
 
 ```
 isabelle_theory_agent/
@@ -623,8 +650,7 @@ Isa-Mini; two lessons from AoA's
 lifetime stays inside one asyncio task, and — unlike that file, which
 sleeps — the port is waited on deterministically. The server is given the
 SDK's transport security settings — the allowed host is `127.0.0.1` with
-the bound port, or `127.0.0.1:*` when the port is system-chosen, the
-spelling the printed URL uses too — so a request whose `Host` or `Origin`
+the bound port, the spelling the printed URL uses too — so a request whose `Host` or `Origin`
 header is not TAT's own is refused before dispatch; without them the SDK
 checks nothing.
 
@@ -696,8 +722,97 @@ descriptors in one process, and that is what refuses a second conversation
 in this host as well as in another; a directory another conversation holds
 is refused with a `TAT_StartupError` — builds the
 `Conversation` (§4.1) from its connection and the working directory; opens
-the `Forest_Store` on `<working directory>/theory_forest.sqlite`; loads the
+the `Forest_Store` on `<working directory>/TAT.sqlite`; loads the
 plugins (§4.4); builds the `Forest`; starts the server, a port that cannot
-be bound being a `TAT_StartupError` too, and prints its URL to the Isabelle
-side; then serves until the conversation's ending (above), after which the
-lock is released.
+be bound being a `TAT_StartupError` too, and prints
+`TAT is serving on http://127.0.0.1:<port>/mcp` to the Isabelle side, a
+line the launcher echoes to its terminal (§5) and nothing depends on; then
+serves until the conversation's ending (above), after which the lock is
+released.
+
+## 5. The launcher
+
+`src/scala/tat.scala` defines the Isabelle tools `TAT_new` and `TAT`
+(ARCHITECTURE §9), registered through `etc/build.props` the way
+`contrib/Isabelle_RPC` registers its Scala functions; `lib/tat.jar` is
+committed and rebuilt with `isabelle scala_build` after a change. Both
+tools run in the JVM that `isabelle` starts, like every Isabelle/Scala
+tool.
+
+`TAT_new [-P PLUGIN]... WORKING_DIRECTORY` creates the directory if it does
+not exist, creates `TAT.sqlite` in it if absent, and adds one row per `-P`
+to the table `plugins`, each the session-qualified name of the theory
+defining the plugin; the table is always created, empty when no `-P` is
+given, and a name already in it is not added twice. On a directory that
+already holds a `TAT.sqlite` it adds the given plugins and changes nothing
+else; nothing removes a row, since the stored nodes name the kinds a
+plugin owns. It records nothing else — no paths, so the directory opens
+on another host. `Forest_Store` (§4.1) creates its own tables in the same
+file and never reads `plugins`; the launcher never reads the store's, and
+reads a file without `plugins` as no plugins.
+
+`TAT [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY`, in
+order:
+
+1. resolves `WORKING_DIRECTORY` to an absolute path — the path is handed
+   on to the Python side, which under the `RPC_Host` order is a process
+   started elsewhere (ARCHITECTURE §9) — and refuses one that is not a
+   directory, with `<path> is not a directory`, or holds no `TAT.sqlite`,
+   with `<path> holds no TAT.sqlite; run isabelle TAT_new first`; either
+   refusal exits `2`, as an Isabelle tool's own errors do; then reads
+   `plugins`;
+2. builds the Isabelle options: the defaults, the `-o` arguments in order,
+   and last the two TAT sets itself, which therefore win —
+   `isabelle_rpc_dialogue=absent` and `editor_tracing_messages=0`, since
+   no dialogue can be answered in a headless process, and the second is
+   Isabelle's own tracing limiter, which asks one;
+3. under a `Console_Progress` and its interrupt handler, `Build.build_logic`
+   on `BASE` — default `ISABELLE_LOGIC` — with the `-d` directories and
+   `build_heap`, which builds and stores a missing or outdated base heap
+   first, the launcher exiting with the build's own code when it fails
+   (`contrib/Isabelle2025-2/src/Pure/ML/ml_console.scala`); then the
+   `Sessions.Background` for `BASE` over the `-d` directories, checked for
+   errors, and `Store.session_heaps` on it; then `Isabelle_Process.start`
+   on those heaps with an `isabelle.Session` whose `all_messages`
+   consumer echoes the process's `writeln`, `warning` and error messages
+   to the terminal through the `Console_Progress`, hung on
+   `session.all_messages` as `isabelle process_theories` hangs its own
+   (`contrib/Isabelle2025-2/src/Pure/Tools/process_theories.scala`), with
+   `ML/TAT_Boot.ML` as `use_prelude` and Isabelle's own
+   `Command_Line.ML_tool(List("Isabelle_Process.init_build ()"))` as
+   `eval_main`; then waits for the process to be ready, reporting a failed
+   start with the process's own syslog;
+4. sends `TAT.boot` with the plugins' theory names, the working directory
+   and the port, default 8191;
+5. waits for `TAT.finished` (§2.6) or for the Isabelle process to
+   terminate, whichever comes first, stops the process, prints the
+   messages `TAT.finished` carried, and exits with its code: `0` when the
+   conversation ended by the connection closing — the Python side went
+   away — or by `start` returning; `1` when an exception ended it — a bug,
+   a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that did not
+   load; and `1` when the process terminated without `TAT.finished`. The
+   launcher prints and exits itself rather than letting the failure out
+   of the tool. An interrupt at the terminal terminates the Isabelle
+   process, as `isabelle console` and the build job do.
+
+`ML/TAT_Boot.ML` is the boot: the one ML file the launcher loads before
+TAT's theory exists. A `--use` file is compiled by Poly/ML's own compiler,
+outside any theory, against the name space the base heap leaves behind, so
+the boot is Standard ML over Isabelle's structures — no antiquotations —
+and what it defines is visible to theory ML and theory ML's to it. It
+defines no structure and one protocol command, `TAT.boot`. Its handler forks a plain Isabelle thread whose whole body is
+captured with `Exn.capture_body`: it restores `parallel_proofs` from the
+option — the `isabelle.Session`'s handshake, `Prover.options`, runs
+`Isabelle_Process.init_options_interactive ()`, which sets
+`Multithreading.parallel_proofs` to 3 for any positive option value; the
+boot sets it back to `Options.default_int "parallel_proofs"`
+(EVALUATOR_DESIGN §6) — loads `Theory_Agent_over_Trees.Theory_Agent_over_Trees`
+with `Thy_Info.use_theories`, and then runs `TAT.start` (§2.6) through
+`Protocol_Command.run` with the arguments it was given; a failure before
+that hand-off is answered with `TAT.finished` carrying `1` and the
+failure's messages. The process's session environment lists every known
+Isabelle session's directory, so a theory is found by its session name
+wherever a registered component or a ROOT under a `-d` directory declares
+that session; a heap-resident theory costs nothing to load. The handler
+forks because the protocol loop reads one message at a time and a loaded
+theory's `Scala.function` calls are answered through that loop.

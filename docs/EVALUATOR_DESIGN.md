@@ -6,8 +6,7 @@ paths are relative to `contrib/Isa-REPL/library/`, except `IsaREPL.py`
 
 TAT drives Isabelle itself, command by command. Isa-REPL (`contrib/Isa-REPL`)
 has done this for years and is the reference: its shape is evidence, and §4
-lists the hazards its review exposed. It serves only as the development
-launcher (ARCHITECTURE §9).
+lists the hazards its review exposed.
 
 ## 1. The mechanism
 
@@ -168,7 +167,8 @@ theory is in the base heap.
 ## 6. Loading a library theory that is not in the base heap
 
 Through `Thy_Info.use_theories`, behind one wrapper that is the only entry
-point (MODULE_STRUCTURE §2.3).
+point (MODULE_STRUCTURE §2.3); the boot's load of TAT's own theory, before
+the wrapper exists, is the one call outside it (MODULE_STRUCTURE §5).
 
 ```ml
 (*Thy_Info.use_theories ends with Execution.reset () (thy_info.ML:284), which
@@ -203,10 +203,22 @@ fun load options qualifier import =
 
 Four conditions, all required together:
 
-- **`parallel_proofs` pinned to 1**, and checked at startup. At 3 — which
-  `init_options_interactive` sets (`Pure/System/isabelle_process.ML:212`) — a
-  theory whose structured proof fails commits successfully and the error
-  surfaces later, breaking the correspondence between committing and succeeding.
+- **`parallel_proofs` below 3**, set from the option by the boot before its
+  first load and asserted at the conversation's start (MODULE_STRUCTURE §5,
+  §2.3). Measured on Isabelle2025-2 with `Thy_Info.use_theories` on a theory
+  whose proof fails, terminal or structured: at 0, 1 and 2 the call raises
+  and the theory is not committed; at 3 — the value
+  `init_options_interactive` sets (`Pure/System/isabelle_process.ML:212`) —
+  the call raises too, but the theory is committed with its false theorem
+  in it, and so is a theory importing it, so the correspondence between
+  committing and succeeding breaks. At 1 and 2 a failing load also leaves
+  one residual failure in the execution table, which makes the next call
+  raise with the previous theory's error while committing its own; the
+  drain in `load` above removes it. The setting governs the theories this
+  loader loads, whose bodies run on Future workers; the conversation's own
+  thread is no worker (MODULE_STRUCTURE §2.6), so `Future.proofs_enabled`
+  is false there and no goal of a node's commands forks whatever the option
+  says.
 - **One theory per call.** In a mixed batch the successful siblings of a failing
   theory are not committed, because the escape also skips the commit.
 - **One lock around every call.** `Thy_Info` has no internal mutual exclusion;
@@ -217,10 +229,13 @@ Four conditions, all required together:
   process-global execution table each running span is registered in
   (MODULE_STRUCTURE §2.4): a concurrent span would lose its entry, stranding
   its forks and making a later `Execution.fork` under its id fail. The
-  framework's own evaluation cannot collide — the conversation's dispatch is
-  one synchronous loop, `run_commands` joins and purges each span before
-  returning, and `begin_theory` resolves every import before it registers or
-  runs anything — but a node class's asynchronous work must not call
+  framework's own evaluation cannot collide: the conversation runs on a
+  thread inside no theory, started only after the boot has finished loading
+  TAT's theory and `TAT.start` has loaded the plugins' (MODULE_STRUCTURE
+  §2.6, §5), so those loads never overlap it; its dispatch is
+  one synchronous loop; `run_commands` joins and purges each span before
+  returning; and `begin_theory` resolves every import before it registers or
+  runs anything. A node class's asynchronous work must not call
   `run_commands` while a load may run.
 
 Pass a path or a session-qualified name, not a bare name.

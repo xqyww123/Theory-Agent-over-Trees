@@ -22,7 +22,7 @@ and its layout is fixed:
 
 ```
 <working directory>/
-  theory_forest.sqlite     the forest (§2); read at start, created empty if absent
+  TAT.sqlite               made by `isabelle TAT_new`: the plugins it records (MODULE_STRUCTURE §5) and the forest (§2), read at start
   tat.lock                 held by the conversation on this directory (MODULE_STRUCTURE §4.6)
   ROOT                     every Session's entry (ARCHITECTURE §4)
   <session name>/          one folder per Session, named after it
@@ -428,9 +428,19 @@ at every step that touches the ML side.
    process — from the per-conversation table `load` returns, so a second
    `load` in one process re-registers nothing already in the registry and
    imports only packages the process has not imported yet
-   (MODULE_STRUCTURE §4.4); `Dev/TAT_Dev.thy` starting a conversation.
-   Test: the tools are called and one tree is evaluated in Isabelle; how
-   the test suite reaches the tools is decided when this step starts, and
+   (MODULE_STRUCTURE §4.4); the launcher, `src/scala/tat.scala` with
+   `etc/build.props`, `lib/tat.jar` and `etc/settings` putting that jar on
+   the classpath (MODULE_STRUCTURE §5, §1) — the tools `TAT_new` and
+   `TAT`; the boot `ML/TAT_Boot.ML` with its protocol command `TAT.boot`,
+   and `TAT.start` that `TAT_Framework.ML` defines; `TAT_Framework.start`
+   taking the theories, the working directory and the port,
+   `check_parallel_proofs` asserting below 3, and `start'` no longer
+   flattening the RPC library's failure (MODULE_STRUCTURE §2.6).
+   Test: the tools are called and one tree is evaluated in Isabelle. The
+   test suite starts one Python RPC host, then one `isabelle TAT` per run
+   with that host's address exported as `RPC_Host` in its environment,
+   and reaches the tools through the `mcp` SDK's Streamable HTTP client;
+   `test/run_ml_framework_test.py` retires into it, and
    `test/routing_forest.py` retires with step 4.
 
 Out of this plan, in the order they are likely needed afterwards: `recall`,

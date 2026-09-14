@@ -378,7 +378,7 @@ def shape(forest):
 
 
 def test_reopen_restores_the_forest_not_evaluated(tmp_path):
-    path = tmp_path / "theory_forest.sqlite"
+    path = tmp_path / "TAT.sqlite"
     store = Forest_Store(path)
     f = OneTreeForest(CONN, store)
     (thy,) = run(locked(f, edit.insert(f,0, [
@@ -420,7 +420,7 @@ def test_a_fresh_database_is_an_empty_forest():
 
 
 def test_the_trees_keep_their_order_across_a_reopen(tmp_path):
-    path = tmp_path / "theory_forest.sqlite"
+    path = tmp_path / "TAT.sqlite"
     f = OneTreeForest(CONN, Forest_Store(path))
     a, b = run(locked(f, edit.insert(f,0, [
         {"kind": "block", "name": "A", "children": [{"kind": "t", "name": "x"}]},
@@ -435,7 +435,7 @@ def test_the_trees_keep_their_order_across_a_reopen(tmp_path):
 
 
 def test_delete_and_amend_at_the_root_reach_the_store(tmp_path):
-    path = tmp_path / "theory_forest.sqlite"
+    path = tmp_path / "TAT.sqlite"
     f = OneTreeForest(CONN, Forest_Store(path))
     a, b = run(locked(f, edit.insert(f,0, [
         {"kind": "block", "name": "A", "children": [{"kind": "t", "name": "x"}]},
@@ -486,7 +486,7 @@ def test_a_store_failure_after_the_commit_is_a_disaster(tmp_path):
     class Broken(T):
         def to_store(self, rows):
             raise ZeroDivisionError("to_store broke")
-    path = tmp_path / "theory_forest.sqlite"
+    path = tmp_path / "TAT.sqlite"
     f = OneTreeForest(CONN, Forest_Store(path))
     (thy,) = run(locked(f, edit.insert(f,0, [{"kind": "block", "name": "Theory"}], KINDS)))
     with pytest.raises(TAT_DisasterError, match="to_store broke") as e:
