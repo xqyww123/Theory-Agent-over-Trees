@@ -48,6 +48,62 @@ object TAT {
 
   /** isabelle TAT_new **/
 
+  /* the agent clients' hooks (docs/CLIENT_HOOKS.md, whose fenced blocks
+     these are verbatim): one script, and one file per client that calls
+     it -- each written when absent, never rewritten */
+
+  val hook_files: List[(Path, String)] =
+    List(
+      Path.explode(".tat/on-compaction.sh") ->
+"""#!/bin/sh
+# Written by `isabelle TAT_new`; the agent clients' hooks call it (docs/CLIENT_HOOKS.md).
+not_running() { echo 'TAT is not running in this directory.' >&2; exit 1; }
+pid=$(sed -n 1p tat.lock 2>/dev/null)
+port=$(sed -n 2p tat.lock 2>/dev/null)
+{ [ -n "$port" ] && kill -0 "$pid" 2>/dev/null; } || not_running
+if [ $# -eq 0 ]
+then curl -sS --fail-with-body -o /dev/null -X POST "http://127.0.0.1:$port/on-compaction"
+else curl -sS --fail-with-body -X POST "http://127.0.0.1:$port/on-compaction?client=$1"
+fi
+rc=$?
+[ $rc -eq 7 ] && not_running
+exit $rc
+""",
+      Path.explode(".claude/settings.json") ->
+"""{ "hooks": { "SessionStart": [ { "hooks": [
+  { "type": "command", "timeout": 10, "command": "sh .tat/on-compaction.sh claude-code" } ] } ] } }
+""",
+      Path.explode(".codex/hooks.json") ->
+"""{ "hooks": { "SessionStart": [ { "hooks": [
+  { "type": "command", "timeout": 10, "additionalContextLimit": 20000, "command": "sh .tat/on-compaction.sh codex" } ] } ] } }
+""",
+      Path.explode(".gemini/settings.json") ->
+"""{ "hooks": {
+  "SessionStart": [ { "matcher": "*", "hooks": [ { "name": "TAT", "type": "command", "command": "sh .tat/on-compaction.sh gemini-cli" } ] } ],
+  "PreCompress": [ { "matcher": "*", "hooks": [ { "name": "TAT", "type": "command", "command": "sh .tat/on-compaction.sh" } ] } ] } }
+""",
+      Path.explode(".cursor/hooks.json") ->
+"""{ "version": 1, "hooks": {
+  "sessionStart": [ { "command": "sh .tat/on-compaction.sh cursor" } ],
+  "preCompact":   [ { "command": "sh .tat/on-compaction.sh" } ] } }
+""",
+      Path.explode(".opencode/plugins/tat.js") ->
+"""export const TAT = async ({ $ }) => ({
+  event: async ({ event }) => {
+    if (event.type === "session.created") await $`sh .tat/on-compaction.sh`.quiet()
+  },
+  "experimental.session.compacting": async (_input, output) => {
+    output.context.push(await $`sh .tat/on-compaction.sh opencode`.text())
+  },
+})
+""")
+
+  def write_hooks(dir: Path): Unit =
+    for ((path, text) <- hook_files if !(dir + path).is_file) {
+      Isabelle_System.make_directory((dir + path).dir)
+      File.write(dir + path, text)
+    }
+
   val tat_new_tool: Isabelle_Tool =
     Isabelle_Tool("TAT_new", "create a working directory for TAT", Scala_Project.here,
       { args =>
@@ -61,9 +117,8 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
                  name (SESSION.THEORY) of the theory that defines the plugin.
                  Example: -P My_Nodes.Locale_Node
 
-  Create WORKING_DIRECTORY for TAT. TAT's own node classes are always loaded.
-  On an existing working directory, TAT_new adds the given plugins and
-  changes nothing else.
+  Create WORKING_DIRECTORY for TAT. Afterwards, you can start TAT on it
+  with: isabelle TAT WORKING_DIRECTORY
 """,
           "P:" -> (arg => plugins += arg))
 
@@ -73,8 +128,16 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
             case _ => getopts.usage()
           }
 
+        // a directory TAT_new did not make is refused, so everything in a
+        // working directory is TAT's (MODULE_STRUCTURE §5)
+        if (dir.is_file) error(dir.implode + " is not a directory")
+        if (dir.is_dir && File.read_dir(dir).nonEmpty && !(dir + database).is_file) {
+          error(dir.implode + " is not empty and is not a TAT working directory")
+        }
+
         Isabelle_System.make_directory(dir)
         using(SQLite.open_database(dir + database))(Plugins.add(_, plugins.toList))
+        write_hooks(dir)
       })
 
 
@@ -103,8 +166,8 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
                  Isabelle sessions
     -o OPTION    as Isabelle's -o: override an Isabelle system option
 
-  Start a TAT conversation on WORKING_DIRECTORY: Isabelle on the base heap,
-  and the MCP server on http://127.0.0.1:PORT/mcp.
+  Start a TAT conversation on WORKING_DIRECTORY, providing the MCP service
+  at http://127.0.0.1:PORT/mcp.
 """,
           "d:" -> (arg => dirs += Path.explode(arg)),
           "l:" -> (arg => logic = arg),

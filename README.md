@@ -61,9 +61,8 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
                  name (SESSION.THEORY) of the theory that defines the plugin.
                  Example: -P My_Nodes.Locale_Node
 
-  Create WORKING_DIRECTORY for TAT. TAT's own node classes are always loaded.
-  On an existing working directory, TAT_new adds the given plugins and
-  changes nothing else.
+  Create WORKING_DIRECTORY for TAT. Afterwards, you can start TAT on it
+  with: isabelle TAT WORKING_DIRECTORY
 
 Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
 
@@ -74,8 +73,8 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
                  Isabelle sessions
     -o OPTION    as Isabelle's -o: override an Isabelle system option
 
-  Start a TAT conversation on WORKING_DIRECTORY: Isabelle on the base heap,
-  and the MCP server on http://127.0.0.1:PORT/mcp.
+  Start a TAT conversation on WORKING_DIRECTORY, providing the MCP service
+  at http://127.0.0.1:PORT/mcp.
 ```
 
-Hand that URL to the agent's client when launching it.
+Start the agent's client in WORKING_DIRECTORY and give it that URL.

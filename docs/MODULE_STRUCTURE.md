@@ -760,10 +760,10 @@ shape the client named by the query parameter `client` takes:
 {"hookEventName": "SessionStart", "additionalContext": <the briefing>}}`,
 `cursor` gets `{"additional_context": <the briefing>}`, `opencode` or no
 parameter the text alone; any other value is refused with status 400 and
-the line ``TAT does not know the client `<value>`; it knows claude-code,
-codex, gemini-cli, cursor and opencode`` — refused before the seen set is
-touched, so a mistyped name discards nothing. The request's body is not
-read. `TAT_Server` takes the work as one more constructor argument beside
+the line CLIENT_HOOKS.md shows — refused before the seen set is touched,
+so a mistyped name discards nothing. While the conversation is ending
+the path answers status 503 with an empty body, touching no forest. The
+request's body is not read. `TAT_Server` takes the work as one more constructor argument beside
 the tools, `on_compaction: Callable[[], str]`, built in `mcp.py` next to
 the tools — it clears the seen set and returns `Forest.render` of the
 root in `Briefing` — so the server still knows nothing of the model; the
@@ -792,9 +792,11 @@ descriptors in one process, and that is what refuses a second conversation
 in this host as well as in another; a directory another conversation holds
 is refused with a `TAT_StartupError`, `another TAT conversation holds
 <working directory> (its Python process is pid <n>)` — the holder writes
-two lines into the file, its pid and then its port, and clears the file
-on release; each reader takes one line and no more, this refusal the
-first and the hooks of CLIENT_HOOKS.md the second; so the parenthesis is
+its pid into the file when it takes the lock and its port once the server
+is listening, one line each, and clears the file on release; each reader
+takes the line it needs and no more, this refusal the first, the hooks of
+CLIENT_HOOKS.md the second and the first to see the holder is alive; so
+the parenthesis is
 missing — or still names a holder that died — only between taking the
 lock and writing it, and between clearing it on release and closing the
 descriptor; a working directory whose lock
@@ -825,7 +827,8 @@ tool.
 `TAT_new [-P PLUGIN]... WORKING_DIRECTORY` takes a directory
 that does not exist, is empty, or already holds a `TAT.sqlite`; any other
 is refused with `<path> is not empty and is not a TAT working directory`,
-exiting `2`. It creates the directory if it does
+a path that is a file with `<path> is not a directory`, both exiting
+`2`. It creates the directory if it does
 not exist, creates `TAT.sqlite` in it if absent, and adds one row per `-P`
 to the table `plugins`, each the session-qualified name of the theory
 defining the plugin; the table is always created, empty when no `-P` is

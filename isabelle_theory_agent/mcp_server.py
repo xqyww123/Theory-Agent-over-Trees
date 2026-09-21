@@ -1,6 +1,7 @@
-"""The Streamable HTTP MCP server (MODULE_STRUCTURE §4.6): one endpoint,
-`http://127.0.0.1:<port>/mcp`; the tool boundary of EXCEPTIONS.md §1; the
-conversation's ending.
+"""The Streamable HTTP MCP server (MODULE_STRUCTURE §4.6): the endpoint
+`http://127.0.0.1:<port>/mcp`, the path `/on-compaction` the agent
+clients' hooks call (CLIENT_HOOKS.md); the tool boundary of EXCEPTIONS.md
+§1; the conversation's ending.
 
 TAT's own transport code, on the Python `mcp` SDK's low-level server and
 session manager and on uvicorn.  Two lessons from AoA's server
@@ -12,11 +13,13 @@ before anything is announced, never waited for.
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, NoReturn
+from urllib.parse import parse_qs
 
 import anyio
 import anyio.lowlevel
@@ -24,13 +27,49 @@ import uvicorn
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
+from starlette.requests import Request
 
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .model import JSON_Schema
 
 HOST = "127.0.0.1"
 PATH = "/mcp"
+ON_COMPACTION = "/on-compaction"
+
+
+def _hook_specific_output(briefing: str) -> Any:
+    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": briefing}}
+
+
+def _additional_context(briefing: str) -> Any:
+    return {"additional_context": briefing}
+
+
+# The clients whose hooks call `/on-compaction`, each with the shape it
+# takes the briefing in — a JSON body, or None for the text alone
+# (CLIENT_HOOKS.md); the order is the refusal line's.
+CLIENTS: dict[str, Callable[[str], Any] | None] = {
+    "claude-code": _hook_specific_output,
+    "codex": _hook_specific_output,
+    "gemini-cli": _hook_specific_output,
+    "cursor": _additional_context,
+    "opencode": None,
+}
+
+
+def unknown_client(client: str) -> str:
+    known = list(CLIENTS)
+    return f"TAT does not know the client `{client}`; it knows {', '.join(known[:-1])} and {known[-1]}"
+
+
+def envelope(client: str | None, briefing: str) -> tuple[bytes, str]:
+    """The answer's body and content type for the client, the text alone
+    for none (CLIENT_HOOKS.md)."""
+    shape = CLIENTS[client] if client is not None else None
+    if shape is None:
+        return briefing.encode(), "text/plain; charset=utf-8"
+    return json.dumps(shape(briefing)).encode(), "application/json"
 
 
 @dataclass(frozen=True)
@@ -65,9 +104,13 @@ class TAT_Server:
     starts the session manager and listens, and on leaving stops; `serve`
     runs the conversation until its ending and raises what ended it."""
 
-    def __init__(self, port: int, tools: list[Tool]):
+    def __init__(self, port: int, tools: list[Tool], on_compaction: Callable[[], str]):
+        """`on_compaction` is what `/on-compaction` does — the seen set
+        cleared, the briefing returned (`mcp.py`); anything it raises ends
+        the conversation, as a tool body's would."""
         self._port = port
         self._tools = {tool.name: tool for tool in tools}
+        self._on_compaction = on_compaction
         self.url = f"http://{HOST}:{port}{PATH}"
 
         # The conversation's ending: what ended it, once entered; the
@@ -82,11 +125,13 @@ class TAT_Server:
         app.list_tools()(self._list_tools)
         app.call_tool(validate_input=False)(self._call_tool)
         # the SDK checks Host and Origin only when told what to accept;
-        # the spelling is the printed URL's
+        # the spelling is the printed URL's, and `/on-compaction` checks
+        # with the same settings, so the two paths cannot drift
         authority = f"{HOST}:{port}"
-        self._manager = StreamableHTTPSessionManager(
-            app, security_settings=TransportSecuritySettings(
-                allowed_hosts=[authority], allowed_origins=["http://" + authority]))
+        security = TransportSecuritySettings(
+            allowed_hosts=[authority], allowed_origins=["http://" + authority])
+        self._security = TransportSecurityMiddleware(security)
+        self._manager = StreamableHTTPSessionManager(app, security_settings=security)
         self._running = AsyncExitStack()    # holds the manager's `run` while the endpoint is open
 
         # not `uvicorn.Server.serve`: it takes over SIGINT and SIGTERM for
@@ -165,21 +210,58 @@ class TAT_Server:
     async def _asgi(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":         # cannot fire: lifespan off, ws none
             return
+        if scope["path"] == ON_COMPACTION:
+            await self._counted(self._compaction(scope, receive, send))
+            return
         if scope["path"] != PATH:
-            await send({"type": "http.response.start", "status": 404, "headers": []})
-            await send({"type": "http.response.body", "body": b""})
+            await _answer(send, 404, b"", "text/plain")
             return
         if scope["method"] == "GET":        # the standalone stream, held as long as the client likes
             await self._manager.handle_request(scope, receive, send)
             return
+        await self._counted(self._manager.handle_request(scope, receive, send))
+
+    async def _counted(self, handling: Coroutine[Any, Any, None]) -> None:
+        """A request the conversation's ending waits for."""
         self._requests += 1
         self._idle.clear()
         try:
-            await self._manager.handle_request(scope, receive, send)
+            await handling
         finally:
             self._requests -= 1
             if self._requests == 0:
                 self._idle.set()
+
+    async def _compaction(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """`POST /on-compaction?client=<name>` (MODULE_STRUCTURE §4.6): the
+        transport check as for `/mcp`, less the content type the hooks do
+        not send; an unknown client refused before anything is touched;
+        an empty 503 while the conversation is ending, which touches no
+        forest; then the closure once, its answer in the client's shape —
+        or, if it raises, the conversation's ending and an empty 500, so
+        the hook reports a failure and nothing half-rendered reaches the
+        agent."""
+        refused = await self._security.validate_request(Request(scope, receive), is_post=False)
+        if refused is not None:
+            await refused(scope, receive, send)
+            return
+        if scope["method"] != "POST":
+            await _answer(send, 405, b"", "text/plain")
+            return
+        client = parse_qs(scope["query_string"].decode()).get("client", [None])[0]
+        if client is not None and client not in CLIENTS:
+            await _answer(send, 400, unknown_client(client).encode(), "text/plain; charset=utf-8")
+            return
+        if self._ending.done():             # nothing left to brief
+            await _answer(send, 503, b"", "text/plain")
+            return
+        try:
+            briefing = self._on_compaction()
+        except Exception as bug:
+            self.end(bug)
+            await _answer(send, 500, b"", "text/plain")
+            return
+        await _answer(send, 200, *envelope(client, briefing))
 
     # --- the tool boundary (EXCEPTIONS.md §1) ----------------------------
 
@@ -235,6 +317,13 @@ async def _run(tool: Tool, arguments: dict[str, Any]) -> str:
 def _result(text: str, is_error: bool) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=text)],
                                 isError=is_error)
+
+
+async def _answer(send: Any, status: int, body: bytes, content_type: str) -> None:
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", content_type.encode()),
+                            (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
 
 
 def _bind(port: int) -> socket.socket:

@@ -18,7 +18,12 @@ from mcp.shared.exceptions import McpError
 from baselines import DOCS, fenced_lines
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
-from isabelle_theory_agent.mcp_server import HOST, TAT_Server, Tool, stopped
+from isabelle_theory_agent.mcp_server import (
+    CLIENTS, HOST, ON_COMPACTION, TAT_Server, Tool, stopped, unknown_client)
+
+
+def no_briefing() -> str:
+    return ""
 
 # The three server lines, in document order; a fourth, a missing one or a
 # reordering fails here, an edited one fails the assertions below.
@@ -108,10 +113,10 @@ class Bodies:
 
 
 @asynccontextmanager
-async def serving(port: int, tools: list[Tool]):
+async def serving(port: int, tools: list[Tool], on_compaction=no_briefing):
     """A server listening and serving in a task; yields the server and the
     serving task, which raises what ended the conversation (`ended`)."""
-    async with TAT_Server(port, tools) as server:
+    async with TAT_Server(port, tools, on_compaction) as server:
         serve = asyncio.create_task(server.serve())
         try:
             yield server, serve
@@ -355,8 +360,82 @@ def test_the_endpoint_answers_as_soon_as_it_listens():
     request between the two is answered normally."""
     async def scenario():
         port = free_port()
-        async with TAT_Server(port, []) as server, client(server.url) as session:
+        async with TAT_Server(port, [], no_briefing) as server, client(server.url) as session:
             assert (await session.list_tools()).tools == []
+    run(scenario)
+
+
+def test_on_compaction_answers_the_briefing_in_the_clients_shape():
+    """CLIENT_HOOKS.md's table, and MODULE_STRUCTURE §4.6's refusals: an
+    unknown client before the closure runs, the transport check as for
+    `/mcp` without the content type, only POST."""
+    briefing = "session_A\n- theory_X (not evaluated)\n"
+    calls = []
+
+    def on_compaction():
+        calls.append(1)
+        return briefing
+
+    async def scenario():
+        port = free_port()
+        async with serving(port, [], on_compaction) as (server, _), httpx.AsyncClient() as http:
+            url = f"http://{HOST}:{port}{ON_COMPACTION}"
+            for name in ("claude-code", "codex", "gemini-cli"):
+                r = await http.post(url, params={"client": name})
+                assert r.status_code == 200 and r.json() == {"hookSpecificOutput": {
+                    "hookEventName": "SessionStart", "additionalContext": briefing}}
+            r = await http.post(url, params={"client": "cursor"})
+            assert r.status_code == 200 and r.json() == {"additional_context": briefing}
+            for params in ({"client": "opencode"}, {}):
+                r = await http.post(url, params=params)
+                assert r.status_code == 200 and r.text == briefing
+                assert r.headers["content-type"].startswith("text/plain")
+            assert len(calls) == 6 and set(CLIENTS) == {
+                "claude-code", "codex", "gemini-cli", "cursor", "opencode"}
+            r = await http.post(url, params={"client": "emacs"})
+            [refusal] = fenced_lines(DOCS / "CLIENT_HOOKS.md", "An unknown client")
+            assert r.status_code == 400 and r.text == unknown_client("emacs") == refusal
+            assert len(calls) == 6                                 # refused before the closure
+            assert (await http.get(url)).status_code == 405
+            other_host = await http.post(url, headers={"Host": f"localhost:{port}"})
+            assert other_host.status_code == 421
+            other_origin = await http.post(url, headers={"Origin": "http://evil.example"})
+            assert other_origin.status_code == 403
+            assert len(calls) == 6
+    run(scenario)
+
+
+def test_a_briefing_that_raises_ends_the_conversation_with_an_empty_500():
+    def broken():
+        raise RuntimeError("render-bug")
+
+    async def scenario():
+        port = free_port()
+        async with serving(port, [], broken) as (server, serve), httpx.AsyncClient() as http:
+            r = await http.post(f"http://{HOST}:{port}{ON_COMPACTION}", params={"client": "codex"})
+            assert r.status_code == 500 and r.content == b""
+            assert isinstance(await ended(serve), RuntimeError)
+    run(scenario)
+
+
+def test_on_compaction_answers_an_empty_503_while_the_conversation_is_ending():
+    """The ending touches no forest: a hook arriving while the server
+    still accepts gets nothing to brief, and the closure is not run."""
+    calls = []
+
+    def on_compaction():
+        calls.append(1)
+        return ""
+
+    async def scenario():
+        port = free_port()
+        async with serving(port, [], on_compaction) as (server, serve), httpx.AsyncClient() as http:
+            accepting = hold_accepting(server)
+            server.end(RuntimeError("ended"))
+            r = await http.post(f"http://{HOST}:{port}{ON_COMPACTION}", params={"client": "codex"})
+            assert r.status_code == 503 and r.content == b"" and calls == []
+            accepting.set()
+            assert isinstance(await ended(serve), RuntimeError)
     run(scenario)
 
 
@@ -383,7 +462,7 @@ def test_a_port_that_cannot_be_bound_is_a_startup_error():
         port = free_port()
         async with serving(port, []):
             with pytest.raises(TAT_StartupError, match=f"TAT cannot serve on {HOST}:{port}: "):
-                async with TAT_Server(port, []):
+                async with TAT_Server(port, [], no_briefing):
                     pass
     run(scenario)
 
@@ -411,7 +490,7 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             raise
 
     async def enter(port):                            # a task of its own takes the cancellation
-        async with TAT_Server(port, []):
+        async with TAT_Server(port, [], no_briefing):
             pass
 
     async def scenario():
@@ -421,7 +500,7 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             with pytest.raises(raised):
                 await asyncio.create_task(enter(port))
             monkeypatch.setattr(uvicorn.Server, "startup", real_startup)
-            async with TAT_Server(port, []) as again, client(again.url) as session:
+            async with TAT_Server(port, [], no_briefing) as again, client(again.url) as session:
                 assert (await session.list_tools()).tools == []
         assert reached_the_window
     run(scenario)

@@ -64,8 +64,10 @@ words are its own document's.
 The framework writes the line at `indent`, calls `print_fields` at
 `indent + 1`, then the children at `indent + 1` and `depth + 1`. A line
 that carries no dash is not a list item and opens no level — the forest
-root's line and the lone session's (§6) — so under it `indent` stays
-where it is while `depth` still rises.
+root's line and the lone session's (§6) — so what a node writes under it,
+its fields and its children alike, stays at `indent` while `depth` still
+rises. The forest root writes no fields; the empty forest's hint, the
+only line it writes under `Sessions:`, sits one level in (§6).
 
 | mode | `print_fields` | children |
 | --- | --- | --- |
@@ -119,8 +121,10 @@ show again after every run, identical or not. Every rendering that
 writes the thing records it, `Recall` included, so a quickview after a
 `recall` does not repeat it; a class checks the set to keep a quickview
 from repeating itself, never to abridge a rendering the agent asked for
-in depth. A deleted node's keys stay behind, harmlessly: an identity is
-never reused (ARCHITECTURE §4.1).
+in depth. A deleted node's keys stay behind, harmlessly: the number of a
+deleted node is never handed out again (`store.next_identity` only
+grows), and an amend keeps the replaced node's identity on purpose
+(MCP_SPECIFICATION §3.1), the key following it.
 
 `POST /on-compaction` clears the set whole (MODULE_STRUCTURE §4.6,
 CLIENT_HOOKS.md): the agent's context was replaced, and nothing it was
@@ -134,8 +138,9 @@ shown can be assumed. Rendering is synchronous, so the set needs no lock.
   other tool result carries one.
 - The **briefing** answers `POST /on-compaction`: `Forest.render` of the
   forest root in `Briefing`.
-- `recall` is `Forest.render` of the recalled node in `Recall`, with no
-  id of the forest root: the node and its children with everything their
+- `recall` is `Forest.render` of the recalled node in `Recall`, or, with
+  no id, of the forest root (MCP_SPECIFICATION §1.1): the node and its
+  children with everything their
   classes write when detailed, the grandchildren with their short form,
   the level below them with what their classes write at depth 3, and
   nothing deeper.

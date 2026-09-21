@@ -64,7 +64,9 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         first, connection = await launch(tmp_path, port)
         assert connection.lines == [f"TAT is serving on http://{HOST}:{port}/mcp"]
         assert (tmp_path / "TAT.sqlite").is_file()
-        assert (tmp_path / "tat.lock").read_text() == str(os.getpid())
+        # pid then port, one line each: the refusal reads the first, the
+        # hooks the second (CLIENT_HOOKS.md)
+        assert (tmp_path / "tat.lock").read_text() == f"{os.getpid()}\n{port}\n"
 
         # a second conversation on the directory is refused while the first
         # holds it, and told who holds it (here: this very process)

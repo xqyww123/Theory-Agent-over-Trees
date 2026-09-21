@@ -155,8 +155,8 @@ class:
   (MCP_SPECIFICATION §2.1);
 - the class does not override `is_finished` — `_owes_nothing` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` —
-  `_own_statuses` is (MODULE_STRUCTURE §4.1) — nor `print` —
-  `print_fields` and `mark` are (PRINT.md);
+  `_own_statuses` is (MODULE_STRUCTURE §4.1) — nor `print` nor
+  `_children_to_print` — `print_fields` and `mark` are (PRINT.md);
 - `print_fields` and `mark` are plain functions, not coroutines: rendering
   is synchronous (PRINT.md);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's

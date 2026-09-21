@@ -271,18 +271,63 @@ twice: keep "below depth 2"); settling `Theorem`'s `not proven` before
 the class is designed. Open with the tools: each tool's focus. Open with
 `Theorem` and `Define`: their `mark` and `print_fields`.
 
-Work this adds to the Python half, before or with 3e: `Node.print` with
-the four modes and the lone-session branch, `print_fields` / `mark`
-defaults, `_own_statuses`, `print_error`, `Conversation.seen`,
-`Forest.render` with the index, the root's three forms; `POST
-/on-compaction` in `mcp_server.py` (`_asgi` routes by path already) with
-the closure and the security check; the quickview on the four tools'
-results; `_held` writing pid and port and reading the first line. In the
-launcher: the emptiness refusal (text approved), the script and the five
-files (contents in CLIENT_HOOKS.md); `TAT_new`'s usage text changes and
-is user-facing — propose the new wording to the owner before writing it.
-Measurements listed at the end of CLIENT_HOOKS.md; the baseline test
-should pin PRINT.md §6's two root forms and §7's example.
+Implemented (2026-09-21, uncommitted): `Node.print` with the four modes
+and the lone-session branch, `print_fields` / `mark` defaults,
+`_own_statuses` (`_operations_ready` derived, the three copies gone),
+`print_error`, `Conversation.seen`, `Forest.render` with the index, the
+root's three forms, `Session.print_fields`, `Theory.print_fields` with
+the own-stop guard and the seen keys discarded in its hooks; `POST
+/on-compaction` in `mcp_server.py` (`_compaction`: the security check
+with the manager's settings, `is_post=False`; unknown `client` → 400
+before the closure; the closure's exception → `end` + empty 500; every
+answer through `_answer`), `mcp.on_compaction`; `_held(directory, port)`
+writing pid and port, the refusal reading the first line;
+`plugin._check_class` refusing `_operations_ready`, `print`, and
+coroutine `print_fields` / `mark`; `tat.scala`: the emptiness refusal, a
+file path refused as `TAT` refuses one, `write_hooks` writing the script
+and the five files when absent (their texts verbatim from
+CLIENT_HOOKS.md), the usage text as proposed to the owner (in the code,
+**awaiting approval** — the README's TAT_new paragraph awaits the same
+wording); `lib/tat.jar` rebuilt. Tests: `test_print.py` (PRINT.md §6, §7
+and RENDER_BASELINES §5 read from the documents; marks; the modes and
+depths; the seen set, a rerun re-showing through a monkeypatched driver;
+the index), `test_launcher.py` (runs the real `isabelle TAT_new`: the
+files equal CLIENT_HOOKS.md's blocks, the refusals, the absent-only
+rewrite, the script's three failure paths), the endpoint tests in
+`test_mcp_server.py`, the lock's two lines in `test_toplevel.py`, the new
+refusals in `test_plugin.py`; 230 pass.
+
+Measured with a real conversation (scratchpad `tatnew/e2e_hooks.py`):
+connected 7–8 s after launch; `tat.lock` holds `<pid>\n<port>\n`; the
+script answers every client in its shape, discards without an argument,
+and prints the refusal line for `emacs` (exit 22, readable through
+`--fail-with-body`); Ctrl-C → exit 1 in 1.2–1.5 s. After Ctrl-C
+`tat.lock` still holds the dead conversation's pid and port — the Python
+host receives the group's SIGINT and dies without `_held`'s `finally` —
+which is why the script checks the pid is alive (owner, 2026-09-21) and
+treats curl's exit 7 as "not running" too. Observed, not ours: two
+`Isabelle_RPC_Host` attached hosts from earlier days (pids 945443,
+1999953) still alive on this machine, orphans of other sessions.
+
+Review 3 of the implementation (2026-09-21; `render_review/BRIEF3.md`,
+`EXCERPTS3.md`, `diff3.patch`, `ruling3.md`, `result3.json`): **READY
+WITH AUTHOR ITEMS**, all applied, no further round: the loader refuses
+overriding `_children_to_print` (`NonLeaf_Node`'s own definition
+admitted); the script's success path tested against a serving
+`TAT_Server` (`test_launcher.py`), the JSON files parsed; `Theory`'s
+errors pinned off the focus; SESSION_AND_THEORY §4's field lines pinned;
+`/on-compaction` answers an empty 503 while the conversation is ending;
+`_held` writes the pid on taking the lock and the port through the
+`announce` it yields, called once the server listens; the briefing
+closure and the ending hook's discard tested; ARCHITECTURE §9, CLIENT_HOOKS
+(curl 7.76; a new section pinning the unknown-client line, which the
+tests now read from there), PRINT.md §2 / §4 / §5 wording;
+`envelope` driven by the one `CLIENTS` table; `Forest.render` refuses to
+nest. Owner's words: the README's `Start the agent's client in
+WORKING_DIRECTORY and give it that URL.`; the script prints the approved
+line on curl's exit 7 as well. Rejected by the judge, not to re-raise:
+deriving `_last_status` from `_own_statuses`; indenting a lone session's
+fields; the dead-pid test as flaky. 237 pass.
 
 ## Remaining, in order
 

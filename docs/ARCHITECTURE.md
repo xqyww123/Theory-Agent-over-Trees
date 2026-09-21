@@ -597,8 +597,9 @@ isabelle TAT [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY
 
 `TAT_new` creates the directory's database and records in it the plugins
 the forest will use, each named by the theory that defines it,
-`SESSION.THEORY`; on an existing directory it adds the plugins given and
-changes nothing else. The record is names only, so a working directory
+`SESSION.THEORY`, and writes the agent clients' hook files and the script
+they call (CLIENT_HOOKS.md); on an existing directory it adds the plugins
+given and the hook files that are absent, and changes nothing else. The record is names only, so a working directory
 opens on any host on which those plugins' Isabelle sessions are declared,
 by a registered component or by a ROOT under a `-d` given at each launch.
 `TAT` starts the Isabelle process on the base heap `BASE` (§8; the default

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import importlib
+import inspect
 import re
 import sys
 from collections.abc import Mapping
@@ -32,7 +33,7 @@ import jsonschema
 from . import model
 from .exceptions import (
     InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
-from .model import JSON_Schema, Leaf, Node, RawAST, is_valid_name
+from .model import JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, is_valid_name
 from .store import FRAMEWORK_FIELDS
 
 
@@ -185,6 +186,15 @@ def _check_class(cls: type[Node]) -> list[str]:
         raise _refuse(cls, "omissible on output but compulsory on input")
     if _defined_by(cls, "is_finished") is not Node:
         raise _refuse(cls, "overrides `is_finished`; `_owes_nothing` is the override point")
+    if _defined_by(cls, "_operations_ready") is not Node:
+        raise _refuse(cls, "overrides `_operations_ready`; `_own_statuses` is the override point")
+    if _defined_by(cls, "print") is not Node:
+        raise _refuse(cls, "overrides `print`; `print_fields` and `mark` are the override points")
+    if _defined_by(cls, "_children_to_print") not in (Node, NonLeaf_Node):
+        raise _refuse(cls, "overrides `_children_to_print`; the descent is the framework's")
+    for method in ("print_fields", "mark"):          # rendering is synchronous (PRINT.md)
+        if inspect.iscoroutinefunction(getattr(cls, method)):
+            raise _refuse(cls, f"`{method}` is a coroutine; rendering is synchronous")
     for method in ("gen", "to_store", "from_store"):
         if _defined_by(cls, method) is Node:
             raise _refuse(cls, f"does not override `{method}`")
@@ -212,7 +222,8 @@ def _defined_by(cls: type, name: str) -> type:
     override checks compare it with `Node`: a framework class between
     `Node` and the plugin's (`Leaf`, `StdBlock`, `Unchained_Node`) must not
     define these methods itself, or the check goes blind for its
-    subclasses."""
+    subclasses — the one exception, `NonLeaf_Node`'s `_children_to_print`,
+    is named in its check."""
     return next(c for c in cls.__mro__ if name in c.__dict__)
 
 

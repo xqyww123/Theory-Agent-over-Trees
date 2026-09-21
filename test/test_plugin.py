@@ -215,6 +215,31 @@ def test_is_finished_is_the_frameworks():
     plugin.TAT_node(leaf("Owing", ["owing"], _owes_nothing=lambda self: False))
 
 
+def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchronous():
+    refused(leaf("Ready", ["ready"], _operations_ready=lambda self: True),
+            "overrides `_operations_ready`")
+    refused(leaf("Liner", ["liner"], print=lambda self, i, o, m, d: None), "overrides `print`")
+
+    async def fields(self, indent, out, mode, depth): ...
+    async def mark(self, mode, depth): ...
+    refused(leaf("Slow", ["slow"], print_fields=fields), "`print_fields` is a coroutine")
+    refused(leaf("Slower", ["slower"], mark=mark), "`mark` is a coroutine")
+    plugin.TAT_node(leaf("Marked", ["marked"], mark=lambda self, m, d: "marked",
+                         print_fields=lambda self, i, o, m, d: None))
+
+
+def test_the_descent_is_the_frameworks_for_leaves_and_nesting_classes_alike():
+    """`NonLeaf_Node` defines `_children_to_print` itself, so a plain
+    nesting class must still register while an override in a plugin is
+    refused, whichever hierarchy class it descends from."""
+    descent = lambda self, mode, depth: []            # noqa: E731
+    refused(leaf("Flat", ["flat"], _children_to_print=descent), "overrides `_children_to_print`")
+    rogue = block("Rogue", {"type": "array", "items": {"$ref": "#/$defs/Construct"}})
+    rogue._children_to_print = descent                # type: ignore[method-assign]
+    refused(rogue, "overrides `_children_to_print`")
+    plugin.TAT_node(block("Plain", {"type": "array", "items": {"$ref": "#/$defs/Construct"}}))
+
+
 def test_gen_and_both_persistence_methods_must_be_overridden():
     methods = ("gen", "to_store", "from_store")
     for missing in methods:

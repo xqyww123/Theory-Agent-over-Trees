@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import io
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TypeAlias, TypedDict
+from typing import (Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TextIO, TypeAlias,
+                    TypedDict)
 
 from Isabelle_RPC_Host import Connection
 
@@ -31,6 +33,16 @@ from .store import Forest_Store, MissingRow, Node_Rows
 # A JSON schema, as `json` reads it.  (`TypeAlias` rather than the `type`
 # statement: the package supports Python 3.11.)
 JSON_Schema: TypeAlias = dict[str, Any]
+
+# What an id is made of (MCP_SPECIFICATION §2, MODULE_STRUCTURE §4.1).
+Id: TypeAlias = str                      # the dotted string the agent sees
+Id_Component: TypeAlias = str            # one `<kind>_<name>`
+Id_Components: TypeAlias = list[Id_Component]
+Identity: TypeAlias = int                # the stored, opaque number
+
+
+def id_components(id: Id) -> Id_Components:
+    return id.split(".")
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +198,47 @@ class EvaluationResult:
 _NAME_GRAMMAR = re.compile(r"[A-Za-z][A-Za-z0-9_'-]*")
 
 
+# ---------------------------------------------------------------------------
+# Rendering (PRINT.md): the print modes, the indent, the error block
+
+class Out_Focus(_Singleton):
+    """Not on the path to the focus: the node itself, no children."""
+
+class Briefing(_Singleton):
+    """The outline: every node, to the bottom."""
+
+@dataclass(frozen=True)
+class Relative_Focus:
+    """The nodes from the next child down to the focus; empty when this
+    node is the focus."""
+    path: list[Node]
+
+class Recall(_Singleton):
+    """The recalled node and what is under it."""
+
+OUT_FOCUS = Out_Focus()
+BRIEFING = Briefing()
+RECALL = Recall()
+
+PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
+
+INDENT = "  "                            # one level
+
+
+def detailed(mode: PrintMode, depth: int) -> bool:
+    """A helper for a class's `print_fields`: at the focus, and under
+    `recall` above the grandchildren."""
+    return (isinstance(mode, Relative_Focus) and not mode.path) or (mode is RECALL and depth < 2)
+
+
+def print_error(indent: int, out: TextIO, message: str) -> None:
+    """The error block (PRINT.md §3): `Error:` at `indent`, every line of
+    the message one level deeper."""
+    out.write(INDENT * indent + "Error:\n")
+    for line in message.rstrip("\n").split("\n"):
+        out.write(INDENT * (indent + 1) + line + "\n")
+
+
 def is_valid_name(name: str) -> bool:
     """The name grammar of MCP_SPECIFICATION §2: a letter followed by
     letters, digits, underscores, primes and interior hyphens — a hyphen or
@@ -223,7 +276,7 @@ class Node(ABC):
     # The framework's two fields, set by it when the node enters the forest
     # (`edit._construct_element`) or is loaded (`Forest._load_subtree`); no class
     # sets or stores them.
-    identity: int        # opaque; survives renaming, moving and restarts
+    identity: Identity   # opaque; survives renaming, moving and restarts
     kind: str            # the construct's `kind`, under which the class was registered
 
     # The three id properties a node class declares (MCP_SPECIFICATION §2.1).
@@ -282,7 +335,7 @@ class Node(ABC):
         self.parent = parent
         self.state = state
 
-    def id_component(self) -> str:
+    def id_component(self) -> Id_Component:
         """The node's one component of an id, `<kind>_<name>`
         (MCP_SPECIFICATION §2): `lemma_P`, `theory_X`, `session_Arith`."""
         return f"{self.kind}_{self.name}"
@@ -344,9 +397,60 @@ class Node(ABC):
         return True
 
     @abstractmethod
+    def _own_statuses(self) -> list[EvaluationStatus]:
+        """The statuses of the node's own operations, in the order it runs
+        them: a leaf's one, a nesting node's beginning and ending, none for
+        a container that runs nothing.  What `_operations_ready` and the
+        default `mark` read; a class with statuses of its own answers them
+        here and overrides neither (PLUGIN_SYSTEM §5)."""
+
     def _operations_ready(self) -> bool:
         """Whether every operation of this node — not its subtree — is
         `Ready`."""
+        return all(s is READY for s in self._own_statuses())
+
+    # --- Rendering (PRINT.md).  The framework writes the line and descends;
+    # a class writes its fields and errors, and may say more in `mark`.
+
+    def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+        """The line at `indent`, then `print_fields` and the children one
+        level deeper (PRINT.md §2).  The root's only child, reached from the
+        root, writes its line without the dash and its body at the same
+        indent (§6)."""
+        forest = self.forest()
+        mark = self.mark(mode, depth)
+        line = forest.id_of(self) + (f" ({mark})" if mark else "")
+        alone = self.parent is forest and len(forest.sub_nodes) == 1 and depth >= 1
+        out.write(INDENT * indent + ("" if alone else "- ") + line + "\n")
+        below = indent if alone else indent + 1
+        self.print_fields(below, out, mode, depth)
+        for child, child_mode in self._children_to_print(mode, depth):
+            child.print(below, out, child_mode, depth + 1)
+
+    def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+        """The class's: its fields and its errors, one per line at `indent`,
+        chosen by mode and depth (PRINT.md §3).  Nothing by default."""
+
+    def mark(self, mode: PrintMode, depth: int) -> str | None:
+        """The default of PRINT.md §1, first row wins; a class overrides it
+        to say more where this says nothing."""
+        if self.is_finished():
+            return "success"
+        statuses = self._own_statuses()
+        if any(_is_own_stop(s) for s in statuses):
+            return "failed"
+        for s in statuses:
+            if isinstance(s, CannotEvaluate):        # blocked: an own stop was caught above
+                assert s.blocked_by is not None
+                return f"blocked by {self.forest().id_of(s.blocked_by)}"
+        if any(s is NOT_EVALUATED for s in statuses):
+            return "not evaluated"
+        return None
+
+    def _children_to_print(self, mode: PrintMode, depth: int) -> list[tuple[Node, PrintMode]]:
+        """The children `print` descends into and the mode each gets
+        (PRINT.md §2's table); none for a leaf."""
+        return []
 
     # --- Event hooks (MODULE_STRUCTURE §4.1), empty by default, driven by
     # the framework; two more, on_removing_child and on_added_child, live on
@@ -453,8 +557,8 @@ class Leaf(Node):
     def _last_status(self):
         return self._status
 
-    def _operations_ready(self):
-        return self._status is READY
+    def _own_statuses(self):
+        return [self._status]
 
     def _set_status(self, ev: Evaluation, new: EvaluationStatus) -> None:
         old = self._status
@@ -526,6 +630,23 @@ class NonLeaf_Node(Node):
         for c in self.sub_nodes:
             c._states_inside(out)
         return out
+
+    def _children_to_print(self, mode: PrintMode, depth: int) -> list[tuple[Node, PrintMode]]:
+        pairs: list[tuple[Node, PrintMode]] = []
+        if mode is BRIEFING:
+            pairs = [(c, BRIEFING) for c in self.sub_nodes]
+        elif mode is RECALL and depth < 3:
+            pairs = [(c, RECALL) for c in self.sub_nodes]
+        elif isinstance(mode, Relative_Focus):
+            if not mode.path:
+                pairs = [(c, OUT_FOCUS) for c in self.sub_nodes]
+            else:
+                head, rest = mode.path[0], mode.path[1:]
+                if not any(c is head for c in self.sub_nodes):
+                    raise TAT_InternalError("the focus path leaves the tree")
+                pairs = [(c, Relative_Focus(rest) if c is head else OUT_FOCUS)
+                         for c in self.sub_nodes]
+        return pairs                                 # none for Out_Focus and Recall at depth 3
 
     def _resulting_state_of_child(self, child: Node) -> Isar_State_Slot:
         for i, c in enumerate(self.sub_nodes):
@@ -636,9 +757,8 @@ class StdBlock(NonLeaf_Node):
     def _beginning_status(self):
         return self.evaluation_status_beginning
 
-    def _operations_ready(self):
-        return (self.evaluation_status_beginning is READY
-                and self.evaluation_status_ending is READY)
+    def _own_statuses(self):
+        return [self.evaluation_status_beginning, self.evaluation_status_ending]
 
     def _state_after_beginning(self) -> Isar_State_Slot:
         if self.sub_nodes:
@@ -768,8 +888,8 @@ class Unchained_Node(NonLeaf_Node):
     def _last_status(self):
         return NOT_EVALUATED                     # no operation: nothing written
 
-    def _operations_ready(self):
-        return True                              # no operation: nothing owed
+    def _own_statuses(self):
+        return []                                # no operation: nothing owed
 
     def _predecessor_wrote(self, index) -> bool:
         return False                             # no child writes another's input
@@ -832,11 +952,20 @@ def _completed(hook, *args) -> None:
 @dataclass(frozen=True)
 class Conversation:
     """What one conversation is given and the forest does not store
-    (ARCHITECTURE §1, §9): the connection to the Isabelle side, and the
-    working directory (ARCHITECTURE §4).  A node reaches it through
-    `forest().conversation`."""
+    (ARCHITECTURE §1, §9): the connection to the Isabelle side, the
+    working directory (ARCHITECTURE §4), and the seen set (PRINT.md §4) —
+    what a class has shown the agent once, under keys of the class's
+    choosing; cleared whole when the agent's context is replaced.  A node
+    reaches it through `forest().conversation`."""
     connection: Connection
     working_directory: Path
+    seen: set[Any] = field(default_factory=set)
+
+
+# The empty forest's one line under `Sessions:` (PRINT.md §6), approved wording.
+EMPTY_FOREST = ('There are no Isabelle sessions yet. Call `edit` with `{"action": "append",'
+                ' "target_id": "Sessions", "constructs": [{"kind": "session", ...}],'
+                ' "evaluate": false}` to declare one.')
 
 
 class Forest(Unchained_Node):
@@ -846,8 +975,9 @@ class Forest(Unchained_Node):
     conversation: Conversation
     lock: asyncio.Lock                         # held across every evaluation and tree change
     store: Forest_Store                        # the working directory's database (the plan's §2)
+    _index: dict[Id_Component, list[Node]] | None   # id component -> its bearers, while `render` runs
 
-    ROOT_IDENTITY: ClassVar[int] = 0           # `next_identity` starts at 1
+    ROOT_IDENTITY: ClassVar[Identity] = 0      # `next_identity` starts at 1
 
     def __init__(self, conversation: Conversation, store: Forest_Store,
                  kinds: Mapping[str, type[Node]]):
@@ -861,6 +991,7 @@ class Forest(Unchained_Node):
         self.identity = self.ROOT_IDENTITY
         self.store = store
         self.lock = asyncio.Lock()
+        self._index = None
         try:
             if store.nodes():
                 seen = {self.identity}
@@ -955,7 +1086,14 @@ class Forest(Unchained_Node):
         chain.reverse()
         return chain
 
-    def _read(self, parts: list[str]) -> list[Node]:
+    def _bearing(self, component: Id_Component) -> list[Node]:
+        """The nodes whose own component is `component`, in tree order: from
+        the index while a rendering runs, else by walking the forest."""
+        if self._index is not None:
+            return self._index.get(component, [])
+        return [n for n in self._all_nodes() if n.id_component() == component]
+
+    def _read(self, parts: Id_Components) -> list[Node]:
         """Every node the id designates: its chain's component sequence
         yields `parts` by dropping input-omissible components — never the
         node's own."""
@@ -981,9 +1119,9 @@ class Forest(Unchained_Node):
                                 and match(ci + 1, pi)))
                 return memo[key]
             return match(0, 0)
-        return [n for n in self._all_nodes() if admits(self._chain(n))]
+        return [n for n in self._bearing(parts[-1]) if admits(self._chain(n))]
 
-    def resolve(self, id: str) -> Node:
+    def resolve(self, id: Id) -> Node:
         """The node an agent-supplied id designates; `Sessions` is the forest
         itself.  No match: `NodeNotFound`, with the closest printed ids as
         guesses.  Several: the exact match wins — the one whose chain
@@ -993,7 +1131,7 @@ class Forest(Unchained_Node):
         `AmbiguousId`, the candidates in tree order."""
         if id == "Sessions":
             return self
-        parts = id.split(".")
+        parts = id_components(id)
         matches = self._read(parts)
         if len(matches) > 1:
             for n in matches:
@@ -1012,7 +1150,7 @@ class Forest(Unchained_Node):
             raise NodeNotFound(id, near)
         raise AmbiguousId(id, [self.id_of(m) for m in matches])
 
-    def id_of(self, node: Node) -> str:
+    def id_of(self, node: Node) -> Id:
         """The shortest form: starting from the full id, repeatedly delete —
         among the output-omissible components whose deletion still resolves
         to exactly this node — the one with the lowest drop priority, the
@@ -1035,6 +1173,40 @@ class Forest(Unchained_Node):
             if best is None:
                 return ".".join(chain[p].id_component() for p in kept)
             kept.remove(best[1])
+
+    # --- rendering (PRINT.md §5, §6)
+
+    def render(self, node: Node, mode: PrintMode) -> str:
+        """Every rendering's entry (MODULE_STRUCTURE §4.1).  The index that
+        makes every printed id linear in the forest lives exactly as long
+        as this call, which is synchronous: a move could change a short
+        form."""
+        if self._index is not None:
+            raise TAT_InternalError("a rendering started inside a rendering")
+        out = io.StringIO()
+        index: dict[Id_Component, list[Node]] = {}
+        for n in self._all_nodes():
+            index.setdefault(n.id_component(), []).append(n)
+        self._index = index
+        try:
+            node.print(0, out, mode, 0)
+        finally:
+            self._index = None
+        return out.getvalue()
+
+    def print(self, indent, out, mode, depth):
+        """The root's three forms (PRINT.md §6): `Sessions:` over the list,
+        the lone session alone — its own `print` drops the dash — or the
+        empty forest's hint.  `Sessions:` carries no dash and opens no
+        level; the hint, the root's one line under it, sits one level in."""
+        if not self.sub_nodes:
+            out.write(INDENT * indent + "Sessions:\n")
+            out.write(INDENT * (indent + 1) + EMPTY_FOREST + "\n")
+            return
+        if len(self.sub_nodes) > 1:
+            out.write(INDENT * indent + "Sessions:\n")
+        for child, child_mode in self._children_to_print(mode, depth):
+            child.print(indent, out, child_mode, depth + 1)
 
     async def _run(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
         """One walk under the lock, already held, then one round trip
@@ -1160,6 +1332,21 @@ class Session(Unchained_Node):
         return cls(config.parent, config.state, rows.get("name"), rows.get("parent_session"),
                    rows.get("options"), rows.get("description"))
 
+    def print_fields(self, indent, out, mode, depth):
+        """SESSION_AND_THEORY §4: `parent_session` in the briefing and when
+        detailed; `options` and `description`, when there are any, when
+        detailed."""
+        if mode is BRIEFING or detailed(mode, depth):
+            out.write(INDENT * indent + f"parent_session: {self.parent_session}\n")
+        if detailed(mode, depth):
+            if self.options:
+                out.write(INDENT * indent + "options: "
+                          + ", ".join(f"{o['name']} = {o['value']}" for o in self.options) + "\n")
+            if self.description:
+                out.write(INDENT * indent + "description:\n")
+                for line in self.description.rstrip("\n").split("\n"):
+                    out.write(INDENT * (indent + 1) + line + "\n")
+
     async def _evaluate(self, ev, mode):
         raise TAT_InternalError(
             "a walk reached a Session: evaluation is transparent to the Session layer")
@@ -1274,15 +1461,40 @@ class Theory(StdBlock):
         """The `theory … begin` span, as the tree's file will open."""
         return f"theory {self.name}\n  imports {' '.join(self.imports)}\nbegin"
 
+    def print_fields(self, indent, out, mode, depth):
+        """SESSION_AND_THEORY §4: `imports` in the briefing, when detailed
+        and at `recall`'s depth 2; the two operations' messages — only for
+        an operation that is an own stop, the one status a failed run
+        leaves standing — whole under `recall` below depth 2, once per run
+        elsewhere (the seen set, PRINT.md §4), never in the briefing."""
+        if mode is BRIEFING or detailed(mode, depth) or (mode is RECALL and depth == 2):
+            out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
+        if mode is BRIEFING:
+            return
+        seen = self.forest().conversation.seen
+        whole = mode is RECALL and depth < 2
+        for operation, status, messages in (
+                ("beginning", self.evaluation_status_beginning, self.beginning_errors),
+                ("ending", self.evaluation_status_ending, self.ending_errors)):
+            if not _is_own_stop(status):
+                continue
+            key = (self.identity, operation)
+            if whole or key not in seen:
+                for message in messages:
+                    print_error(indent, out, message)
+                seen.add(key)
+
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
     # operation's errors, empty when it passed (ARCHITECTURE §6.2), and
     # whatever it lets escape is a bug (`isabelle_driver.call`).  The
     # previous run's messages go before the call, so a failed call leaves
-    # none standing.
+    # none standing; and the run's key leaves the seen set, so its
+    # messages show again (PRINT.md §4).
 
     async def _eval_beginning_opr(self):
         session = self.session()
         conversation = self.forest().conversation
+        conversation.seen.discard((self.identity, "beginning"))
         self.beginning_errors = []
         self.beginning_errors = await isabelle_driver.call(
             conversation.connection, "TAT.Theory.begin",
@@ -1293,9 +1505,11 @@ class Theory(StdBlock):
         return not self.beginning_errors
 
     async def _eval_ending_opr(self):
+        conversation = self.forest().conversation
+        conversation.seen.discard((self.identity, "ending"))
         self.ending_errors = []
         self.ending_errors = await isabelle_driver.call(
-            self.forest().conversation.connection, "TAT.Theory.end",
+            conversation.connection, "TAT.Theory.end",
             (self._state_before_ending.to_msgpack(), self._state_after_ending.to_msgpack()))
         return not self.ending_errors
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import fcntl
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NoReturn
@@ -29,17 +29,21 @@ LOCK = "tat.lock"
 
 
 @contextmanager
-def _held(working_directory: Path) -> Generator[None]:
+def _held(working_directory: Path) -> Generator[Callable[[int], None]]:
     """The working directory's lock: an exclusive `flock` on a descriptor
     kept open for the life of the conversation, so the kernel releases it
     when the process dies and the `finally` when the conversation ends any
     other way.  `flock`, not a POSIX record lock, because only `flock`
     conflicts between two descriptors in one process — what refuses a
     second conversation in this host as well as in another.  The holder
-    writes its pid into the file and clears it on release, so a refusal
-    can name it; between taking the lock and writing, the file is still
-    empty or still a crashed holder's, and between clearing it on release
-    and closing the descriptor it is empty."""
+    writes its pid into the file when it takes the lock and, through the
+    `announce` it yields, its port once the server is listening, one line
+    each, and clears the file on release; each reader takes the line it
+    needs — the refusal here the first, the hooks of CLIENT_HOOKS.md the
+    second, and the first to see the holder is alive.  Between taking the
+    lock and writing, the file is still empty or still a crashed holder's,
+    and between clearing it on release and closing the descriptor it is
+    empty."""
     try:
         fd = os.open(working_directory / LOCK, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as e:
@@ -49,14 +53,18 @@ def _held(working_directory: Path) -> Generator[None]:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as e:
-            holder = os.pread(fd, 32, 0).decode(errors="replace").strip()
+            holder = os.pread(fd, 64, 0).decode(errors="replace").split("\n")[0].strip()
             raise TAT_StartupError(
                 f"another TAT conversation holds {working_directory}"
                 + (f" (its Python process is pid {holder})" if holder.isdigit() else "")) from e
         os.ftruncate(fd, 0)
-        os.write(fd, str(os.getpid()).encode())
+        os.write(fd, f"{os.getpid()}\n".encode())
+
+        def announce(port: int) -> None:
+            os.write(fd, f"{port}\n".encode())      # the descriptor stands after the pid line
+
         try:
-            yield
+            yield announce
         finally:
             os.ftruncate(fd, 0)
     finally:
@@ -71,11 +79,13 @@ async def launch_TAT(arg: tuple[list[str], str, int], connection: Connection) ->
     the `Forest`, the server; then the conversation, until its ending."""
     python_packages, working_directory, port = arg
     directory = Path(working_directory)
-    with _held(directory), Forest_Store(directory / DATABASE) as store:
+    with _held(directory) as announce, Forest_Store(directory / DATABASE) as store:
         conversation = Conversation(connection, directory)
         loaded = plugin.load(python_packages)
         forest = Forest(conversation, store, loaded.kinds)
-        async with TAT_Server(port, mcp.tools(forest, loaded)) as server:
+        async with TAT_Server(port, mcp.tools(forest, loaded),
+                              mcp.on_compaction(forest)) as server:
+            announce(port)                  # listening: the hooks may call
             # a line nothing depends on, and the launcher does not echo (§5)
             await connection.writeln(f"TAT is serving on {server.url}")
             await server.serve()
