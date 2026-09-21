@@ -20,17 +20,23 @@ what registers: a node class is defined at module top level under
 `@TAT_node`, and the decorator runs as the class statement executes. The
 two framework classes, `Session` and `Theory` (`model.py`), are registered
 by `load` itself, first, through the same `TAT_node`. Registration has no
-other path. What a class registers into is a process-wide registry, filled
-once per process — the framework's two classes by the first `load`, a
-plugin's the first time its package is imported; what `load` returns is
+other path. What a class registers into is a process-wide registry, which
+holds a class exactly while the module defining it is in `sys.modules` —
+the framework's two classes from the first `load`, a plugin's from the
+import of its package; what `load` returns is
 this conversation's kind table — those two plus the classes of the listed
-packages — and the assembled `edit` schema, so a second conversation in
-the same process reads the registry rather than registering again
-(MODULE_STRUCTURE §4.4).
+packages, a class belonging to the package whose module defines it, a
+module under the package counting — and the assembled `edit` schema, so a
+second conversation in the same process reads the registry rather than
+registering again (MODULE_STRUCTURE §4.4).
 
 A package that fails to import — a syntax error, a registration check
 below — fails the conversation start: a plugin's bug is never skipped
-quietly.
+quietly. The failed import takes the failing module out of `sys.modules`,
+and with it what that module had registered, so the next `load` takes the
+fixed module; a module it had imported cleanly before failing stays, with
+what that one registered, so a fix inside such a module needs a new host
+process — the imported modules are the process's (ARCHITECTURE §9).
 
 ## 2. What a class declares
 
@@ -120,9 +126,7 @@ After every package is imported, the loader builds the `$defs` of the
   "#/$defs/Theorem"}, ...]}` over the class entries, in the same order.
 
 `edit`'s hand-written file (TOOL_SCHEMAS.md §1) carries an empty `$defs`;
-the server fills it at start and never afterwards. A class registering
-outside a `load` — from an import no `load` is performing — is refused (a
-`TAT_InternalError`: registration belongs to a conversation's start).
+`load` fills a copy of it for the conversation it is starting.
 
 The assembled schema keeps its references. The loader never inlines a
 `$ref`; a client that cannot take references is the MCP server's concern
@@ -150,7 +154,10 @@ class:
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
 - the class does not override `is_finished` — `_owes_nothing` is the
-  override point (ARCHITECTURE §3.2);
+  override point (ARCHITECTURE §3.2) — nor `_operations_ready` —
+  `_own_statuses` is (MODULE_STRUCTURE §4.1);
+- `print_fields` and `mark` are plain functions, not coroutines: rendering
+  is synchronous (PRINT.md);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's
   defaults only raise, and a class missing one would fail at its first
   edit or at the next start instead of here;

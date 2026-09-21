@@ -33,10 +33,16 @@ language. A concept that needs a name gets one here first.
 | **conversation** | one run of TAT, from Isabelle's call into Python until either process stops, the connection between them closes, or a bug or a `TAT_DisasterError` ends it from inside; one per working directory (§9) |
 | **launcher** | `isabelle TAT`, the command that starts the Isabelle process on the chosen base heap and calls `TAT_Framework.start` (§9) |
 | **boot** | `ML/TAT_Boot.ML`, the one ML file the launcher loads into the Isabelle process before TAT's theory exists; it defines the protocol command `TAT.boot` (MODULE_STRUCTURE §5) |
-| **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation (§9), the ROOT, and one folder per `Session` for its trees' `.thy` files (§4) |
+| **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation (§9), the ROOT, one folder per `Session` for its trees' `.thy` files (§4), and the hook files `TAT_new` writes for the agent clients (CLIENT_HOOKS.md) |
 | **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
+| **print mode** | what a rendering is looking at: one of `Out_Focus`, `Briefing`, `Relative_Focus`, `Recall` (PRINT.md) |
+| **focus** | the node a tool call was about; the quickview expands the path from the root to it (PRINT.md §5) |
+| **mark** | the word in parentheses on a node's line that says its state, `success`, `not evaluated`, `failed`, `blocked by <id>`, or a class's own (PRINT.md §1) |
+| **quickview** | the rendering that ends the result of `edit`, `move`, `delete` and `evaluate_to` (PRINT.md §5) |
+| **briefing** | the rendering `POST /on-compaction` answers, which the agent's client puts into the agent's replaced context (PRINT.md §5, CLIENT_HOOKS.md) |
+| **seen set** | the conversation's record of what a class has shown the agent once; cleared when the agent's context is replaced (PRINT.md §4) |
 
 Isabelle's build unit is always written **Isabelle session** in full; the
 `Session` node class (§2.2) is one Isabelle session under construction.
@@ -103,7 +109,7 @@ plain text is the agent system the method falls back to.
 
 **`Theorem`**
 
-| Attribute | Type | |
+| Field | Type | |
 | --- | --- | --- |
 | `kind` | `lemma` \| `corollary` \| `theorem` | authored |
 | `statement` | AoA's Long statement (`contrib/Isa-Mini/IsaMini/AoA/model.py`, `class LongStatement`) | authored |
@@ -126,7 +132,7 @@ for a proved one.
 
 **`Define`**
 
-| Attribute | Type | |
+| Field | Type | |
 | --- | --- | --- |
 | `auto_reduction` | `bool` | authored |
 | `equations` | the defining equations | authored |

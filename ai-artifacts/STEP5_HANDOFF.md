@@ -1,50 +1,332 @@
-# Hand-off into plan §7 step 5 (2026-09-14)
+# Hand-off within plan §7 step 5 (updated 2026-09-21)
 
-Where things stand: the design of the entry point is final and reviewed —
-MODULE_STRUCTURE §2.6 and §5 (the launcher `isabelle TAT_new` / `isabelle
-TAT`, the boot `ML/TAT_Boot.ML`, the protocol commands `TAT.boot` and
-`TAT.start`, `TAT.finished` and the exit codes), ARCHITECTURE §9,
-EVALUATOR_DESIGN §6 (measured; data in PARALLEL_PROOFS_MEASUREMENT.md),
-FIRST_END_TO_END_RUN_PLAN §7 step 5. The ML and Scala halves of step 5
-(items 1 and 2 below) are implemented, reviewed and committed; the Python
-half and the test harness (items 3 and 4) are not started.
+Where things stand: the ML and Scala halves of step 5 are committed
+(`fd4a42e`, `0508b71`), and so is the Python half but for the tools
+(2026-09-21, after review rounds 11–13): `plugin.py`'s registry split, the
+shield in `isabelle_driver.call`, `mcp_server.py`, `toplevel.launch_TAT`,
+the dependencies. `mcp.py` holds the seam only (`tools` returns `[]`): the
+tools wait on their own design, which the owner deferred to when they are
+written; the rendering their results end with is PRINT.md (decided
+2026-09-21). The design is MODULE_STRUCTURE §2.6, §5 and §4.3–§4.6,
+ARCHITECTURE §9, EVALUATOR_DESIGN §6, PLUGIN_SYSTEM §1, plan §7 step 5.
 
 ## Owner's standing permissions for this work
 
 - `isabelle TAT` may be run at will (it may build a base heap).
-- `isabelle scala_build` may be run at will, for this component.
-- `isabelle ML_process` was used for measurements; `isabelle build` stays
-  forbidden except `repl_server.sh`.
+- `isabelle scala_build` may be run at will, for this component (the
+  rebuild procedure is in `etc/build.props`' comment and MODULE_STRUCTURE
+  §5).
+- `isabelle build` stays forbidden except `repl_server.sh`.
 - Test framework: the author's call (plan §7 step 5 names the shape).
+- TAT is registered as an Isabelle component on this host.
 
-## Implementation order
+## Done (do not redo)
 
-1. ML: `ML/TAT_Boot.ML`; `TAT.start` in `TAT_Framework.ML`; `start` taking
-   a list of theories (registrations deduplicated by serial);
-   `check_parallel_proofs` asserting `< 3`; `TAT.finished (rc, messages)`
-   on every path.
-2. Scala: `src/scala/tat.scala` (`TAT_new`, `TAT`), `etc/build.props`,
-   `lib/tat.jar` committed, `etc/settings` classpath line.
-3. Python: `launch_TAT` (lock, `Conversation`, `Forest_Store` on
-   `TAT.sqlite`, plugins, `Forest`, server, served line), `mcp_server.py`,
-   `mcp.py` tools, `isabelle_driver.call` shield, `plugin.py` registry vs
-   table.
-4. Tests: one Python RPC host, then one `isabelle TAT` with `RPC_Host`
-   exported, the `mcp` SDK's Streamable HTTP client; retire
-   `test/run_ml_framework_test.py` and `test/routing_forest.py`.
+1. ML: `ML/TAT_Boot.ML` (`TAT.boot`); `TAT.start` in `TAT_Framework.ML`;
+   `start` taking theories, working directory, port; `Loader.fetch` /
+   `fetch_named`; `check_parallel_proofs` below 3 in every load; both
+   emitters render `Interrupt` and fall back to `CRASHED`.
+2. Scala: `src/scala/tat.scala` (`TAT_new`, `TAT`), `etc/build.props`
+   (`no_build`), `lib/tat.jar`, `etc/settings`.
+3. Python:
+   - `plugin.py`: one process-wide `registry: dict[type[Node], list[str]]`
+     (class → its kinds, registration order); `load` registers the
+     framework's classes once, imports, and returns `Loaded(kinds,
+     edit_schema)` — the table selected from the registry: the framework's
+     classes and those whose `__module__` is a listed package or a module
+     under it; `assemble`/`edit_schema` take the class list. The seal is
+     gone: a table is a snapshot, so a later registration cannot reach it.
+   - `isabelle_driver.call`: `asyncio.shield` around the round trip.
+   - `mcp_server.py`: `Tool(name, description, input_schema, run)`;
+     `TAT_Server(port, tools)` binds in the constructor
+     (`TAT_StartupError`), `async with` listens/stops, `serve()` returns
+     what ended the conversation (a `CancelledError` when the RPC host
+     cancelled `launch_TAT`), `end(exn)` enters the ending. The handler:
+     body as its own task, `asyncio.wait` inside `anyio.CancelScope
+     (shield=True)`, then `anyio.lowlevel.checkpoint()`; `TAT_Error` →
+     `isError` text; else `end` + the RENDER_BASELINES §4 line
+     (`stopped`). The ASGI app counts non-GET requests in flight so the
+     manager is torn down only after every handler has answered. uvicorn
+     is driven through `startup`/`main_loop`/`shutdown`, not `serve()`
+     (which captures SIGINT/SIGTERM); `interface="asgi3"` is required for
+     a bound method.
+   - `toplevel.launch_TAT((packages, wd, port), connection)`: `tat.lock`
+     flock → `Forest_Store` → `Conversation` → `plugin.load` → `Forest` →
+     `TAT_Server` → `writeln` the served line → `raise await
+     server.serve()`.
+   - `pyproject.toml`: `mcp>=1.26`, `uvicorn>=0.41`, `anyio>=4.5`.
+   - Tests: `test_mcp_server.py` (SDK client end to end: results, the
+     ending's three doors, the host's cancellation, a client's
+     cancellation, Host header 421, 404, port in use), `test_toplevel.py`
+     (lock, served line, cancellation, release); 197 pass.
+
+Measured: the first real run of the Python side under `isabelle TAT`
+(scratchpad `launcher_run/e2e.py`, log `e2e.log`): an `mcp` client
+connected 21 s after launch (`Isabelle_RPC` heap), listed `[]`, got
+``unknown tool `nothing` `` on a bogus name; Ctrl-C → `*** Interrupt`,
+exit 1, 1.5 s, no orphan. Earlier measurements as before (the three
+pre-flight refusals, Ctrl-C in every phase, `TAT_new`'s table).
+
+## Awaiting the owner
+
+Wording (owner's rulings of 2026-09-14):
+
+- `another TAT conversation holds <working directory> (its Python process
+  is pid <pid>)` (`TAT_StartupError`, `toplevel._held`; reaches the
+  launcher's terminal): approved; the holder writes its pid into
+  `tat.lock`, the parenthesis is dropped when the file is still empty.
+- `TAT cannot serve on 127.0.0.1:<port>: <strerror>` (`TAT_StartupError`,
+  `mcp_server._bind`): approved.
+- ``unknown tool `<name>` `` (agent-visible, `isError`, `_call_tool`):
+  approved for now; to be discussed again with the tools themselves.
+- PLUGIN_SYSTEM §1's added clause on which classes a package contributes:
+  the author's call (kept).
+
+Review 11 (2026-09-15; ruling in the scratchpad `entry_review/ruling11.json`,
+brief `BRIEF11.md`, diff `diff11.patch`): not accepted; two blocking, the
+rest major/minor. Owner's rulings on its owner items:
+
+- GRACE = 5 seconds: the ending's drain (`anyio.move_on_after`) and
+  uvicorn's `timeout_graceful_shutdown`; worst case the sum (10 s); §4.6
+  now says the ending waits a bounded time and stops regardless.
+- PLUGIN_SYSTEM §4's seal passage replaced (done); MODULE_STRUCTURE §4.3
+  qualified — only a round trip in flight gets the connection error; a
+  tool body's cancellation path never starts one (done).
+- "every call" answered the stopped line means every **tool call**
+  (RENDER_BASELINES §4, MODULE_STRUCTURE §4.6 changed); `tools/list` and
+  `ping` answer normally while the ending lasts.
+- §4.6: the promise holds until the server stops accepting (done).
+- The `main_loop` relaxation is not taken; decision 6 stands.
+- A working directory TAT cannot write:
+  `TAT cannot use <working directory> as its working directory: <strerror>`
+  (`TAT_StartupError`, around `os.open` of `tat.lock`).
+
+The code fixes, applied with the owner's go-ahead (2026-09-15), to be
+re-reviewed (round 12):
+
+- `_call_tool` decides the answer (`_answer`) before its checkpoint; the
+  decision is total (`except Exception` enters the ending; a body that
+  let a cancellation escape enters it with a `TAT_InternalError`); the
+  ending's reason is read from one place, `self._ending`, an
+  `asyncio.Future`.
+- `serve` raises what ended the conversation (`NoReturn`); after
+  `main_loop` it stops accepting (`_stop_accepting`: uvicorn's own three
+  steps) and drains `while self._requests: await self._idle.wait()` under
+  `anyio.move_on_after(GRACE)`; `timeout_graceful_shutdown=GRACE` on the
+  uvicorn config; `ws="none"`.
+- The port is bound in `__aenter__` (closed if `startup` fails);
+  `launch_TAT` is `await server.serve()`.
+- `isabelle_driver.call` retrieves an abandoned round trip's outcome
+  (`_dropped`) so asyncio reports nothing.
+- `plugin.load` drops from the registry the classes whose module a failed
+  import removed from `sys.modules`, so a fixed package loads on retry.
+- `_held`: `os.open` failure → the approved `TAT cannot use … as its
+  working directory: …`; the pid is cleared on release.
+- Tests: events instead of sleeps, one 30 s deadline per test, the
+  client's cancellation through a real `notifications/cancelled`, the
+  RENDER_BASELINES §4 lines read from the document, no `uvicorn.error`
+  record at ERROR on any ending (autouse), the stalled peer (GRACE
+  monkeypatched to 1), the empty tool list, `validate_input=False`, the
+  boundary's own failures, the registry retry; 205 pass; three
+  consecutive runs of the server and toplevel files clean, zero ASGI
+  tracebacks with the logging plugin off.
+- Docs: MODULE_STRUCTURE §4.6 (order of business, the lock texts, the pid,
+  the bounded ending, the standalone stream), §4.3, PLUGIN_SYSTEM §4,
+  RENDER_BASELINES §4 ("tool call").
+
+Review 12 (2026-09-15; ruling `entry_review/ruling12.json`, brief
+`BRIEF12.md`, diff `diff12.patch`; the run was split by session limits —
+challengers and 21 defenders from `wf_bf3942d8-06c`, the rest from the
+continuation `wf_dd341108-6d2`, inputs under `entry_review/cont12/`): not
+accepted, "the gap is much smaller than round 11's and most of what is
+left is prose". Accepted: the `caplog` guard reads the teardown phase
+(inert; `get_records("call")`); the stalled-peer ending logs an ASGI
+traceback (drop the connections the drain gave up on, inside
+`manager.run()`, then drain again); the `late` assertion still races the
+tick (test-only: hold the window via a wrapped `main_loop`, warm the
+client's schema cache with an early `list_tools`); own the session
+manager in `__aenter__`/`__aexit__` (`AsyncExitStack`) so the endpoint
+listens only while it runs; `remove_reader` on `__aenter__`'s failure
+path; `tool.run` called inside the body task (`_run`); PLUGIN_SYSTEM §1's
+"filled once per process" replaced by the `sys.modules` invariant; two
+owner items — the GRACE bound is on the transport, not on a body that
+ignores its cancellation (decision 1's "worst case is their sum" is
+false; §4.6 and the module comment to restate), and what a call whose
+body completed despite the ending is answered (code: what it did; docs:
+the stopped line). Rejected: the abandoned-trip test being vacuous.
+
+Owner's rulings after round 12 (2026-09-15): **GRACE removed** — a peer
+that stalls mid-request is a trusted local client's bug, not TAT's
+concern; the ending waits for the requests in flight with no cap, and
+uvicorn's `timeout_graceful_shutdown` stays at its default (decision 1 of
+2026-09-15 withdrawn; the round-12 owner item on the bound is moot). A
+tool call whose body completed despite the ending — before it, or after
+ignoring its cancellation — is answered what it did (code wins; the clause
+is in MODULE_STRUCTURE §4.6 and RENDER_BASELINES §4). The round-12 author
+items applied: the `caplog` guard reads the call phase and lives in
+`test/conftest.py` (every test file); the session manager runs from
+`__aenter__` to `__aexit__` (`AsyncExitStack`), `serve` no longer enters
+it; `remove_reader` on `__aenter__`'s failure path; `tool.run` called
+inside the body task (`_run`); the `late` assertion holds the accepting
+window through a wrapped `main_loop` (`hold_accepting`) and warms the
+SDK client's schema cache; plugin import failures become
+`CannotLoadPlugin(package, None, "<ExcType>: <msg>")` (reason text is
+Python's — to mention to the owner); docs: §4.6 (the completed body, the
+ending's waits, the lock file predicate, the second pid window), EXCEPTIONS
+§1's list, PLUGIN_SYSTEM §1's `sys.modules` invariant; tests for the
+head-end window, the released port after a failed or cancelled startup,
+the `Origin` refusal, `tools/list` during the ending, a plain-`def` tool,
+a missing package. 208 pass; mutation checks on the guard and on
+`remove_reader` done; e2e clean. Re-review: round 13.
+
+Review 13 (2026-09-15; ruling `entry_review/ruling13.json`, brief
+`BRIEF13.md`, diff `diff13.patch`): **accepted**, conditional on five
+author items, all applied: `_stop_listening` split out of
+`_stop_accepting` and called first in `__aexit__` (the writeln-failure
+path no longer accepts while the manager unwinds); the `__aexit__`
+comment names the body wait; the attached-client test (the deployed
+shape, in a task of its own — the mutant with `__aexit__`'s two awaits
+reversed hangs to the 30 s deadline); the tail's two assertions (`serve`
+waits for `stubborn`'s call; a connection after it is refused — both
+statements now have a red mutant); the tick test asserts it reached
+`create_server`'s window and runs the cancelled `__aenter__` in its own
+task (the judge's missed item: the test's task otherwise kept
+`cancelling() == 1`). Docs (no design change, the author's call):
+`CannotLoadPlugin`'s docstring and EXCEPTIONS' tree entry widened to the
+import failure; EXCEPTIONS §1 points at PLUGIN_SYSTEM §1 and §5; §4.6's
+pid sentence admits a crashed holder's pid in the first window;
+PLUGIN_SYSTEM §1's recovery promise narrowed to the failing module (a
+clean submodule of a failed package stays cached; a fix there needs a new
+host process — the judge's recommended resolution over a code handler,
+which would have to know which conversations still hold a package).
+Rejected by the judge: startup texts under RENDER_BASELINES (that
+document is agent-facing; `TAT_StartupError` never reaches the agent);
+hairsplitting: "stops accepting once entered" read as simultaneity;
+settled: helper copies between test files. Optional for the owner: §4.6's
+`toplevel.py` paragraph as a list; a home for the four startup strings if
+they are to be drift-guarded. 209 pass.
+
+Observed, not ours: the `mcp` SDK handles a new session's first request
+inside its session-creation lock (streamable_http_manager.py,
+`_handle_stateful_request`), so a peer that sends a session-less POST's
+headers and stalls blocks every new session until it goes; existing
+sessions are unaffected.
+
+Deferred by the owner (2026-09-14) to the design of `edit`/`move`/`delete`
+themselves, not to be raised before then: the success result's body (the
+text a successful call returns, before the `quickview`).
+
+## Rendering settled (2026-09-15, in the forked session)
+
+The owner decided the rendering; PRINT.md is now the design, with
+RENDER_BASELINES §5 (the lines), CLIENT_HOOKS.md (new: the hook files per
+agent client and `POST /on-compaction`), MODULE_STRUCTURE §4.1 (the
+contract gains `print`, `quickview`, `errors`), §4.6 (the endpoint), §5
+(`TAT_new`: the emptiness rule, `-p`, the hook files), ARCHITECTURE §1
+(the working directory row), MCP_SPECIFICATION §1.1 (`recall` renders
+through `print`; no detail levels). Owner's rulings, not to re-raise: no
+title on a node's line; the four marks `success` / `not evaluated` /
+`failed` / `blocked by <id>` and none for a ready-but-owing node; a lone
+session prints as `session_A:` with its content unindented; errors printed
+once per conversation and the record cleared only through the endpoint
+(no "print every time until a hook checks in" fallback — the hooks are
+assumed configured); the endpoint is `/on-compaction` with `client=` naming
+the client, unknown values refused; no preface line before the injected
+quickview; `TAT_new` refuses a non-empty directory that is not a working
+directory, writes all five hook files on creation and only the absent ones
+later; OpenCode uses its `experimental.session.compacting` hook.
+
+Rulings of 2026-09-16 and, after the first design review (round 1,
+scratchpad `render_review/`: `BRIEF1.md`, `EXCERPTS.md`, `ruling1.md`,
+`result1.json`; judge: NOT READY), of 2026-09-21 — all in PRINT.md: one
+method `print(indent, out, mode, depth)` with `PrintMode = Out_Focus |
+Briefing | Relative_Focus(path: list[Node]) | Recall` and `depth` a
+parameter of its own; the class hooks are `print_fields(indent, out,
+mode, depth)` and an overridable `mark(mode, depth)` whose default is the
+four-word table (`Theorem` may answer `not proven`); no `errors()`: a
+class prints its own errors in `print_fields` through the framework's
+`print_error`, and shows a thing once through the conversation's seen set
+(`Conversation.seen`, keys the class's, `Theory` discarding its key in
+the evaluation hook; cleared whole by `/on-compaction`); the quickview
+ends `edit`, `move`, `delete`, `evaluate_to` only (AoA's rule; `recall`
+and `status` carry none); `Out_Focus` prints the node itself and no
+children for every class, `Session` included; the lone session prints
+itself without the dash by seeing it is the root's only child, depth 1;
+`_own_statuses()` in the contract, `_operations_ready` derived;
+`Forest`'s per-rendering id index; the endpoint's closure
+`on_compaction` built in `mcp.py`, the transport-security check with the
+manager's settings (`is_post=False`), unknown `client` refused before
+the seen set is touched; the port read by every hook from `tat.lock`'s
+second line (pid on the first), the hooks all command hooks with the
+approved failure line `TAT is not running in this directory (no
+tat.lock).`, `TAT_new` without `-p`; the evaluation walk's `Mode`
+renamed `EvaluationMode` (done in `model.py`); the aliases `Id`,
+`Id_Component`, `Id_Components`, `Identity`; `edit`'s `target_id`
+description (TOOL_SCHEMAS §1, `tools/edit.jsonc`); `Session`'s and
+`Theory`'s `print_fields` per mode (SESSION_AND_THEORY.md §4). Rejected
+by the owner: recording the port in `TAT.sqlite`; a `bullet` parameter
+on `print`; a fallback when hooks are absent; any cap on the briefing.
+Open with the tools: each tool's focus. Open with `Theorem`: its `mark`
+and `print_fields`.
+
+Work this adds to the Python half, before or with 3e: `Node.print` with
+the four modes, `print_fields` / `errors` defaults, the mark, the shown
+record; `Forest`'s three root forms;
+`POST /on-compaction` in `mcp_server.py` (`_asgi` routes by path already);
+`quickview` appended to every tool result. In the launcher: `TAT_new -p`,
+the emptiness refusal (text approved), the five files (contents in
+CLIENT_HOOKS.md); its usage text changes and is user-facing — propose the
+new wording to the owner before writing it. Measurements listed at the end
+of CLIENT_HOOKS.md. Still to decide with the owner (PRINT.md §6): which
+fields `Session` and `Theory` show in `print`; how the agent learns the
+root's id `Sessions` while a lone session hides it (a sentence in `edit`'s
+`target_id` description was floated).
+
+## Remaining, in order
+
+3. e. `mcp.py`: `edit`, `move`, `delete` (TOOL_SCHEMAS.md; `insert_after`
+      is `edit.insert` at index + 1; `HoldsNoChildren`/`ProtectedNode`
+      refused before the model), the `quickview` on every result, the
+      pending-message queue's seam. Build `Tool`s from the schema files
+      under `tools/` (`edit.jsonc`'s `$defs` from `Loaded.edit_schema`).
+4. Tests: one Python RPC host (`Isabelle_RPC_Host` launcher, address in
+   `RPC_Host`), one `isabelle TAT` per run, the `mcp` SDK's Streamable
+   HTTP client; one tree evaluated in Isabelle; retire
+   `test/run_ml_framework_test.py` (and `Test_TAT_Framework.thy` with it),
+   `test/routing_forest.py`.
+5. Review of the whole step, commit.
+
+## Still unverified from the first-run list
+
+Exit code 0 (unreachable today: `launch_TAT` ends only by raising — a
+normal ending is undesigned); `editor_tracing_messages=0` load-bearing
+(needs a plugin theory emitting over 1000 tracing lines); `Scala.function`
+calls during the boot's own load (only indirect evidence); `init_build`'s
+print modes against RENDER_BASELINES (needs the tests); start latency on a
+stock HOL heap (only `Isabelle_RPC` measured; 21 s to a connected client
+against 8 s to the old `NotImplementedError` — the difference is not
+broken down).
 
 ## To propose to the owner when reached
 
-- `docs/node_classes/THEOREM.md`: untracked draft, to discuss before the
-  `Theorem` class.
+- `docs/node_classes/THEOREM.md`: untracked draft, before the `Theorem`
+  class.
+- Isabelle_RPC's `Invalid response, protocol error` when the host dies
+  mid-conversation: the library's text; the owner defers it.
+- Isabelle_RPC has no public "connection closed" hook: `launch_TAT` learns
+  of a dead wire from the host's cancellation (after its 3 s grace) or
+  from a round trip failing; a hook in the library would be earlier.
 
-## To verify at the first run (from the reviews)
+## Measurement notes
 
-`parallel_proofs` inside the loader after the boot's restore; a missing
-base heap is built and found; the
-exit codes (clean ending, exception, each pre-flight refusal, Ctrl-C,
-process death without `TAT.finished`); a mistyped `-P` ends with a message
-naming the theory; `editor_tracing_messages=0` is load-bearing; a plugin
-declared only under a `-d` ROOT resolves; `Scala.function` calls during
-the boot's load complete; whether `init_build`'s print modes change any
-approved rendering (RENDER_BASELINES); start latency on a stock HOL heap.
+- Never test Ctrl-C from a bash background job (`cmd &` in a script):
+  the child inherits SIGINT ignored and every result is void. Use
+  `subprocess.Popen(..., start_new_session=True,
+  preexec_fn=lambda: signal.signal(SIGINT, SIG_DFL))` and `os.killpg`
+  (`launcher_run/sigint/probe.py`, `probe_conv.py`, `launcher_run/e2e.py`).
+- A blocking stand-in for the Python side lives in
+  `launcher_run/stub/isabelle_theory_agent/`; put it first on
+  `PYTHONPATH` to keep a conversation running without the real package.
+- The review recipe (challengers → fresh defenders → judge, Opus, English)
+  and its briefs/rulings are under the scratchpad `entry_review/`
+  (BRIEF9.md, ruling10.md).

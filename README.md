@@ -32,7 +32,8 @@ are implemented.**
 | [docs/EXCEPTIONS.md](docs/EXCEPTIONS.md) | The exceptions: the hierarchy and the two framework-written fields, `opr` and `raw_ast_path` |
 | [docs/TOOL_SCHEMAS.md](docs/TOOL_SCHEMAS.md) | The tools' argument shapes and the first line a failure renders |
 | [docs/PLUGIN_SYSTEM.md](docs/PLUGIN_SYSTEM.md) | How node classes register, and how their schemas complete the `edit` tool's |
-| [docs/PRINT.md](docs/PRINT.md) | `print` and `quickview`: how nodes and the forest render |
+| [docs/PRINT.md](docs/PRINT.md) | Rendering: the modes, the marks, the errors, the forest root |
+| [docs/CLIENT_HOOKS.md](docs/CLIENT_HOOKS.md) | The hook files `TAT_new` writes for each agent client, and the endpoint they call |
 | [docs/RENDER_BASELINES.md](docs/RENDER_BASELINES.md) | The approved agent-facing wording of every error |
 | [docs/node_classes/SESSION_AND_THEORY.md](docs/node_classes/SESSION_AND_THEORY.md) | The `Session` and `Theory` node classes |
 | [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | What is undecided, and what it blocks |

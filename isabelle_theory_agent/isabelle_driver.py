@@ -11,6 +11,7 @@ no callback registered under the name — is raised here as
 callback names are the ML side's and are decided nowhere else.
 """
 
+import asyncio
 from typing import Any
 
 from Isabelle_RPC_Host import Connection, IsabelleError
@@ -20,12 +21,24 @@ from .exceptions import TAT_IsabelleError
 
 async def call(conn: Connection, name: str, args: Any) -> Any:
     """One round trip to the callback `name`.  An exception the callback
-    let escape is a bug, not a result (EXCEPTIONS.md §1)."""
+    let escape is a bug, not a result (EXCEPTIONS.md §1).  Shielded: a
+    callback is a two-phase exchange the wire must see whole, so a
+    cancellation of the caller unwinds the caller at once while the round
+    trip completes on its own, its result dropped (MODULE_STRUCTURE §4.3)."""
+    trip = asyncio.ensure_future(conn.callback(name, args))
+    trip.add_done_callback(_dropped)
     try:
-        return await conn.callback(name, args)
+        return await asyncio.shield(trip)
     except IsabelleError as e:
         raise TAT_IsabelleError(
             f"the ML callback {name} failed:\n" + "\n".join(e.errors)) from e
+
+
+def _dropped(trip: asyncio.Future[Any]) -> None:
+    """An abandoned round trip's outcome is nobody's; read here so asyncio
+    does not report an exception of it as unhandled."""
+    if not trip.cancelled():
+        trip.exception()
 
 
 async def state_delete(conn: Connection, names: list[str]) -> None:

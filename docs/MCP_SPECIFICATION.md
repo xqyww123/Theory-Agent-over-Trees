@@ -12,7 +12,7 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | `edit` | Add nodes, or amend one — replace it, its children inherited (§3.1) |
 | `delete` | Remove a node or a subtree |
 | `move` | Reorder a node within its tree, or move it to another tree or `Session` |
-| `recall` | Read the forest: a node by id, or the outline |
+| `recall` | Read the forest: a node by id, or the whole of it |
 | `construct` | Start a node's own operation, where its class has one |
 | `evaluate_to` | Evaluate everything not yet evaluated, up to a node |
 | `status` | Collect pending messages |
@@ -33,8 +33,11 @@ do.
 
 ### 1.1 `recall`
 
-Reading the forest: a node by id, or, with no id, the outline of the whole
-forest. A detail level selects between a summary rendering and the full one.
+Reading the forest: a node by id, or, with no id, the whole forest. It
+renders the node in depth (PRINT.md §5) and nothing else; the quickview,
+which ends the results of the tools that change the forest or evaluate
+it, renders the forest around the node the call was about. Its argument
+shape is undecided (TOOL_SCHEMAS.md §5); AoA's `recall` is the reference.
 
 A `recall` of a node that has not been evaluated reports it as such. Reading
 never evaluates: TAT submits the commands, so nothing runs unless TAT asks for
@@ -242,9 +245,11 @@ call released it; another agent's call may have changed it since
 no lock and reads the forest in memory, never the database, as it stands
 at that instant: whole (MODULE_STRUCTURE §4.2), and with evaluation
 possibly under way, since an evaluating call changes statuses one node at
-a time. Collecting the pending messages is `status`'s one write; how that
-queue is kept whole when several calls are working at once is settled
-with `construct`.
+a time. Collecting the pending messages is `status`'s one write, and the
+seen set (PRINT.md §4) is written by every rendering and cleared by
+`POST /on-compaction`, both without a lock, rendering being synchronous;
+how the queue is kept whole when several calls are working at once is
+settled with `construct`.
 
 `construct` is the exception: it starts a proof search that outlives the call.
 

@@ -28,7 +28,7 @@ Tool description: `Edit Isabelle theory constructs`.
       "enum": ["append", "insert_before", "insert_after", "amend"],
       "description": "append: add the constructs at the end of the target's children; insert_before: add them before the target, as its siblings; insert_after: add them after the target, as its siblings; amend: replace the target with the given construct, inheriting the target's children."
     },
-    "target_id":  { "type": "string", "description": "The id of the target node." },
+    "target_id":  { "type": "string", "description": "The id of the target node; use `Sessions` when you are declaring a new Isabelle session." },
     "constructs": {
       "type": "array",
       "minItems": 1,

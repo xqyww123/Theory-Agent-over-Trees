@@ -4,13 +4,13 @@ complete the `edit` tool's schema at start, and the argument schema grammar
 — what a class's TypedDict may declare, and how a submitted construct is
 checked against it.
 
-Importing a plugin's package is what registers its classes; `load` imports
-every package `launch_TAT` received, after the framework's own classes, and
-then assembles and seals.  Every check failure is a `CannotLoadPlugin`
-(EXCEPTIONS.md §1): a plugin's bug fails the conversation start.  `kinds`,
-`classes` and `_sealed` are module state; the first two are filled as
-classes register, the seal is set when `load` finishes (MODULE_STRUCTURE
-§4.4).
+Importing a plugin's package is what registers its classes, into the
+process-wide `registry`; `load` imports every package `launch_TAT`
+received, after the framework's own classes, and selects this
+conversation's kind table from the registry (MODULE_STRUCTURE §4.4), so a
+second conversation in the process registers nothing again.  Every check
+failure is a `CannotLoadPlugin` (EXCEPTIONS.md §1): a plugin's bug fails
+the conversation start.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import importlib
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,8 +37,8 @@ from .store import FRAMEWORK_FIELDS
 
 
 class CannotLoadPlugin(TAT_StartupError):
-    """A node class failed a check of PLUGIN_SYSTEM §5; `node_class` is None
-    for a check on the assembled schema."""
+    """A package would not import, or a node class failed a check of
+    PLUGIN_SYSTEM §5; `node_class` is None when no class is named."""
 
     def __init__(self, package: str | None, node_class: str | None, reason: str):
         where = (f"{package}.{node_class}" if node_class
@@ -48,12 +49,12 @@ class CannotLoadPlugin(TAT_StartupError):
         self.reason = reason
 
 
-# kind -> node class, in registration order — the order agent-facing lists
-# of kinds render in (EXCEPTIONS.md §3, `UnknownKind`) and the order of the
-# `Construct` union.
-kinds: dict[str, type[Node]] = {}
-classes: list[type[Node]] = []
-_sealed = False
+# The process-wide registry (PLUGIN_SYSTEM §1): every class registered in
+# this process, in registration order, with the kinds its construct schema
+# names.  A conversation's kind table is a selection from it, in this
+# order — the order agent-facing lists of kinds render in (EXCEPTIONS.md
+# §3, `UnknownKind`) and the order of the `Construct` union.
+registry: dict[type[Node], list[str]] = {}
 
 CONSTRUCT = "Construct"                        # the union's reserved `$defs` name
 _REF = re.compile(r"^#/\$defs/([^/]+)$")
@@ -63,40 +64,54 @@ _EDIT_SCHEMA = Path(__file__).parent / "tools" / "edit.jsonc"
 def TAT_node(cls: type[Node]) -> type[Node]:
     """Class decorator: check the class (PLUGIN_SYSTEM §5) and register it
     under every kind its construct schema names."""
-    if _sealed:
-        raise TAT_InternalError(
-            f"{cls.__name__} registers after load returned; the conversation is running")
-    for kind in _check_class(cls):               # nothing is written before the checks pass
-        kinds[kind] = cls
-    classes.append(cls)
+    registry[cls] = _check_class(cls)            # nothing is written before the checks pass
     return cls
 
 
 @dataclass(frozen=True)
 class Loaded:
-    """What `load` hands the conversation: the `edit` tool's schema with
-    its `$defs` filled in (PLUGIN_SYSTEM §4)."""
+    """What `load` hands the conversation: its kind table — what `edit`
+    dispatches on and `Forest` rebuilds nodes with — and the `edit` tool's
+    schema with its `$defs` filled in from the table's classes (PLUGIN_SYSTEM
+    §4)."""
+    kinds: dict[str, type[Node]]
     edit_schema: JSON_Schema
 
 
 def load(python_packages: list[str]) -> Loaded:
-    """Register the framework's classes, import every package — importing
-    registers — then assemble the `edit` schema and seal the table."""
-    global _sealed
+    """Register the framework's classes unless an earlier load did, import
+    every package — importing registers, and a package the process holds
+    already registers nothing again — then select this conversation's
+    classes: the framework's, and those defined in a listed package or a
+    module under it."""
+    # a module a failed import dropped from sys.modules re-executes below;
+    # what it registered before it failed goes with it
+    for cls in [c for c in registry if c.__module__ not in sys.modules]:
+        del registry[cls]
     for cls in model.FRAMEWORK_NODE_CLASSES:
-        TAT_node(cls)
+        if cls not in registry:
+            TAT_node(cls)
     for package in python_packages:
-        importlib.import_module(package)
-    loaded = Loaded(edit_schema())
-    _sealed = True
-    return loaded
+        try:
+            importlib.import_module(package)
+        except CannotLoadPlugin:
+            raise
+        except Exception as e:              # missing, or failing before any class registers
+            raise CannotLoadPlugin(package, None, f"{type(e).__name__}: {e}") from e
+    classes = [cls for cls in registry
+               if cls in model.FRAMEWORK_NODE_CLASSES or _defined_in(cls, python_packages)]
+    return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes))
 
 
-def edit_schema() -> JSON_Schema:
-    """The `edit` tool's schema with its `$defs` filled in (PLUGIN_SYSTEM
-    §4), checked whole."""
+def _defined_in(cls: type, packages: list[str]) -> bool:
+    return any(cls.__module__ == p or cls.__module__.startswith(p + ".") for p in packages)
+
+
+def edit_schema(classes: list[type[Node]]) -> JSON_Schema:
+    """The `edit` tool's schema with its `$defs` filled in from `classes`
+    (PLUGIN_SYSTEM §4), checked whole."""
     schema = jsoncomment.JsonComment().loads(_EDIT_SCHEMA.read_text())
-    schema["$defs"] = assemble()
+    schema["$defs"] = assemble(classes)
     try:
         jsonschema.Draft202012Validator.check_schema(schema)
     except jsonschema.SchemaError as e:
@@ -152,11 +167,12 @@ def _check_class(cls: type[Node]) -> list[str]:
         if not is_valid_name(kind):
             # the kind heads every id component `<kind>_<name>` (MCP_SPECIFICATION §2)
             raise _refuse(cls, f"kind `{kind}` is outside the name grammar")
-        if kind in kinds:
-            raise _refuse(cls, f"kind `{kind}` is already registered by {kinds[kind].__name__}")
+        for other, other_kinds in registry.items():
+            if kind in other_kinds:
+                raise _refuse(cls, f"kind `{kind}` is already registered by {other.__name__}")
     if "kind" not in required:
         raise _refuse(cls, "`kind` must be in `required`")
-    if any(c.__name__ == cls.__name__ for c in classes):
+    if any(c.__name__ == cls.__name__ for c in registry):
         raise _refuse(cls, "another node class has this name")
     properties = _properties(cls)
     if "children" in properties:
@@ -397,7 +413,7 @@ def _check_value(value: Any, ann: Any, kind: str, path: str) -> None:
 
 # --- assembly ----------------------------------------------------------------
 
-def assemble() -> dict[str, JSON_Schema]:
+def assemble(classes: list[type[Node]]) -> dict[str, JSON_Schema]:
     """The `$defs` of the `edit` schema (PLUGIN_SYSTEM §4): each class under
     its name, less its own `$defs`, which are merged at the top level; then
     `Construct`, the union of the classes.  References are kept, never

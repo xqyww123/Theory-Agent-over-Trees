@@ -1,5 +1,6 @@
-"""The loader (PLUGIN_SYSTEM.md): registration and its checks, the kind
-table, assembly of the `edit` schema's `$defs`, sealing.
+"""The loader (PLUGIN_SYSTEM.md): registration and its checks, the
+process-wide registry and the conversation's kind table selected from it,
+assembly of the `edit` schema's `$defs`.
 Run: python -m pytest test/test_plugin.py
 """
 
@@ -10,7 +11,7 @@ import jsonschema
 import pytest
 
 from isabelle_theory_agent import model as M, plugin
-from isabelle_theory_agent.exceptions import TAT_InternalError, TAT_StartupError
+from isabelle_theory_agent.exceptions import TAT_StartupError
 from isabelle_theory_agent.plugin import CannotLoadPlugin
 
 # The classes TAT ships, captured before the fixture below empties the list
@@ -20,11 +21,14 @@ SHIPPED = list(M.FRAMEWORK_NODE_CLASSES)
 
 
 @pytest.fixture(autouse=True)
-def fresh_table(monkeypatch):
-    monkeypatch.setattr(plugin, "kinds", {})
-    monkeypatch.setattr(plugin, "classes", [])
-    monkeypatch.setattr(plugin, "_sealed", False)
+def fresh_registry(monkeypatch):
+    monkeypatch.setattr(plugin, "registry", {})
     monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [])
+
+
+def registered():
+    """Every class in the registry, for the assembly and schema tests."""
+    return list(plugin.registry)
 
 
 # --- classes to register ----------------------------------------------------
@@ -124,7 +128,7 @@ def refused(cls, match):
 
 def refused_at_assembly(cls, match):
     with pytest.raises(CannotLoadPlugin, match=match) as e:
-        plugin.assemble()
+        plugin.assemble(registered())
     assert (e.value.package, e.value.node_class) == (__name__, cls.__name__)
 
 
@@ -133,9 +137,8 @@ def refused_at_assembly(cls, match):
 def test_a_class_registers_every_kind_its_schema_names_in_order():
     assert plugin.TAT_node(Thm) is Thm
     plugin.TAT_node(Sec)
-    assert plugin.kinds == {"lemma": Thm, "theorem": Thm, "section": Sec}
-    assert list(plugin.kinds) == ["lemma", "theorem", "section"]
-    assert plugin.classes == [Thm, Sec]
+    assert plugin.registry == {Thm: ["lemma", "theorem"], Sec: ["section"]}
+    assert registered() == [Thm, Sec]
 
 
 def test_the_schema_must_be_a_well_formed_object_schema():
@@ -170,8 +173,8 @@ def test_a_kind_and_a_class_name_are_taken_once():
     # a kind heads every id component, so it keeps to the name grammar
     for bad in ("my.leaf", "my leaf", "1st", "leaf_"):
         refused(leaf("Odd", [bad]), f"kind `{bad}` is outside the name grammar")
-    assert list(plugin.kinds) == ["lemma", "theorem"]     # nothing half-registered
-    plugin.TAT_node(leaf("Hyphenated", ["my-leaf"]))      # an interior hyphen is within it
+    assert plugin.registry == {Thm: ["lemma", "theorem"]}   # nothing half-registered
+    plugin.TAT_node(leaf("Hyphenated", ["my-leaf"]))        # an interior hyphen is within it
 
 
 def test_children_only_on_a_nesting_class_and_only_as_refs():
@@ -260,7 +263,7 @@ def test_the_two_schemas_must_agree():
 def test_assembly_hoists_defs_builds_the_union_and_changes_nothing_else():
     plugin.TAT_node(Thm)
     plugin.TAT_node(Sec)
-    defs = plugin.assemble()
+    defs = plugin.assemble([Thm, Sec])
     assert list(defs) == ["Thm", "Sec", "Statement", "Construct"]
     assert defs["Thm"] == {k: v for k, v in Thm.construct_schema.items() if k != "$defs"}
     assert defs["Sec"] == Sec.construct_schema
@@ -332,11 +335,11 @@ def test_a_class_may_refer_to_another_class_and_to_itself():
         more: NotRequired[list[Any]]     # the grammar has no recursion; `Any` stands for the tree
     plugin.TAT_node(Thm)
     plugin.TAT_node(leaf("U", ["u"], construct_schema=nested, argument_schema=U_RawAST))
-    defs = plugin.assemble()
+    defs = plugin.assemble(registered())
     assert "Tree" in defs and defs["U"]["properties"]["inner"] == {"$ref": "#/$defs/Thm"}
 
 
-# --- the edit schema, loading and sealing -----------------------------------
+# --- the edit schema, loading and the conversation's table -----------------
 
 def envelope(*constructs):
     return {"action": "append", "target_id": "theory_X", "evaluate": False,
@@ -347,7 +350,7 @@ def test_the_completed_edit_schema_validates_constructs():
     plugin.TAT_node(Thm)
     plugin.TAT_node(Sec)
     plugin.TAT_node(block("Thms", {"type": "array", "items": {"$ref": "#/$defs/Thm"}}))
-    schema = plugin.edit_schema()
+    schema = plugin.edit_schema(registered())
     assert schema["properties"]["constructs"]["items"] == {"$ref": "#/$defs/Construct"}
     validator = jsonschema.Draft202012Validator(schema)
     lemma = {"kind": "lemma", "statement": {"text": "P"}, "tags": ["easy"]}
@@ -391,39 +394,77 @@ SHIPPED_EXAMPLES: dict[str, dict] = {
 def test_a_construct_of_every_shipped_kind_validates():
     for cls in SHIPPED:
         plugin.TAT_node(cls)
-    assert set(SHIPPED_EXAMPLES) == set(plugin.kinds)
+    assert set(SHIPPED_EXAMPLES) == {k for kinds in plugin.registry.values() for k in kinds}
     if SHIPPED:
-        validator = jsonschema.Draft202012Validator(plugin.edit_schema())
+        validator = jsonschema.Draft202012Validator(plugin.edit_schema(SHIPPED))
         for kind, construct in SHIPPED_EXAMPLES.items():
             assert construct["kind"] == kind
             validator.validate(envelope(construct))
 
 
-def test_load_registers_the_framework_first_then_imports_then_seals(tmp_path, monkeypatch):
-    (tmp_path / "fake_tat_pkg.py").write_text(
-        "from typing import TypedDict\n"
-        "from isabelle_theory_agent import model, plugin\n"
-        "class Empty(TypedDict): pass\n"
-        "@plugin.TAT_node\n"
-        "class Fake(model.Leaf):\n"
-        "    construct_schema = {'type': 'object', 'additionalProperties': False,\n"
-        "        'properties': {'kind': {'const': 'fake'}}, 'required': ['kind']}\n"
-        "    argument_schema = Empty\n"
-        "    @classmethod\n"
-        "    async def gen(cls, config, raw): raise NotImplementedError\n"
-        "    def to_store(self, rows): raise NotImplementedError\n"
-        "    @classmethod\n"
-        "    def from_store(cls, config, rows): raise NotImplementedError\n"
-        "    async def _eval_opr(self): return True\n")
+def a_leaf_module(name, kind):
+    """The source of a module defining one registered Leaf class."""
+    return ("from typing import TypedDict\n"
+            "from isabelle_theory_agent import model, plugin\n"
+            "class Empty(TypedDict): pass\n"
+            "@plugin.TAT_node\n"
+            f"class {name}(model.Leaf):\n"
+            "    construct_schema = {'type': 'object', 'additionalProperties': False,\n"
+            f"        'properties': {{'kind': {{'const': '{kind}'}}}}, 'required': ['kind']}}\n"
+            "    argument_schema = Empty\n"
+            "    @classmethod\n"
+            "    async def gen(cls, config, raw): raise NotImplementedError\n"
+            "    def to_store(self, rows): raise NotImplementedError\n"
+            "    @classmethod\n"
+            "    def from_store(cls, config, rows): raise NotImplementedError\n"
+            "    async def _eval_opr(self): return True\n")
+
+
+@pytest.fixture
+def two_packages(tmp_path, monkeypatch):
+    """`fake_tat_pkg`, a package whose class lives in a submodule, and
+    `other_tat_pkg`, a module that imports it and defines a class of its
+    own — importing `other_tat_pkg` registers both classes."""
+    pkg = tmp_path / "fake_tat_pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("from . import nodes\n")
+    (pkg / "nodes.py").write_text(a_leaf_module("Fake", "fake"))
+    (tmp_path / "other_tat_pkg.py").write_text(
+        "import fake_tat_pkg\n" + a_leaf_module("Other", "other"))
     monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.delitem(sys.modules, "fake_tat_pkg", raising=False)
+    for module in ("fake_tat_pkg", "fake_tat_pkg.nodes", "other_tat_pkg"):
+        monkeypatch.delitem(sys.modules, module, raising=False)
+
+
+def test_load_registers_the_framework_first_then_imports_then_selects(two_packages, monkeypatch):
     monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
     loaded = plugin.load(["fake_tat_pkg"])
-    assert list(plugin.kinds) == ["section", "fake"]
+    assert list(loaded.kinds) == ["section", "fake"]        # the submodule's class counts
     assert list(loaded.edit_schema["$defs"]) == ["Sec", "Fake", "Construct"]
-    with pytest.raises(TAT_InternalError, match="after load returned"):
-        plugin.TAT_node(Thm)
-    assert list(plugin.kinds) == ["section", "fake"]
+    assert [c.__name__ for c in registered()] == ["Sec", "Fake"]
+
+
+def test_a_second_load_in_the_process_registers_nothing_again(two_packages, monkeypatch):
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
+    first = plugin.load(["fake_tat_pkg"])
+    before = dict(plugin.registry)
+    again = plugin.load(["fake_tat_pkg"])
+    assert again.kinds == first.kinds and plugin.registry == before
+    # a class registering after a load joins the registry, not that load's table
+    plugin.TAT_node(Thm)
+    assert "lemma" not in first.kinds and Thm in plugin.registry
+
+
+def test_the_table_holds_the_listed_packages_classes_only(two_packages, monkeypatch):
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
+    # importing other_tat_pkg registers Fake too, but Fake's package is not listed
+    loaded = plugin.load(["other_tat_pkg"])
+    assert list(loaded.kinds) == ["section", "other"]
+    assert [c.__name__ for c in registered()] == ["Sec", "Fake", "Other"]
+    # and a conversation listing both, in either order, gets both in registration order
+    assert list(plugin.load(["fake_tat_pkg", "other_tat_pkg"]).kinds) == ["section", "fake", "other"]
+    assert list(plugin.load(["other_tat_pkg", "fake_tat_pkg"]).kinds) == ["section", "fake", "other"]
+    assert list(plugin.load([]).kinds) == ["section"]
 
 
 def test_a_package_that_fails_its_checks_fails_the_load(tmp_path, monkeypatch):
@@ -438,10 +479,38 @@ def test_a_package_that_fails_its_checks_fails_the_load(tmp_path, monkeypatch):
     with pytest.raises(CannotLoadPlugin) as e:
         plugin.load(["broken_tat_pkg"])
     assert (e.value.package, e.value.node_class) == ("broken_tat_pkg", "Broken")
-    assert plugin.kinds == {} and not plugin._sealed
+    assert plugin.registry == {}
+
+
+def test_a_failed_load_does_not_poison_the_retry(tmp_path, monkeypatch):
+    """A package whose second class fails its checks: the first is
+    registered by then, and the failed import drops the module.  Once the
+    author has fixed the package, the next load must take it."""
+    package = tmp_path / "halfbroken_pkg.py"
+    good = a_leaf_module("Good", "good")
+    package.write_text(good + "\n@plugin.TAT_node\nclass Broken(model.Leaf):\n"
+                       "    construct_schema = {'type': 'object'}\n"
+                       "    async def _eval_opr(self): return True\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "halfbroken_pkg", raising=False)
+    with pytest.raises(CannotLoadPlugin) as e:
+        plugin.load(["halfbroken_pkg"])
+    assert e.value.node_class == "Broken"
+    package.write_text(good + "\n# the broken class removed\n")   # another size: no stale bytecode
+    loaded = plugin.load(["halfbroken_pkg"])
+    assert list(loaded.kinds) == ["good"] and [c.__name__ for c in registered()] == ["Good"]
+
+
+def test_a_package_that_cannot_be_imported_fails_the_load_the_same_way():
+    with pytest.raises(CannotLoadPlugin) as e:
+        plugin.load(["no_such_tat_pkg"])
+    assert (e.value.package, e.value.node_class) == ("no_such_tat_pkg", None)
+    assert str(e.value) == \
+        "cannot load no_such_tat_pkg: ModuleNotFoundError: No module named 'no_such_tat_pkg'"
+    assert isinstance(e.value.__cause__, ModuleNotFoundError)
 
 
 def test_an_empty_table_cannot_complete_the_edit_schema():
     with pytest.raises(CannotLoadPlugin, match="cannot load the assembled edit schema") as e:
-        plugin.edit_schema()
+        plugin.edit_schema([])
     assert e.value.node_class is None and e.value.package is None

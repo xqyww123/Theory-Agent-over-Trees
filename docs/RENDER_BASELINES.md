@@ -208,12 +208,39 @@ Fail to load `TAT_Nowhere.Nope` because it is not found.
 ## 4. Server text
 
 The one answer the server gives while the conversation is ending
-(MODULE_STRUCTURE §4.6), to every call it cancels whose client is still
-waiting, and every call that arrives meanwhile — one line per reason the
+(MODULE_STRUCTURE §4.6), to every tool call it cancels whose client is
+still waiting, and every tool call that arrives meanwhile — one line per reason the
 server gives, and never an exception's own text:
 
 ```
 TAT has stopped: an internal error; this call did not complete.
 TAT has stopped: the forest could not be saved; this call did not complete.
 TAT has stopped: Isabelle is gone; this call did not complete.
+```
+
+A tool call whose body completed — before the ending reached it, or after
+ignoring its cancellation — is answered what it did (MODULE_STRUCTURE
+§4.6).
+
+## 5. Rendering
+
+The lines the framework writes in every rendering (PRINT.md); the empty
+forest's hint is PRINT.md §6's, and a class's own marks are its own
+document's.
+
+A node's line, one per default mark and one without:
+
+```
+- lemma_P (success)
+- lemma_P (not evaluated)
+- definition_f (failed)
+- lemma_P (blocked by definition_f)
+- lemma_P
+```
+
+An error block, as `print_error` writes it:
+
+```
+Error:
+  Type unification failed: ...
 ```

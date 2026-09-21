@@ -1,7 +1,7 @@
 # The `Session` and `Theory` node classes
 
 Status: design, approved 2026-09-06, amended 2026-09-08 (the recorded
-fields, the name grammar, §3); the classes are in `model.py`, their
+fields, the name grammar, §3) and 2026-09-16 (§4); the classes are in `model.py`, their
 descriptions pinned by `test/test_descriptions.py` and §3's sentences by
 `test/test_session_theory.py`.
 
@@ -14,7 +14,7 @@ specified together because neither means much without the other: the
 imports resolve against where the trees sit in the `Session` layer.
 
 A class's agent-facing wording lives here: in §1 and §2 the `description`
-texts of its construct schema (PLUGIN_SYSTEM §3), beside its attribute
+texts of its construct schema (PLUGIN_SYSTEM §3), beside its field
 table, one fenced line per description — a field with no line has no
 description — and in §3 the `InvalidField` reasons its gen checks supply;
 the rendering of a whole exception class its gen raises — its
@@ -26,7 +26,7 @@ way RENDER_BASELINES.md's are pinned.
 
 Kind: `session`.
 
-| Attribute | Type | |
+| Field | Type | |
 | --- | --- | --- |
 | `name` | the Isabelle session name, `str` | authored |
 | `parent_session` | the parent Isabelle session of the ROOT entry, `str`; required, no default | authored |
@@ -87,7 +87,7 @@ putting the theory value into the theory table through `end_theory`
 (MODULE_STRUCTURE §3; the slot, ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
 §6; the order of the two writes, `TAT_Common_Nodes.ML`).
 
-| Attribute | Type | |
+| Field | Type | |
 | --- | --- | --- |
 | `name` | the theory's short name, `str`: an Isabelle identifier — a letter, then letters, digits, underscores and primes; no dot, no hyphen. The framework's name grammar (MCP_SPECIFICATION §2) applies as well, refusing a trailing underscore | authored |
 | `imports` | `list[str]`, non-empty; each item as written in the header's `imports` clause | authored |
@@ -133,3 +133,37 @@ empty option name or value:
 The field `parent_session` must not be empty.
 The field `options[1].name` sets the option `document` a second time.
 ```
+
+## 4. What they print
+
+What each class's `print_fields` writes in each mode (PRINT.md §2, §3);
+the line and the children are the framework's, and both classes take the
+framework's default `mark`. `Session` runs no operation, so it has no
+errors; `Theory` writes its two operations' messages in every mode but
+`Briefing`, once per run, and not for an operation that is
+`not_evaluated` (PRINT.md §3, §4).
+
+| mode | `Session` | `Theory` |
+| --- | --- | --- |
+| `Out_Focus` | nothing | errors |
+| `Briefing` | `parent_session` | `imports` |
+| `Relative_Focus([c, …])` | nothing | errors |
+| `Relative_Focus([])` | `parent_session`, `options`, `description` | `imports`, errors |
+| `Recall`, depth 0 and 1 | `parent_session`, `options`, `description` | `imports`, errors |
+| `Recall`, depth 2 | nothing | `imports`, errors |
+| `Recall`, depth 3 | nothing | errors |
+
+The lines:
+
+```
+parent_session: HOL
+options: quick_and_dirty = true, document = false
+description:
+  Sorting, verified.
+imports: Main HOL-Library.Multiset
+```
+
+`options` and `description` are left out when empty; `options` is one
+line in the ROOT's own spelling; `description` is a block, one indent
+deeper, since it may run to several lines; `imports` is one line, the
+items separated by spaces as in the header.

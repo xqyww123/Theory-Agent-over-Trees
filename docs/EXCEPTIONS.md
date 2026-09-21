@@ -40,8 +40,9 @@ messages, a `Bug` and an interrupt propagate as they arrived.
 `TAT_StartupError` is the third kind: TAT cannot start in this
 environment — the working directory's database was written by another
 schema version or is not a database, a node class package cannot be
-loaded (PLUGIN_SYSTEM §5), another conversation holds the working directory
-(ARCHITECTURE §9), or the port cannot be bound (MODULE_STRUCTURE §4.6). It is raised before any tool boundary or agent
+loaded (PLUGIN_SYSTEM §1, §5), another conversation holds the working directory
+(ARCHITECTURE §9), its lock file cannot be opened, or the port cannot be
+bound (MODULE_STRUCTURE §4.6). It is raised before any tool boundary or agent
 exists, out of `launch_TAT` into the ML call that started the conversation,
 and is never rendered to the agent. It inherits from neither of the other two.
 
@@ -180,10 +181,10 @@ TAT_InternalError             outside TAT_Error; never answered to the agent
 TAT_StartupError              outside both; TAT cannot start here (§1)
 ├─ IncompatibleStore          the database was written under another
 │                             schema version                      [Forest_Store]
-└─ CannotLoadPlugin           package, node_class, reason — a node class
-                              failed a check of PLUGIN_SYSTEM §5;
-                              node_class is None for a check on the
-                              assembled schema                    [plugin]
+└─ CannotLoadPlugin           package, node_class, reason — a package would
+                              not import, or a node class failed a check
+                              of PLUGIN_SYSTEM §5; node_class is None when
+                              no class is named                   [plugin]
 
 TAT_DisasterError             outside all three; memory and the database
                               have parted, the conversation ends (§1);

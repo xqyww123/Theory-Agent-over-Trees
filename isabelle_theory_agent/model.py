@@ -171,13 +171,13 @@ class Invalidating(_Singleton):
 
 INVALIDATING = Invalidating()
 
-Mode = Evaluating | Seeking | Invalidating
+EvaluationMode = Evaluating | Seeking | Invalidating
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
     stopped_at: Node | None      # the obstacle that ended evaluation, if one did
-    mode: Mode                   # the mode the node after this one runs under
+    mode: EvaluationMode         # the mode the node after this one runs under
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +404,7 @@ class Node(ABC):
         return out
 
     @abstractmethod
-    async def _evaluate(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
+    async def _evaluate(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
         """One recursion for evaluation and invalidation (ARCHITECTURE §3.5),
         visiting every node of the subtree under `mode`.  A nesting node is
         reached at its ending, so its children come before it."""
@@ -415,7 +415,7 @@ class Node(ABC):
         What an edit does before evaluating."""
 
     def _mode_after(self, ev: Evaluation, mode: Evaluating, stop: Node | None,
-                    ran: bool) -> Mode:
+                    ran: bool) -> EvaluationMode:
         """The one place the mode changes: the destination turns it into
         `Invalidating`; otherwise a stop blocks what follows, and `ran` tells
         the successor whether its input was just rewritten."""
@@ -594,7 +594,7 @@ class NonLeaf_Node(Node):
         elif _wrote(node._last_status()):
             ev.release(self._state_at(index + 1))
 
-    async def _evaluate_children(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
+    async def _evaluate_children(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
         """The children in order.  A seeking walk turns `Invalidating` on
         reaching its destination position — before the child standing
         there, or after all children when the position is the end."""
@@ -1036,7 +1036,7 @@ class Forest(Unchained_Node):
                 return ".".join(chain[p].id_component() for p in kept)
             kept.remove(best[1])
 
-    async def _run(self, ev: Evaluation, mode: Mode) -> EvaluationResult:
+    async def _run(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
         """One walk under the lock, already held, then one round trip
         releasing every state it invalidated."""
         r = await self._evaluate(ev, mode)
