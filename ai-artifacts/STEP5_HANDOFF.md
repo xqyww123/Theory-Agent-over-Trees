@@ -333,9 +333,19 @@ fields; the dead-pid test as flaky. 237 pass.
 
 3. e. `mcp.py`: `edit`, `move`, `delete` (TOOL_SCHEMAS.md; `insert_after`
       is `edit.insert` at index + 1; `HoldsNoChildren`/`ProtectedNode`
-      refused before the model), the `quickview` on every result, the
+      refused before the model), each result ending with the quickview —
+      `Forest.render(root, Relative_Focus(path))` (PRINT.md §5) — and the
       pending-message queue's seam. Build `Tool`s from the schema files
       under `tools/` (`edit.jsonc`'s `$defs` from `Loaded.edit_schema`).
+      **Design first, with the owner** (agent-visible): the text a
+      successful call returns before the quickview (the author's
+      2026-09-14 proposal, `Done: append theory_X` mirroring the
+      `Cannot …` line, is only a starting point); each tool's focus
+      (proposed: `append` the target, `insert_*` the target's parent,
+      `amend` the replacement, `move` the moved node, `delete` the old
+      parent, `evaluate_to` the destination); `move.jsonc` and
+      `delete.jsonc` (copy TOOL_SCHEMAS §2, §3); the ``unknown tool
+      `<name>` `` line revisited.
 4. Tests: one Python RPC host (`Isabelle_RPC_Host` launcher, address in
    `RPC_Host`), one `isabelle TAT` per run, the `mcp` SDK's Streamable
    HTTP client; one tree evaluated in Isabelle; retire
