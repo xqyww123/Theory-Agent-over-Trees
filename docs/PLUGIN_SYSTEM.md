@@ -104,7 +104,7 @@ class Theorem(Leaf):
   the TypedDict types such a field as `Any`.
 - Every `description` is agent-facing text. For a class TAT ships, it is
   approved wording, kept in the class's document under `docs/node_classes/`
-  beside its attribute table; for a class delivered separately, it is its
+  beside its field table; for a class delivered separately, it is its
   author's.
 
 The class is written in Python rather than as a JSON string because the
@@ -155,7 +155,8 @@ class:
   (MCP_SPECIFICATION §2.1);
 - the class does not override `is_finished` — `_owes_nothing` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` —
-  `_own_statuses` is (MODULE_STRUCTURE §4.1);
+  `_own_statuses` is (MODULE_STRUCTURE §4.1) — nor `print` —
+  `print_fields` and `mark` are (PRINT.md);
 - `print_fields` and `mark` are plain functions, not coroutines: rendering
   is synchronous (PRINT.md);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's

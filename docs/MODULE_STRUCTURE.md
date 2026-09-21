@@ -305,14 +305,20 @@ agent sees; `Id_Component = str`, one `<kind>_<name>`; `Id_Components =
 list[Id_Component]`, what `id_components(id)` splits an `Id` into; and
 `Identity = int`, the stored, opaque number (ARCHITECTURE §4.1).
 
-Rendering (PRINT.md) is synchronous throughout — `print`, `print_fields`,
-`mark`, `is_finished` and `id_of` — so a rendering sees one forest and
-needs no lock, and `Forest` may build, at the entry of each rendering, an
-index from id component to the nodes bearing it, so that printing every
-node's shortest id is linear in the forest; the index is discarded with
-the rendering, since a move can change a printed short form
-(MCP_SPECIFICATION §2.2). The seen set (PRINT.md §4) is a field of
-`Conversation`.
+Every rendering (PRINT.md) is one call of `Forest.render(node: Node,
+mode: PrintMode) -> str`: it builds an index from id component to the
+nodes bearing it, calls `node.print(0, out, mode, 0)` into a buffer,
+discards the index in a `finally`, and returns the text; `id_of` uses the
+index while one stands and computes as before otherwise, so `resolve`'s
+guesses work outside a rendering. The index goes with the rendering
+because a move can change a printed short form (MCP_SPECIFICATION §2.2),
+and it is sound because rendering is synchronous throughout — `print`,
+`print_fields`, `mark`, `is_finished`, `id_of` — so a rendering sees one
+forest and needs no lock. The framework's `print` also holds the lone
+session's form (PRINT.md §6): descending from the forest into its only
+child, at `depth >= 1`, it writes the child's line without the dash and
+the child's body at the same indent. The seen set (PRINT.md §4) is a
+field of `Conversation`.
 
 **Construction.** A node enters the forest from a `RawAST` — the JSON
 object the agent submitted, `Mapping[str, Any]` — less `children`, which
@@ -759,8 +765,14 @@ codex, gemini-cli, cursor and opencode`` — refused before the seen set is
 touched, so a mistyped name discards nothing. The request's body is not
 read. `TAT_Server` takes the work as one more constructor argument beside
 the tools, `on_compaction: Callable[[], str]`, built in `mcp.py` next to
-the tools, so the server still knows nothing of the model; the request is
-counted among those in flight, so the conversation's ending waits for it.
+the tools — it clears the seen set and returns `Forest.render` of the
+root in `Briefing` — so the server still knows nothing of the model; the
+request is counted among those in flight, so the conversation's ending
+waits for it. The closure runs under the tool body's rule: anything it
+raises enters the conversation's ending, a `TAT_Error` included, since
+this path answers no agent and has nothing to render for one; the branch
+then answers status 500 with an empty body, so the hook reports the
+failure and nothing half-rendered reaches the agent's replaced context.
 The path checks the request the way `/mcp` does — `Host` TAT's own,
 `Origin`, when present, TAT's own — with a `TransportSecurityMiddleware`
 built on the same settings object the session manager is given, called
@@ -780,8 +792,9 @@ descriptors in one process, and that is what refuses a second conversation
 in this host as well as in another; a directory another conversation holds
 is refused with a `TAT_StartupError`, `another TAT conversation holds
 <working directory> (its Python process is pid <n>)` — the holder writes
-two lines into the file, its pid and its port, the port for the hooks of
-CLIENT_HOOKS.md, and clears the file on release, so the parenthesis is
+two lines into the file, its pid and then its port, and clears the file
+on release; each reader takes one line and no more, this refusal the
+first and the hooks of CLIENT_HOOKS.md the second; so the parenthesis is
 missing — or still names a holder that died — only between taking the
 lock and writing it, and between clearing it on release and closing the
 descriptor; a working directory whose lock
@@ -816,11 +829,12 @@ exiting `2`. It creates the directory if it does
 not exist, creates `TAT.sqlite` in it if absent, and adds one row per `-P`
 to the table `plugins`, each the session-qualified name of the theory
 defining the plugin; the table is always created, empty when no `-P` is
-given, and a name already in it is not added twice. It writes the hook
-files of CLIENT_HOOKS.md, which carry no port: each hook reads the port
-of the running conversation from `tat.lock` (§4.6). On a directory that
-already holds a `TAT.sqlite` it adds the given plugins, writes the hook
-files that are absent, and changes nothing
+given, and a name already in it is not added twice. It writes the script
+`.tat/on-compaction.sh` and the hook files of CLIENT_HOOKS.md, which
+call it; the script reads the port of the running conversation from
+`tat.lock` (§4.6), so no file carries a port. On a directory that
+already holds a `TAT.sqlite` it adds the given plugins, writes the script
+and the hook files that are absent, and changes nothing
 else; nothing removes a row, since the stored nodes name the kinds a
 plugin owns. It records nothing else — no paths, so the directory opens
 on another host. `Forest_Store` (§4.1) creates its own tables in the same

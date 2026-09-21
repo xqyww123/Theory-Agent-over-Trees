@@ -1,6 +1,6 @@
 # Rendering
 
-Status: decided (2026-09-21), except §8.
+Status: decided (2026-09-21, after two design reviews), except §8.
 
 Every node renders itself through one method, in a **print mode** that
 says what the reader is looking at, and at a **depth**, the number of
@@ -21,15 +21,17 @@ def detailed(mode: PrintMode, depth: int) -> bool                               
 ```
 
 `indent` is a level, two spaces each; `depth` is 0 at the node a
-rendering starts from. The framework adds one to both for each level it
-descends.
+rendering starts from. Every rendering is one call of
+`Forest.render(node, mode)` (MODULE_STRUCTURE §4.1), which calls
+`node.print(0, out, mode, 0)`; the framework adds one to both for each
+level it descends, with the exception §2 names.
 
 ## 1. The line and its mark
 
 A node's first line is `- <id> (<mark>)`: the id in its shortest form
 (MCP_SPECIFICATION §2.1) and the mark `mark(mode, depth)` returns, the
-parenthesis left out when it returns none. The one exception is the lone
-session's line (§6).
+parenthesis left out when it returns none. Two lines carry no dash: the
+forest root's and the lone session's (§6).
 
 The framework's default `mark` reads the node's own operations' statuses
 through `_own_statuses()` — none for a `Session`, one for a leaf, the
@@ -51,15 +53,19 @@ under it, or something the node itself still owes, is unfinished.
 obstacle is always in the forest, since every delete, amend and move
 invalidates from its position first (ARCHITECTURE §3.4).
 
-A class overrides `mark` to say more, normally only where the default says
-nothing: a `Theorem` whose statement ran and whose proof is not found
-answers `not proven`. The framework's four words are RENDER_BASELINES
-§5's; a class's words are its own document's.
+A class overrides `mark` to say more, normally only where the default
+says nothing — a `Theorem` whose statement ran and whose proof is not
+found is that case, and the word it answers is decided with the class
+(§8). The framework's four words are RENDER_BASELINES §5's; a class's
+words are its own document's.
 
 ## 2. What each mode prints
 
 The framework writes the line at `indent`, calls `print_fields` at
-`indent + 1`, then the children at `indent + 1` and `depth + 1`:
+`indent + 1`, then the children at `indent + 1` and `depth + 1`. A line
+that carries no dash is not a list item and opens no level — the forest
+root's line and the lone session's (§6) — so under it `indent` stays
+where it is while `depth` still rises.
 
 | mode | `print_fields` | children |
 | --- | --- | --- |
@@ -92,9 +98,15 @@ Error:
   Type error in application: incompatible operand type
 ```
 
-`Theory`'s rule: its two operations' messages, in every mode but
-`Briefing`, once per run (§4), and not for an operation that is
-`not_evaluated`.
+`Theory`'s rule: its two operations' messages — whole under `Recall`
+below depth 2, once per run (§4) elsewhere, never in `Briefing` — and
+only for an operation that is an obstacle, `cannot_evaluate` with no
+`blocked_by` (§1's second row), the one status a failed run of it leaves
+standing. An operation's recorded messages are its last run's, and that
+run is current exactly while the status it left stands, so an operation
+that is `not_evaluated`, blocked, or given `ready` without running shows
+none: a `Theory`'s `Error:` block accompanies a `failed` line and no
+other.
 
 ## 4. The seen set
 
@@ -103,7 +115,12 @@ set**, `Conversation.seen`: after writing the thing it adds a key of its
 own choosing, and before writing it checks. `Theory` keys its messages
 `(identity, "beginning")` and `(identity, "ending")`, and discards the key
 in the evaluation hook before the operation runs, so a run's messages
-show again after every run, identical or not.
+show again after every run, identical or not. Every rendering that
+writes the thing records it, `Recall` included, so a quickview after a
+`recall` does not repeat it; a class checks the set to keep a quickview
+from repeating itself, never to abridge a rendering the agent asked for
+in depth. A deleted node's keys stay behind, harmlessly: an identity is
+never reused (ARCHITECTURE §4.1).
 
 `POST /on-compaction` clears the set whole (MODULE_STRUCTURE §4.6,
 CLIENT_HOOKS.md): the agent's context was replaced, and nothing it was
@@ -112,37 +129,40 @@ shown can be assumed. Rendering is synchronous, so the set needs no lock.
 ## 5. The three renderings
 
 - The **quickview** ends the results of `edit`, `move`, `delete` and
-  `evaluate_to`: the forest root in `Relative_Focus` with the path to the
-  call's focus, the node the call was about (§8), at depth 0. No other
-  tool result carries one.
-- The **briefing** answers `POST /on-compaction`: the forest root in
-  `Briefing` at depth 0.
-- `recall` renders the recalled node in `Recall` at depth 0, with no id
-  the forest root: the node with everything its class writes when
-  detailed, its children likewise, the grandchildren in the short form,
-  the level below them as lines.
+  `evaluate_to`: `Forest.render` of the forest root in `Relative_Focus`
+  with the path to the call's focus, the node the call was about (§8). No
+  other tool result carries one.
+- The **briefing** answers `POST /on-compaction`: `Forest.render` of the
+  forest root in `Briefing`.
+- `recall` is `Forest.render` of the recalled node in `Recall`, with no
+  id of the forest root: the node and its children with everything their
+  classes write when detailed, the grandchildren with their short form,
+  the level below them with what their classes write at depth 3, and
+  nothing deeper.
 
 ## 6. The forest root
 
-Two or more sessions:
+Two or more sessions — here in a quickview whose focus is `theory_X`:
 
 ```
 Sessions:
 - session_A (success)
-  <what the session prints under its line>
 - session_B
-  ...
+  - theory_X (not evaluated)
+    imports: Main
 ```
 
-Exactly one: neither `Sessions:` nor the list — the session's own line
-without the dash, and what it prints under its line at the same indent.
-The session decides this itself, being the root's only child; in every
-other respect, its depth included — the root at 0, a session at 1 in both
-forms — it prints as it would in the list:
+Exactly one: neither `Sessions:` nor the list. The framework's `print`,
+descending from the forest root into its only child at `depth >= 1`,
+writes the session's line without the dash and keeps what the session
+writes under it at the same indent; a `recall` that starts at the
+session itself, at depth 0, keeps the dash. The same quickview:
 
 ```
-session_A (success)
-<what the session prints under its line>
+session_A
+- theory_Base (success)
+- theory_X (not evaluated)
+  imports: Main
 ```
 
 None, in every mode:
@@ -176,12 +196,16 @@ session_A
 - theory_Y (not evaluated)
 ```
 
+The lines with a dash, and the marks on them, are the framework's;
+`imports: Main` and the error block are what the classes write.
 `theory_Base` and `theory_Y` are in `Out_Focus`; `theory_X` is the focus
-and writes `imports`; its children are in `Out_Focus`, and `definition_f`
-writes its error there because its class does so in every mode but
-`Briefing`.
+and writes `imports`; its children are in `Out_Focus`. `lemma_A` ran and
+still owes its proof, so the default `mark` leaves its line bare, and
+`Theorem`'s own `mark` is undecided (§8). `definition_f` is a `Define`, a
+class not yet designed (§8); the block is what its `print_fields` would
+write through `print_error`, and stands here to fix the block's place.
 
 ## 8. Undecided
 
 Each tool's focus — decided with the tools (TOOL_SCHEMAS.md). `Theorem`'s
-`mark` and `print_fields` — decided with the class.
+and `Define`'s `mark` and `print_fields` — decided with each class.

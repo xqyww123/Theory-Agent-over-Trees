@@ -91,7 +91,7 @@ putting the theory value into the theory table through `end_theory`
 | --- | --- | --- |
 | `name` | the theory's short name, `str`: an Isabelle identifier — a letter, then letters, digits, underscores and primes; no dot, no hyphen. The framework's name grammar (MCP_SPECIFICATION §2) applies as well, refusing a trailing underscore | authored |
 | `imports` | `list[str]`, non-empty; each item as written in the header's `imports` clause | authored |
-| `beginning_errors`, `ending_errors` | `list[str]` each: what the last run of the operation reported, empty when it passed; held for the life of the conversation and never stored, a loaded forest being `not_evaluated` throughout | recorded |
+| `beginning_errors`, `ending_errors` | `list[str]` each: what the last run of the operation reported, empty when it passed; held until the operation runs again and never stored, a loaded forest being `not_evaluated` throughout; shown only while the status that run left stands (PRINT.md §3) | recorded |
 
 Its construct declares `children`, `items` being `#/$defs/Construct`.
 
@@ -139,9 +139,10 @@ The field `options[1].name` sets the option `document` a second time.
 What each class's `print_fields` writes in each mode (PRINT.md §2, §3);
 the line and the children are the framework's, and both classes take the
 framework's default `mark`. `Session` runs no operation, so it has no
-errors; `Theory` writes its two operations' messages in every mode but
-`Briefing`, once per run, and not for an operation that is
-`not_evaluated` (PRINT.md §3, §4).
+errors; `Theory` writes its two operations' messages — whole under
+`Recall` below depth 2, once per run elsewhere, never in `Briefing` — and
+only for an operation that is an obstacle, `cannot_evaluate` with no
+`blocked_by` (PRINT.md §3, §4).
 
 | mode | `Session` | `Theory` |
 | --- | --- | --- |

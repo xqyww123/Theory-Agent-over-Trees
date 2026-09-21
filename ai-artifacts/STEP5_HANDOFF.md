@@ -224,63 +224,65 @@ agent client and `POST /on-compaction`), MODULE_STRUCTURE §4.1 (the
 contract gains `print`, `quickview`, `errors`), §4.6 (the endpoint), §5
 (`TAT_new`: the emptiness rule, `-p`, the hook files), ARCHITECTURE §1
 (the working directory row), MCP_SPECIFICATION §1.1 (`recall` renders
-through `print`; no detail levels). Owner's rulings, not to re-raise: no
-title on a node's line; the four marks `success` / `not evaluated` /
-`failed` / `blocked by <id>` and none for a ready-but-owing node; a lone
-session prints as `session_A:` with its content unindented; errors printed
-once per conversation and the record cleared only through the endpoint
-(no "print every time until a hook checks in" fallback — the hooks are
-assumed configured); the endpoint is `/on-compaction` with `client=` naming
-the client, unknown values refused; no preface line before the injected
-quickview; `TAT_new` refuses a non-empty directory that is not a working
-directory, writes all five hook files on creation and only the absent ones
-later; OpenCode uses its `experimental.session.compacting` hook.
+through `print`; no detail levels). The rulings of that day are
+superseded by the paragraph below wherever the two differ; the documents
+are authoritative.
 
-Rulings of 2026-09-16 and, after the first design review (round 1,
-scratchpad `render_review/`: `BRIEF1.md`, `EXCERPTS.md`, `ruling1.md`,
-`result1.json`; judge: NOT READY), of 2026-09-21 — all in PRINT.md: one
-method `print(indent, out, mode, depth)` with `PrintMode = Out_Focus |
-Briefing | Relative_Focus(path: list[Node]) | Recall` and `depth` a
-parameter of its own; the class hooks are `print_fields(indent, out,
-mode, depth)` and an overridable `mark(mode, depth)` whose default is the
-four-word table (`Theorem` may answer `not proven`); no `errors()`: a
-class prints its own errors in `print_fields` through the framework's
-`print_error`, and shows a thing once through the conversation's seen set
-(`Conversation.seen`, keys the class's, `Theory` discarding its key in
-the evaluation hook; cleared whole by `/on-compaction`); the quickview
-ends `edit`, `move`, `delete`, `evaluate_to` only (AoA's rule; `recall`
-and `status` carry none); `Out_Focus` prints the node itself and no
-children for every class, `Session` included; the lone session prints
-itself without the dash by seeing it is the root's only child, depth 1;
-`_own_statuses()` in the contract, `_operations_ready` derived;
-`Forest`'s per-rendering id index; the endpoint's closure
-`on_compaction` built in `mcp.py`, the transport-security check with the
-manager's settings (`is_post=False`), unknown `client` refused before
-the seen set is touched; the port read by every hook from `tat.lock`'s
-second line (pid on the first), the hooks all command hooks with the
-approved failure line `TAT is not running in this directory (no
-tat.lock).`, `TAT_new` without `-p`; the evaluation walk's `Mode`
-renamed `EvaluationMode` (done in `model.py`); the aliases `Id`,
-`Id_Component`, `Id_Components`, `Identity`; `edit`'s `target_id`
-description (TOOL_SCHEMAS §1, `tools/edit.jsonc`); `Session`'s and
-`Theory`'s `print_fields` per mode (SESSION_AND_THEORY.md §4). Rejected
-by the owner: recording the port in `TAT.sqlite`; a `bullet` parameter
-on `print`; a fallback when hooks are absent; any cap on the briefing.
-Open with the tools: each tool's focus. Open with `Theorem`: its `mark`
-and `print_fields`.
+The rendering went through two design reviews (scratchpad
+`render_review/`: `BRIEF1.md`, `EXCERPTS.md`, `ruling1.md`,
+`result1.json`; `BRIEF2.md`, `EXCERPTS2.md`, `ruling2.md`,
+`result2.json`); the owner ruled on every item, the round-2 judge said
+no third round is needed once its items land, and they have landed
+(2026-09-21). The design is PRINT.md, SESSION_AND_THEORY.md §4,
+CLIENT_HOOKS.md, MODULE_STRUCTURE §4.1 / §4.6 / §5, PLUGIN_SYSTEM §5,
+RENDER_BASELINES §5, MCP_SPECIFICATION §1.1 / §5, ARCHITECTURE §1's rows.
+In one breath: `print(indent, out, mode, depth)` with `PrintMode =
+Out_Focus | Briefing | Relative_Focus(path: list[Node]) | Recall`; the
+class hooks `print_fields(indent, out, mode, depth)` and an overridable
+`mark(mode, depth)` whose default is the four-word table; no `errors()`
+— a class prints its errors in `print_fields` through `print_error`,
+shows a thing once through `Conversation.seen` (keys the class's;
+`Theory` discards its key in the evaluation hook, prints only for an
+operation that is an own stop, whole under `Recall` below depth 2, once
+per run elsewhere, never in `Briefing`); `Forest.render(node, mode)` is
+every rendering's entry (id index built and dropped there); the quickview
+ends `edit`, `move`, `delete`, `evaluate_to` only; `Out_Focus` prints the
+node itself and no children, for every class; the lone session's dashless
+line is the framework's `print`'s (root's only child, `depth >= 1`);
+`_own_statuses()` in the contract, `_operations_ready` derived; the
+endpoint's closure `on_compaction` built in `mcp.py` (clear the seen set,
+render the root in `Briefing`; anything raised enters the ending, 500
+empty body), the transport-security check with the manager's settings
+(`is_post=False`), unknown `client` refused before the seen set is
+touched; `tat.lock` two lines, pid then port, each reader one line; the
+hooks are one script `.tat/on-compaction.sh <client>` (guard on the port
+line, approved line `TAT is not running in this directory.`, `curl -sS
+--fail-with-body`) and five files calling it; `TAT_new` without `-p`; the
+evaluation walk's alias `EvaluationMode` (done in `model.py`); the
+aliases `Id`, `Id_Component`, `Id_Components`, `Identity`; `edit`'s
+`target_id` description (TOOL_SCHEMAS §1, `tools/edit.jsonc`).
+
+Rejected by the owner, not to re-raise: recording the port in
+`TAT.sqlite`; `TAT` writing the hook files; a `bullet` parameter on
+`print`; a fallback when hooks are absent; any cap or ordering of the
+briefing; a `Session` listing its theories in `Out_Focus`; a `not
+finished` mark; showing errors whole at every `Recall` depth (rejected
+twice: keep "below depth 2"); settling `Theorem`'s `not proven` before
+the class is designed. Open with the tools: each tool's focus. Open with
+`Theorem` and `Define`: their `mark` and `print_fields`.
 
 Work this adds to the Python half, before or with 3e: `Node.print` with
-the four modes, `print_fields` / `errors` defaults, the mark, the shown
-record; `Forest`'s three root forms;
-`POST /on-compaction` in `mcp_server.py` (`_asgi` routes by path already);
-`quickview` appended to every tool result. In the launcher: `TAT_new -p`,
-the emptiness refusal (text approved), the five files (contents in
-CLIENT_HOOKS.md); its usage text changes and is user-facing — propose the
-new wording to the owner before writing it. Measurements listed at the end
-of CLIENT_HOOKS.md. Still to decide with the owner (PRINT.md §6): which
-fields `Session` and `Theory` show in `print`; how the agent learns the
-root's id `Sessions` while a lone session hides it (a sentence in `edit`'s
-`target_id` description was floated).
+the four modes and the lone-session branch, `print_fields` / `mark`
+defaults, `_own_statuses`, `print_error`, `Conversation.seen`,
+`Forest.render` with the index, the root's three forms; `POST
+/on-compaction` in `mcp_server.py` (`_asgi` routes by path already) with
+the closure and the security check; the quickview on the four tools'
+results; `_held` writing pid and port and reading the first line. In the
+launcher: the emptiness refusal (text approved), the script and the five
+files (contents in CLIENT_HOOKS.md); `TAT_new`'s usage text changes and
+is user-facing — propose the new wording to the owner before writing it.
+Measurements listed at the end of CLIENT_HOOKS.md; the baseline test
+should pin PRINT.md §6's two root forms and §7's example.
 
 ## Remaining, in order
 
