@@ -652,20 +652,36 @@ conversation's kind table — the framework's two classes and the listed
 packages' — and the assembled `edit` schema from it (PLUGIN_SYSTEM §1).
 The table is what `edit` dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
-schema, is PLUGIN_SYSTEM.md. `check_call(td, tool, arguments)` checks a
-tool call's own arguments the way `check_construct` checks a construct's
-fields — one checker, `_check_fields`, told which fields are the
-framework's to pass over (`kind` and `children` at a construct's top
-level, none in a call), the refusal marked as the call's on its way out
-(`RawASTError.of_tool`), which the three shape errors render as tool and
-argument (RENDER_BASELINES §2) — against a TypedDict of the grammar
-below, which `validate_call_schema(td)` enforces when the tools are
-built (§4.6).
+schema, is PLUGIN_SYSTEM.md. `check_call(schema, tool, arguments)` checks
+a tool call's own arguments against the schema the tool advertises — the
+one object the agent is told and held to — the way `check_construct`
+checks a construct's fields against its class's declaration: an argument
+the schema does not name, a required one missing, a type, an `enum`, an
+empty `constructs` (`minItems`), an object's fields by their names and a
+typed `items`' elements by their index, the innermost at fault reported;
+the constructs themselves it leaves to `edit.py`. The refusal is marked
+as the call's on its way out (`RawASTError.of_tool`), which the three
+shape errors render as tool and argument (RENDER_BASELINES §2). The two
+checkers render in one vocabulary, the JSON types' phrases, held once.
+`validate_call_schema(schema, where)` refuses, as the tools are built
+(§4.6), a schema saying anything the check does not enforce or its
+sentences cannot say, and one saying too little for the check to read —
+an object without its `properties`, an array without its `items` — so
+that the two cannot drift apart. A tool's schema comes from a closed
+grammar of its own: a well-formed JSON schema that is an object carrying
+`properties`, `additionalProperties: false` and a `required` within
+them; a `string`, an `integer` or a `number`, each optionally with an
+`enum` of one or more values of its type; a `boolean`; an `array` with
+`items`, either a schema of this
+grammar or the `Construct` `$ref` the check leaves to `edit.py`, and
+optionally `minItems: 1`, the only count its sentence can say;
+`description` anywhere, `$defs` at the top alone.
 
 The argument schema grammar lives here too. A declaration's annotations
 come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
 `list[X]`, a TypedDict, and unions of those holding at most one
-TypedDict, each field optionally wrapped in `NotRequired[X]` or
+TypedDict and no arm another makes moot (`Any`, `int` beside `float`),
+each field optionally wrapped in `NotRequired[X]` or
 `Required[X]`, which the loader reads off the annotation itself — so every
 check renders within RENDER_BASELINES §2's
 vocabulary; `@TAT_node` refuses anything else when the class is
@@ -692,16 +708,15 @@ pending messages (MCP_SPECIFICATION §5) lands here with `construct`, and
 the future `query` tool (MCP_SPECIFICATION §1.1) too. `tools(forest,
 loaded)` builds `edit`, `move` and `delete` (TOOL_SCHEMAS.md): the
 schemas from `tools/*.jsonc`, `edit`'s the assembled one of
-`Loaded.edit_schema`; the `action` and `position` enums are read off
-those files, never retyped, and the tools' argument TypedDicts are
-checked against the grammar as the tools are built
-(`plugin.validate_call_schema`). Each call first checks its own
-arguments (`plugin.check_call`, §4.4) — an empty `constructs`, the
-schema's `minItems`, refused here too — then holds the forest's lock
-across the change, the evaluation the call asks for and the quickview,
-naming the refused operation on a `TAT_Error` raised by the change
-(EXCEPTIONS.md §4) through one context manager, which also yields the
-phrase the `Done` line carries; the walk raises none
+`Loaded.edit_schema`, each validated as the tools are built
+(`plugin.validate_call_schema`). Each call is first checked against the
+schema its tool advertises (`plugin.check_call`, §4.4), enums and
+`minItems` included, so the entry retypes nothing off the schema and
+dispatches on an `action` the check let through; then it holds the
+forest's lock across the change, the evaluation the call asks for and
+the quickview, naming the refused operation on a `TAT_Error` raised by
+the change (EXCEPTIONS.md §4) through one context manager, which also
+yields the phrase the `Done` line carries; the walk raises none
 (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The change is `edit.py`'s
 entry with its Location (ARCHITECTURE §1) resolved here, once for both
 tools: `edit`'s `append`, `insert_before` and `insert_after` are `move`'s

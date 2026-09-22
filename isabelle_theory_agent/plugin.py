@@ -25,7 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
 from typing import (
-    Any, NotRequired, Required, Union, get_args, get_origin, get_type_hints, is_typeddict)
+    Any, NamedTuple, NotRequired, Required, Union, get_args, get_origin, get_type_hints,
+    is_typeddict)
 
 import jsoncomment
 import jsonschema
@@ -244,6 +245,26 @@ def _is_def_ref(x: Any) -> bool:
     return isinstance(x, dict) and isinstance(x.get("$ref"), str) and bool(_REF.match(x["$ref"]))
 
 
+# --- the JSON types -----------------------------------------------------------
+# What a value of each is in Python, and the phrase RENDER_BASELINES §2
+# approves for it: the one vocabulary the two checkers below render in.
+
+class _JSON_Type(NamedTuple):
+    shape: type | tuple[type, ...]
+    phrase: str
+
+_JSON_TYPES = {"string": _JSON_Type(str, "a string"), "boolean": _JSON_Type(bool, "a boolean"),
+               # a Python int: a JSON `1.0` is refused, since the same table types `gen`'s raw
+               "integer": _JSON_Type(int, "an integer"), "number": _JSON_Type((int, float), "a number"),
+               "array": _JSON_Type(list, "a list"), "object": _JSON_Type(Mapping, "an object")}
+
+
+def _fits(value: Any, json_type: str) -> bool:
+    if isinstance(value, bool):            # a flag is not a number
+        return json_type == "boolean"
+    return isinstance(value, _JSON_TYPES[json_type].shape)
+
+
 # --- the argument schema grammar --------------------------------------------
 # `str`, `bool`, `int`, `float`, `Any`, `list[X]`, a TypedDict, and unions of
 # those holding at most one TypedDict, each field optionally wrapped in
@@ -252,8 +273,7 @@ def _is_def_ref(x: Any) -> bool:
 # then every submitted construct is checked against the declaration before
 # its class's `gen` is consulted (MODULE_STRUCTURE §4.2).
 
-_JSON_NAMES = {str: "a string", bool: "a boolean", int: "a number",
-               float: "a number"}
+_JSON_NAMES = {str: "string", bool: "boolean", int: "integer", float: "number"}   # the scalars
 
 
 def _declared(td: Any) -> tuple[dict[str, Any], frozenset[str]]:
@@ -316,6 +336,8 @@ def _validate_annotation(ann: Any, where: str, enclosing: tuple) -> None:
         arms = get_args(ann)
         if any(a is Any for a in arms):
             raise TAT_InternalError(f"{where}: `Any` makes the other arms moot")
+        if int in arms and float in arms:
+            raise TAT_InternalError(f"{where}: `float` makes `int` moot")
         if sum(_holds_object(a) for a in arms) > 1:
             raise TAT_InternalError(
                 f"{where}: a union may reach one TypedDict")
@@ -352,19 +374,15 @@ def _matches(value: Any, ann: Any) -> bool:
         return any(_matches(value, a) for a in get_args(ann))
     if ann not in _JSON_NAMES:
         raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
-    if isinstance(value, bool):            # a flag is not a number
-        return ann is bool
-    if ann is float:                       # JSON has one number type
-        return isinstance(value, (int, float))
-    return isinstance(value, ann)
+    return _fits(value, _JSON_NAMES[ann])
 
 
 def _json_name(ann: Any) -> str:
     """The approved rendering of a type (RENDER_BASELINES §2)."""
     if is_typeddict(ann):
-        return "an object"
+        return _JSON_TYPES["object"].phrase
     if get_origin(ann) is list:
-        return "a list"
+        return _JSON_TYPES["array"].phrase
     if get_origin(ann) in (Union, UnionType):
         names = []
         for a in get_args(ann):
@@ -373,7 +391,7 @@ def _json_name(ann: Any) -> str:
         return " or ".join(names)
     if ann not in _JSON_NAMES:
         raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
-    return _JSON_NAMES[ann]
+    return _JSON_TYPES[_JSON_NAMES[ann]].phrase
 
 
 def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
@@ -383,44 +401,29 @@ def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
     _check_fields(cls.argument_schema, kind, raw, prefix="", framework=FRAMEWORK_FIELDS)
 
 
-def check_call(td: Any, tool: str, arguments: Mapping[str, Any]) -> None:
-    """A tool call's own arguments against the tool's declared shape, a
-    TypedDict in the argument schema grammar (`validate_call_schema`),
-    checked as a construct's fields are — the tool's name where the kind
-    would be, and the refusal marked on its way out, so that its sentence
-    says tool and argument (EXCEPTIONS.md §3)."""
-    try:
-        _check_fields(td, tool, arguments, prefix="")
-    except RawASTError as e:
-        e._mark_of_tool()
-        raise
-
-
-def validate_call_schema(td: Any) -> None:
-    """Refuse a tool's argument TypedDict outside the grammar — at the
-    conversation's start, where `tools` builds them (MODULE_STRUCTURE
-    §4.6)."""
-    _validate_typeddict(td, top=False, enclosing=())
+def _check_names(declared: Collection[str], required: Collection[str], holder: str,
+                 mapping: Mapping[str, Any], prefix: str, framework: Collection[str] = ()) -> None:
+    """The names a mapping carries against those declared for it, for both
+    checkers: one the declaration does not name first — a typo beats its
+    own hole — then a required one missing, in declaration order.
+    `framework` are the framework's own fields, which pass unread and
+    which the holder does not "take" (RENDER_BASELINES.md §2)."""
+    for field in mapping:
+        if field not in framework and field not in declared:
+            raise UnexpectedField(prefix[:-1] if prefix else holder, field,
+                                  [f for f in declared if f not in framework],
+                                  holder_is_top=not prefix)
+    for field in declared:
+        if field in required and field not in mapping:
+            raise MissingField(holder, prefix + field)
 
 
 def _check_fields(td: Any, holder: str, mapping: Mapping[str, Any], prefix: str,
                   framework: Collection[str] = ()) -> None:
-    """`holder` is the kind or the tool; `framework` the fields of the
-    framework's own that pass unread, `kind` and `children` at a
-    construct's top level."""
+    """`holder` is the kind; `framework` the fields of the framework's own
+    that pass unread, `kind` and `children` at a construct's top level."""
     hints, required = _declared(td)
-    for field in mapping:                  # first: a typo beats its own hole
-        if field in framework:
-            continue
-        if field not in hints:
-            # `kind` is the framework's field, not one the class "takes"
-            # (RENDER_BASELINES.md §2).
-            takes = [f for f in hints if f not in framework]
-            raise UnexpectedField(prefix[:-1] if prefix else holder, field,
-                                  takes, holder_is_top=not prefix)
-    for field in hints:                    # in declaration order
-        if field in required and field not in mapping:
-            raise MissingField(holder, prefix + field)
+    _check_names(hints, required, holder, mapping, prefix, framework)
     for field, value in mapping.items():
         if field in framework:
             continue
@@ -447,6 +450,107 @@ def _check_value(value: Any, ann: Any, holder: str, path: str) -> None:
         _check_fields(ann, holder, value, path + ".")
     elif not _matches(value, ann):
         raise InvalidField(path, f"must be {_json_name(ann)}")
+
+
+# --- a tool call's own arguments (TOOL_SCHEMAS.md §4) ------------------------
+# Checked against the very schema the tool advertises, so what the agent is
+# told and what it is held to are one object.  The keywords listed below are
+# the whole of it — closed like the grammar above, so every rendering stays
+# within RENDER_BASELINES §2's vocabulary; `validate_call_schema` refuses a
+# schema saying anything more.
+
+# By the JSON type of the value, the keywords a schema may carry there
+# besides `type` and `description`, each enforced by `check_call`:
+# `additionalProperties` by construction (it refuses an argument the
+# `properties` do not name, always), which is why `_validate_schema` demands
+# the word be `false` — `true` would advertise a freedom the check does not
+# grant.  A boolean has no `enum`: its values would render as Python's.
+_KEYWORDS = {"string": {"enum"}, "boolean": set(), "integer": {"enum"}, "number": {"enum"},
+             "array": {"items", "minItems"},
+             "object": {"properties", "required", "additionalProperties"}}
+_CONSTRUCTS = {"$ref": f"#/$defs/{CONSTRUCT}"}   # `items` the check leaves to `edit.py`
+
+
+def check_call(schema: JSON_Schema, tool: str, arguments: Mapping[str, Any]) -> None:
+    """A tool call's own arguments against the schema the tool advertises
+    — one `validate_call_schema` has passed, whose keywords the check
+    therefore reads unguarded — as a construct's fields are checked
+    against its class's declaration: the tool's name where the kind would
+    be, and the refusal marked on its way out, so that its sentence says
+    tool and argument (EXCEPTIONS.md §3)."""
+    try:
+        _check_arguments(schema, tool, arguments, prefix="")
+    except RawASTError as e:
+        e._mark_of_tool()
+        raise
+
+
+def validate_call_schema(schema: JSON_Schema, where: str) -> None:
+    """Refuse a tool schema saying anything `check_call` does not enforce,
+    or its sentences cannot say, or too little for the check to read —
+    where the tools are built (MODULE_STRUCTURE §4.6), so that what the
+    agent is told and what it is held to cannot drift apart.  `where`
+    names the schema in the refusal."""
+    try:
+        jsonschema.Draft202012Validator.check_schema(schema)
+    except jsonschema.SchemaError as e:
+        raise TAT_InternalError(f"{where}: not a well-formed JSON schema: {e.message}") from e
+    _validate_schema(schema, where, top=True)
+
+
+def _check_arguments(schema: JSON_Schema, tool: str, mapping: Mapping[str, Any],
+                     prefix: str) -> None:
+    properties = schema["properties"]
+    _check_names(properties, schema.get("required", ()), tool, mapping, prefix)
+    for field, value in mapping.items():
+        _check_argument(value, properties[field], tool, prefix + field)
+
+
+def _check_argument(value: Any, schema: JSON_Schema, tool: str, path: str) -> None:
+    """One argument against its schema — its JSON type, its `enum`, an
+    empty list against `minItems` — descending so that the argument
+    reported is the innermost at fault: an object's field by its name, a
+    typed `items`' element by its index.  The constructs are opaque here,
+    `edit.py`'s to check."""
+    json_type = schema["type"]
+    if not _fits(value, json_type):
+        raise InvalidField(path, f"must be {_JSON_TYPES[json_type].phrase}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise InvalidField(path, "must be one of " + ", ".join(f"`{a}`" for a in schema["enum"]))
+    if "minItems" in schema and not value:
+        raise InvalidField(path, "must not be empty")
+    if json_type == "object":
+        _check_arguments(schema, tool, value, path + ".")
+    elif json_type == "array" and schema["items"] != _CONSTRUCTS:
+        for i, v in enumerate(value):
+            _check_argument(v, schema["items"], tool, f"{path}[{i}]")
+
+
+def _validate_schema(schema: Any, where: str, top: bool) -> None:
+    def refuse(what: str) -> TAT_InternalError:
+        return TAT_InternalError(f"{where}: {what}")
+    json_type = schema.get("type") if isinstance(schema, dict) else None
+    if not isinstance(json_type, str) or json_type not in _KEYWORDS:   # a well-formed `type` may be a list
+        raise refuse("not of one JSON type of the tool schema grammar")
+    if top and json_type != "object":
+        raise refuse("a tool takes an object of arguments")
+    extra = set(schema) - {"type", "description", *_KEYWORDS[json_type]} - ({"$defs"} if top else set())
+    if extra:
+        raise refuse(f"{sorted(extra)} is outside the tool schema grammar")
+    if schema.get("minItems", 1) != 1:
+        raise refuse("only `minItems: 1` has a sentence")
+    if "enum" in schema and not (schema["enum"] and all(_fits(v, json_type) for v in schema["enum"])):
+        raise refuse("an `enum` needs one or more values of its own type")
+    if json_type == "array" and schema.get("items") != _CONSTRUCTS:
+        _validate_schema(schema.get("items"), where + "[]", top=False)
+    if json_type == "object":
+        if (schema.get("additionalProperties") is not False
+                or not isinstance(schema.get("properties"), dict)
+                or not set(schema.get("required", ())) <= set(schema["properties"])):
+            raise refuse("an object schema needs `properties`, `additionalProperties: false`"
+                         " and a `required` within its properties")
+        for field, property in schema["properties"].items():
+            _validate_schema(property, f"{where}.{field}", top=False)
 
 
 # --- assembly ----------------------------------------------------------------

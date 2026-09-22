@@ -1,11 +1,11 @@
 """The three forest-changing tools of `mcp.py` (TOOL_SCHEMAS.md,
 MODULE_STRUCTURE §4.6) on `test_model`'s fake classes: the advertised
-schemas against the documents and against the shapes the entries
-enforce, where each action and position puts or takes a node, the
-`evaluate` flag, the `Done` line and the quickview that follow, and every
-refusal — its class and fields, and the opening line the entry adds
-(RENDER_BASELINES §1); a malformed call's lines are read from
-TOOL_SCHEMAS §4.  Nothing here crosses the wire.
+schemas against the documents, where each action and position puts or
+takes a node, the `evaluate` flag, the `Done` line and the quickview that
+follow, and every refusal — its class and fields, and the opening line
+the entry adds (RENDER_BASELINES §1); a malformed call's lines are read
+from TOOL_SCHEMAS §4.  The call check itself, on a schema of every shape
+it reads, is `test_plugin`'s.  Nothing here crosses the wire.
 Run: python -m pytest test/test_mcp.py
 """
 
@@ -22,7 +22,7 @@ from test_model import T, add, slot
 from isabelle_theory_agent import mcp, plugin
 from isabelle_theory_agent.exceptions import (
     HoldsNoChildren, InvalidField, MissingField, MoveBesideItself, MoveIntoOwnSubtree,
-    NodeNotFound, ProtectedNode, RawASTError, TAT_Error, UnexpectedField)
+    NodeNotFound, ProtectedNode, RawASTError, TAT_Error, TAT_InternalError, UnexpectedField)
 from isabelle_theory_agent.model import CannotEvaluate, READY
 
 
@@ -31,6 +31,7 @@ class Block(tm.Block):                  # omissible like a `Theory`, so the test
 
 
 KINDS = {"t": T, "block": Block}
+EDIT_SCHEMA = mcp._schema("edit")       # the envelope, its `$defs` empty: the check reads no construct
 TOOL_SCHEMAS = DOCS / "TOOL_SCHEMAS.md"
 
 
@@ -47,7 +48,7 @@ def build():
     sec = add(thy, Block(thy, slot(), "Section", slot()))
     a = add(sec, T(sec, slot(), "a")); b = add(sec, T(sec, slot(), "b"))
     c = add(thy, T(thy, slot(), "c"))
-    tools = {t.name: t for t in mcp.tools(f, plugin.Loaded(KINDS, {}))}
+    tools = {t.name: t for t in mcp.tools(f, plugin.Loaded(KINDS, EDIT_SCHEMA))}
     return f, thy, sec, a, b, c, tools
 
 
@@ -86,38 +87,14 @@ def test_the_three_tools_their_descriptions_and_schemas_as_the_document_states_t
     assert [t.description for t in tools.values()] == stated(TOOL_SCHEMAS, "Tool description")
     parse = jsoncomment.JsonComment().loads
     [edit], [move], [delete] = (fenced_blocks(TOOL_SCHEMAS, s) for s in ("1.", "2.", "3."))
-    assert mcp._schema("edit") == parse("\n".join(edit))    # the envelope `Loaded.edit_schema` fills
+    assert EDIT_SCHEMA == parse("\n".join(edit))            # the envelope `Loaded.edit_schema` fills
     assert tools["move"].input_schema == parse("\n".join(move))
     assert tools["delete"].input_schema == parse("\n".join(delete))
-    assert tools["edit"].input_schema == {}                # `Loaded.edit_schema`, as given
-
-
-def test_the_advertised_schemas_bind_the_shapes_the_entries_enforce():
-    """What the agent is told and what `check_call` and the enum checks
-    enforce are two spellings of one grammar: fields, required fields,
-    types and enums agree, so neither can drift alone."""
-    JSON_TYPE = {"a string": "string", "a boolean": "boolean", "a number": "number"}
-    enums = {"action": mcp.ACTIONS, "position": mcp.POSITIONS}
-
-    def bound(schema, td):
-        hints, required = plugin._declared(td)         # through `_declared`: postponed annotations
-        assert set(schema["properties"]) == set(hints)
-        assert set(schema["required"]) == required and schema["additionalProperties"] is False
-        for field, ann in hints.items():
-            prop = schema["properties"][field]
-            if typing.is_typeddict(ann):
-                assert prop["type"] == "object"
-                bound(prop, ann)
-            elif typing.get_origin(ann) is list:
-                assert prop["type"] == "array"
-            else:
-                assert prop["type"] == JSON_TYPE[plugin._json_name(ann)]
-            assert tuple(prop.get("enum", ())) == enums.get(field, ())
-
-    bound(mcp._schema("edit"), mcp.Edit_Arguments)
-    bound(mcp._schema("move"), mcp.Move_Arguments)
-    bound(mcp._schema("delete"), mcp.Delete_Arguments)
-    assert mcp._schema("edit")["properties"]["constructs"]["minItems"] == 1   # enforced by the entry, below
+    assert tools["edit"].input_schema is EDIT_SCHEMA       # `Loaded.edit_schema`, as given
+    # `tools` validates what it advertises (`plugin.validate_call_schema`), naming the tool.
+    broken = {**EDIT_SCHEMA, "properties": {**EDIT_SCHEMA["properties"], "extra": {"type": "null"}}}
+    with pytest.raises(TAT_InternalError, match=r"edit\.extra: not of one JSON type"):
+        mcp.tools(f, plugin.Loaded(KINDS, broken))
 
 
 def test_the_success_lines_of_render_baselines_section_6():
@@ -128,7 +105,7 @@ def test_the_success_lines_of_render_baselines_section_6():
     add(x, Block(x, slot(), "Basics", slot()), "section")
     add(x, T(x, slot(), "P"), "lemma")
     add(f, Block(f, slot(), "Sorting", slot()), "theory")
-    tools = {t.name: t for t in mcp.tools(f, plugin.Loaded(kinds, {}))}
+    tools = {t.name: t for t in mcp.tools(f, plugin.Loaded(kinds, EDIT_SCHEMA))}
     assert lines == [
         call(tools["edit"], action="append", target_id="theory_X",
              constructs=[{"kind": "lemma", "name": "Q"}], evaluate=False)[0],

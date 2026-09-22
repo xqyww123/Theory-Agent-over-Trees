@@ -11,7 +11,8 @@ import jsonschema
 import pytest
 
 from isabelle_theory_agent import model as M, plugin
-from isabelle_theory_agent.exceptions import TAT_StartupError
+from isabelle_theory_agent.exceptions import (
+    InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
 from isabelle_theory_agent.plugin import CannotLoadPlugin
 
 # The classes TAT ships, captured before the fixture below empties the list
@@ -295,6 +296,104 @@ def test_the_two_schemas_must_agree():
     refused(leaf("M5", ["m5"], argument_schema=Mostly_Optional,
                  construct_schema=leaf_schema(["m5"], fields)),
             r"requires \[\], argument_schema requires \['name'\]")
+
+
+# --- a tool call's arguments against its schema (TOOL_SCHEMAS.md §4) ---------
+
+def call_schema(properties, **more):
+    return {"type": "object", "additionalProperties": False, "properties": properties, **more}
+
+
+CALL = call_schema({
+    "names": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "at": call_schema({"row": {"type": "number"},
+                       "tag": {"type": "string", "enum": ["a", "b"]},
+                       "line": {"type": "integer", "enum": [1, 2, 3]}}, required=["row"]),
+    "constructs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Construct"}},
+    "flag": {"type": "boolean"},
+}, required=["names", "at"], **{"$defs": {}})
+
+
+def test_a_call_is_checked_against_its_schema_down_to_the_innermost_argument():
+    """Every shape `check_call` reads, on one schema: the arguments the tool
+    takes and requires, each JSON type, an `enum`, `minItems`, an object's
+    fields, a typed `items`' elements — and the constructs, left alone."""
+    plugin.validate_call_schema(CALL, "t")
+    plugin.check_call(CALL, "t", {"names": ["x"], "at": {"row": 1.5, "tag": "a", "line": 3},
+                                  "constructs": [5, "not a construct"], "flag": True})
+
+    def refused(cls, arguments):
+        with pytest.raises(cls) as e:
+            plugin.check_call(CALL, "t", arguments)
+        assert e.value.of_tool
+        return e.value
+
+    e = refused(UnexpectedField, {"names": ["x"], "at": {"row": 1}, "x": 0})
+    assert (e.holder, e.field, e.takes, e.holder_is_top) == (
+        "t", "x", ["names", "at", "constructs", "flag"], True)
+    assert refused(UnexpectedField, {"x": 0}).field == "x"        # a typo beats its own hole
+    e = refused(MissingField, {"names": ["x"]})
+    assert (e.holder, e.field) == ("t", "at")
+    e = refused(MissingField, {"names": ["x"], "at": {}})
+    assert (e.holder, e.field) == ("t", "at.row")
+    e = refused(UnexpectedField, {"names": ["x"], "at": {"row": 1, "col": 2}})
+    assert (e.holder, e.field, e.takes, e.holder_is_top) == ("at", "col", ["row", "tag", "line"], False)
+    for arguments, field, reason in [
+        ({"names": "x", "at": {"row": 1}}, "names", "must be a list"),
+        ({"names": [], "at": {"row": 1}}, "names", "must not be empty"),
+        ({"names": ["x", 2], "at": {"row": 1}}, "names[1]", "must be a string"),
+        ({"names": ["x"], "at": 5}, "at", "must be an object"),
+        ({"names": ["x"], "at": {"row": True}}, "at.row", "must be a number"),
+        ({"names": ["x"], "at": {"row": "1"}}, "at.row", "must be a number"),
+        ({"names": ["x"], "at": {"row": 1, "tag": 1}}, "at.tag", "must be a string"),
+        ({"names": ["x"], "at": {"row": 1, "tag": "c"}}, "at.tag", "must be one of `a`, `b`"),
+        ({"names": ["x"], "at": {"row": 1, "line": 1.5}}, "at.line", "must be an integer"),
+        ({"names": ["x"], "at": {"row": 1, "line": 1.0}}, "at.line", "must be an integer"),
+        ({"names": ["x"], "at": {"row": 1, "line": True}}, "at.line", "must be an integer"),
+        # an enum is read whatever the type, as `_KEYWORDS` says
+        ({"names": ["x"], "at": {"row": 1, "line": 4}}, "at.line", "must be one of `1`, `2`, `3`"),
+        ({"names": ["x"], "at": {"row": 1}, "flag": 1}, "flag", "must be a boolean"),
+        # falsy and not a list: the type's sentence, not `minItems`'s
+        ({"names": ["x"], "at": {"row": 1}, "constructs": {}}, "constructs", "must be a list"),
+        ({"names": ["x"], "at": {"row": 1}, "constructs": []}, "constructs", "must not be empty"),
+    ]:
+        e = refused(InvalidField, arguments)
+        assert (e.field, e.reason) == (field, reason), arguments
+
+
+def test_a_tool_schema_may_say_nothing_the_check_does_not_enforce():
+    """`validate_call_schema`: a schema that is not well formed, a top
+    that is not an object, a keyword the check does not read, a JSON type
+    it has no phrase for, a `minItems` its sentence cannot say, an `items`
+    neither typed nor the constructs, an object without its three
+    keywords, `$defs` below the top — each refused where the tools are
+    built, naming the schema at fault."""
+    def refused(schema, match):
+        with pytest.raises(TAT_InternalError, match=match):
+            plugin.validate_call_schema(schema, "t")
+
+    plugin.validate_call_schema(call_schema({}), "t")
+    refused(call_schema({}, required="z"), "t: not a well-formed JSON schema")
+    refused(call_schema({"n": {"type": "string", "enum": 3}}), "t: not a well-formed JSON schema")
+    refused({"type": "string"}, "t: a tool takes an object")
+    refused({"type": "object", "properties": {}}, "t: an object schema needs")
+    refused(call_schema({}, required=["z"]), "t: an object schema needs")
+    refused(call_schema({}, maxProperties=1), r"t: \['maxProperties'\] is outside")
+    refused(call_schema({"n": {"type": "null"}}), "t.n: not of one JSON type")
+    refused(call_schema({"n": {"type": ["string", "null"]}}), "t.n: not of one JSON type")
+    refused(call_schema({"n": {"type": "boolean", "enum": [True]}}), r"t.n: \['enum'\] is outside")
+    for json_type, values in [("string", []), ("string", ["a", None]), ("integer", [1, True]),
+                              ("number", [0.5, "half"])]:
+        refused(call_schema({"n": {"type": json_type, "enum": values}}),
+                "t.n: an `enum` needs one or more values of its own type")
+    refused(call_schema({"s": {"type": "string", "pattern": "x"}}), r"t.s: \['pattern'\] is outside")
+    refused(call_schema({"xs": {"type": "array"}}), r"t.xs\[\]: not of one JSON type")
+    refused(call_schema({"xs": {"type": "array", "items": {"$ref": "#/$defs/Other"}}}),
+            r"t.xs\[\]: not of one JSON type")
+    refused(call_schema({"xs": {"type": "array", "items": {"type": "string"}, "minItems": 2}}),
+            "t.xs: only `minItems: 1`")
+    refused(call_schema({"o": call_schema({"z": {"type": "string", "x": 1}})}), r"t.o.z: \['x'\] is outside")
+    refused(call_schema({"o": {**call_schema({}), "$defs": {}}}), r"t.o: \['\$defs'\] is outside")
 
 
 # --- assembly ----------------------------------------------------------------

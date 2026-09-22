@@ -70,7 +70,7 @@ def test_unknown_kind():
 
 def of_tool(exc):
     """A shape error about a tool call's own arguments, marked the way
-    `plugin.check_call`, or the tool entry for its own refusals, marks it."""
+    `plugin.check_call` marks it."""
     exc._mark_of_tool()
     return exc
 
@@ -91,7 +91,7 @@ def test_invalid_field():
     # A reason ending in a period does not double it.
     assert (str(InvalidField(field="statement", reason="is not a term."))
             == "The field `statement` is not a term.")
-    # The tool entry's two reasons (mcp.py), in the argument form.
+    # The call check's two further reasons, a schema's `enum` and `minItems`.
     check(of_tool(InvalidField("action", "must be one of `append`, `insert_before`,"
                                " `insert_after`, `amend`")),
           "The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.")

@@ -61,19 +61,20 @@ A `lemma` needs the field `statement`.
 The `edit` tool needs the argument `evaluate`.
 ```
 
-`InvalidField` — `<reason>` is the schema check's, the tool entry's or
-the `gen` author's, a predicate completing the sentence; `argument`
-replaces `field` for a tool call's own arguments:
+`InvalidField` — `<reason>` is a schema check's or the `gen` author's, a
+predicate completing the sentence; `argument` replaces `field` for a
+tool call's own arguments:
 
 ```
 The field `statement` <reason>.
 The argument `constructs` <reason>.
 ```
 
-The schema check's own reasons are `must be` followed by the JSON type —
-`a string`, `a number`, `a boolean`, `a list`, `an object` — several
-joined with ` or `; the tool entry's are `must be one of` followed by
-the allowed values, backticked, and `must not be empty`:
+A schema check's own reasons are `must be` followed by the JSON type —
+`a string`, `an integer`, `a number`, `a boolean`, `a list`, `an object`
+— several joined with ` or `; for a tool call's arguments also `must be one of`
+followed by the schema's `enum`, backticked, and `must not be empty` for
+its `minItems`:
 
 ```
 The field `statement` must be a string.

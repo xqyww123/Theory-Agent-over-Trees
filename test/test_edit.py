@@ -211,9 +211,11 @@ def test_schema_typed_dict_forms():
     check_ok({"kind": "t", "name": "x", "note": 7})      # the union's other arm
     check_bad({"kind": "t"}, "name", None)               # required missing
     check_bad({"kind": "t", "name": "x", "priority": True},
-              "priority", "must be a number")            # a flag is not a number
+              "priority", "must be an integer")          # a flag is not a number
+    check_bad({"kind": "t", "name": "x", "priority": 1.5},
+              "priority", "must be an integer")
     check_bad({"kind": "t", "name": "x", "note": []},
-              "note", "must be a string or a number")
+              "note", "must be a string or an integer")
     check_bad({"kind": "t", "name": "x", "facts": [{"name": 1}]},
               "facts[0].name", "must be a string")
     check_bad({"kind": "t", "name": "x", "facts": [{}]},
@@ -290,11 +292,13 @@ def test_schema_grammar_is_closed_at_registration():
         a: list[str | Fact] | list[Fine]
     class AnyArm(TypedDict):
         a: Any | Fact                        # Any would make the object moot
+    class Nums(TypedDict):
+        n: int | float                       # float makes int moot
     class Dangling(TypedDict):
         a: "NoSuchType"                      # a forward reference nothing resolves
     for td in (HasChildren, Optional, Dicty, Lit, TwoObjects,
                TwoObjectsInLists, TwoObjectsThroughAUnionInAList, AnyArm,
-               Dangling, Nesting_RawAST):
+               Nums, Dangling, Nesting_RawAST):
         refused(td)
     refused(dict)                            # not a TypedDict at all
 
@@ -309,13 +313,13 @@ def test_schema_grammar_is_closed_at_registration():
     with pytest.raises(UnexpectedField) as e:                          # D5: through a union arm
         plugin.check_construct(R, "t", {"kind": "t", "a": "x", "either": {"bogus": 1}})
     assert (e.value.holder, e.value.field) == ("either", "bogus")
-    class Nums(TypedDict):
-        n: int | float
-    class N(RT):
-        argument_schema = Nums
+    class Lists(TypedDict):
+        xs: list[str] | list[int]
+    class L(RT):
+        argument_schema = Lists
     with pytest.raises(InvalidField) as e:
-        plugin.check_construct(N, "t", {"kind": "t", "n": "3"})
-    assert e.value.reason == "must be a number"                        # deduplicated
+        plugin.check_construct(L, "t", {"kind": "t", "xs": "3"})
+    assert e.value.reason == "must be a list"                          # deduplicated
 
 
 def test_children_field_must_be_a_list():

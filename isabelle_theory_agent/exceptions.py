@@ -13,9 +13,8 @@ never by the raise site: `opr` with `target` at the tool entry
 (EXCEPTIONS.md §4), and `raw_ast_path` by the per-element loops as the
 exception unwinds (EXCEPTIONS.md §5).  `RawASTError` carries a third
 framework-written field, `of_tool`: written by `plugin.check_call` as the
-exception leaves the checker, and by the tool entry for the refusals it
-raises itself (`mcp._about_the_call`) — the two places that know whose
-shape was read (TOOL_SCHEMAS.md §4).
+exception leaves it — the one place that knows it read a tool's schema
+(TOOL_SCHEMAS.md §4).
 """
 
 from __future__ import annotations
@@ -159,14 +158,13 @@ class RawASTError(TAT_Error, ABC):
 
     # The holder is a tool and its fields the call's arguments, not a kind
     # and a construct's (TOOL_SCHEMAS.md §4); the three shape errors' sentences
-    # say so.  Written by `plugin.check_call` as the exception leaves it, and
-    # by `mcp._about_the_call` for the tool entry's own refusals, so no check
-    # below knows whose shape it reads.  Inert on `MalformedRawAST` and
-    # `UnknownKind`.
+    # say so.  Written by `plugin.check_call` as the exception leaves it, so
+    # no raise site knows whose shape it reads.  Inert on `MalformedRawAST`
+    # and `UnknownKind`.
     of_tool: bool = False
 
     def _mark_of_tool(self) -> None:
-        """Framework-only, at `plugin.check_call` and the tool entries."""
+        """Framework-only, at `plugin.check_call`."""
         self.of_tool = True
 
 

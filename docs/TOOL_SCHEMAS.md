@@ -6,9 +6,11 @@ ruling; *(proposed)* is not settled.
 The argument shape of every tool MCP_SPECIFICATION §1 names, and the first
 line a failed call renders. The JSON schemas are hand-written, one file per
 tool under `isabelle_theory_agent/tools/`, in the style of AoA's
-(`contrib/Isa-Mini/IsaMini/AoA/tools/`); `edit`'s is completed at start
-from the loaded node classes (PLUGIN_SYSTEM.md §4). Ids resolve as
-MCP_SPECIFICATION §2.1.
+(`contrib/Isa-Mini/IsaMini/AoA/tools/`) though within the closed grammar
+of MODULE_STRUCTURE §4.4, which is narrower than AoA's — no `default`, no
+`anyOf`, no `minimum`; `edit`'s is completed at start from the loaded
+node classes (PLUGIN_SYSTEM.md §4). Ids resolve as MCP_SPECIFICATION
+§2.1.
 
 A **construct** is what the agent submits to become a node: a JSON object
 whose `kind` names the node class and whose other fields are that class's
@@ -117,10 +119,10 @@ No `evaluate`: there is nothing new to see (MCP_SPECIFICATION §3.2).
 
 A **malformed call** — an argument missing, one the tool does not take,
 of the wrong type, outside its allowed set, or an empty `constructs` —
-is refused on the call's own shape before any operation is named,
-checked as a construct's fields are (EXCEPTIONS.md §3's `MissingField`,
-`UnexpectedField` and `InvalidField`, in their forms for a tool call;
-RENDER_BASELINES §2), and renders the cause alone:
+is refused against the schema the tool advertises, before any operation
+is named and as a construct's fields are checked (EXCEPTIONS.md §3's
+`MissingField`, `UnexpectedField` and `InvalidField`, in their forms for
+a tool call; RENDER_BASELINES §2), and renders the cause alone:
 
 ```
 The `edit` tool needs the argument `evaluate`.

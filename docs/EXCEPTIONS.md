@@ -107,8 +107,8 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 ├─ RawASTError                a submitted RawAST, or a tool call's own
 │  │                          arguments, is malformed.  The group carries
 │  │                          of_tool, written after the raise by
-│  │                          `check_call` and by the tool entry for its own
-│  │                          refusals (§4's shape): the holder is a tool,
+│  │                          `check_call`, which read a tool's schema
+│  │                          (§4's shape): the holder is a tool,
 │  │                          the fields its arguments, and the three shape
 │  │                          errors' sentences say so (TOOL_SCHEMAS §4)
 │  ├─ MalformedRawAST         missing_kind — an object with no `kind`, or

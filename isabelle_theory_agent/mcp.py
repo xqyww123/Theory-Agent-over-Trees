@@ -8,14 +8,13 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 import jsoncomment
 
 from . import edit
 from .exceptions import (
-    HoldsNoChildren, InvalidField, MoveBesideItself, ProtectedNode, TAT_Error,
-    TAT_InternalError)
+    HoldsNoChildren, MoveBesideItself, ProtectedNode, TAT_Error, TAT_InternalError)
 from .mcp_server import Tool
 from .model import (
     BRIEFING, Evaluating, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node,
@@ -29,51 +28,27 @@ def _schema(tool: str) -> JSON_Schema:
     return jsoncomment.JsonComment().loads((_TOOLS / f"{tool}.jsonc").read_text())
 
 
-# --- the calls' own shapes (TOOL_SCHEMAS.md §1-§3): the TypedDicts the
-# checker takes (`plugin.check_call`), the enums read off the advertised
-# schemas; the constructs themselves are `edit.py`'s to check.
-
-class Edit_Arguments(TypedDict):
-    action: str
-    target_id: str
-    constructs: list[Any]
-    evaluate: bool
-
-class Location_Arguments(TypedDict):
-    position: str
-    node_id: str
-
-class Move_Arguments(TypedDict):
-    source_id: str
-    location: Location_Arguments
-    evaluate: bool
-
-class Delete_Arguments(TypedDict):
-    node_id: str
-
-ACTIONS: tuple[str, ...] = tuple(_schema("edit")["properties"]["action"]["enum"])
-POSITIONS: tuple[str, ...] = tuple(
-    _schema("move")["properties"]["location"]["properties"]["position"]["enum"])
 # `edit`'s adding actions as the Location they name (TOOL_SCHEMAS.md §1, §2)
 _ACTION_POSITION = {"append": "into", "insert_before": "before", "insert_after": "after"}
 
 
 def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
-    """`edit`, `move` and `delete` (TOOL_SCHEMAS.md): each checks the
-    call's own shape, holds the forest's lock across the change, the
-    evaluation the call asks for and the quickview, names the refused
-    operation on a `TAT_Error` the change raises (EXCEPTIONS.md §4), and
-    answers the `Done` line over the quickview (PRINT.md §5)."""
-    for td in (Edit_Arguments, Move_Arguments, Delete_Arguments):
-        validate_call_schema(td)
+    """`edit`, `move` and `delete` (TOOL_SCHEMAS.md): each checks the call
+    against the schema it advertises, holds the forest's lock across the
+    change, the evaluation the call asks for and the quickview, names the
+    refused operation on a `TAT_Error` the change raises (EXCEPTIONS.md
+    §4), and answers the `Done` line over the quickview (PRINT.md §5)."""
+    # One object per tool is what the agent is told and what a call is held
+    # to (`plugin.check_call`); the constructs inside `edit`'s are
+    # `edit.py`'s to check, element by element.
+    schemas = {"edit": loaded.edit_schema, "move": _schema("move"), "delete": _schema("delete")}
+    for tool, schema in schemas.items():
+        validate_call_schema(schema, tool)
 
     async def run_edit(arguments: dict[str, Any]) -> str:
-        check_call(Edit_Arguments, "edit", arguments)
+        check_call(schemas["edit"], "edit", arguments)
         action, target_id = arguments["action"], arguments["target_id"]
         constructs = arguments["constructs"]
-        _one_of("action", action, ACTIONS)
-        if not constructs:                           # the schema's minItems, enforced here
-            raise _about_the_call(InvalidField("constructs", "must not be empty"))
         async with forest.lock:
             with _operation(action, target_id) as what:
                 if action == "amend":
@@ -87,10 +62,9 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             return _done(forest, what, stopped, nodes, -1)
 
     async def run_move(arguments: dict[str, Any]) -> str:
-        check_call(Move_Arguments, "move", arguments)
+        check_call(schemas["move"], "move", arguments)
         source_id, location = arguments["source_id"], arguments["location"]
         position, node_id = location["position"], location["node_id"]
-        _one_of("location.position", position, POSITIONS)
         where = f"{source_id} {position} {node_id}"   # the target phrase (TOOL_SCHEMAS.md §4)
         async with forest.lock:
             with _operation("move", where) as what:
@@ -101,29 +75,16 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             return _done(forest, what, stopped, [node], -1)
 
     async def run_delete(arguments: dict[str, Any]) -> str:
-        check_call(Delete_Arguments, "delete", arguments)
+        check_call(schemas["delete"], "delete", arguments)
         node_id = arguments["node_id"]
         async with forest.lock:
             with _operation("delete", node_id) as what:
                 parent = await edit.delete(_resolve(forest, node_id))
             return _done(forest, what, None, [parent], 0)
 
-    return [Tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit),
-            Tool("move", "Move an Isabelle theory construct", _schema("move"), run_move),
-            Tool("delete", "Delete an Isabelle theory construct", _schema("delete"), run_delete)]
-
-
-def _about_the_call(e: InvalidField) -> InvalidField:
-    """A refusal the tool entry raises itself, about the call's own
-    arguments (TOOL_SCHEMAS.md §4)."""
-    e._mark_of_tool()
-    return e
-
-
-def _one_of(field: str, value: str, allowed: tuple[str, ...]) -> None:
-    if value not in allowed:
-        raise _about_the_call(
-            InvalidField(field, "must be one of " + ", ".join(f"`{a}`" for a in allowed)))
+    return [Tool("edit", "Edit Isabelle theory constructs", schemas["edit"], run_edit),
+            Tool("move", "Move an Isabelle theory construct", schemas["move"], run_move),
+            Tool("delete", "Delete an Isabelle theory construct", schemas["delete"], run_delete)]
 
 
 @contextmanager
