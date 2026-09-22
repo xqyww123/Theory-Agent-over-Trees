@@ -84,8 +84,8 @@ three classes for one cause — `NodeNotFound`, `CannotDelete_NodeNotFound`
 and `CannotEdit_NodeNotFound` (`contrib/Isa-Mini/IsaMini/AoA/model.py`).
 
 The groups under `TAT_Error` are the agent's four remediation directions:
-fix the id you gave (`ResolutionError`), fix the construct you
-submitted (`RawASTError`), rethink the change (`BadEdit`), or — for
+fix the id you gave (`ResolutionError`), fix the construct — or the
+call — you submitted (`RawASTError`), rethink the change (`BadEdit`), or — for
 `ConstructFailed` — the node's class does not offer the operation, so reach
 the goal another way. A failed forest-changing operation opens with the
 refused operation (§4); the cause — under it, or alone for the other
@@ -104,17 +104,24 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  └─ AmbiguousId             id, candidates — every node the id matches,
 │                             each in its shortest unambiguous form
 │                             (MCP_SPECIFICATION §2.1)            [framework]
-├─ RawASTError                a submitted RawAST is malformed
+├─ RawASTError                a submitted RawAST, or a tool call's own
+│  │                          arguments, is malformed.  The group carries
+│  │                          of_tool, written after the raise by
+│  │                          `check_call` and by the tool entry for its own
+│  │                          refusals (§4's shape): the holder is a tool,
+│  │                          the fields its arguments, and the three shape
+│  │                          errors' sentences say so (TOOL_SCHEMAS §4)
 │  ├─ MalformedRawAST         missing_kind — an object with no `kind`, or
 │  │                          not an object at all                [framework]
 │  ├─ UnknownKind             kind, available_kinds               [framework]
-│  ├─ MissingField            kind, field — derived from the class's declared
-│  │                          argument schema, before its gen     [framework]
-│  ├─ UnexpectedField         holder, holder_is_kind, field, takes — a field
+│  ├─ MissingField            holder, field — derived from the class's or
+│  │                          the tool's declared argument schema, before
+│  │                          a gen                               [framework]
+│  ├─ UnexpectedField         holder, holder_is_top, field, takes — a field
 │  │                          the class does not declare; holder is the
-│  │                          kind (holder_is_kind), or a nested container's
-│  │                          path.  Schema-derived like MissingField, its
-│  │                          dual                                [framework]
+│  │                          kind or the tool (holder_is_top), or a nested
+│  │                          container's path.  Schema-derived like
+│  │                          MissingField, its dual              [framework]
 │  └─ InvalidField            field, reason — schema-derived like
 │                             MissingField; also ready-made for `gen`
 │                             authors' semantic checks (a term Isabelle
@@ -161,11 +168,15 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          containment
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
+│  ├─ MoveBesideItself        id — the move is `before` or `after` the
+│  │                          moved node itself                   [framework]
 │  ├─ HoldsNoChildren         id, kind — the target of an `append` or a
 │  │                          `move … into` is a leaf              [framework]
 │  └─ ProtectedNode           id — the target is protected: the forest
-│                             root `Sessions`, which takes `append` and
-│                             nothing else (MCP_SPECIFICATION §2) [framework]
+│                             root `Sessions`, which takes `edit`'s `append`
+│                             and a `move … into`, and nothing else
+│                             (MCP_SPECIFICATION §2, TOOL_SCHEMAS §1, §2)
+│                                                                  [framework]
 ├─ ConstructFailed            `construct` could not start
 │  └─ ConstructNotSupported   id — raised by Node.construct's default
 │                             implementation; a class with a `construct`
@@ -199,8 +210,15 @@ class's `gen` supplies to a framework exception — `InvalidField`'s
 `<reason>`, whose shape alone is RENDER_BASELINES §2's — is approved in
 that class's document under docs/node_classes/ and pinned by that class's
 test, as `Session`'s and `Theory`'s two reasons are in SESSION_AND_THEORY
-§3 and test_session_theory.py. No test outside those homes touches a
-rendered string.
+§3 and test_session_theory.py. Every other test that meets a rendering
+asserts the exception's class and fields, or reads the line from the
+documents (TOOL_SCHEMAS §4's malformed-call block and RENDER_BASELINES
+§6's success lines by test_mcp.py, §5's node lines by test_print.py,
+§3's evaluation text by tat_framework_ml_test.py);
+the lines the framework writes itself — the `Cannot <opr> <target>`
+opening (RENDER_BASELINES §1), the `Done` line (§6) and a node's line
+with its mark (§5) — a test may also spell out with its own ids. No test
+outside the homes above spells out a cause sentence.
 
 ## 4. The `opr` field
 
@@ -211,7 +229,8 @@ name into `opr` at the tool entry. `__str__` then opens with
 (TOOL_SCHEMAS.md §4). Any other tool
 writes nothing, and the cause renders alone: the forest's shape is
 untouched, and an opening line would only repeat what the agent just
-called.
+called. A call refused on its own shape, before the operation is known,
+renders alone the same way (TOOL_SCHEMAS.md §4).
 
 `opr` is a field written once by the layer that knows it — like §5's, and
 deliberately not a wrapper exception: an `except DuplicateName` means the

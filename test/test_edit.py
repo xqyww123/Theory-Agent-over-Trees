@@ -165,7 +165,7 @@ def test_the_rawast_error_family():
     assert e.value.missing_kind
     with pytest.raises(MissingField) as e:
         run(insert({"kind": "t"}))
-    assert (e.value.kind, e.value.field) == ("t", "name")
+    assert (e.value.holder, e.value.field) == ("t", "name")
     with pytest.raises(InvalidField) as e:
         run(insert({"kind": "t", "name": 5}))
     assert e.value.reason == "must be a string"
@@ -227,12 +227,12 @@ def test_schema_typed_dict_forms():
         plugin.check_construct(Rich, "t", {"kind": "t", "namee": "x"})
     assert (e.value.holder, e.value.field) == ("t", "namee")
     assert e.value.takes == ["name", "priority", "note", "facts", "tags"]
-    assert e.value.holder_is_kind
+    assert e.value.holder_is_top
     with pytest.raises(UnexpectedField) as e:
         plugin.check_construct(Rich, "t", {"kind": "t", "name": "x",
                                     "facts": [{"name": "f", "extra": 1}]})
     assert (e.value.holder, e.value.field) == ("facts[0]", "extra")
-    assert e.value.takes == ["name"] and not e.value.holder_is_kind
+    assert e.value.takes == ["name"] and not e.value.holder_is_top
     # a TypedDict that declares `kind` for the static checker: `takes`
     # still does not advertise the framework's field
     from typing import Literal, TypedDict

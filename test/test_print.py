@@ -17,7 +17,7 @@ from isabelle_theory_agent import isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import (
     BRIEFING, NOT_EVALUATED, OUT_FOCUS, RECALL, CannotEvaluate, Isar_State_Slot,
-    Relative_Focus, detailed, print_error)
+    Relative_Focus, print_error)
 from isabelle_theory_agent.store import Forest_Store
 
 CONN = typing.cast(typing.Any, object())
@@ -106,6 +106,10 @@ def render(forest, node, mode) -> list[str]:
     return forest.render(node, mode).splitlines()
 
 
+def focus(*nodes, depth=0):
+    return Relative_Focus(frozenset(nodes), depth)
+
+
 # --- the documents' examples ------------------------------------------------
 
 def example_forest():
@@ -127,7 +131,7 @@ def example_forest():
 def test_the_quickview_of_print_md_section_7():
     f, a, x = example_forest()
     [example] = fenced_blocks(PRINT, "7.")
-    assert render(f, f, Relative_Focus([a, x])) == example
+    assert render(f, f, focus(x)) == example
 
 
 def test_the_root_forms_of_print_md_section_6():
@@ -137,16 +141,16 @@ def test_the_root_forms_of_print_md_section_6():
     session(f, "A")                                    # nothing under it: finished
     b = session(f, "B")
     x = theory(b, "X")
-    assert render(f, f, Relative_Focus([b, x])) == two_sessions
+    assert render(f, f, focus(x)) == two_sessions
 
     f = new_forest()
     a = session(f, "A")
     theory(a, "Base", beginning=M.READY, ending=M.READY)
     x = theory(a, "X")
-    assert render(f, f, Relative_Focus([a, x])) == lone_session
+    assert render(f, f, focus(x)) == lone_session
 
     f = new_forest()
-    for mode in (BRIEFING, RECALL, Relative_Focus([])):
+    for mode in (BRIEFING, RECALL, focus(f)):
         assert render(f, f, mode) == empty
     assert empty[1].strip() == M.EMPTY_FOREST
 
@@ -272,7 +276,7 @@ def test_the_quickview_expands_the_path_to_the_focus_only():
     f, a, x, s, p = deep_forest()
     q = leaf(Lemma, s, "lemma", "Q")
     y = theory(a, "Y")
-    assert render(f, f, Relative_Focus([a, x, s])) == [
+    assert render(f, f, focus(s)) == [
         "session_A",
         "- theory_X (not evaluated)",                  # on the path: no fields
         "  - section_S",                               # the focus
@@ -280,21 +284,54 @@ def test_the_quickview_expands_the_path_to_the_focus_only():
         "    - lemma_Q (not evaluated)",
         "- theory_Y (not evaluated)",                  # off the path: the line
     ]
-    assert render(f, f, Relative_Focus([a, x])) == [
+    assert render(f, f, focus(x)) == [
         "session_A",
         "- theory_X (not evaluated)",
         "  imports: Main HOL-Library.Multiset",        # the focus writes its fields
         "  - section_S",
         "- theory_Y (not evaluated)",
     ]
-    with pytest.raises(TAT_InternalError):
-        f.render(f, Relative_Focus([a, y, s]))         # a path that leaves the tree is a bug
+    with pytest.raises(TAT_InternalError, match="a focus outside the rendered node"):
+        f.render(y, focus(s))                          # a bug in the caller
+    with pytest.raises(TAT_InternalError, match="a focus under another focus"):
+        f.render(f, focus(x, s))
+    with pytest.raises(TAT_InternalError, match="a Relative_Focus with no focus"):
+        f.render(f, focus())
 
 
-def test_detailed_is_the_focus_and_recall_above_the_grandchildren():
-    assert detailed(Relative_Focus([]), 0) and detailed(RECALL, 1)
-    assert not detailed(RECALL, 2) and not detailed(OUT_FOCUS, 0) and not detailed(BRIEFING, 0)
-    assert not detailed(Relative_Focus([typing.cast(M.Node, object())]), 0)
+def test_the_depth_is_how_far_under_a_focus_every_node_is_detailed():
+    """PRINT.md §2: the focus and `depth` levels under it are detailed,
+    the layer below is lines only, -1 is the whole subtree."""
+    f, a, x, s, p = deep_forest()
+    t = section(x, "T")
+    leaf(Lemma, t, "lemma", "R")
+    y = theory(a, "Y")
+    subtree = [
+        "- theory_X (not evaluated)",
+        "  imports: Main HOL-Library.Multiset",
+        "  - section_S",
+        "    - lemma_P",
+        "  - section_T",
+        "    - lemma_R (not evaluated)",
+    ]
+    assert render(f, f, focus(x, depth=1)) == ["session_A", *subtree, "- theory_Y (not evaluated)"]
+    assert render(f, f, focus(x, depth=2)) == render(f, f, focus(x, depth=-1)) \
+        == ["session_A", *subtree, "- theory_Y (not evaluated)"]
+    assert render(f, f, focus(x, depth=0)) == [
+        "session_A", *subtree[:3], "  - section_T", "- theory_Y (not evaluated)"]
+    assert render(f, f, focus(s, t, depth=-1)) == [   # several focuses: siblings, an edit's batch
+        "session_A", "- theory_X (not evaluated)", *subtree[2:], "- theory_Y (not evaluated)"]
+    assert render(f, f, focus(f)) == ["session_A"]     # the root as the focus: a deleted session's parent
+    assert render(f, f, focus(f, depth=-1)) == [
+        "session_A", "parent_session: HOL", "options: quick_and_dirty = true", "description:",
+        "  Sorting,", "  verified.", *subtree, "- theory_Y (not evaluated)", "  imports: Main"]
+
+
+def test_detailed_is_a_focus_and_recall_above_the_grandchildren():
+    f, a, x, s, p = deep_forest()
+    assert x.detailed(focus(x), 2) and x.detailed(RECALL, 1)
+    assert not x.detailed(RECALL, 2) and not x.detailed(OUT_FOCUS, 0) and not x.detailed(BRIEFING, 0)
+    assert not x.detailed(focus(s), 2)                 # above the focus: on the path
 
 
 # --- errors and the seen set --------------------------------------------
@@ -310,14 +347,14 @@ def failing_theory():
 def test_a_theory_prints_its_error_once_per_run_in_a_quickview_and_whole_in_recall():
     f, a, x = failing_theory()
     block = ["  Error:", "    header broke"]
-    first = render(f, f, Relative_Focus([a, x]))
+    first = render(f, f, focus(x))
     assert first[-2:] == block and (x.identity, "beginning") in f.conversation.seen
-    assert render(f, f, Relative_Focus([a, x]))[-1] == "  imports: Main"   # seen: not again
+    assert render(f, f, focus(x))[-1] == "  imports: Main"   # seen: not again
     assert render(f, x, RECALL)[-2:] == block                         # whole under recall
     assert render(f, x, RECALL)[-2:] == block                         # every time
     assert "Error:" not in "".join(render(f, f, BRIEFING))
     f.conversation.seen.clear()                                       # the context replaced
-    assert render(f, f, Relative_Focus([a, x]))[-2:] == block
+    assert render(f, f, focus(x))[-2:] == block
 
 
 def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
@@ -328,18 +365,18 @@ def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
     y = theory(a, "Y")
     p = leaf(Lemma, x, "lemma", "P")
     block = ["  Error:", "    header broke"]
-    beside = render(f, f, Relative_Focus([a, y]))       # x in Out_Focus
+    beside = render(f, f, focus(y))       # x in Out_Focus
     assert beside[1:5] == ["- theory_X (failed)", *block, "- theory_Y (not evaluated)"]
     f.conversation.seen.clear()
-    on_the_path = render(f, f, Relative_Focus([a, x, p]))   # x with a non-empty path
+    on_the_path = render(f, f, focus(p))   # x with a non-empty path
     assert on_the_path[1:5] == ["- theory_X (failed)", *block, "  - lemma_P (not evaluated)"]
-    assert "Error:" not in "".join(render(f, f, Relative_Focus([a, x, p])))   # once per run
+    assert "Error:" not in "".join(render(f, f, focus(p)))   # once per run
 
 
 def test_the_briefing_closure_clears_the_seen_set_and_renders_the_root():
     from isabelle_theory_agent import mcp
     f, a, x = failing_theory()
-    render(f, f, Relative_Focus([a, x]))
+    render(f, f, focus(x))
     assert f.conversation.seen
     answer = mcp.on_compaction(f)()
     assert not f.conversation.seen and answer == f.render(f, BRIEFING)
@@ -349,7 +386,7 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     f, a, x = failing_theory()
     x.evaluation_status_beginning, x.beginning_errors = M.READY, []
     x.evaluation_status_ending, x.ending_errors = CannotEvaluate(None), ["end broke"]
-    render(f, f, Relative_Focus([a, x]))
+    render(f, f, focus(x))
     assert (x.identity, "ending") in f.conversation.seen
 
     async def fails_the_same_way(conn, name, arg):
@@ -361,12 +398,12 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     import asyncio
     asyncio.run(rerun())
     assert (x.identity, "ending") not in f.conversation.seen
-    assert render(f, f, Relative_Focus([a, x]))[-2:] == ["  Error:", "    end broke"]
+    assert render(f, f, focus(x))[-2:] == ["  Error:", "    end broke"]
 
 
 def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     f, a, x = failing_theory()
-    render(f, f, Relative_Focus([a, x]))
+    render(f, f, focus(x))
     assert (x.identity, "beginning") in f.conversation.seen
 
     async def fails_the_same_way(conn, name, arg):
@@ -378,7 +415,7 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     import asyncio
     asyncio.run(rerun())
     assert (x.identity, "beginning") not in f.conversation.seen
-    assert render(f, f, Relative_Focus([a, x]))[-2:] == ["  Error:", "    header broke"]
+    assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke"]
 
 
 def test_messages_show_only_while_the_operation_is_an_own_stop():

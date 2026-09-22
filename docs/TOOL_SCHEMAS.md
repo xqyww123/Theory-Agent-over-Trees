@@ -39,7 +39,8 @@ Tool description: `Edit Isabelle theory constructs`.
   },
   "required": ["action", "target_id", "constructs", "evaluate"],
   "additionalProperties": false,
-  "$defs": { }      // one entry per node class and `Construct`, their union: PLUGIN_SYSTEM.md §4
+  // one entry per node class and `Construct`, their union: PLUGIN_SYSTEM.md §4
+  "$defs": { }
 }
 ```
 
@@ -90,8 +91,10 @@ a **Location** (ARCHITECTURE §1) on the wire.
 
 Beyond the schema, TAT checks: `into`'s node can hold children
 (`HoldsNoChildren`); the destination is not inside the moved subtree
-(`MoveIntoOwnSubtree`); and the moved node's id component is free among
-its new siblings (`DuplicateName`).
+(`MoveIntoOwnSubtree`), nor `before` or `after` the moved node itself
+(`MoveBesideItself`); neither the moved node nor a `before`/`after` node
+is `Sessions` (`ProtectedNode`); and the moved node's id component is
+free among its new siblings (`DuplicateName`).
 
 ## 3. `delete` *(decided 2026-09-04)*
 
@@ -110,22 +113,38 @@ Tool description: `Delete an Isabelle theory construct`.
 
 No `evaluate`: there is nothing new to see (MCP_SPECIFICATION §3.2).
 
-## 4. What a failure renders
+## 4. What a call renders
 
-A failed `edit`, `move` or `delete` — the tools that change the forest
+A **malformed call** — an argument missing, one the tool does not take,
+of the wrong type, outside its allowed set, or an empty `constructs` —
+is refused on the call's own shape before any operation is named,
+checked as a construct's fields are (EXCEPTIONS.md §3's `MissingField`,
+`UnexpectedField` and `InvalidField`, in their forms for a tool call;
+RENDER_BASELINES §2), and renders the cause alone:
+
+```
+The `edit` tool needs the argument `evaluate`.
+The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constructs`, `evaluate`.
+The argument `constructs` must be a list.
+The argument `constructs` must not be empty.
+The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
+The argument `location.position` must be one of `before`, `after`, `into`.
+```
+
+A **successful** `edit`, `move` or `delete` opens with one line naming
+the operation and its target, echoed from the call — the `Done` line,
+RENDER_BASELINES §6 — and ends with the quickview (PRINT.md §5): what
+the call added, the moved node, or the deleted node's parent, with the
+path to them. When the call evaluated and the walk stopped at an
+obstacle (ARCHITECTURE §3.3), the line names it, in its shortest form;
+whether the call evaluated at all, and how each node fared, the
+quickview's marks say.
+
+A **failed** `edit`, `move` or `delete` — the tools that change the forest
 (the glossary's broad **edit**, ARCHITECTURE §1) — opens with one line
-naming the refused operation and its target, echoed from the call:
-
-```
-Cannot append theory_X.section_Basics
-Cannot insert_before theory_X.lemma_P
-Cannot insert_after theory_X.lemma_P
-Cannot amend theory_X.lemma_P
-Cannot move theory_Sorting to after theory_X.section_Basics
-Cannot move theory_Sorting to session_Arith
-Cannot delete theory_X.section_Basics
-```
-
+naming the refused operation and its target, echoed from the call — the
+`Cannot` line, RENDER_BASELINES §1; a `move`'s target phrase carries the
+position word, `theory_Sorting after theory_X.section_Basics`.
 The lines after it are the cause, prefixed by its `raw_ast_path`
 (EXCEPTIONS.md §5) where one applies; the path indexes `constructs`. The
 `opr` field (EXCEPTIONS.md §4) takes exactly these operation names:

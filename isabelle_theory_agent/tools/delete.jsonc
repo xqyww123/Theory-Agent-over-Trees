@@ -1,0 +1,9 @@
+// The `delete` tool (TOOL_SCHEMAS.md §3).
+{
+  "type": "object",
+  "properties": {
+    "node_id": { "type": "string", "description": "The id of the node to delete, with its subtree." }
+  },
+  "required": ["node_id"],
+  "additionalProperties": false
+}

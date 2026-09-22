@@ -1,23 +1,26 @@
 # Rendering
 
-Status: decided (2026-09-21, after two design reviews), except §8.
+Status: decided (2026-09-21, after two design reviews; the quickview's
+focus and depth 2026-09-22), except §8.
 
 Every node renders itself through one method, in a **print mode** that
 says what the reader is looking at, and at a **depth**, the number of
 levels below the rendering's starting node:
 
 ```python
-class Out_Focus: ...                        # not on the path to the focus: the node itself, no children
+class Out_Focus: ...                        # not on the path to a focus: the node itself, no children
 class Briefing: ...                         # the outline: every node, to the bottom
 @dataclass(frozen=True)
-class Relative_Focus: path: list[Node]      # the nodes from the next child down to the focus; [] when this node is the focus
+class Relative_Focus:                       # the quickview: every node of `nodes` is a focus, with what lies
+    nodes: frozenset[Node]                  #   `depth` levels under it — its whole subtree at -1; a node
+    depth: int                              #   above one is on the path
 class Recall: ...                           # the recalled node and what is under it
 PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 
 def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None         # the framework's: the line, print_fields, the children
 def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None  # the class's: its fields and its errors; nothing by default
 def mark(self, mode: PrintMode, depth: int) -> str | None                              # the framework's default (§1); a class may override
-def detailed(mode: PrintMode, depth: int) -> bool                                      # a helper: true for Relative_Focus([]) and for Recall below depth 2
+def detailed(self, mode: PrintMode, depth: int) -> bool                                # a helper: true for a focus and for Recall below depth 2
 ```
 
 `indent` is a level, two spaces each; `depth` is 0 at the node a
@@ -73,9 +76,17 @@ only line it writes under `Sessions:`, sits one level in (§6).
 | --- | --- | --- |
 | `Out_Focus` | called | none |
 | `Briefing` | called | every child, in `Briefing` |
-| `Relative_Focus([c, …])` | called | `c` in `Relative_Focus([…])`, every other child in `Out_Focus` |
-| `Relative_Focus([])` | called | every child in `Out_Focus` |
+| `Relative_Focus(nodes, depth)`, this node in `nodes` | called | `depth = 0`: every child in `Out_Focus`; otherwise every child in `Relative_Focus(the children, depth − 1)`, `-1` staying `-1` |
+| `Relative_Focus(nodes, depth)`, a node of `nodes` under this one | called | every child that is in `nodes` or above one, in the same mode; every other child in `Out_Focus` |
 | `Recall` | called | every child in `Recall`, while `depth < 3` |
+
+So under `Relative_Focus` a node is one of three things: a **focus** — a
+node of `nodes`, or under one within `depth` levels — which is detailed
+and whose children are focuses one level shallower, the layer below the
+last being lines only; on the **path**, above a focus, writing what it
+writes off the focus; or in `Out_Focus`. `Forest.render` refuses an
+empty `nodes`, a node of `nodes` outside the rendered node, and one
+under another node of `nodes`.
 
 The descent is the framework's; what a class writes under its line is
 the class's, by mode and depth (§3).
@@ -133,9 +144,19 @@ shown can be assumed. Rendering is synchronous, so the set needs no lock.
 ## 5. The three renderings
 
 - The **quickview** ends the results of `edit`, `move`, `delete` and
-  `evaluate_to`: `Forest.render` of the forest root in `Relative_Focus`
-  with the path to the call's focus, the node the call was about (§8). No
-  other tool result carries one.
+  `evaluate_to`: `Forest.render` of the forest root in
+  `Relative_Focus(nodes, depth)`, the nodes the call was about and how
+  deep under them it looks. No other tool result carries one.
+
+  | tool | `nodes` | `depth` |
+  | --- | --- | --- |
+  | `edit` | the nodes the call added — on `amend`, the replacement and those after it | `-1` |
+  | `move` | the moved node | `-1` |
+  | `delete` | the deleted node's parent | `0` |
+  | `evaluate_to` | the destination | `0` |
+
+  What a call added is printed whole, once; the rest of the forest is
+  the path and the lines beside it.
 - The **briefing** answers `POST /on-compaction`: `Forest.render` of the
   forest root in `Briefing`.
 - `recall` is `Forest.render` of the recalled node in `Recall`, or, with
@@ -181,11 +202,11 @@ Sessions:
 
 ## 7. An example
 
-The quickview after an `edit` on `theory_X` — the focus — in a forest of
-one session and three theories; `definition_f` failed with a two-line
-message, `lemma_P` after it is blocked, `lemma_A` before it ran and still
-owes its proof, and `theory_Y`, which imports `theory_X`, was invalidated
-by the edit:
+The quickview after an `evaluate_to` on `theory_X` — the focus, at depth
+0 — in a forest of one session and three theories; `definition_f` failed
+with a two-line message, `lemma_P` after it is blocked, `lemma_A` before
+it ran and still owes its proof, and `theory_Y`, which imports
+`theory_X`, was invalidated by the edit that put `definition_f` there:
 
 ```
 session_A
@@ -204,7 +225,8 @@ session_A
 The lines with a dash, and the marks on them, are the framework's;
 `imports: Main` and the error block are what the classes write.
 `theory_Base` and `theory_Y` are in `Out_Focus`; `theory_X` is the focus
-and writes `imports`; its children are in `Out_Focus`. `lemma_A` ran and
+and writes `imports`; the call's depth is 0, so its children are in
+`Out_Focus`. `lemma_A` ran and
 still owes its proof, so the default `mark` leaves its line bare, and
 `Theorem`'s own `mark` is undecided (§8). `definition_f` is a `Define`, a
 class not yet designed (§8); the block is what its `print_fields` would
@@ -212,5 +234,5 @@ write through `print_error`, and stands here to fix the block's place.
 
 ## 8. Undecided
 
-Each tool's focus — decided with the tools (TOOL_SCHEMAS.md). `Theorem`'s
-and `Define`'s `mark` and `print_fields` — decided with each class.
+`Theorem`'s and `Define`'s `mark` and `print_fields` — decided with each
+class.

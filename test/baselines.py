@@ -28,3 +28,10 @@ def fenced_lines(doc: Path, *section_prefixes: str) -> list[str]:
     """Every non-empty line inside a ``` fence, within the `## ` sections
     whose title starts with one of `section_prefixes`, in document order."""
     return [line for block in fenced_blocks(doc, *section_prefixes) for line in block if line]
+
+
+def stated(doc: Path, label: str) -> list[str]:
+    """The backticked text of every prose line `<label>: \\`...\\``, in
+    document order — TOOL_SCHEMAS.md's `Tool description:` lines."""
+    return [line.split("`")[1] for line in doc.read_text().splitlines()
+            if line.startswith(f"{label}: `")]

@@ -278,7 +278,7 @@ isabelle_theory_agent/
   mcp.py               the tools, recall, the queue of pending messages
   mcp_server.py        the Streamable HTTP MCP server
   toplevel.py          the RPC entry point Isabelle calls into: the Conversation, the Forest, the server
-  tools/edit.jsonc     the edit tool's schema, its $defs filled at start (PLUGIN_SYSTEM §4)
+  tools/*.jsonc        the tools' schemas; edit's $defs filled at start (PLUGIN_SYSTEM §4)
 ```
 
 A leading underscore marks a framework-internal member: the framework's
@@ -314,7 +314,12 @@ guesses work outside a rendering. The index goes with the rendering
 because a move can change a printed short form (MCP_SPECIFICATION §2.2),
 and it is sound because rendering is synchronous throughout — `print`,
 `print_fields`, `mark`, `is_finished`, `id_of` — so a rendering sees one
-forest and needs no lock. The framework's `print` also holds the lone
+forest and needs no lock. For `Relative_Focus(nodes, depth)` the same
+call collects the ancestors of every node of `nodes` — walking up, never
+down — into `_above`, which the descent consults for what is on the
+path, and refuses an empty `nodes`, a node of `nodes` outside `node`, or
+one under another (`TAT_InternalError`); `detailed` is a method of
+`Node`, since a focus is the node's own membership of `nodes`. The framework's `print` also holds the lone
 session's form (PRINT.md §6): descending from the forest into its only
 child, at `depth >= 1`, it writes the child's line without the dash and
 the child's body at the same indent. The seen set (PRINT.md §4) is a
@@ -540,7 +545,10 @@ at its ending.
 
 Changing the forest: how a submitted construct becomes a node, and the
 four entries behind the `edit`, `move` and `delete` tools — `insert`,
-`amend`, `delete`, `move`.
+`amend`, `delete`, `move`. Each returns what the tool's quickview focuses
+on (PRINT.md §5): `insert` and `amend` the batch, its last element the
+natural destination (MCP_SPECIFICATION §3.2); `delete` the parent it
+left; `move` nothing, the caller holding the moved node.
 
 Two fields of a construct belong to the framework: `kind` selects the
 node class (§4.4), and `children` — which no `gen` ever sees — holds a
@@ -644,7 +652,15 @@ conversation's kind table — the framework's two classes and the listed
 packages' — and the assembled `edit` schema from it (PLUGIN_SYSTEM §1).
 The table is what `edit` dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
-schema, is PLUGIN_SYSTEM.md.
+schema, is PLUGIN_SYSTEM.md. `check_call(td, tool, arguments)` checks a
+tool call's own arguments the way `check_construct` checks a construct's
+fields — one checker, `_check_fields`, told which fields are the
+framework's to pass over (`kind` and `children` at a construct's top
+level, none in a call), the refusal marked as the call's on its way out
+(`RawASTError.of_tool`), which the three shape errors render as tool and
+argument (RENDER_BASELINES §2) — against a TypedDict of the grammar
+below, which `validate_call_schema(td)` enforces when the tools are
+built (§4.6).
 
 The argument schema grammar lives here too. A declaration's annotations
 come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
@@ -671,9 +687,36 @@ result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 
 ### 4.6 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
-`mcp.py` implements the tools of MCP_SPECIFICATION §1 and the queue of
-pending messages; the future `query` tool (MCP_SPECIFICATION §1.1) will land
-here too. `mcp_server.py` builds the server: one Streamable HTTP server on
+`mcp.py` implements the tools of MCP_SPECIFICATION §1; the queue of
+pending messages (MCP_SPECIFICATION §5) lands here with `construct`, and
+the future `query` tool (MCP_SPECIFICATION §1.1) too. `tools(forest,
+loaded)` builds `edit`, `move` and `delete` (TOOL_SCHEMAS.md): the
+schemas from `tools/*.jsonc`, `edit`'s the assembled one of
+`Loaded.edit_schema`; the `action` and `position` enums are read off
+those files, never retyped, and the tools' argument TypedDicts are
+checked against the grammar as the tools are built
+(`plugin.validate_call_schema`). Each call first checks its own
+arguments (`plugin.check_call`, §4.4) — an empty `constructs`, the
+schema's `minItems`, refused here too — then holds the forest's lock
+across the change, the evaluation the call asks for and the quickview,
+naming the refused operation on a `TAT_Error` raised by the change
+(EXCEPTIONS.md §4) through one context manager, which also yields the
+phrase the `Done` line carries; the walk raises none
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The change is `edit.py`'s
+entry with its Location (ARCHITECTURE §1) resolved here, once for both
+tools: `edit`'s `append`, `insert_before` and `insert_after` are `move`'s
+`into`, `before` and `after`, the end of the anchor's children or the
+anchor's index, one past it for `after`; for a move the index is counted
+after the node's removal, so a sibling before which the node stood
+loses one. Refused before the model: a leaf as an `into` anchor
+(`HoldsNoChildren`), `Sessions` anywhere but as one (`ProtectedNode`,
+raised by the one id resolution every entry goes through, which
+`_location` does for its anchor), and a `before`/`after` relative to
+the moved node itself (`MoveBesideItself`).
+`evaluate` runs the walk through `Forest._run` under the lock already
+held (§4.1). The result is the `Done` line over `Forest.render(forest,
+Relative_Focus(…))` with PRINT.md §5's nodes and depth.
+`mcp_server.py` builds the server: one Streamable HTTP server on
 `127.0.0.1:<port>`, one endpoint `/mcp`, a low-level `mcp.server.Server`
 from the Python `mcp` SDK — TAT's own transport code, with no dependency on
 Isa-Mini; two lessons from AoA's

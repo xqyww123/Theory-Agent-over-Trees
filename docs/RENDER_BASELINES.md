@@ -11,17 +11,17 @@ identifier is backticked; opening lines echo the call and are not.
 
 ## 1. Opening lines
 
-Rendered for every forest-changing operation (TOOL_SCHEMAS.md §4), above
-the cause:
+Rendered for every forest-changing operation that failed (TOOL_SCHEMAS.md
+§4), above the cause:
 
 ```
 Cannot append theory_X.section_Basics
 Cannot insert_before theory_X.lemma_P
 Cannot insert_after theory_X.lemma_P
 Cannot amend theory_X.lemma_P
-Cannot move theory_Sorting to before theory_X.lemma_P
-Cannot move theory_Sorting to after theory_X.section_Basics
-Cannot move theory_Sorting to session_Arith
+Cannot move theory_Sorting before theory_X.lemma_P
+Cannot move theory_Sorting after theory_X.section_Basics
+Cannot move theory_Sorting into session_Arith
 Cannot delete theory_X.section_Basics
 ```
 
@@ -53,33 +53,43 @@ The field `kind` is missing.
 Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `definition`, `section`, `text`, `theory`, `session`.
 ```
 
-`MissingField`:
+`MissingField`, and its form for a tool call's own arguments
+(TOOL_SCHEMAS.md §4):
 
 ```
 A `lemma` needs the field `statement`.
+The `edit` tool needs the argument `evaluate`.
 ```
 
-`InvalidField` — `<reason>` is the schema check's or the `gen` author's, a
-predicate completing the sentence:
+`InvalidField` — `<reason>` is the schema check's, the tool entry's or
+the `gen` author's, a predicate completing the sentence; `argument`
+replaces `field` for a tool call's own arguments:
 
 ```
 The field `statement` <reason>.
+The argument `constructs` <reason>.
 ```
 
 The schema check's own reasons are `must be` followed by the JSON type —
 `a string`, `a number`, `a boolean`, `a list`, `an object` — several
-joined with ` or `:
+joined with ` or `; the tool entry's are `must be one of` followed by
+the allowed values, backticked, and `must not be empty`:
 
 ```
 The field `statement` must be a string.
+The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
+The argument `constructs` must not be empty.
 ```
 
 `UnexpectedField` — the holder is the kind, or a nested container's path,
-and `it takes` lists that holder's fields in declaration order:
+and `it takes` lists that holder's fields in declaration order; for a
+tool call's own arguments the holder is the tool:
 
 ```
 A `lemma` has no field `statment`; it takes `statement`, `name`, `facts`.
 `facts[1]` has no field `nmae`; it takes `name`.
+The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constructs`, `evaluate`.
+`location` has no argument `where`; it takes `position`, `node_id`.
 ```
 
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
@@ -167,6 +177,12 @@ A `theory` cannot be placed under `section_Basics`; a theory lives directly unde
 `theory_X.section_Basics` cannot move into its own subtree.
 ```
 
+`MoveBesideItself`:
+
+```
+`theory_X.lemma_P` is already in that position; a move must name another node.
+```
+
 `ProtectedNode`:
 
 ```
@@ -243,4 +259,17 @@ An error block, as `print_error` writes it:
 ```
 Error:
   Type unification failed: ...
+```
+
+## 6. Success lines
+
+Rendered for every forest-changing operation that succeeded, above the
+quickview (TOOL_SCHEMAS.md §4); the second form when the call's
+evaluation stopped at an obstacle, which it names in its shortest form:
+
+```
+Done: append theory_X.
+Done: insert_after theory_X.lemma_P; evaluation stopped at definition_f.
+Done: move theory_Sorting after theory_X.section_Basics.
+Done: delete theory_X.section_Basics.
 ```

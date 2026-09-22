@@ -5,16 +5,189 @@ builds what the server advertises and runs for one conversation, and
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, TypedDict
 
+import jsoncomment
+
+from . import edit
+from .exceptions import (
+    HoldsNoChildren, InvalidField, MoveBesideItself, ProtectedNode, TAT_Error,
+    TAT_InternalError)
 from .mcp_server import Tool
-from .model import BRIEFING, Forest
-from .plugin import Loaded
+from .model import (
+    BRIEFING, Evaluating, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node,
+    Relative_Focus)
+from .plugin import Loaded, check_call, validate_call_schema
+
+_TOOLS = Path(__file__).parent / "tools"
+
+
+def _schema(tool: str) -> JSON_Schema:
+    return jsoncomment.JsonComment().loads((_TOOLS / f"{tool}.jsonc").read_text())
+
+
+# --- the calls' own shapes (TOOL_SCHEMAS.md §1-§3): the TypedDicts the
+# checker takes (`plugin.check_call`), the enums read off the advertised
+# schemas; the constructs themselves are `edit.py`'s to check.
+
+class Edit_Arguments(TypedDict):
+    action: str
+    target_id: str
+    constructs: list[Any]
+    evaluate: bool
+
+class Location_Arguments(TypedDict):
+    position: str
+    node_id: str
+
+class Move_Arguments(TypedDict):
+    source_id: str
+    location: Location_Arguments
+    evaluate: bool
+
+class Delete_Arguments(TypedDict):
+    node_id: str
+
+ACTIONS: tuple[str, ...] = tuple(_schema("edit")["properties"]["action"]["enum"])
+POSITIONS: tuple[str, ...] = tuple(
+    _schema("move")["properties"]["location"]["properties"]["position"]["enum"])
+# `edit`'s adding actions as the Location they name (TOOL_SCHEMAS.md §1, §2)
+_ACTION_POSITION = {"append": "into", "insert_before": "before", "insert_after": "after"}
 
 
 def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
-    """Empty until the tools land."""
-    return []
+    """`edit`, `move` and `delete` (TOOL_SCHEMAS.md): each checks the
+    call's own shape, holds the forest's lock across the change, the
+    evaluation the call asks for and the quickview, names the refused
+    operation on a `TAT_Error` the change raises (EXCEPTIONS.md §4), and
+    answers the `Done` line over the quickview (PRINT.md §5)."""
+    for td in (Edit_Arguments, Move_Arguments, Delete_Arguments):
+        validate_call_schema(td)
+
+    async def run_edit(arguments: dict[str, Any]) -> str:
+        check_call(Edit_Arguments, "edit", arguments)
+        action, target_id = arguments["action"], arguments["target_id"]
+        constructs = arguments["constructs"]
+        _one_of("action", action, ACTIONS)
+        if not constructs:                           # the schema's minItems, enforced here
+            raise _about_the_call(InvalidField("constructs", "must not be empty"))
+        async with forest.lock:
+            with _operation(action, target_id) as what:
+                if action == "amend":
+                    nodes = await edit.amend(_resolve(forest, target_id), constructs, loaded.kinds)
+                elif action in _ACTION_POSITION:
+                    parent, index = _location(forest, _ACTION_POSITION[action], target_id)
+                    nodes = await edit.insert(parent, index, constructs, loaded.kinds)
+                else:
+                    raise TAT_InternalError(f"unknown action {action!r}")
+            stopped = await _evaluate(forest, nodes[-1]) if arguments["evaluate"] else None
+            return _done(forest, what, stopped, nodes, -1)
+
+    async def run_move(arguments: dict[str, Any]) -> str:
+        check_call(Move_Arguments, "move", arguments)
+        source_id, location = arguments["source_id"], arguments["location"]
+        position, node_id = location["position"], location["node_id"]
+        _one_of("location.position", position, POSITIONS)
+        where = f"{source_id} {position} {node_id}"   # the target phrase (TOOL_SCHEMAS.md §4)
+        async with forest.lock:
+            with _operation("move", where) as what:
+                node = _resolve(forest, source_id)
+                parent, index = _location(forest, position, node_id, moving=node)
+                await edit.move(node, parent, index)
+            stopped = await _evaluate(forest, node) if arguments["evaluate"] else None
+            return _done(forest, what, stopped, [node], -1)
+
+    async def run_delete(arguments: dict[str, Any]) -> str:
+        check_call(Delete_Arguments, "delete", arguments)
+        node_id = arguments["node_id"]
+        async with forest.lock:
+            with _operation("delete", node_id) as what:
+                parent = await edit.delete(_resolve(forest, node_id))
+            return _done(forest, what, None, [parent], 0)
+
+    return [Tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit),
+            Tool("move", "Move an Isabelle theory construct", _schema("move"), run_move),
+            Tool("delete", "Delete an Isabelle theory construct", _schema("delete"), run_delete)]
+
+
+def _about_the_call(e: InvalidField) -> InvalidField:
+    """A refusal the tool entry raises itself, about the call's own
+    arguments (TOOL_SCHEMAS.md §4)."""
+    e._mark_of_tool()
+    return e
+
+
+def _one_of(field: str, value: str, allowed: tuple[str, ...]) -> None:
+    if value not in allowed:
+        raise _about_the_call(
+            InvalidField(field, "must be one of " + ", ".join(f"`{a}`" for a in allowed)))
+
+
+@contextmanager
+def _operation(opr: str, target: str) -> Generator[str]:
+    """The operation's phrase, which the `Done` line and the `Cannot` line
+    both carry: yielded to the entry, and written onto a `TAT_Error` the
+    change raises (EXCEPTIONS.md §4)."""
+    try:
+        yield f"{opr} {target}"
+    except TAT_Error as e:
+        e._set_operation(opr, target)
+        raise
+
+
+def _resolve(forest: Forest, id: str, *, root_ok: bool = False) -> Node:
+    """The node an id names — one the call edits: `Sessions` only where the
+    call may take the root, `ProtectedNode` elsewhere (TOOL_SCHEMAS.md §1,
+    §2).  `_location` is the one caller that says `root_ok`; a tool that
+    reads, and so may name the root, must not resolve through here."""
+    node = forest.resolve(id)
+    if node is forest and not root_ok:
+        raise ProtectedNode(id)
+    return node
+
+
+def _location(forest: Forest, position: str, anchor_id: str,
+              moving: Node | None = None) -> tuple[NonLeaf_Node, int]:
+    """A Location (ARCHITECTURE §1) resolved: the anchor the call names,
+    and the parent and the index a batch is inserted at, or the node
+    `moving` lands at — that one counted after the node's removal
+    (TOOL_SCHEMAS.md §2).  `Sessions` is an anchor only for `into`, the
+    one position that needs no parent (TOOL_SCHEMAS.md §1, §2)."""
+    anchor = _resolve(forest, anchor_id, root_ok=position == "into")
+    if position == "into":
+        if not isinstance(anchor, NonLeaf_Node):
+            raise HoldsNoChildren(anchor_id, anchor.kind)
+        return anchor, len(anchor.sub_nodes) - (1 if moving is not None and moving.parent is anchor else 0)
+    if position not in ("before", "after"):
+        raise TAT_InternalError(f"unknown position {position!r}")
+    if anchor is moving:
+        raise MoveBesideItself(forest.id_of(anchor))
+    parent = edit.parent_of(anchor)
+    index = anchor.index_of()
+    if moving is not None and moving.parent is parent and moving.index_of() < index:
+        index -= 1
+    return parent, index + (1 if position == "after" else 0)
+
+
+async def _evaluate(forest: Forest, destination: Node) -> Node | None:
+    """`evaluate` true (MCP_SPECIFICATION §3.2): run up to the change's
+    natural destination under the lock the call holds, `ignore_error`
+    unset; the obstacle the walk stopped at, if one did."""
+    return (await forest._run(Evaluation(destination, False), Evaluating())).stopped_at
+
+
+def _done(forest: Forest, what: str, stopped: Node | None, nodes: list[Node], depth: int) -> str:
+    """A successful call's result (TOOL_SCHEMAS.md §4): the `Done` line,
+    naming the stop when evaluation did not reach its destination, over
+    the quickview (PRINT.md §5)."""
+    assert forest.lock.locked(), "a call's answer is rendered under the forest lock"
+    line = f"Done: {what}"
+    if stopped is not None:
+        line += f"; evaluation stopped at {forest.id_of(stopped)}"
+    return f"{line}.\n" + forest.render(forest, Relative_Focus(frozenset(nodes), depth))
 
 
 def on_compaction(forest: Forest) -> Callable[[], str]:

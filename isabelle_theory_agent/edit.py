@@ -85,7 +85,7 @@ async def amend(old: Node, raws: list[RawAST],
     """`amend`: `nodes[0]` is built with `replacing` set and takes `old`'s
     position, state slot, identity number and children; `nodes[1:]` follow
     it."""
-    parent = _parent_of(old)
+    parent = parent_of(old)
     forest = parent.forest()
     taken: dict[str, Node | str] = {c.id_component(): c
                                     for c in parent.sub_nodes if c is not old}
@@ -162,11 +162,13 @@ async def amend(old: Node, raws: list[RawAST],
     return nodes
 
 
-async def delete(node: Node) -> None:
+async def delete(node: Node) -> NonLeaf_Node:
     """`delete`: remove `node` with its subtree and invalidate from its
     successor on.  The predecessor's result, which lived under
-    `node.state`, is copied under the state now at that position."""
-    parent = _parent_of(node)
+    `node.state`, is copied under the state now at that position.
+    Returns the parent it left, which the quickview focuses on
+    (PRINT.md §5)."""
+    parent = parent_of(node)
     for n in node._children_first():
         _gate(n.on_deleting, "delete")
     _gate(parent.on_removing_child, node, "insert_or_delete")
@@ -185,6 +187,7 @@ async def delete(node: Node) -> None:
     for n in node._children_first():
         _completed(n.on_deleted, "delete")
     await forest._run(ev, Seeking(Location(parent, index)))
+    return parent
 
 
 async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
@@ -192,7 +195,7 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     and one on the destination side; the subtree's slots travel with their
     nodes, none is deleted (ARCHITECTURE §3.4).  `new_index` is the
     position in `new_parent.sub_nodes` after the removal."""
-    parent = _parent_of(node)
+    parent = parent_of(node)
     forest = parent.forest()
     p: Node | None = new_parent
     while p is not None:
@@ -251,9 +254,10 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     await forest._invalidate_from(new_location)
 
 
-def _parent_of(node: Node) -> NonLeaf_Node:
-    """The parent of a node an entry acts on; the root has none and takes
-    only an `append` (MCP_SPECIFICATION §2)."""
+def parent_of(node: Node) -> NonLeaf_Node:
+    """The parent of a node an entry acts on; the root has none — it
+    anchors only `into`, which `edit`'s `append` and `move`'s `into` both
+    resolve to (MCP_SPECIFICATION §2, TOOL_SCHEMAS §1, §2)."""
     if node.parent is None:
         raise TAT_InternalError("the forest root has no parent")
     return node.parent

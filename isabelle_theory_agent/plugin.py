@@ -20,7 +20,7 @@ import importlib
 import inspect
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
@@ -32,7 +32,8 @@ import jsonschema
 
 from . import model
 from .exceptions import (
-    InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
+    InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
+    UnexpectedField)
 from .model import JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, is_valid_name
 from .store import FRAMEWORK_FIELDS
 
@@ -192,6 +193,9 @@ def _check_class(cls: type[Node]) -> list[str]:
         raise _refuse(cls, "overrides `print`; `print_fields` and `mark` are the override points")
     if _defined_by(cls, "_children_to_print") not in (Node, NonLeaf_Node):
         raise _refuse(cls, "overrides `_children_to_print`; the descent is the framework's")
+    # nodes live in sets, and in lists compared with `==` (PRINT.md §2, `Forest.id_of`)
+    if cls.__hash__ is not object.__hash__ or cls.__eq__ is not object.__eq__:
+        raise _refuse(cls, "defines `__eq__` or `__hash__`; a node is equal to, and hashed as, itself alone")
     for method in ("print_fields", "mark"):          # rendering is synchronous (PRINT.md)
         if inspect.iscoroutinefunction(getattr(cls, method)):
             raise _refuse(cls, f"`{method}` is a coroutine; rendering is synchronous")
@@ -376,31 +380,54 @@ def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
     """The mechanical shape of a submitted construct, before its class is
     consulted: no field the class does not declare, required fields
     present, types right — against the class's `argument_schema`."""
-    _check_fields(cls.argument_schema, kind, raw, prefix="")
+    _check_fields(cls.argument_schema, kind, raw, prefix="", framework=FRAMEWORK_FIELDS)
 
 
-def _check_fields(td: Any, kind: str, mapping: Mapping[str, Any],
-                  prefix: str) -> None:
+def check_call(td: Any, tool: str, arguments: Mapping[str, Any]) -> None:
+    """A tool call's own arguments against the tool's declared shape, a
+    TypedDict in the argument schema grammar (`validate_call_schema`),
+    checked as a construct's fields are — the tool's name where the kind
+    would be, and the refusal marked on its way out, so that its sentence
+    says tool and argument (EXCEPTIONS.md §3)."""
+    try:
+        _check_fields(td, tool, arguments, prefix="")
+    except RawASTError as e:
+        e._mark_of_tool()
+        raise
+
+
+def validate_call_schema(td: Any) -> None:
+    """Refuse a tool's argument TypedDict outside the grammar — at the
+    conversation's start, where `tools` builds them (MODULE_STRUCTURE
+    §4.6)."""
+    _validate_typeddict(td, top=False, enclosing=())
+
+
+def _check_fields(td: Any, holder: str, mapping: Mapping[str, Any], prefix: str,
+                  framework: Collection[str] = ()) -> None:
+    """`holder` is the kind or the tool; `framework` the fields of the
+    framework's own that pass unread, `kind` and `children` at a
+    construct's top level."""
     hints, required = _declared(td)
     for field in mapping:                  # first: a typo beats its own hole
-        if not prefix and field in FRAMEWORK_FIELDS:
-            continue                       # the framework's own fields
+        if field in framework:
+            continue
         if field not in hints:
-            # At the top level `kind` is the framework's field, not one the
-            # class "takes" (RENDER_BASELINES.md §2).
-            takes = [f for f in hints if prefix or f != "kind"]
-            raise UnexpectedField(prefix[:-1] if prefix else kind, field,
-                                  takes, holder_is_kind=not prefix)
+            # `kind` is the framework's field, not one the class "takes"
+            # (RENDER_BASELINES.md §2).
+            takes = [f for f in hints if f not in framework]
+            raise UnexpectedField(prefix[:-1] if prefix else holder, field,
+                                  takes, holder_is_top=not prefix)
     for field in hints:                    # in declaration order
         if field in required and field not in mapping:
-            raise MissingField(kind, prefix + field)
+            raise MissingField(holder, prefix + field)
     for field, value in mapping.items():
-        if not prefix and field in FRAMEWORK_FIELDS:
+        if field in framework:
             continue
-        _check_value(value, hints[field], kind, prefix + field)
+        _check_value(value, hints[field], holder, prefix + field)
 
 
-def _check_value(value: Any, ann: Any, kind: str, path: str) -> None:
+def _check_value(value: Any, ann: Any, holder: str, path: str) -> None:
     """One value against its annotation, descending so that the field
     reported is the innermost at fault: a list element by its index, a
     TypedDict's field by its name, a union by the arm the value fits."""
@@ -408,16 +435,16 @@ def _check_value(value: Any, ann: Any, kind: str, path: str) -> None:
         if not isinstance(value, list):
             raise InvalidField(path, "must be a list")
         for i, v in enumerate(value):
-            _check_value(v, get_args(ann)[0], kind, f"{path}[{i}]")
+            _check_value(v, get_args(ann)[0], holder, f"{path}[{i}]")
     elif get_origin(ann) in (Union, UnionType):
         arm = next((a for a in get_args(ann) if _matches(value, a)), None)
         if arm is None:
             raise InvalidField(path, f"must be {_json_name(ann)}")
-        _check_value(value, arm, kind, path)
+        _check_value(value, arm, holder, path)
     elif is_typeddict(ann):
         if not isinstance(value, Mapping):
             raise InvalidField(path, "must be an object")
-        _check_fields(ann, kind, value, path + ".")
+        _check_fields(ann, holder, value, path + ".")
     elif not _matches(value, ann):
         raise InvalidField(path, f"must be {_json_name(ann)}")
 

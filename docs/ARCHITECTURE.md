@@ -37,8 +37,9 @@ language. A concept that needs a name gets one here first.
 | **edit** | any change to the forest — the `edit`, `move` and `delete` tools all make edits; the tool named `edit` (MCP_SPECIFICATION §1) is the narrow sense |
 | **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
+| **anchor** | the node a Location is relative to: `edit`'s `target_id` under `append`, `insert_before` and `insert_after`, `move`'s `location.node_id` (TOOL_SCHEMAS.md) |
 | **print mode** | what a rendering is looking at: one of `Out_Focus`, `Briefing`, `Relative_Focus`, `Recall` (PRINT.md) |
-| **focus** | the node a tool call was about; the quickview expands the path from the root to it (PRINT.md §5) |
+| **focus** | under `Relative_Focus`, a node the quickview prints detailed: one a tool call was about, or one within the call's depth under it; the quickview expands the path from the root to them (PRINT.md §2, §5) |
 | **mark** | the word in parentheses on a node's line that says its state, `success`, `not evaluated`, `failed`, `blocked by <id>`, or a class's own (PRINT.md §1) |
 | **quickview** | the rendering that ends the result of `edit`, `move`, `delete` and `evaluate_to` (PRINT.md §5) |
 | **briefing** | the rendering `POST /on-compaction` answers, which the agent's client puts into the agent's replaced context (PRINT.md §5, CLIENT_HOOKS.md) |

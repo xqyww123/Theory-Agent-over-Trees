@@ -12,7 +12,7 @@ from isabelle_theory_agent.exceptions import (
     ChildrenNotInheritable, ConstructFailed,
     ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
-    MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
+    MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
     ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
     TAT_IsabelleError, TAT_StartupError, UnexpectedChildren, UnexpectedField,
     UnknownKind)
@@ -68,20 +68,35 @@ def test_unknown_kind():
           " `corollary`, `definition`, `section`, `text`, `theory`,"
           " `session`.")
 
+def of_tool(exc):
+    """A shape error about a tool call's own arguments, marked the way
+    `plugin.check_call`, or the tool entry for its own refusals, marks it."""
+    exc._mark_of_tool()
+    return exc
+
+
 def test_missing_field():
-    check(MissingField(kind="lemma", field="statement"),
+    check(MissingField(holder="lemma", field="statement"),
           "A `lemma` needs the field `statement`.")
+    check(of_tool(MissingField(holder="edit", field="evaluate")),
+          "The `edit` tool needs the argument `evaluate`.")
 
 def test_invalid_field():
-    # The doc holds the shape with a <reason> placeholder.
-    placeholder = "The field `statement` <reason>."
-    assert placeholder in BASELINES
-    COVERED.add(placeholder)
+    # The doc holds the shape with a <reason> placeholder, in both forms.
+    for placeholder in ("The field `statement` <reason>.", "The argument `constructs` <reason>."):
+        assert placeholder in BASELINES
+        COVERED.add(placeholder)
     assert (str(InvalidField(field="statement", reason="is not a term"))
             == "The field `statement` is not a term.")
     # A reason ending in a period does not double it.
     assert (str(InvalidField(field="statement", reason="is not a term."))
             == "The field `statement` is not a term.")
+    # The tool entry's two reasons (mcp.py), in the argument form.
+    check(of_tool(InvalidField("action", "must be one of `append`, `insert_before`,"
+                               " `insert_after`, `amend`")),
+          "The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.")
+    check(of_tool(InvalidField("constructs", "must not be empty")),
+          "The argument `constructs` must not be empty.")
     # The schema check's own reason form.
     check(InvalidField(field="statement", reason="must be a string"),
           "The field `statement` must be a string.")
@@ -90,12 +105,20 @@ def test_invalid_field():
 def test_unexpected_field():
     check(UnexpectedField(holder="lemma", field="statment",
                           takes=["statement", "name", "facts"],
-                          holder_is_kind=True),
+                          holder_is_top=True),
           "A `lemma` has no field `statment`; it takes `statement`, `name`,"
           " `facts`.")
     check(UnexpectedField(holder="facts[1]", field="nmae", takes=["name"],
-                          holder_is_kind=False),
+                          holder_is_top=False),
           "`facts[1]` has no field `nmae`; it takes `name`.")
+    check(of_tool(UnexpectedField(holder="edit", field="kind",
+                                  takes=["action", "target_id", "constructs", "evaluate"],
+                                  holder_is_top=True)),
+          "The `edit` tool has no argument `kind`; it takes `action`, `target_id`,"
+          " `constructs`, `evaluate`.")
+    check(of_tool(UnexpectedField(holder="location", field="where", takes=["position", "node_id"],
+                                  holder_is_top=False)),
+          "`location` has no argument `where`; it takes `position`, `node_id`.")
 
 def test_duplicate_name():
     check(DuplicateName(id_component="lemma_assoc",
@@ -166,6 +189,10 @@ def test_move_into_own_subtree():
                              destination="theory_X.section_Basics.text_a"),
           "`theory_X.section_Basics` cannot move into its own subtree.")
 
+def test_move_beside_itself():
+    check(MoveBesideItself(id="theory_X.lemma_P"),
+          "`theory_X.lemma_P` is already in that position; a move must name another node.")
+
 def test_protected_node():
     check(ProtectedNode(id="Sessions"),
           "The `Sessions` cannot be edited.")
@@ -182,9 +209,9 @@ OPENINGS = [
     ("insert_before", "theory_X.lemma_P"),
     ("insert_after", "theory_X.lemma_P"),
     ("amend", "theory_X.lemma_P"),
-    ("move", "theory_Sorting to before theory_X.lemma_P"),
-    ("move", "theory_Sorting to after theory_X.section_Basics"),
-    ("move", "theory_Sorting to session_Arith"),
+    ("move", "theory_Sorting before theory_X.lemma_P"),
+    ("move", "theory_Sorting after theory_X.section_Basics"),
+    ("move", "theory_Sorting into session_Arith"),
     ("delete", "theory_X.section_Basics"),
 ]
 
@@ -211,7 +238,7 @@ def test_set_operation_refuses_misuse():
 # --- the raw_ast_path field (EXCEPTIONS.md §5) ------------------------------
 
 def test_raw_ast_path_accumulates_upward():
-    exc = MissingField(kind="lemma", field="statement")
+    exc = MissingField(holder="lemma", field="statement")
     try:
         try:
             raise exc                          # the raise site knows no path
@@ -227,7 +254,7 @@ def test_raw_ast_path_accumulates_upward():
           " `statement`.")
 
 def test_opening_line_above_prefixed_cause():
-    exc = MissingField(kind="lemma", field="statement")
+    exc = MissingField(holder="lemma", field="statement")
     exc._prefix_raw_ast_path("constructs[2]")
     exc._set_operation("append", "theory_X.section_Basics")
     assert (str(exc) ==

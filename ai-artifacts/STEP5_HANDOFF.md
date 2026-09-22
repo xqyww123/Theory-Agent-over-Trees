@@ -237,7 +237,7 @@ no third round is needed once its items land, and they have landed
 CLIENT_HOOKS.md, MODULE_STRUCTURE §4.1 / §4.6 / §5, PLUGIN_SYSTEM §5,
 RENDER_BASELINES §5, MCP_SPECIFICATION §1.1 / §5, ARCHITECTURE §1's rows.
 In one breath: `print(indent, out, mode, depth)` with `PrintMode =
-Out_Focus | Briefing | Relative_Focus(path: list[Node]) | Recall`; the
+Out_Focus | Briefing | Relative_Focus(nodes: frozenset[Node], depth: int) | Recall`; the
 class hooks `print_fields(indent, out, mode, depth)` and an overridable
 `mark(mode, depth)` whose default is the four-word table; no `errors()`
 — a class prints its errors in `print_fields` through `print_error`,
@@ -268,8 +268,8 @@ Rejected by the owner, not to re-raise: recording the port in
 briefing; a `Session` listing its theories in `Out_Focus`; a `not
 finished` mark; showing errors whole at every `Recall` depth (rejected
 twice: keep "below depth 2"); settling `Theorem`'s `not proven` before
-the class is designed. Open with the tools: each tool's focus. Open with
-`Theorem` and `Define`: their `mark` and `print_fields`.
+the class is designed. Open with `Theorem` and `Define`: their `mark`
+and `print_fields`.
 
 Implemented (2026-09-21, uncommitted): `Node.print` with the four modes
 and the lone-session branch, `print_fields` / `mark` defaults,
@@ -329,23 +329,193 @@ line on curl's exit 7 as well. Rejected by the judge, not to re-raise:
 deriving `_last_status` from `_own_statuses`; indenting a lone session's
 fields; the dead-pid test as flaky. 237 pass.
 
+## The tools (3e), settled and implemented 2026-09-22
+
+Owner's rulings (2026-09-22), the documents authoritative (PRINT.md §2 /
+§5, TOOL_SCHEMAS §2 / §4, MCP_SPECIFICATION §3.2, MODULE_STRUCTURE §4.4 /
+§4.6, RENDER_BASELINES §1 / §6):
+
+- The quickview's mode is `Relative_Focus(nodes: frozenset[Node],
+  depth: int)`: every node of `nodes` is a focus, detailed with
+  everything `depth` levels under it, the layer below lines only, `-1`
+  the whole subtree; a focus's children get `Relative_Focus(the
+  children, depth − 1)`; a node above a focus is on the path; the rest
+  `Out_Focus`. The owner's own formulation, replacing the path list;
+  the owner declined a `count` of siblings and a bare-node variant, and
+  asked not to discuss the singleton set's cost further (measured:
+  330 ns and 216 bytes per focus node, beside a 40 ns line write).
+- Focus and depth per tool: `edit` the nodes added (`amend`: the
+  replacement and those after it), −1; `move` the moved node, −1;
+  `delete` the old parent, 0; `evaluate_to` the destination, 0.
+  Everything a call added is printed whole, once.
+- The success line: `Done: <opr> <target>.`, the target echoed as the
+  agent wrote it; `; evaluation stopped at <id>` only when the walk
+  stopped at an obstacle. No "evaluated to", no destination id: the
+  quickview's marks say it, and TAT has no evaluation caret —
+  `evaluate_to` always takes an explicit id (the §3.2 sentence that
+  promised the destination's id predates the quickview and is gone).
+- ``unknown tool `<name>` `` stays as it is ("不需要过度设计").
+
+Author's calls, told to the owner: a call's own arguments are checked
+by `plugin.check_call` — the construct-field checker `_check_fields`,
+told which fields are the framework's (`framework`, none for a call) and
+that the holder is a tool (`of_tool`, carried by `MissingField`,
+`UnexpectedField`, `InvalidField`, which then say tool and argument) —
+against TypedDicts in `mcp.py` (`constructs: list[Any]`, the elements
+`edit.py`'s), so a malformed call renders TOOL_SCHEMAS §4's lines alone,
+before any operation is named; `edit.parent_of` public, used by
+`mcp._location`; `detailed` a `Node` method (a focus is the node's own
+membership of `nodes`); `Forest.render` computes `_above` by walking up
+from each focus and refuses an empty `nodes`, a focus outside the
+rendered node, and one under another.
+
+Review 4 (2026-09-22; scratchpad `tools_review/`: `BRIEF4.md`,
+`diff4.patch`, `ruling4.md`, the workflow's result in
+`tasks/wrx4ud2ot.output`; 69 findings, 46 after dedupe, a defender each,
+the judge measuring eleven mutations): **NOT READY**, one blocking item —
+`edit` with `"constructs": []` ended the conversation in every
+action/evaluate combination, `minItems` being enforced nowhere with the
+SDK's validation off. All items landed the same day, owner's rulings on
+the three agent-visible ones: the empty batch refused as ``The argument
+`constructs` must not be empty.``; the malformed-call sentences in the
+tool form (``The `edit` tool needs the argument `evaluate`.``); a `move`
+`before`/`after` the moved node itself is its own `MoveBesideItself`
+(``` `t_a` is already in that position; a move must name another node. ```,
+the author's pick between one sentence and two). Author items, all
+applied: `Forest.render` refuses an empty `nodes` and the descent's
+guard is an assertion; `assert self.lock.locked()` in `Forest._run`
+(the lock removed: 8 tests fail); the quickview rendered inside the
+lock; `ACTIONS`/`POSITIONS` read off the schema files and every schema
+bound to its TypedDict by one test; `edit.jsonc` pinned to TOOL_SCHEMAS
+§1 (the `$defs` comment moved onto its own line there); `edit.delete`
+returns the parent it left; one `_location` for both tools and one
+`_resolve(root_ok=…)` for `Sessions`; `_operation` yields the phrase;
+exhaustive dispatch on action and position; `_check_fields`'s
+`framework: Collection[str] = ()`; `validate_call_schema` on the tool
+TypedDicts when `tools` builds them; the loader refuses `__eq__` /
+`__hash__` (nodes live in sets); tests for `append Sessions`, a
+first-layer insertion, a nested batch pinning every per-tool depth,
+`match=` on the three render refusals, causes asserted by class and
+fields (the `Cannot` lines and TOOL_SCHEMAS §4's block read as
+documents), descriptions from `Tool description:` lines
+(`baselines.stated`), `test_model.add(kind=…)`; the document repairs of
+N1 and M4–M6, M15. Rejected by the judge, not to re-raise: widening the
+argument schema grammar with `Literal`; `Relative_Focus.__post_init__`
+refusing an empty set (a childless focus builds one legitimately);
+`exceptions._OPERATIONS` as a copy of the enum; a `detailed` override
+guard; the `table` fixture shared; store-mirror checks in `test_mcp`;
+moving the malformed-call lines into RENDER_BASELINES §2. Declined by
+the author (the judge recommending the same, the owner having closed the
+topic): replacing `_above` with a per-child narrowed mode. Deferred to
+step 4 (owner): where the order constraint's sentence (RENDER_BASELINES
+§3) goes in a successful call's answer — the judge suggests under the
+`Done` line, `_evaluate` handing back the whole `EvaluationResult`.
+255 pass, pyright clean on the package. Not yet: the pending-message
+queue's seam (with `construct`).
+
+Review 5 (2026-09-22, on the fixes above; `tools_review/BRIEF5.md`,
+`diff5_since_review4.patch`, `ruling5.md`, the workflow's result in
+`tasks/wj8f5aea5.output`; 40 findings, 26 after dedupe, a fresh defender
+each): **READY WITH AUTHOR ITEMS** — ruling 4's blocking item verified
+closed; what remained was correctness held in memory rather than in
+shape, plus one document clause the author had inverted. Owner's
+rulings: O1, checking a call against the schema it advertises and
+deleting the tool TypedDicts (the relaxation the judge recommended,
+with three amendments: descend into typed `items` or refuse any but
+`Construct`'s, check `loaded.edit_schema` itself, and note it reverses
+ruling 4's A2/M10/M11), left to the author, who takes it **as its own
+change after this round's commit**, so ruling 5's M12 (a `_tool`
+helper, `check_call` returning the narrowed TypedDict) is not applied —
+O1 replaces it; O2, the `move` phrases without "to" (``Cannot move
+theory_Sorting after theory_X.section_Basics``, ``… into
+session_Arith``, and the `Done` twin), approved; O3, TOOL_SCHEMAS §4
+pointing at RENDER_BASELINES §1 / §6 instead of copying their blocks,
+approved; M10's noun `anchor` given a glossary row (ARCHITECTURE §1), the
+author's call. Author items, all applied: `of_tool` written on the way
+out by `check_call` (`RawASTError._mark_of_tool`, the parameter gone
+from the checker and the three constructors; the tool entry marks its
+own two raises through `_about_the_call`); three nested-argument cases
+and a `move … into Sessions` case tested; MODULE_STRUCTURE §4.6's move
+clause restored ("a sibling before which the node stood loses one");
+`_location(forest, position, anchor_id, moving)` resolving its own
+anchor with `root_ok` from the position; `_done` asserting the lock;
+the loader refusing `__eq__` as well as `__hash__`; `MissingField.holder`
+and `UnexpectedField.holder_is_top`; the descent test's positive control
+restored; EXCEPTIONS §3's `ProtectedNode` row and the tests' rendering
+rule reworded; MCP_SPECIFICATION §5's lock sentence; every jsonc block
+parsed alike. Struck by the judge, not to re-raise: `parent_of`'s
+publication; RENDER_BASELINES §2's elliptical gloss; an `InvalidField`
+row gloss; `test_mcp` reading RENDER_BASELINES §2; `Relative_Focus`
+holding the non-empty invariant itself; a `docs/DECISIONS.md`.
+
+Review 6 (2026-09-22, confirming, on the fixes above; `BRIEF6.md`,
+`diff6_since_review5.patch`, `ruling6.md`, `tasks/w2zr68ajg.output`; 16
+findings, 8 after dedupe): **READY WITH AUTHOR ITEMS** — every ruling-5
+item verified present, 72 malformed call shapes driven with `of_tool`
+marked on all 61 refusals and none of the construct-side errors; five
+minor author items, all sentences: `exceptions.py`'s header and field
+comment, EXCEPTIONS §3's group row and the tests' rendering rule (the
+ML harness added as a home), `edit.parent_of`'s docstring, two test
+docstrings, the `[0:1]` slice at §1–§3 — all applied; no owner items.
+Struck: PLUGIN_SYSTEM §5's hash clause reasoning (not this round's); a
+test binding `_done`'s assertion (its own scenario defeats it); comment
+wording and extra `len(lines)` asserts; README's index row. The judge
+notes the round fit to commit once the five clauses are written.
+
 ## Remaining, in order
 
-3. e. `mcp.py`: `edit`, `move`, `delete` (TOOL_SCHEMAS.md; `insert_after`
-      is `edit.insert` at index + 1; `HoldsNoChildren`/`ProtectedNode`
-      refused before the model), each result ending with the quickview —
-      `Forest.render(root, Relative_Focus(path))` (PRINT.md §5) — and the
-      pending-message queue's seam. Build `Tool`s from the schema files
-      under `tools/` (`edit.jsonc`'s `$defs` from `Loaded.edit_schema`).
-      **Design first, with the owner** (agent-visible): the text a
-      successful call returns before the quickview (the author's
-      2026-09-14 proposal, `Done: append theory_X` mirroring the
-      `Cannot …` line, is only a starting point); each tool's focus
-      (proposed: `append` the target, `insert_*` the target's parent,
-      `amend` the replacement, `move` the moved node, `delete` the old
-      parent, `evaluate_to` the destination); `move.jsonc` and
-      `delete.jsonc` (copy TOOL_SCHEMAS §2, §3); the ``unknown tool
-      `<name>` `` line revisited.
+**Found 2026-09-22, the order pending with the owner:** the plan's step
+4, the forest walk (`Forest._evaluate`, FIRST_END_TO_END_RUN_PLAN §6 —
+the import graph, the order constraint's stop, stops across import
+edges, invalidation of importers, `TAT.theory_delete`), was never
+implemented: `Forest._evaluate` raises `NotImplementedError`, and a
+smoke run against a real `isabelle TAT` (scratchpad
+`tools_review/e2e_tools.py`, output `e2e_tools.out`) shows every tool
+call — `evaluate: false` included, since every entry ends with the
+invalidation walk — dying there, the server answering `TAT has stopped:
+an internal error` as designed. The suite passes because
+`test_model.OneTreeForest` supplies its own `_evaluate`. The author's
+recommendation: step 4 before the test harness. Another session is
+planning it (`ai-artifacts/FOREST_WALK_PLAN.md`, untracked, not ours):
+coordinate before touching `Forest._evaluate`.
+
+3. f. **O1, next, as its own change with its own review** (the author's
+      call after ruling 5, `tools_review/ruling5.md` §3, the judge
+      recommending it with three amendments): check a tool call against
+      the schema the tool advertises, and delete the tool TypedDicts.
+      What goes: `Edit_Arguments`, `Location_Arguments`,
+      `Move_Arguments`, `Delete_Arguments`, `ACTIONS`/`POSITIONS`,
+      `_one_of`, the `minItems` refusal in `run_edit`,
+      `plugin.validate_call_schema`, `test_mcp.py::
+      test_the_advertised_schemas_bind_the_shapes_the_entries_enforce`,
+      and `_about_the_call` once nothing in `mcp.py` raises a shape error
+      itself. What comes: `plugin.check_call(schema, tool, arguments)`
+      walking a JSON Schema subset — `type` (object, array, string,
+      boolean, number/integer), `properties`, `required`,
+      `additionalProperties: false`, `enum`, `minItems`, nested objects —
+      raising the same three exceptions with the same sentences (a
+      type-phrase table beside `_JSON_NAMES`, kept inside RENDER_BASELINES
+      §2's vocabulary; `must be one of …` and `must not be empty` as
+      today), marked `of_tool` on the way out as today. The three
+      amendments: (1) `items` — descend into a typed `items`, and treat
+      the `$ref` to `Construct` as opaque, the elements being
+      `edit.py`'s; refuse any other `items`; (2) check the object the
+      agent is shown — `loaded.edit_schema` for `edit`, the `.jsonc`
+      files for the others; (3) the documents: MODULE_STRUCTURE §4.4
+      (the "one checker" sentence ends: the construct side keeps the
+      TypedDict checker, which types `gen`'s `raw`), §4.6, EXCEPTIONS §3's
+      `of_tool` row, TOOL_SCHEMAS §4's intro (already in the schema's
+      vocabulary). `_ACTION_POSITION` stays (its values are the schema's
+      enum, the dispatch exhaustive). Ruling 5's M12 (a `_tool` helper,
+      `check_call` returning the narrowed TypedDict) is superseded by
+      this and not applied. A prototype from the review — 254 passed, a
+      103-case differential of malformed calls rendering byte-identical
+      sentences — is in the scratchpad `tools_review/scratch5-relaxation/
+      repo3` (a scratch copy of the package; read it, do not copy it
+      blindly: it carries A1's mark-on-the-way-out but predates ruling
+      5's other items and ruling 6). Then a review round of the recipe,
+      then commit.
+
 4. Tests: one Python RPC host (`Isabelle_RPC_Host` launcher, address in
    `RPC_Host`), one `isabelle TAT` per run, the `mcp` SDK's Streamable
    HTTP client; one tree evaluated in Isabelle; retire

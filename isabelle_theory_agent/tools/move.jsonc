@@ -1,0 +1,21 @@
+// The `move` tool (TOOL_SCHEMAS.md §2).
+{
+  "type": "object",
+  "properties": {
+    "source_id": { "type": "string", "description": "The id of the node to move, with its subtree." },
+    "location": {
+      "type": "object",
+      "description": "Where it goes.",
+      "properties": {
+        "position": { "type": "string", "enum": ["before", "after", "into"],
+                      "description": "before or after the node, as its sibling; into: at the end of the node's children." },
+        "node_id":  { "type": "string", "description": "The node the position is relative to." }
+      },
+      "required": ["position", "node_id"],
+      "additionalProperties": false
+    },
+    "evaluate": { "type": "boolean", "description": "Whether to evaluate the moved node right away." }
+  },
+  "required": ["source_id", "location", "evaluate"],
+  "additionalProperties": false
+}

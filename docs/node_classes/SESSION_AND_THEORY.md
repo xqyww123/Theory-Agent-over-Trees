@@ -148,8 +148,8 @@ only for an operation that is an obstacle, `cannot_evaluate` with no
 | --- | --- | --- |
 | `Out_Focus` | nothing | errors |
 | `Briefing` | `parent_session` | `imports` |
-| `Relative_Focus([c, …])` | nothing | errors |
-| `Relative_Focus([])` | `parent_session`, `options`, `description` | `imports`, errors |
+| `Relative_Focus`, on the path | nothing | errors |
+| `Relative_Focus`, a focus | `parent_session`, `options`, `description` | `imports`, errors |
 | `Recall`, depth 0 and 1 | `parent_session`, `options`, `description` | `imports`, errors |
 | `Recall`, depth 2 | nothing | `imports`, errors |
 | `Recall`, depth 3 | nothing | errors |

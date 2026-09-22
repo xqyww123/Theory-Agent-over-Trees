@@ -159,6 +159,8 @@ class:
   `_children_to_print` — `print_fields` and `mark` are (PRINT.md);
 - `print_fields` and `mark` are plain functions, not coroutines: rendering
   is synchronous (PRINT.md);
+- the class defines neither `__eq__` nor `__hash__`: a node is equal to,
+  and hashed as, itself alone, since nodes live in sets (PRINT.md §2);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's
   defaults only raise, and a class missing one would fail at its first
   edit or at the next start instead of here;

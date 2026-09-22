@@ -198,13 +198,16 @@ def run_tag(n):
 def slot(): return Isar_State_Slot.assign(CONN)
 
 
-def add(parent, node):
+_N = typing.TypeVar("_N", bound=M.Node)
+
+
+def add(parent, node: _N, kind: str | None = None) -> _N:
     """Append a directly built node the way the framework would have entered
     it: identity and kind set, its rows and the parent's `children` row
     stored — so the store mirrors the forest from the start."""
     f = parent.forest()
     node.parent = parent
-    node.kind = "block" if isinstance(node, M.NonLeaf_Node) else "t"
+    node.kind = kind or ("block" if isinstance(node, M.NonLeaf_Node) else "t")
     node.identity = f.store.next_identity()
     parent.sub_nodes.append(node)
     with f.store.transaction():

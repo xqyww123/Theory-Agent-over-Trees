@@ -240,6 +240,20 @@ def test_the_descent_is_the_frameworks_for_leaves_and_nesting_classes_alike():
     plugin.TAT_node(block("Plain", {"type": "array", "items": {"$ref": "#/$defs/Construct"}}))
 
 
+def test_a_node_is_equal_to_and_hashed_as_itself_alone():
+    """Nodes live in sets and in lists compared with `==` (PRINT.md §2,
+    `Forest.id_of`): a class defining `__eq__` or `__hash__` is refused —
+    `__eq__` alone, which drops `__hash__`; `__hash__` alone; and `__eq__`
+    beside `__hash__ = object.__hash__`, CPython's idiom for staying
+    hashable."""
+    equal = lambda self, other: True                  # noqa: E731
+    refused(leaf("Equal", ["equal"], __eq__=equal), "defines `__eq__` or `__hash__`")
+    refused(leaf("Hashed", ["hashed"], __hash__=lambda self: 0), "defines `__eq__` or `__hash__`")
+    refused(leaf("Both", ["both"], __eq__=equal, __hash__=object.__hash__),
+            "defines `__eq__` or `__hash__`")
+    plugin.TAT_node(leaf("Hashable", ["hashable"]))
+
+
 def test_gen_and_both_persistence_methods_must_be_overridden():
     methods = ("gen", "to_store", "from_store")
     for missing in methods:

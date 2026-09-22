@@ -202,16 +202,18 @@ _NAME_GRAMMAR = re.compile(r"[A-Za-z][A-Za-z0-9_'-]*")
 # Rendering (PRINT.md): the print modes, the indent, the error block
 
 class Out_Focus(_Singleton):
-    """Not on the path to the focus: the node itself, no children."""
+    """Not on the path to a focus: the node itself, no children."""
 
 class Briefing(_Singleton):
     """The outline: every node, to the bottom."""
 
 @dataclass(frozen=True)
 class Relative_Focus:
-    """The nodes from the next child down to the focus; empty when this
-    node is the focus."""
-    path: list[Node]
+    """The quickview's mode (PRINT.md §2, §5): every node of `nodes` is a
+    focus, with what lies `depth` levels under it — its whole subtree at
+    -1; a node above one is on the path."""
+    nodes: frozenset[Node]
+    depth: int
 
 class Recall(_Singleton):
     """The recalled node and what is under it."""
@@ -223,12 +225,6 @@ RECALL = Recall()
 PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 
 INDENT = "  "                            # one level
-
-
-def detailed(mode: PrintMode, depth: int) -> bool:
-    """A helper for a class's `print_fields`: at the focus, and under
-    `recall` above the grandchildren."""
-    return (isinstance(mode, Relative_Focus) and not mode.path) or (mode is RECALL and depth < 2)
 
 
 def print_error(indent: int, out: TextIO, message: str) -> None:
@@ -430,6 +426,12 @@ class Node(ABC):
     def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The class's: its fields and its errors, one per line at `indent`,
         chosen by mode and depth (PRINT.md §3).  Nothing by default."""
+
+    def detailed(self, mode: PrintMode, depth: int) -> bool:
+        """A helper for a class's `print_fields`: this node is a focus, or
+        under `recall` above the grandchildren."""
+        return ((isinstance(mode, Relative_Focus) and self in mode.nodes)
+                or (mode is RECALL and depth < 2))
 
     def mark(self, mode: PrintMode, depth: int) -> str | None:
         """The default of PRINT.md §1, first row wins; a class overrides it
@@ -638,13 +640,16 @@ class NonLeaf_Node(Node):
         elif mode is RECALL and depth < 3:
             pairs = [(c, RECALL) for c in self.sub_nodes]
         elif isinstance(mode, Relative_Focus):
-            if not mode.path:
-                pairs = [(c, OUT_FOCUS) for c in self.sub_nodes]
-            else:
-                head, rest = mode.path[0], mode.path[1:]
-                if not any(c is head for c in self.sub_nodes):
-                    raise TAT_InternalError("the focus path leaves the tree")
-                pairs = [(c, Relative_Focus(rest) if c is head else OUT_FOCUS)
+            if self in mode.nodes:                   # a focus: its children are focuses one level shallower
+                if mode.depth == 0:
+                    pairs = [(c, OUT_FOCUS) for c in self.sub_nodes]
+                else:
+                    below = Relative_Focus(frozenset(self.sub_nodes), max(mode.depth - 1, -1))
+                    pairs = [(c, below) for c in self.sub_nodes]
+            else:                                    # on the path: only what leads to a focus continues
+                above = self.forest()._above
+                assert above is not None and self in above, "Relative_Focus off its path"
+                pairs = [(c, mode if c in mode.nodes or c in above else OUT_FOCUS)
                          for c in self.sub_nodes]
         return pairs                                 # none for Out_Focus and Recall at depth 3
 
@@ -976,6 +981,7 @@ class Forest(Unchained_Node):
     lock: asyncio.Lock                         # held across every evaluation and tree change
     store: Forest_Store                        # the working directory's database (the plan's §2)
     _index: dict[Id_Component, list[Node]] | None   # id component -> its bearers, while `render` runs
+    _above: frozenset[Node] | None             # the nodes above a focus, while `render` runs in Relative_Focus
 
     ROOT_IDENTITY: ClassVar[Identity] = 0      # `next_identity` starts at 1
 
@@ -992,6 +998,7 @@ class Forest(Unchained_Node):
         self.store = store
         self.lock = asyncio.Lock()
         self._index = None
+        self._above = None
         try:
             if store.nodes():
                 seen = {self.identity}
@@ -1180,18 +1187,34 @@ class Forest(Unchained_Node):
         """Every rendering's entry (MODULE_STRUCTURE §4.1).  The index that
         makes every printed id linear in the forest lives exactly as long
         as this call, which is synchronous: a move could change a short
-        form."""
+        form.  So does `_above`, what `Relative_Focus`'s path is made of:
+        every focus must lie under `node` and under no other focus."""
         if self._index is not None:
             raise TAT_InternalError("a rendering started inside a rendering")
         out = io.StringIO()
         index: dict[Id_Component, list[Node]] = {}
         for n in self._all_nodes():
             index.setdefault(n.id_component(), []).append(n)
-        self._index = index
+        above: set[Node] = set()
+        if isinstance(mode, Relative_Focus):
+            if not mode.nodes:
+                raise TAT_InternalError("a Relative_Focus with no focus")
+            for focus in mode.nodes:
+                ancestors: list[Node] = []
+                p = focus.parent
+                while p is not None:
+                    ancestors.append(p)
+                    p = p.parent
+                if focus is not node and node not in ancestors:
+                    raise TAT_InternalError("a focus outside the rendered node")
+                if any(a in mode.nodes for a in ancestors):
+                    raise TAT_InternalError("a focus under another focus")
+                above.update(ancestors)
+        self._index, self._above = index, frozenset(above)
         try:
             node.print(0, out, mode, 0)
         finally:
-            self._index = None
+            self._index = self._above = None
         return out.getvalue()
 
     def print(self, indent, out, mode, depth):
@@ -1211,6 +1234,7 @@ class Forest(Unchained_Node):
     async def _run(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
         """One walk under the lock, already held, then one round trip
         releasing every state it invalidated."""
+        assert self.lock.locked(), "a walk runs under the forest lock"
         r = await self._evaluate(ev, mode)
         await ev.flush(self.state.connection)
         return r
@@ -1336,9 +1360,9 @@ class Session(Unchained_Node):
         """SESSION_AND_THEORY §4: `parent_session` in the briefing and when
         detailed; `options` and `description`, when there are any, when
         detailed."""
-        if mode is BRIEFING or detailed(mode, depth):
+        if mode is BRIEFING or self.detailed(mode, depth):
             out.write(INDENT * indent + f"parent_session: {self.parent_session}\n")
-        if detailed(mode, depth):
+        if self.detailed(mode, depth):
             if self.options:
                 out.write(INDENT * indent + "options: "
                           + ", ".join(f"{o['name']} = {o['value']}" for o in self.options) + "\n")
@@ -1467,7 +1491,7 @@ class Theory(StdBlock):
         an operation that is an own stop, the one status a failed run
         leaves standing — whole under `recall` below depth 2, once per run
         elsewhere (the seen set, PRINT.md §4), never in the briefing."""
-        if mode is BRIEFING or detailed(mode, depth) or (mode is RECALL and depth == 2):
+        if mode is BRIEFING or self.detailed(mode, depth) or (mode is RECALL and depth == 2):
             out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
         if mode is BRIEFING:
             return

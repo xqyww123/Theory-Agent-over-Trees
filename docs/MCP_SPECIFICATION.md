@@ -36,7 +36,7 @@ do.
 Reading the forest: a node by id, or, with no id, the whole forest. It
 renders the node in depth (PRINT.md §5) and nothing else; the quickview,
 which ends the results of the tools that change the forest or evaluate
-it, renders the forest around the node the call was about. Its argument
+it, renders the forest around the nodes the call was about. Its argument
 shape is undecided (TOOL_SCHEMAS.md §5); AoA's `recall` is the reference.
 
 A `recall` of a node that has not been evaluated reports it as such. Reading
@@ -211,13 +211,14 @@ destination — the last node the call submitted, in tree order; for a
 `move`, the moved node — with `ignore_error` unset, so the result comes
 back with the call; a nesting node is reached at its ending command
 (ARCHITECTURE §3.5), so a submitted subtree is evaluated whole. With it
-false, the call only reports that destination's id, for a later
+false, nothing is evaluated — only the invalidation walk runs — and the
+quickview shows the new nodes `not evaluated`, for a later
 `evaluate_to`. `delete` takes no such flag: there is nothing new to see,
-and only the invalidation walk runs (ARCHITECTURE §3.5). Replacing a
-nesting node invalidates from its first child, since the children come
-before its own commands in the walk (ARCHITECTURE §3.5). Whatever is
-invalidated and not evaluated is reported as such until the agent asks for
-it.
+and the invalidation walk runs (ARCHITECTURE §3.5). Replacing a nesting node invalidates from its first
+child, since the children come before its own commands in the walk
+(ARCHITECTURE §3.5). Whatever is invalidated and not evaluated is
+reported as such until the agent asks for it. What a successful call
+returns — the `Done` line and the quickview — is TOOL_SCHEMAS.md §4.
 
 ## 4. Evaluation
 
@@ -247,7 +248,7 @@ at that instant: whole (MODULE_STRUCTURE §4.2), and with evaluation
 possibly under way, since an evaluating call changes statuses one node at
 a time. Collecting the pending messages is `status`'s one write, and the
 seen set (PRINT.md §4) is written by every rendering and cleared by
-`POST /on-compaction`, both without a lock, rendering being synchronous;
+`POST /on-compaction`, neither taking a lock of its own, rendering being synchronous;
 how the queue is kept whole when several calls are working at once is
 settled with `construct`.
 

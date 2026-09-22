@@ -2,13 +2,20 @@
 
 Every class carries its facts as fields; `__str__` assembles the agent-facing
 sentence from them.  The approved wording lives in docs/RENDER_BASELINES.md,
-and `test/test_exceptions.py` asserts it verbatim; no other test touches the
-rendered strings.
+and `test/test_exceptions.py` asserts it verbatim; every other test that
+meets a cause sentence asserts the exception's class and fields, or reads
+the line from the documents — the lines the framework writes itself, the
+`Cannot` and `Done` openings and a node's line, a test may spell out with
+its own ids (EXCEPTIONS.md §3).
 
-Two fields on `TAT_Error` are written by the framework after the raise, never
-by the raise site: `opr` with `target` at the tool entry (EXCEPTIONS.md §4),
-and `raw_ast_path` by the per-element loops as the exception unwinds
-(EXCEPTIONS.md §5).
+Two fields on `TAT_Error` are written by the framework after the raise,
+never by the raise site: `opr` with `target` at the tool entry
+(EXCEPTIONS.md §4), and `raw_ast_path` by the per-element loops as the
+exception unwinds (EXCEPTIONS.md §5).  `RawASTError` carries a third
+framework-written field, `of_tool`: written by `plugin.check_call` as the
+exception leaves the checker, and by the tool entry for the refusals it
+raises itself (`mcp._about_the_call`) — the two places that know whose
+shape was read (TOOL_SCHEMAS.md §4).
 """
 
 from __future__ import annotations
@@ -43,7 +50,7 @@ class TAT_Error(Exception, ABC):
         """Framework-only, at the tool entry.  `opr` is one of the
         forest-changing operation names (TOOL_SCHEMAS.md §4); `target` is the operation's
         target echoed from the call — for `move` including the destination
-        phrase, e.g. "theory_Sorting to before theory_X.lemma_P"."""
+        phrase, e.g. "theory_Sorting before theory_X.lemma_P"."""
         if self.opr is not None or opr not in _OPERATIONS:
             raise TAT_InternalError(f"operation {opr!r} onto {self.opr!r}")
         self.opr = opr
@@ -143,11 +150,24 @@ class AmbiguousId(ResolutionError):
 
 
 # ---------------------------------------------------------------------------
-# RawASTError — a submitted RawAST is malformed
+# RawASTError — a submitted RawAST, or a tool call's own arguments, is
+# malformed
 
 class RawASTError(TAT_Error, ABC):
-    """Remediation direction: fix the construct you submitted
+    """Remediation direction: fix the construct, or the call, you submitted
     (EXCEPTIONS.md §2)."""
+
+    # The holder is a tool and its fields the call's arguments, not a kind
+    # and a construct's (TOOL_SCHEMAS.md §4); the three shape errors' sentences
+    # say so.  Written by `plugin.check_call` as the exception leaves it, and
+    # by `mcp._about_the_call` for the tool entry's own refusals, so no check
+    # below knows whose shape it reads.  Inert on `MalformedRawAST` and
+    # `UnknownKind`.
+    of_tool: bool = False
+
+    def _mark_of_tool(self) -> None:
+        """Framework-only, at `plugin.check_call` and the tool entries."""
+        self.of_tool = True
 
 
 class MalformedRawAST(RawASTError):
@@ -175,13 +195,15 @@ class UnknownKind(RawASTError):
 
 
 class MissingField(RawASTError):
-    def __init__(self, kind: str, field: str):
+    def __init__(self, holder: str, field: str):
         super().__init__()
-        self.kind = kind
+        self.holder = holder             # the kind, or the tool (of_tool)
         self.field = field
 
     def _cause(self) -> str:
-        return f"A `{self.kind}` needs the field `{self.field}`."
+        if self.of_tool:
+            return f"The `{self.holder}` tool needs the argument `{self.field}`."
+        return f"A `{self.holder}` needs the field `{self.field}`."
 
 
 class InvalidField(RawASTError):
@@ -197,7 +219,8 @@ class InvalidField(RawASTError):
         self.reason = reason
 
     def _cause(self) -> str:
-        return f"The field `{self.field}` {self.reason.rstrip('.')}."
+        what = "argument" if self.of_tool else "field"
+        return f"The {what} `{self.field}` {self.reason.rstrip('.')}."
 
 
 class UnexpectedField(RawASTError):
@@ -205,21 +228,26 @@ class UnexpectedField(RawASTError):
     `MissingField`, its dual."""
 
     def __init__(self, holder: str, field: str, takes: list[str],
-                 holder_is_kind: bool):
+                 holder_is_top: bool):
         super().__init__()
-        # The kind (holder_is_kind), or the path of the nested object the
-        # field sits in, e.g. "facts[1]".
+        # At the top: the kind, or the tool (of_tool).  Below: the path of
+        # the nested object the field sits in, e.g. "facts[1]".
         self.holder = holder
-        self.holder_is_kind = holder_is_kind
+        self.holder_is_top = holder_is_top
         self.field = field
         # Every field the holder declares, in declaration order.
         self.takes = takes
 
     def _cause(self) -> str:
-        subject = (f"A `{self.holder}`" if self.holder_is_kind
-                   else f"`{self.holder}`")
+        if not self.holder_is_top:
+            subject = f"`{self.holder}`"
+        elif self.of_tool:
+            subject = f"The `{self.holder}` tool"
+        else:
+            subject = f"A `{self.holder}`"
+        what = "argument" if self.of_tool else "field"
         takes = ", ".join(f"`{t}`" for t in self.takes)
-        return f"{subject} has no field `{self.field}`; it takes {takes}."
+        return f"{subject} has no {what} `{self.field}`; it takes {takes}."
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +404,17 @@ class MoveIntoOwnSubtree(BadEdit):
 
     def _cause(self) -> str:
         return f"`{self.id}` cannot move into its own subtree."
+
+
+class MoveBesideItself(BadEdit):
+    """`move` `before` or `after` the moved node itself (TOOL_SCHEMAS.md §2)."""
+
+    def __init__(self, id: str):
+        super().__init__()
+        self.id = id
+
+    def _cause(self) -> str:
+        return f"`{self.id}` is already in that position; a move must name another node."
 
 
 class HoldsNoChildren(BadEdit):
