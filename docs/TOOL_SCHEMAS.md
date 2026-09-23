@@ -137,8 +137,8 @@ A **successful** `edit`, `move` or `delete` opens with one line naming
 the operation and its target, echoed from the call — the `Done` line,
 RENDER_BASELINES §6 — and ends with the quickview (PRINT.md §5): what
 the call added, the moved node, or the deleted node's parent, with the
-path to them. When the call evaluated and the walk stopped at an
-obstacle (ARCHITECTURE §3.3), the line names it, in its shortest form;
+path to them. When the call evaluated and the walk stopped, the line
+names the node it stopped at (ARCHITECTURE §3.3), in its shortest form;
 whether the call evaluated at all, and how each node fared, the
 quickview's marks say.
 

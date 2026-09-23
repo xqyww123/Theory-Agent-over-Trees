@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from typing import Literal
 
 
 class TAT_Error(Exception, ABC):
@@ -286,25 +287,28 @@ class DuplicateName(BadEdit):
 
 
 class InvalidName(BadEdit):
-    """Raised by the framework against the name grammar of
-    MCP_SPECIFICATION §2, and by `Theory.gen` against the Isabelle
-    identifier a theory name must be (`theory_name`); each renders its own
-    grammar, so the agent can correct the name from the message."""
+    """Raised against one of three grammars, which `grammar` names: the
+    framework's name grammar (MCP_SPECIFICATION §2), by the framework; the
+    theory name's, by `Theory.gen`; the session name's, by `Session.gen`.
+    Each renders its own grammar, so the agent can correct the name from
+    the message."""
 
-    def __init__(self, name: str, theory_name: bool = False):
+    def __init__(self, name: str,
+                 grammar: Literal["name", "theory name", "session name"] = "name"):
         super().__init__()
         self.name = name
-        self.theory_name = theory_name
+        self.grammar = grammar
 
     def _cause(self) -> str:
-        if self.theory_name:
-            return (f"`{self.name}` is not a valid theory name: a theory name"
-                    " starts with a letter and continues with letters, digits,"
-                    " underscores and primes ('), with no hyphen and no dot.")
-        return (f"`{self.name}` is not a valid name: a name starts with a"
-                " letter and continues with letters, digits, underscores,"
-                " primes (') and interior hyphens, and does not end with a"
-                " hyphen or an underscore.")
+        continues = {
+            "name": "letters, digits, underscores, primes (') and interior hyphens,"
+                    " and does not end with a hyphen or an underscore",
+            "theory name": "letters, digits and underscores, with no hyphen and no dot",
+            "session name": "letters, digits, underscores and interior hyphens, and does"
+                            " not end with a hyphen or an underscore",
+        }[self.grammar]
+        return (f"`{self.name}` is not a valid {self.grammar}: a {self.grammar}"
+                f" starts with a letter and continues with {continues}.")
 
 
 class DuplicateTheoryShortName(BadEdit):
@@ -326,6 +330,20 @@ class DuplicateTheoryShortName(BadEdit):
         return (f"The theory name `{self.short_name}` conflicts with the"
                 f" short name of `{self.holder}`. No two theories can share"
                 " a short name.")
+
+
+class ReservedTheoryName(BadEdit):
+    """Raised by `Theory.gen`: no loaded theory bears the name, and the
+    Isabelle session layout declares it global — `FOL`, `ZF`, … on a HOL
+    heap — so Isabelle would leave a tree so named unqualified
+    (EXCEPTIONS.md §3)."""
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    def _cause(self) -> str:
+        return f"`{self.name}` is a reserved theory name; choose another name."
 
 
 class UnexpectedChildren(BadEdit):

@@ -94,12 +94,14 @@ The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constru
 ```
 
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
-framework's check), and against the Isabelle identifier a theory name must
-be (`Theory.gen`'s check, `theory_name`):
+framework's check), against the theory name's grammar (`Theory.gen`'s
+check) and against the session name's (`Session.gen`'s check); `grammar`
+selects the rendering:
 
 ```
 `Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.
-`Foo-Bar` is not a valid theory name: a theory name starts with a letter and continues with letters, digits, underscores and primes ('), with no hyphen and no dot.
+`Foo-Bar` is not a valid theory name: a theory name starts with a letter and continues with letters, digits and underscores, with no hyphen and no dot.
+`S'` is not a valid session name: a session name starts with a letter and continues with letters, digits, underscores and interior hyphens, and does not end with a hyphen or an underscore.
 ```
 
 `DuplicateName` — two siblings would share an id component
@@ -126,6 +128,12 @@ The theory name `List` conflicts with the short name of `HOL.List`. No two theor
 
 ```
 The theory name `Foo` is also used by `constructs[1].children[0]` of this call.
+```
+
+`ReservedTheoryName`, a name the Isabelle session layout declares global:
+
+```
+`FOL` is a reserved theory name; choose another name.
 ```
 
 `HoldsNoChildren`:
@@ -208,15 +216,19 @@ At `constructs[2].children[0]`: A `lemma` needs the field `statement`.
 Not exception classes — evaluation failure lives outside the hierarchy
 (EXCEPTIONS.md §6) — but TAT-authored and agent-facing all the same.
 
-The order constraint's stop (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6),
-a tree importing a forest tree placed after it; `S.C` as the agent wrote
-it in `imports`:
+The order constraint's stop (ARCHITECTURE §3.3), a tree importing a forest
+tree placed after it, or itself — composed by the tool from the forest's
+answer (`Forest._order_violation`, MODULE_STRUCTURE §4.1): the tree's id
+and the offending item, `S.C` as the agent wrote it in `imports`:
 
 ```
 Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move it later.
 ```
 
-`Loader.load_target` (ML side), an import found nowhere:
+`Loader.fetch` (ML side), an import found nowhere — no forest tree, no
+base-heap theory, no file the Isabelle session layout knows — or a
+qualified import whose short name the layout declares global (`HOL.Main`,
+EVALUATOR_DESIGN §7), named as Isabelle resolved it:
 
 ```
 Fail to load `TAT_Nowhere.Nope` because it is not found.
@@ -251,7 +263,6 @@ A node's line, one per default mark and one without:
 - lemma_P (success)
 - lemma_P (not evaluated)
 - definition_f (failed)
-- lemma_P (blocked by definition_f)
 - lemma_P
 ```
 
@@ -266,7 +277,7 @@ Error:
 
 Rendered for every forest-changing operation that succeeded, above the
 quickview (TOOL_SCHEMAS.md §4); the second form when the call's
-evaluation stopped at an obstacle, which it names in its shortest form:
+evaluation stopped at a node, which it names in its shortest form:
 
 ```
 Done: append theory_X.

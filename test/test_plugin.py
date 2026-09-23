@@ -525,7 +525,7 @@ SHIPPED_EXAMPLES: dict[str, dict] = {
                 "description": "Arithmetic, from scratch",
                 "children": [{"kind": "theory", "name": "X", "imports": ["Main"]}]},
     "theory": {"kind": "theory", "name": "Y",
-               "imports": ["Arith.X", "HOL-Library.Multiset", '"lib/Rel"']},
+               "imports": ["Arith.X", "HOL-Library.Multiset"]},
 }
 
 

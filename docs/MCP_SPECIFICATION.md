@@ -75,8 +75,12 @@ begin one — and the framework refuses one outside this grammar
 (`InvalidName`, rendering the agent's own spelling). Hyphens exist for
 `Session` names like `HOL-Library`; a class whose names must be Isabelle
 identifiers, such as `Theory` and `Theorem`, rejects them in its `gen`
-first, with its own rendering of `InvalidName`. TAT refuses a name that
-would give two nodes the same id.
+first, with its own rendering of `InvalidName`. A `Theory`'s and a
+`Session`'s names become path elements — `<session>/<short name>.thy` —
+and so take no prime either: each class judges its own grammar first
+(node_classes/SESSION_AND_THEORY.md), with its own rendering
+(RENDER_BASELINES §2). TAT refuses a name that would give two nodes the
+same id.
 
 The forest root has the id **`Sessions`**, which no node's id component can
 be, an id component always carrying an underscore. `edit`'s `append` on it
@@ -227,14 +231,13 @@ it carries one more, internal flag (MODULE_STRUCTURE §4.1) — evaluates
 every node that is not evaluated, in tree order, up to and including the destination — a nesting
 node's whole subtree, so the `Theory` node's id means the whole tree, `end`
 included. It returns when every tree it ran has finished or stopped, naming
-the first stopped node in tree order; `ignore_error` carries on past a node
-that would stop it.
-Where evaluation stops, and why the same node stops every later call until it
-is edited, is ARCHITECTURE §3.3.
+the first stopped node in tree order, which for a blocked tree may lie in
+a tree it imports; `ignore_error` carries on past a stop inside a tree. Where evaluation stops, which stops the flag
+can pass, and why the same node stops every later call until it is edited,
+is ARCHITECTURE §3.3.
 
 Each node renders its own part of the result: what its class chose to report,
-whether it is `finished` (ARCHITECTURE §3.2), and — when it cannot be
-evaluated because of another node — which one (ARCHITECTURE §3.3).
+and whether it is `finished` (ARCHITECTURE §3.2).
 
 ## 5. Messages
 

@@ -23,10 +23,11 @@ from pathlib import Path
 from Isabelle_RPC_Host import Connection, IsabelleError, isabelle_remote_procedure
 
 from isabelle_theory_agent import edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import DuplicateTheoryShortName, TAT_IsabelleError
-from isabelle_theory_agent.model import READY, CannotEvaluate, Isar_State_Slot, Session, Theory
+from isabelle_theory_agent.exceptions import (
+    DuplicateTheoryShortName, ReservedTheoryName, TAT_IsabelleError)
+from isabelle_theory_agent.model import (
+    CANNOT_EVALUATE, NOT_EVALUATED, READY, Isar_State_Slot, Session, Theory)
 from isabelle_theory_agent.store import Forest_Store
-from routing_forest import Routing_Forest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -103,14 +104,15 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     def slot() -> Isar_State_Slot:
         return Isar_State_Slot.assign(connection)
 
-    async def begin(sl: Isar_State_Slot, header_src: str) -> None:
+    async def begin(sl: Isar_State_Slot, header_src: str, session: str = "TAT_TEST") -> None:
         await connection.callback(
-            "TAT_test.begin", (sl.to_msgpack(), ("TAT_TEST", HERE, header_src)))
+            "TAT_test.begin", (sl.to_msgpack(), (session, HERE, header_src)))
 
-    async def begin_fails(header_src: str, expect: str | None = None) -> None:
+    async def begin_fails(header_src: str, expect: str | None = None,
+                          session: str = "TAT_TEST") -> None:
         sl = slot()
         try:
-            await begin(sl, header_src)
+            await begin(sl, header_src, session)
             raise AssertionError(f"begin did not fail: {header_src}")
         except IsabelleError as e:
             if expect is not None:
@@ -123,7 +125,7 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     async def end(sl: Isar_State_Slot) -> None:
         await connection.callback("TAT_test.end", sl.to_msgpack())
 
-    async def short_name_holder(name: str) -> str | None:
+    async def short_name(name: str) -> isabelle_driver.Short_Name_Answer:
         return await isabelle_driver.check_new_theory_short_name(connection, name)
 
     def errors(recs: list) -> list:
@@ -132,9 +134,13 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     def texts(rec: list) -> list[str]:
         return [t for _, t in rec[2]]
 
-    # the base-heap half of the short-name check (§2.3)
-    assert await short_name_holder("List") == "HOL.List"
-    assert await short_name_holder("TAT_Test_A_Fresh_Name") is None
+    # the Isabelle half of the short-name check (§2.3): taken by a loaded
+    # theory, under its long name -- the short name itself for a global
+    # one; reserved, global in the layout but loaded nowhere; free
+    assert await short_name("List") == isabelle_driver.Taken("HOL.List")
+    assert await short_name("Main") == isabelle_driver.Taken("Main")
+    assert await short_name("FOL") == isabelle_driver.Reserved()
+    assert await short_name("TAT_Test_A_Fresh_Name") == isabelle_driver.Free()
 
     # begin a theory whose one import is in the base heap
     t = slot()
@@ -289,34 +295,43 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     assert not any("iso-b" in t for t in flat_a), (ra, rb)
     assert not any("iso-a" in t for t in flat_b), (ra, rb)
 
-    # an import neither evaluated nor in the heap loads from source --
-    # TAT_Lib_Helper.thy next to this file, TAT_Lib_Rel.thy by a
-    # slash-relative path under the master_dir.  On a warm server these are
-    # already in Thy_Info and the load arm would silently be skipped, so
-    # fail loudly instead.
-    for name in ("TAT_Lib_Helper", "TAT_Lib_Rel"):
-        holder = await short_name_holder(name)
-        assert holder is None, (
-            f"stale REPL server: {holder} already loaded -- restart the server")
+    # an import neither evaluated nor in the heap loads from source, by its
+    # session-qualified name: TAT_Lib_Helper.thy next to this file, which
+    # the Isabelle session layout knows through the repository ROOT's
+    # `directories "test"`.  On a warm server it is already in Thy_Info and
+    # the load arm would silently be skipped, so fail loudly instead.
+    helper = "Theory_Agent_over_Trees.TAT_Lib_Helper"
+    assert await short_name("TAT_Lib_Helper") == isabelle_driver.Free(), (
+        "stale REPL server: TAT_Lib_Helper already loaded -- restart the server")
     v = slot()
-    await begin(v, 'theory TAT_Test_C imports TAT_Lib_Helper "lib/TAT_Lib_Rel" begin')
-    recs = await run(
-        v, v,
-        'lemma "tat_lib_y = 1" by (simp add: tat_lib_y_def)\n'
-        'lemma "tat_lib_rel_z = 2" by (simp add: tat_lib_rel_z_def)')
+    await begin(v, f"theory TAT_Test_C imports {helper} begin")
+    recs = await run(v, v, 'lemma "tat_lib_y = 1" by (simp add: tat_lib_y_def)')
     assert not errors(recs), recs
-    assert await short_name_holder("TAT_Lib_Helper") == "TAT_TEST.TAT_Lib_Helper"
+    assert await short_name("TAT_Lib_Helper") == isabelle_driver.Taken(helper)
 
-    # a bare import with no file anywhere: the load itself fails, naming
-    # the import (Isabelle's own wording)
-    await begin_fails("theory TAT_Test_E imports TAT_No_Such_Theory begin",
-                      expect="TAT_No_Such_Theory")
-
-    # a qualified import in no known session: refused by name
-    # (RENDER_BASELINES wording, asserted verbatim)
+    # an import found nowhere is refused under the name Isabelle resolved
+    # it to (RENDER_BASELINES §3, asserted verbatim): a bare name, taken as
+    # the header's own session's; a qualified name in no known session; a
+    # bare name from another Isabelle session, which the theory table holds
+    # under TAT_TEST and this header asks for under TAT_OTHER; a path,
+    # which nothing loads by
+    await begin_fails(
+        "theory TAT_Test_E imports TAT_No_Such_Theory begin",
+        expect="Fail to load `TAT_TEST.TAT_No_Such_Theory` because it is not found.")
     await begin_fails(
         'theory TAT_Test_F imports "TAT_Nowhere.Nope" begin',
         expect="Fail to load `TAT_Nowhere.Nope` because it is not found.")
+    # a global theory written session-qualified, which Isabelle would load
+    # a second time under that name (EVALUATOR_DESIGN §7)
+    await begin_fails(
+        'theory TAT_Test_M imports "HOL.Main" begin',
+        expect="Fail to load `HOL.Main` because it is not found.")
+    await begin_fails(
+        "theory TAT_Test_X imports TAT_Test_A begin", session="TAT_OTHER",
+        expect="Fail to load `TAT_OTHER.TAT_Test_A` because it is not found.")
+    await begin_fails(
+        'theory TAT_Test_H imports "lib/TAT_Lib_Rel" begin',
+        expect="Fail to load `TAT_TEST.TAT_Lib_Rel` because it is not found.")
 
     # a header the theory initialisation itself rejects (an unknown load
     # command, named in Isabelle's own wording): begin_theory's failure branch
@@ -364,10 +379,17 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
 
     # --- the Theory node class, end to end (SESSION_AND_THEORY §2) ---
 
-    # a forest on an in-memory store, this directory its working directory
+    # a forest on an in-memory store, this directory its working directory;
+    # every theory_delete round trip recorded on its way to the wire
     kinds = {"session": Session, "theory": Theory}
-    forest = Routing_Forest(M.Conversation(connection, Path(HERE)),
-                            Forest_Store(":memory:"), kinds)
+    forest = M.Forest(M.Conversation(connection, Path(HERE)), Forest_Store(":memory:"), kinds)
+    theory_deletes: list[list[str]] = []
+    real_theory_delete = isabelle_driver.theory_delete
+
+    async def recording_theory_delete(conn, names):
+        theory_deletes.append(list(names))
+        await real_theory_delete(conn, names)
+    isabelle_driver.theory_delete = recording_theory_delete
 
     async def insert(parent, index, raws):
         async with forest.lock:
@@ -383,12 +405,19 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     assert (sess.name, ta.name) == ("TAT_E2E", "TAT_E2E_A")
     assert (forest.id_of(sess), forest.id_of(ta)) == ("session_TAT_E2E", "theory_TAT_E2E_A")
 
-    # the base-heap half of the short-name check, in gen, over the wire
+    # the Isabelle half of the short-name check, in gen, over the wire:
+    # taken by a loaded theory, by a loaded global theory, reserved
+    for name, holder in (("List", "HOL.List"), ("Main", "Main")):
+        try:
+            await insert(sess, 1, [theory(name, "Main")])
+            raise AssertionError(f"the loaded short name {name} was not refused")
+        except DuplicateTheoryShortName as e:
+            assert (e.short_name, e.holder) == (name, holder), str(e)
     try:
-        await insert(sess, 1, [theory("List", "Main")])
-        raise AssertionError("a heap short name was not refused")
-    except DuplicateTheoryShortName as e:
-        assert (e.short_name, e.holder) == ("List", "HOL.List"), str(e)
+        await insert(sess, 1, [theory("FOL", "Main")])
+        raise AssertionError("a reserved theory name was not refused")
+    except ReservedTheoryName as e:
+        assert e.name == "FOL", str(e)
 
     # an empty theory to its end: the header from a fresh toplevel state
     # into the slot before the ending, `end` into the resulting slot the
@@ -403,7 +432,7 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     assert await is_toplevel(ta._state_before_ending) is False    # the theory, open
     assert ta.resulting_state() is ta._state_after_ending
     assert await is_toplevel(ta._state_after_ending) is True      # after `end`
-    assert await short_name_holder("TAT_E2E_A") is None           # the table, not Thy_Info
+    assert await short_name("TAT_E2E_A") == isabelle_driver.Free()   # the table, not Thy_Info
 
     # a second tree importing the first by its bare name: resolved through
     # the conversation's theory table, under the session's name
@@ -412,22 +441,52 @@ async def drive(arg: tuple[list[str], str, int], connection: Connection) -> None
     assert r == M.EvaluationResult(None, M.INVALIDATING), r
     assert tb.is_finished() and tb.beginning_errors == []
 
-    # a header that fails -- an import found nowhere -- is the node's own
-    # stop at its beginning, with the message; the ending is the framework's
-    # copy-through of an input that holds nothing, so the owned resulting
-    # slot stays empty under a `ready` ending (the plan's §6)
+    # a header that fails -- an import found nowhere, refused under the
+    # name Isabelle resolved it to (RENDER_BASELINES §3, the whole
+    # sentence) -- is the node's own stop at its beginning, with the
+    # message; the ending is the framework's copy-through of an input that
+    # holds nothing, so the owned resulting slot stays empty under a
+    # `ready` ending (the plan's §6)
+    def not_found(name: str) -> str:
+        return f"Fail to load `{name}` because it is not found."
+
     (tc,) = await insert(sess, 2, [theory("TAT_E2E_C", "TAT_E2E_Nowhere")])
     r = await tc.evaluate_to(False)
     assert r == M.EvaluationResult(None, M.INVALIDATING), r   # its successors are not blocked
-    assert tc.evaluation_status_beginning == CannotEvaluate(None)
-    assert any("TAT_E2E_Nowhere" in m for m in tc.beginning_errors), tc.beginning_errors
+    assert tc.evaluation_status_beginning is CANNOT_EVALUATE
+    assert any(not_found("TAT_E2E.TAT_E2E_Nowhere") in m for m in tc.beginning_errors), \
+        tc.beginning_errors
     assert tc.evaluation_status_ending is READY and not tc.is_finished()
     for sl in (tc.state, tc._state_before_ending, tc._state_after_ending):
         assert not await sl.is_initialized()
+    assert theory_deletes == [], theory_deletes                # nothing has vanished so far
 
-    # deleting a tree releases what its operations wrote, in one round trip
+    # deleting a tree releases what its operations wrote, in one round
+    # trip; its importer is `not_evaluated` whole (ARCHITECTURE §3.4) and
+    # the tree's name is gone from the theory table in one theory_delete
+    # round trip, so the importer's next header fails under the name
+    # Isabelle resolves the import to -- `Loader.resolve` never hands it
+    # the value of a tree that no longer exists
     async with forest.lock:
         await edit.delete(ta)
     assert sess.sub_nodes == [tb, tc]
     assert not await ta._state_before_ending.is_initialized()
     assert not await ta._state_after_ending.is_initialized()
+    assert (tb.evaluation_status_beginning, tb.evaluation_status_ending) == \
+        (NOT_EVALUATED, NOT_EVALUATED)
+    assert not await tb._state_after_ending.is_initialized()
+    assert theory_deletes == [["TAT_E2E.TAT_E2E_A"]], theory_deletes
+    r = await tb.evaluate_to(False)
+    assert r == M.EvaluationResult(None, M.INVALIDATING), r
+    assert tb.evaluation_status_beginning is CANNOT_EVALUATE
+    assert any(not_found("TAT_E2E.TAT_E2E_A") in m for m in tb.beginning_errors), \
+        tb.beginning_errors
+
+    # deleting the session whole: one theory_delete round trip carrying
+    # every name that vanished -- TAT_E2E_B's, which the table held, and
+    # TAT_E2E_C's, which it never held
+    async with forest.lock:
+        await edit.delete(sess)
+    assert forest.sub_nodes == []
+    assert theory_deletes == [["TAT_E2E.TAT_E2E_A"], ["TAT_E2E.TAT_E2E_B", "TAT_E2E.TAT_E2E_C"]], \
+        theory_deletes

@@ -12,7 +12,8 @@ callback names are the ML side's and are decided nowhere else.
 """
 
 import asyncio
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, TypeAlias
 
 from Isabelle_RPC_Host import Connection, IsabelleError
 
@@ -57,9 +58,44 @@ async def state_copy(conn: Connection, src: str, dst: str) -> None:
     await call(conn, "TAT.state_copy", (src, dst))
 
 
-async def check_new_theory_short_name(conn: Connection, name: str) -> str | None:
-    """The base-heap half of the short-name check (MODULE_STRUCTURE §2.3):
-    the long name of the base-heap theory whose short name `name` would
-    take, or None when the name is free.  The forest half, and the
-    rejection itself, live in `Theory`'s gen (MCP_SPECIFICATION §2)."""
-    return await call(conn, "TAT.check_new_theory_short_name", name)
+async def theory_delete(conn: Connection, names: list[str]) -> None:
+    """Remove the qualified names from the conversation's theory table
+    (MODULE_STRUCTURE §2.2), in one round trip.  A name that is not there
+    is not an error."""
+    await call(conn, "TAT.theory_delete", names)
+
+
+# The three answers of the short-name check (MODULE_STRUCTURE §2.3).
+
+@dataclass(frozen=True)
+class Taken:
+    """A loaded theory bears the short name: its long name, which for a
+    global theory is the short name itself."""
+    holder: str
+
+@dataclass(frozen=True)
+class Reserved:
+    """No loaded theory bears it, but the Isabelle session layout declares
+    the name global."""
+
+@dataclass(frozen=True)
+class Free:
+    """Nobody bears it."""
+
+Short_Name_Answer: TypeAlias = Taken | Reserved | Free
+
+
+async def check_new_theory_short_name(conn: Connection, name: str) -> Short_Name_Answer:
+    """The Isabelle half of the short-name check (MODULE_STRUCTURE §2.3).
+    The forest half, and the rejection itself, live in `Theory`'s gen
+    (MCP_SPECIFICATION §2)."""
+    match await call(conn, "TAT.check_new_theory_short_name", name):
+        case ["taken", str(holder)]:
+            return Taken(holder)
+        case ["reserved"]:
+            return Reserved()
+        case ["free"]:
+            return Free()
+        case answer:
+            raise TAT_IsabelleError(
+                f"the ML callback TAT.check_new_theory_short_name answered {answer!r}")

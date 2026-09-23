@@ -25,7 +25,7 @@ import time
 from IsaREPL import Client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPL_SERVER = os.path.join(HERE, "..", "..", "Isa-REPL", "repl_server.sh")
+ISABELLE = os.path.join(HERE, "..", "..", "Isabelle2025-2", "bin", "isabelle")
 BASE_SESSION = "Minilang_AoA"
 STARTUP_TIMEOUT = 3600          # the first start builds the wrapper session
 
@@ -52,10 +52,15 @@ async def wait_for_server(addr: str, proc: subprocess.Popen, log_path: str) -> N
             await asyncio.sleep(5)
 
 
-async def run(addr: str) -> None:
+async def run(addr: str, on_client=None) -> None:
     with open(os.path.join(HERE, "Test_TAT_Framework.thy")) as f:
         source = f.read()
     async with Client(addr, "Draft") as c:
+        # hand the client to the caller the moment the handshake succeeds, so it
+        # can kill the server through it (its pid is the JVM) even if eval below
+        # raises and we leave this `async with`
+        if on_client is not None:
+            on_client(c)
         outputs = await c.eval(source, import_dir=HERE)
     # out.output is always empty under repl_server.sh, which runs
     # REPL.disable_output (); the loop matters only against a server
@@ -82,12 +87,24 @@ async def main() -> None:
     outdir = tempfile.mkdtemp(prefix="tat_repl_out_")
     log_path = os.path.join(outdir, "server.log")
     with open(log_path, "w") as log:
-        proc = subprocess.Popen([REPL_SERVER, addr, BASE_SESSION, outdir],
+        proc = subprocess.Popen([ISABELLE, "REPL", "-l", BASE_SESSION, addr, outdir],
                                 env=env, stdout=log, stderr=subprocess.STDOUT)
+    client_box = {}
     try:
         await wait_for_server(addr, proc, log_path)
-        await run(addr)
+        await run(addr, on_client=lambda c: client_box.__setitem__("c", c))
     finally:
+        # proc.pid is the `isabelle` bash layer, not the JVM, so proc.terminate()
+        # cannot reach the server; kill it through the client (Client.kill sends
+        # SIGKILL to REPL_PID, the JVM) if we ever connected.  Only this is
+        # guarded; the terminate/kill below run unconditionally as before, so the
+        # wait_for_server failure paths (no client yet) still clean up the bash.
+        client = client_box.get("c")
+        if client is not None:
+            try:
+                client.kill()
+            except Exception:
+                pass
         proc.terminate()
         try:
             proc.wait(timeout=30)

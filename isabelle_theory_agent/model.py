@@ -14,8 +14,8 @@ import difflib
 import io
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TextIO, TypeAlias,
                     TypedDict)
@@ -25,8 +25,8 @@ from Isabelle_RPC_Host import Connection
 from . import isabelle_driver
 from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
-    DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, TAT_Error,
-    TAT_InternalError, TAT_StartupError)
+    DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedTheoryName,
+    TAT_Error, TAT_InternalError, TAT_StartupError)
 from .store import Forest_Store, MissingRow, Node_Rows
 
 
@@ -112,29 +112,24 @@ class Ready(_Singleton):
     """The operation ran and its resulting state is current.  Evaluation
     passes through."""
 
-@dataclass(frozen=True)
-class CannotEvaluate:
-    """Evaluation does not pass through.  `blocked_by` None: the node itself
-    is the obstacle (its class judged the failure fatal); it is not rerun
-    until edited.  Otherwise: the node sits under or after the obstacle
-    named, and runs as soon as it is reached unblocked."""
-    blocked_by: Node | None
+class CannotEvaluate(_Singleton):
+    """The operation ran and its class judged the failure fatal: the node is
+    an obstacle (ARCHITECTURE §3.3), not rerun until edited, its input
+    standing as its result.  What it blocks is `NotEvaluated`, and runs as
+    soon as a walk reaches it unblocked."""
 
 NOT_EVALUATED = NotEvaluated()
 READY = Ready()
+CANNOT_EVALUATE = CannotEvaluate()
 
 EvaluationStatus = NotEvaluated | Ready | CannotEvaluate
-
-
-def _is_own_stop(status: EvaluationStatus) -> bool:
-    return isinstance(status, CannotEvaluate) and status.blocked_by is None
 
 
 def _wrote(status: EvaluationStatus) -> bool:
     """Whether an operation in this status has written its resulting state:
     `ready`, or an own stop, which copied its input through
     (ARCHITECTURE §3.1)."""
-    return status is READY or _is_own_stop(status)
+    return status is READY or status is CANNOT_EVALUATE
 
 
 # ---------------------------------------------------------------------------
@@ -142,9 +137,12 @@ def _wrote(status: EvaluationStatus) -> bool:
 
 class Evaluation:
     """One walk: its two constants, and the states it releases, deleted in
-    one round trip when it ends.  `destination` is the node an evaluating
-    walk runs up to and including; an invalidate-only walk has none — its
-    starting position rides in its `Seeking` mode."""
+    one round trip when it is flushed.  Whoever creates one flushes it
+    once, when its walk ends (`Forest._run` does so for the walks it
+    drives); the forest's evaluating walk gives each tree its own
+    (`Forest._handle_tree`).  `destination` is the node an evaluating walk
+    runs up to and including; an invalidation has none, and its mode says
+    where it starts."""
 
     def __init__(self, destination: Node | None, ignore_error: bool):
         self.destination = destination
@@ -162,13 +160,15 @@ class Evaluation:
 
 @dataclass(frozen=True)
 class Evaluating:
-    """Before the destination: run what is not `Ready` — unless `blocked_by`
-    is set, when nothing runs and each node is marked `CannotEvaluate` with
-    it.  `rewritten`: the state at this position was written by an
-    operation that ran in this walk, so whatever stands here runs again
-    even if `Ready` or an own stop — its input changed under it."""
-    blocked_by: Node | None = None
+    """Before the destination: run what is not `Ready`.  `rewritten`: the
+    state at this position was written by an operation that ran in this
+    walk, so whatever stands here runs again even if `Ready` or an own
+    stop — its input changed under it."""
     rewritten: bool = False
+
+class Blocked(_Singleton):
+    """Before the destination, where nothing can run: mark `NotEvaluated`,
+    an own stop kept as it is (ARCHITECTURE §3.3)."""
 
 @dataclass(frozen=True)
 class Seeking:
@@ -179,16 +179,18 @@ class Seeking:
     destination: Location
 
 class Invalidating(_Singleton):
-    """Past the destination: mark `NotEvaluated`."""
+    """Past the destination, or throughout a walk that invalidates trees
+    whole: mark `NotEvaluated`."""
 
+BLOCKED = Blocked()
 INVALIDATING = Invalidating()
 
-EvaluationMode = Evaluating | Seeking | Invalidating
+EvaluationMode = Evaluating | Blocked | Seeking | Invalidating
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    stopped_at: Node | None      # the obstacle that ended evaluation, if one did
+    stopped_at: Node | None      # the node evaluation stopped at, if it stopped
     mode: EvaluationMode         # the mode the node after this one runs under
 
 
@@ -439,12 +441,8 @@ class Node(ABC):
         if self.is_finished():
             return "success"
         statuses = self._own_statuses()
-        if any(_is_own_stop(s) for s in statuses):
+        if any(s is CANNOT_EVALUATE for s in statuses):
             return "failed"
-        for s in statuses:
-            if isinstance(s, CannotEvaluate):        # blocked: an own stop was caught above
-                assert s.blocked_by is not None
-                return f"blocked by {self.forest().id_of(s.blocked_by)}"
         if any(s is NOT_EVALUATED for s in statuses):
             return "not evaluated"
         return None
@@ -520,31 +518,34 @@ class Node(ABC):
         """Mark the node — for a nesting node, its ending — `NotEvaluated`.
         What an edit does before evaluating."""
 
-    def _mode_after(self, ev: Evaluation, mode: Evaluating, stop: Node | None,
+    def _mode_after(self, ev: Evaluation, mode: Evaluating | Blocked, stop: Node | None,
                     ran: bool) -> EvaluationMode:
         """The one place the mode changes: the destination turns it into
         `Invalidating`; otherwise a stop blocks what follows, and `ran` tells
         the successor whether its input was just rewritten."""
         if self is ev.destination:
             return INVALIDATING
-        if stop is not None:
-            return Evaluating(stop)
-        return Evaluating(mode.blocked_by, rewritten=ran)
+        if stop is not None or mode is BLOCKED:
+            return BLOCKED
+        return Evaluating(rewritten=ran)
 
     async def evaluate_to(self, ignore_error: bool, evaluate: bool = True) -> EvaluationResult:
         """The `evaluate_to` tool's entry: takes the forest's lock itself —
         an edit, whose tool entry already holds it, drives the walk through
         `Forest._run` instead (MODULE_STRUCTURE §4.1).  With
         `evaluate`: run up to and including this node.  Without: only
-        invalidate from this node on.  The walk visits every node, so the
-        result's `mode` is always `Invalidating`; what happened to this node
-        it reports itself."""
+        invalidate from this node on — a node nothing chains, the child of
+        an `Unchained_Node`, whole (ARCHITECTURE §3.5).  The walk visits
+        every node, so the result's `mode` is always `Invalidating`; what
+        happened to this node it reports itself."""
         forest = self.forest()
         async with forest.lock:
             if evaluate:
                 return await forest._run(Evaluation(self, ignore_error), Evaluating())
             if self.parent is None:
                 raise TAT_InternalError("the forest root has no position")
+            if isinstance(self.parent, Unchained_Node):
+                return await forest._invalidate_whole(self)
             return await forest._invalidate_from(Location(self.parent, self.index_of()))
 
 
@@ -581,23 +582,23 @@ class Leaf(Node):
         into `resulting_state()`, which `ignore_error` will run from."""
 
     async def _evaluate(self, ev, mode):
+        if mode is BLOCKED:
+            if self._status is not CANNOT_EVALUATE:      # an own stop keeps reporting itself
+                self._set_status(ev, NOT_EVALUATED)
+            return EvaluationResult(None, self._mode_after(ev, BLOCKED, None, False))
         if isinstance(mode, Evaluating):
             stop, ran = None, False
-            if mode.blocked_by is not None:
-                if not _is_own_stop(self._status):        # an own stop keeps reporting itself
-                    self._set_status(ev, CannotEvaluate(mode.blocked_by))
-            else:
-                # Not rerun: a Ready operation, or an own stop — unless the
-                # input under it was rewritten this walk.
-                if mode.rewritten or not _wrote(self._status):
-                    ran = True
-                    if await self._eval_opr():
-                        self._set_status(ev, READY)
-                    else:
-                        await self.state.copy_to(self.resulting_state())
-                        self._set_status(ev, CannotEvaluate(None))
-                if self._status is not READY and not ev.ignore_error:
-                    stop = self
+            # Not rerun: a Ready operation, or an own stop — unless the
+            # input under it was rewritten this walk.
+            if mode.rewritten or not _wrote(self._status):
+                ran = True
+                if await self._eval_opr():
+                    self._set_status(ev, READY)
+                else:
+                    await self.state.copy_to(self.resulting_state())
+                    self._set_status(ev, CANNOT_EVALUATE)
+            if self._status is not READY and not ev.ignore_error:
+                stop = self
             return EvaluationResult(stop, self._mode_after(ev, mode, stop, ran))
         if isinstance(mode, Seeking):
             return EvaluationResult(None, mode)
@@ -783,7 +784,9 @@ class StdBlock(NonLeaf_Node):
         if old is READY and new is not READY:
             _completed(self.on_invalidated, "beginning")
 
-    def _set_ending(self, ev: Evaluation, new: EvaluationStatus) -> None:
+    async def _set_ending(self, ev: Evaluation, new: EvaluationStatus) -> None:
+        """Async, alone among the three setters: `Theory`'s carries a rule
+        that walks other trees (ARCHITECTURE §3.4)."""
         old = self.evaluation_status_ending
         if _wrote(old) and not _wrote(new):               # written -> unwritten; a rewrite releases nothing
             ev.release(self.resulting_state())
@@ -793,7 +796,7 @@ class StdBlock(NonLeaf_Node):
 
     async def _mark_not_evaluated(self, ev):
         if self.evaluation_status_ending is not NOT_EVALUATED:
-            self._set_ending(ev, NOT_EVALUATED)
+            await self._set_ending(ev, NOT_EVALUATED)
 
     @abstractmethod
     async def _eval_beginning_opr(self) -> bool:
@@ -812,14 +815,14 @@ class StdBlock(NonLeaf_Node):
         return True
 
     async def _evaluate(self, ev, mode):
-        if isinstance(mode, Evaluating) and mode.blocked_by is None:
+        if isinstance(mode, Evaluating):
             beginning = self.evaluation_status_beginning
-            began = mode.rewritten or not _wrote(beginning)   # a blocked one reruns; an own stop does not
+            began = mode.rewritten or not _wrote(beginning)   # not evaluated reruns; an own stop does not
             if began:
                 ok = await self._eval_beginning_opr()
-                self._set_beginning(ev, READY if ok else CannotEvaluate(None))
-            if _is_own_stop(self.evaluation_status_beginning):    # the children have no context
-                r = await self._evaluate_children(ev, Evaluating(self))
+                self._set_beginning(ev, READY if ok else CANNOT_EVALUATE)
+            if self.evaluation_status_beginning is CANNOT_EVALUATE:   # the children have no context
+                r = await self._evaluate_children(ev, BLOCKED)
                 if r.mode is INVALIDATING:
                     await self._mark_not_evaluated(ev)
                     return EvaluationResult(None, INVALIDATING)
@@ -828,50 +831,48 @@ class StdBlock(NonLeaf_Node):
                 copied = mode.rewritten or self.evaluation_status_ending is not READY
                 if copied:
                     await self.state.copy_to(self.resulting_state())
-                    self._set_ending(ev, READY)
+                    await self._set_ending(ev, READY)
                 return EvaluationResult(None, self._mode_after(ev, mode, None, copied))
 
-            r = await self._evaluate_children(ev, replace(mode, rewritten=began))
+            r = await self._evaluate_children(ev, Evaluating(rewritten=began))
             if r.mode is INVALIDATING:                    # the ending lies past the destination
                 await self._mark_not_evaluated(ev)
                 return EvaluationResult(r.stopped_at, INVALIDATING)
             if r.stopped_at is not None:                  # no state to run the ending from
-                if not _is_own_stop(self.evaluation_status_ending):
-                    self._set_ending(ev, CannotEvaluate(r.stopped_at))
+                if self.evaluation_status_ending is not CANNOT_EVALUATE:
+                    await self._set_ending(ev, NOT_EVALUATED)
                 return EvaluationResult(r.stopped_at, self._mode_after(ev, mode, r.stopped_at, False))
             assert isinstance(r.mode, Evaluating)
             ended = r.mode.rewritten or not _wrote(self.evaluation_status_ending)
             if ended:
                 if await self._eval_ending_opr():
-                    self._set_ending(ev, READY)
+                    await self._set_ending(ev, READY)
                 else:
                     await self._state_before_ending.copy_to(self.resulting_state())
-                    self._set_ending(ev, CannotEvaluate(None))
+                    await self._set_ending(ev, CANNOT_EVALUATE)
             stop = None                                   # an ending that failed stays a stop until edited
             if self.evaluation_status_ending is not READY and not ev.ignore_error:
                 stop = self
             return EvaluationResult(stop, self._mode_after(ev, mode, stop, ended))
 
         # Not running here: blocked, past the destination, or seeking.  A
-        # blocked status never overwrites an own stop: the node keeps
+        # blocked walk never overwrites an own stop: the node keeps
         # reporting itself as the obstacle, and is not rerun
-        # (ARCHITECTURE §3.3).
-        if isinstance(mode, Evaluating):
-            if not _is_own_stop(self.evaluation_status_beginning):
-                self._set_beginning(ev, CannotEvaluate(mode.blocked_by))
+        # (ARCHITECTURE §3.3); an invalidating walk resets it.
+        if mode is BLOCKED:
+            if self.evaluation_status_beginning is not CANNOT_EVALUATE:
+                self._set_beginning(ev, NOT_EVALUATED)
         elif mode is INVALIDATING:
             self._set_beginning(ev, NOT_EVALUATED)
         r = await self._evaluate_children(ev, mode)
         if r.mode is INVALIDATING:
             await self._mark_not_evaluated(ev)
-        elif isinstance(mode, Evaluating):
-            if not _is_own_stop(self.evaluation_status_ending):
-                self._set_ending(ev, CannotEvaluate(mode.blocked_by))
+        elif mode is BLOCKED:
+            if self.evaluation_status_ending is not CANNOT_EVALUATE:
+                await self._set_ending(ev, NOT_EVALUATED)
         reached = r.mode is INVALIDATING or self is ev.destination
         if reached:
             return EvaluationResult(None, INVALIDATING)
-        if isinstance(mode, Evaluating):                 # blocked: nothing ran here
-            mode = replace(mode, rewritten=False)
         return EvaluationResult(None, mode)
 
 
@@ -971,6 +972,16 @@ class Conversation:
 EMPTY_FOREST = ('There are no Isabelle sessions yet. Call `edit` with `{"action": "append",'
                 ' "target_id": "Sessions", "constructs": [{"kind": "session", ...}],'
                 ' "evaluate": false}` to declare one.')
+
+
+class TreeRecord(NamedTuple):
+    """What an edit compares per tree (ARCHITECTURE §3.4): the two things
+    an edit can change without moving any ending."""
+    qualified_name: str
+    resolved_imports: frozenset[Theory]     # the nodes themselves: an `amend` replaces one
+
+
+Tree_Records: TypeAlias = dict[Identity, TreeRecord]
 
 
 class Forest(Unchained_Node):
@@ -1231,9 +1242,17 @@ class Forest(Unchained_Node):
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(indent, out, child_mode, depth + 1)
 
+    # --- the walk (ARCHITECTURE §3.5): its entries, the trees, the import
+    # graph, and `_evaluate` over the trees.  The graph is a function of
+    # the forest, recomputed by every walk and every edit that reads it,
+    # never stored; it may hold a cycle, a self-import included, since
+    # `Theory.gen` judges nothing about what an item names, and every
+    # reading of it is finite under cycles.
+
     async def _run(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
         """One walk under the lock, already held, then one round trip
-        releasing every state it invalidated."""
+        releasing every state it invalidated — nothing, after an evaluating
+        walk, whose trees each flushed their own (`_handle_tree`)."""
         assert self.lock.locked(), "a walk runs under the forest lock"
         r = await self._evaluate(ev, mode)
         await ev.flush(self.state.connection)
@@ -1241,11 +1260,195 @@ class Forest(Unchained_Node):
 
     async def _invalidate_from(self, position: Location) -> EvaluationResult:
         """An edit's unconditional invalidation (MCP_SPECIFICATION §3.2):
-        everything from `position` on, the node standing there whole."""
+        everything from `position` on in its tree, the node standing there
+        whole; nothing under a `Session` or the root, where sibling trees
+        are independent — what an edit there disturbed is
+        `_invalidate_changed_trees`'."""
         return await self._run(Evaluation(None, False), Seeking(position))
 
+    async def _invalidate_whole(self, node: Node) -> EvaluationResult:
+        """`evaluate_to(evaluate=False)` on a node nothing chains, the child
+        of an `Unchained_Node`: the node whole — for a `Session`, every tree
+        under it — under one `Evaluation`, flushed here."""
+        ev = Evaluation(None, False)
+        await self._invalidate_trees(
+            ev, list(node.sub_nodes) if isinstance(node, Session) else [node])
+        await ev.flush(self.state.connection)
+        return EvaluationResult(None, INVALIDATING)
+
+    async def _invalidate_trees(self, ev: Evaluation, trees: Sequence[Node]) -> None:
+        """Walk each of `trees` whole in `Invalidating` mode under the
+        caller's `Evaluation`, which the caller flushes."""
+        assert self.lock.locked(), "a walk runs under the forest lock"
+        for tree in trees:
+            await tree._evaluate(ev, INVALIDATING)
+
+    def _trees(self) -> list[Theory]:
+        """The trees in tree order: the `Theory` nodes under the `Session`
+        nodes under the root, selected by class at both levels — a root
+        holding something else, as a test double's does, holds no tree."""
+        return [t for s in self.sub_nodes if isinstance(s, Session)
+                for t in s.sub_nodes if isinstance(t, Theory)]
+
+    def _tree_of(self, node: Node) -> Node:
+        """The child of an `Unchained_Node` above `node`, or `node` itself."""
+        while node.parent is not None and not isinstance(node.parent, Unchained_Node):
+            node = node.parent
+        return node
+
+    def _trees_under(self, node: Node) -> list[Theory]:
+        """The trees a destination stands for (ARCHITECTURE §3.5): every
+        tree for the root, every tree under a `Session`, else the tree
+        containing the node."""
+        if node is self:
+            return self._trees()
+        if isinstance(node, Session):
+            return [t for t in node.sub_nodes if isinstance(t, Theory)]
+        tree = self._tree_of(node)
+        assert isinstance(tree, Theory), "a node outside every tree"
+        return [tree]
+
+    def _name_table(self) -> dict[str, Theory]:
+        return {t.qualified_name(): t for t in self._trees()}
+
+    @staticmethod
+    def _import_of(tree: Theory, item: str, table: dict[str, Theory]) -> Theory | None:
+        """The forest tree an `imports` item names, or None when the item is
+        external: a dotted item as written, a bare one under the tree's own
+        `Session`.  This agrees with `Resources.theory_name`: on a dotted
+        item it is the same rule; on a bare item the two differ exactly
+        when the name is global, and then both answer no tree — no tree
+        bears a global name (`ReservedTheoryName`), and every qualified name
+        carries a dot."""
+        return table.get(item if "." in item else f"{tree.session().name}.{item}")
+
+    def _resolved_imports(self, tree: Theory,
+                          table: dict[str, Theory] | None = None) -> list[Theory]:
+        """The forest trees among `tree`'s `imports`, in the items' order as
+        the agent wrote them, each at its first occurrence."""
+        if table is None:
+            table = self._name_table()
+        out: list[Theory] = []
+        for item in tree.imports:
+            target = self._import_of(tree, item, table)
+            if target is not None and target not in out:
+                out.append(target)
+        return out
+
+    def _importers(self, tree: Theory) -> list[Theory]:
+        """The trees whose resolved imports contain `tree`, in tree order —
+        `tree` itself when it imports itself."""
+        table = self._name_table()
+        return [t for t in self._trees() if tree in self._resolved_imports(t, table)]
+
+    def _closure(self, trees: Sequence[Theory]) -> list[Theory]:
+        """The least set containing `trees` and closed under resolved
+        imports, in tree order."""
+        table = self._name_table()
+        closed: set[Theory] = set()
+        pending = list(trees)
+        while pending:
+            tree = pending.pop()
+            if tree not in closed:
+                closed.add(tree)
+                pending.extend(self._resolved_imports(tree, table))
+        return [t for t in self._trees() if t in closed]
+
+    def _order_violation(self, node: Node) -> str | None:
+        """The order constraint (ARCHITECTURE §3.3): the first `imports`
+        item, as the agent wrote it, whose forest tree does not lie strictly
+        earlier in tree order — placed after the tree, or the tree itself —
+        or None.  Total on nodes, None off a `Theory`, so the renderer may
+        ask it of any `stopped_at` and compose RENDER_BASELINES §3's sentence
+        from the answer.  No edit refuses the state; the check runs before
+        every run of the tree, so a repairing `move` clears it by itself."""
+        if not isinstance(node, Theory):
+            return None
+        trees = self._trees()
+        table = {t.qualified_name(): t for t in trees}
+        position = trees.index(node)
+        for item in node.imports:
+            target = self._import_of(node, item, table)
+            if target is not None and trees.index(target) >= position:
+                return item
+        return None
+
+    async def _handle_tree(self, ev: Evaluation, tree: Theory) -> Node | None:
+        """One tree of an evaluating walk, and its stop, if any, by the
+        first case that applies: the order constraint's stop, the stop
+        crossing an import dependency, the run (MODULE_STRUCTURE §4.1;
+        ARCHITECTURE §3.3).  Under either stop the tree is not run but
+        walked whole in `Invalidating` mode.  The tree has its own
+        `Evaluation`, flushed here, so a slot released for one tree is gone
+        before a later tree of the walk could write it."""
+        own = Evaluation(ev.destination, ev.ignore_error)
+        if self._order_violation(tree) is not None:
+            await self._invalidate_trees(own, [tree])
+            stop: Node | None = tree                      # reported whatever ignore_error says
+        else:
+            # both operations: after a failed header the ending is ready with no theory value
+            missing = next((i for i in self._resolved_imports(tree)
+                            if not i._operations_ready()), None)
+            if missing is not None:
+                await self._invalidate_trees(own, [tree])
+                stop = None if ev.ignore_error else missing
+            else:
+                stop = (await tree._evaluate(own, Evaluating())).stopped_at
+        await own.flush(self.state.connection)
+        return stop
+
     async def _evaluate(self, ev, mode):
-        raise NotImplementedError
+        """The forest's part of the recursion (ARCHITECTURE §3.5), which
+        works on the trees directly.  `Seeking`: routed to the one tree the
+        position lies in; under a `Session` or the root nothing is walked.
+        `Evaluating`, with `ev.destination` set: the closure of the trees
+        the destination stands for, in tree order, each by `_handle_tree`
+        — a tree reaching the second case there has every resolved import
+        earlier in tree order and already handled, so its statuses are
+        current.  The result names the first stop in tree order
+        (MCP_SPECIFICATION §4)."""
+        if isinstance(mode, Seeking):
+            parent = mode.destination.parent
+            if isinstance(parent, Unchained_Node):
+                return EvaluationResult(None, INVALIDATING)
+            return await self._tree_of(parent)._evaluate(ev, mode)
+        if not isinstance(mode, Evaluating) or ev.destination is None:
+            raise TAT_InternalError("a forest walk evaluates to a destination or seeks a position")
+        stopped_at: Node | None = None
+        for tree in self._closure(self._trees_under(ev.destination)):
+            stop = await self._handle_tree(ev, tree)
+            if stopped_at is None:
+                stopped_at = stop
+        return EvaluationResult(stopped_at, INVALIDATING)
+
+    # --- what an edit compares (ARCHITECTURE §3.4)
+
+    def _record(self) -> Tree_Records:
+        """Every tree's `TreeRecord`, by identity."""
+        table = self._name_table()
+        return {t.identity: TreeRecord(t.qualified_name(),
+                                       frozenset(self._resolved_imports(t, table)))
+                for t in self._trees()}
+
+    async def _invalidate_changed_trees(self, ev: Evaluation, before: Tree_Records) -> None:
+        """After an edit's commit, against the record taken at its start:
+        every tree present in both whose record changed — its `Session`
+        renamed, itself renamed, moved into another `Session`, a tree it
+        imports vanished, appeared or replaced by an `amend`, or a name it
+        imports now naming another tree — is walked whole in `Invalidating`
+        mode, its ending then carrying the rule of `Theory._set_ending`
+        onward; every qualified name present before and absent after is
+        removed from the ML theory table, in one round trip
+        (EVALUATOR_DESIGN §3)."""
+        after = self._record()
+        await self._invalidate_trees(
+            ev, [t for t in self._trees()
+                 if t.identity in before and before[t.identity] != after[t.identity]])
+        kept = {record.qualified_name for record in after.values()}
+        vanished = sorted(record.qualified_name for record in before.values()
+                          if record.qualified_name not in kept)
+        if vanished:
+            await isabelle_driver.theory_delete(self.state.connection, vanished)
 
 
 # ---------------------------------------------------------------------------
@@ -1259,6 +1462,39 @@ def _parent_id(config: NodeConfig) -> str:
     """The parent as the agent sees it, for a `Bad<Class>NodeParent`.  A
     parent still under construction in the same call prints its full id."""
     return config.parent.forest().id_of(config.parent)
+
+
+# The two names that become path elements — `<session>/<short name>.thy`,
+# and every import through `Path.explode` — and so take no prime, which
+# Isabelle refuses in a path element (Pure/General/path.ML, `illegal_char`).
+# A theory short name is an Isabelle identifier without the prime: no
+# hyphen, no dot; a trailing underscore, legal here, is the framework's
+# name grammar to refuse, with the rendering that says so.  A session name
+# is the same with interior hyphens (`HOL-Library`), not ending in a hyphen
+# or an underscore: strictly narrower than the framework's grammar, whose
+# rendering therefore never fires for a `Session`.
+_THEORY_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+_SESSION_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+
+
+def is_valid_session_name(name: str) -> bool:
+    return bool(_SESSION_NAME.fullmatch(name)) and not name.endswith(("-", "_"))
+
+
+def is_theory_name_item(item: str) -> bool:
+    """An item of `imports` (SESSION_AND_THEORY §2): `<short name>` or
+    `<session>.<short name>`, each half in the session name's grammar so
+    that the AFP's hyphenated theory names (`AList-Utils`) can be imported;
+    no quotes, no path, no `.thy`.  Isabelle's two steps in Isabelle's
+    order — the `.thy` suffix refused on the whole item before the halves
+    are read (`Thy_Header.import_name`, Pure/Thy/thy_header.ML:131-134),
+    since `thy` is itself a legal half — so that on this domain
+    `Thy_Header.import_name` is the identity and the forest's reading of
+    an item (`Forest._import_of`) agrees with Isabelle's."""
+    if item.endswith(".thy"):
+        return False
+    halves = item.split(".")
+    return len(halves) <= 2 and all(is_valid_session_name(half) for half in halves)
 
 
 class Session_Option(TypedDict):
@@ -1326,6 +1562,8 @@ class Session(Unchained_Node):
     async def gen(cls, config, raw: Session_RawAST):
         if not isinstance(config.parent, Forest):
             raise BadSessionNodeParent(raw["kind"], _parent_id(config))
+        if not is_valid_session_name(raw["name"]):
+            raise InvalidName(raw["name"], "session name")
         if not raw["parent_session"]:
             raise InvalidField("parent_session", "must not be empty")
         options = raw.get("options", [])
@@ -1382,12 +1620,6 @@ class Theory_RawAST(TypedDict):
     imports: list[str]
 
 
-# An Isabelle identifier: no hyphen, no dot (SESSION_AND_THEORY §2).  A
-# trailing underscore, legal here, is the framework's name grammar to
-# refuse, with the rendering that says so.
-_ISABELLE_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_']*")
-
-
 class Theory(StdBlock):
     """The root of every tree (SESSION_AND_THEORY §2): the header, the
     imports and the `end`.  Its beginning runs the header through the
@@ -1439,19 +1671,28 @@ class Theory(StdBlock):
         if not isinstance(config.parent, Session):
             raise BadTheoryNodeParent(raw["kind"], _parent_id(config))
         name = raw["name"]
-        if not _ISABELLE_IDENTIFIER.fullmatch(name):
-            raise InvalidName(name, theory_name=True)
-        # The base-heap half of the short-name check; the forest half is the
+        if not _THEORY_NAME.fullmatch(name):
+            raise InvalidName(name, "theory name")
+        # The Isabelle half of the short-name check; the forest half is the
         # framework's, through `namespace` (the plan's §3).
         connection = config.parent.forest().conversation.connection
-        holder = await isabelle_driver.check_new_theory_short_name(connection, name)
-        if holder is not None:
-            raise DuplicateTheoryShortName(name, holder)
+        match await isabelle_driver.check_new_theory_short_name(connection, name):
+            case isabelle_driver.Taken(holder):
+                raise DuplicateTheoryShortName(name, holder)
+            case isabelle_driver.Reserved():
+                raise ReservedTheoryName(name)
+            case isabelle_driver.Free():
+                pass
+        # The item's shape only; whether it names anything is
+        # `begin_theory`'s report at evaluation (SESSION_AND_THEORY §2).
         if not raw["imports"]:
             raise InvalidField("imports", "must not be empty")
         for i, item in enumerate(raw["imports"]):
             if not item:
                 raise InvalidField(f"imports[{i}]", "must not be empty")
+            if not is_theory_name_item(item):
+                raise InvalidField(f"imports[{i}]",
+                                   "must be a theory name without quotes; a path is not allowed")
         return cls(config.parent, config.state, name, list(raw["imports"]),
                    Isar_State_Slot.assign(connection), Isar_State_Slot.assign(connection))
 
@@ -1481,9 +1722,32 @@ class Theory(StdBlock):
         assert isinstance(self.parent, Session)     # gen and on_moving admit no other parent
         return self.parent
 
+    def qualified_name(self) -> str:
+        """`<Session name>.<short name>`, computed, never stored: the key of
+        the ML theory table (EVALUATOR_DESIGN §7)."""
+        return f"{self.session().name}.{self.name}"
+
     def header(self) -> str:
-        """The `theory … begin` span, as the tree's file will open."""
-        return f"theory {self.name}\n  imports {' '.join(self.imports)}\nbegin"
+        """The `theory … begin` span, as the tree's file will open; every
+        import quoted, so a hyphenated name is one token to Isabelle's
+        lexer."""
+        imports = " ".join(f'"{item}"' for item in self.imports)
+        return f"theory {self.name}\n  imports {imports}\nbegin"
+
+    async def _set_ending(self, ev, new):
+        """ARCHITECTURE §3.4's rule, a property of the status: whenever the
+        ending was `ready` and no longer is, the tree's direct importers are
+        walked whole in `Invalidating` mode under the same `Evaluation`,
+        each ending so moved firing the same rule for its own importers.
+        The assignment comes first, so within one cascade no ending leaves
+        `ready` twice, cycles included: a tree importing itself re-enters
+        its own walk, and the inner call finds the ending already
+        `not_evaluated`."""
+        old = self.evaluation_status_ending
+        await super()._set_ending(ev, new)
+        if old is READY and new is not READY:
+            forest = self.forest()
+            await forest._invalidate_trees(ev, forest._importers(self))
 
     def print_fields(self, indent, out, mode, depth):
         """SESSION_AND_THEORY §4: `imports` in the briefing, when detailed
@@ -1500,7 +1764,7 @@ class Theory(StdBlock):
         for operation, status, messages in (
                 ("beginning", self.evaluation_status_beginning, self.beginning_errors),
                 ("ending", self.evaluation_status_ending, self.ending_errors)):
-            if not _is_own_stop(status):
+            if status is not CANNOT_EVALUATE:
                 continue
             key = (self.identity, operation)
             if whole or key not in seen:

@@ -32,6 +32,10 @@ def tat_new(*args):
     return subprocess.run(["isabelle", "TAT_new", *args], capture_output=True, text=True)
 
 
+def tat(*args):
+    return subprocess.run(["isabelle", "TAT", *args], capture_output=True, text=True)
+
+
 def hook_blocks() -> list[list[str]]:
     """The six files as CLIENT_HOOKS.md shows them: the script's section
     holds a second block, the failure line, which is not a file."""
@@ -82,6 +86,20 @@ def test_on_a_working_directory_only_the_absent_hook_files_are_written(tmp_path)
     assert tat_new("-P", "My_Nodes.X", str(wd)).returncode == 0
     assert (wd / ".codex" / "hooks.json").is_file()
     assert (wd / ".cursor" / "hooks.json").read_text() == "mine\n"
+
+
+def test_a_session_under_the_working_directory_is_refused(tmp_path):
+    """MODULE_STRUCTURE §5 step 3: the Isabelle session layout is checked
+    before anything is built or started.  The session's folder need not
+    exist: it is never selected."""
+    wd = tmp_path / "wd"
+    assert tat_new(str(wd)).returncode == 0
+    (wd / "ROOT").write_text('session Foo in "Foo" = HOL +\n')
+    r = tat("-d", str(wd), str(wd))
+    assert r.returncode == 2 and r.stdout == "", r
+    assert r.stderr.strip() == (
+        f"*** Isabelle session Foo is declared under the working directory {wd};"
+        " TAT never loads theories from there")
 
 
 def test_the_script_fails_readably_without_a_running_conversation(tmp_path):

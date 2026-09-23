@@ -205,7 +205,22 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
         }
 
 
-        /* 3. the Isabelle process */
+        /* 3. the Isabelle session layout, the base heap, the process */
+
+        val session_background =
+          Sessions.background(tat_options, logic, dirs = dirs.toList).check_errors
+
+        // no theory is ever loaded from under the working directory
+        // (docs/EVALUATOR_DESIGN.md §2): a session declared there is refused,
+        // so that no file under it can be found by its session name
+        val session_directories =
+          session_background.sessions_structure.session_directories.toList.sortBy(_._1.getPath)
+        for ((file, name) <- session_directories) {
+          if (File.relative_path(dir.canonical, File.path(file)).isDefined) {
+            error("Isabelle session " + name + " is declared under the working directory " +
+              dir.implode + "; TAT never loads theories from there")
+          }
+        }
 
         val progress = new Console_Progress()
 
@@ -216,8 +231,6 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
           }
         if (!results.ok) sys.exit(results.rc)
 
-        val session_background =
-          Sessions.background(tat_options, logic, dirs = dirs.toList).check_errors
         val session_heaps = Store(tat_options).session_heaps(session_background, logic = logic)
 
         val session =

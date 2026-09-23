@@ -20,7 +20,7 @@ from isabelle_theory_agent.exceptions import (
     MoveIntoOwnSubtree, TAT_InternalError, UnexpectedChildren,
     UnexpectedField, UnknownKind)
 from isabelle_theory_agent.model import (
-    NOT_EVALUATED, READY, CannotEvaluate, Location)
+    CANNOT_EVALUATE, NOT_EVALUATED, READY, Location)
 
 
 @pytest.fixture(autouse=True)
@@ -344,7 +344,7 @@ def test_insert_moves_the_value_from_the_source_slot():
 def test_insert_after_own_stop_receives_the_written_input():
     f, thy, sec, t1, t2, t3, t4 = tm.build(T1=True)
     run(t4.evaluate_to(True))
-    assert st(t1) == CannotEvaluate(None)
+    assert st(t1) is CANNOT_EVALUATE
     (n,) = run(locked(f, edit.insert(sec,
         1, [{"kind": "t", "name": "N"}], {"t": T})))
     # An own stop wrote its resulting state (the input copied through), so
@@ -672,7 +672,7 @@ def test_blocked_beginning_reruns_when_unblocked():
     a = add(sec, T(sec, slot(), "a"))
     r = run(a.evaluate_to(False))                # strict: d stops, sec blocked
     assert r.stopped_at is d
-    assert st(sec)[0] == CannotEvaluate(d) and sec.begin_runs == 0
+    assert st(sec)[0] is NOT_EVALUATED and sec.begin_runs == 0
     r = run(a.evaluate_to(True))                 # resumes past the obstacle
     assert sec.begin_runs == 1 and st(sec)[0] is READY and st(a) is READY
     assert tm.TABLE.values[a.state.name] == "begin Sec"
@@ -681,7 +681,7 @@ def test_failed_opening_repeated_pass_keeps_the_result():
     f, thy, sec, t1, t2, t3, t4 = tm.build(Section="begin")
     for _ in range(3):
         run(t4.evaluate_to(False))
-    assert st(sec) == (CannotEvaluate(None), READY)
+    assert st(sec) == (CANNOT_EVALUATE, READY)
     assert tm.TABLE.values[sec.resulting_state().name] == "begin Theory"
     assert sec.begin_runs == 1                   # an own stop is not rerun
 
@@ -742,12 +742,12 @@ def test_failed_opening_after_failed_ending_keeps_its_result():
     z = add(b, T(b, slot(), "z"))
     y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(True)); inv(f)
-    assert st(b) == (READY, CannotEvaluate(None))
+    assert st(b) == (READY, CANNOT_EVALUATE)
     run(y.evaluate_to(False)); inv(f)            # A stops; B's ending keeps its own stop
-    assert st(b) == (CannotEvaluate(a), CannotEvaluate(None))
+    assert st(b) == (NOT_EVALUATED, CANNOT_EVALUATE)
     record(b, fail_beginning=True)
     run(y.evaluate_to(True)); inv(f)             # B's beginning reruns and fails
-    assert st(b) == (CannotEvaluate(None), READY) and st(y) is READY
+    assert st(b) == (CANNOT_EVALUATE, READY) and st(y) is READY
     assert (tm.TABLE.values[b.resulting_state().name]
             == tm.TABLE.values[b.state.name])
 
@@ -761,9 +761,9 @@ def test_own_stop_reruns_when_its_input_is_rewritten():
     run(y.evaluate_to(True)); inv(f)
     assert (p.runs, x.runs) == (1, 1)
     run(y.evaluate_to(False)); inv(f)            # A stops: P blocked, X keeps its own stop
-    assert st(p) == CannotEvaluate(a) and st(x) == CannotEvaluate(None)
+    assert st(p) is NOT_EVALUATED and st(x) is CANNOT_EVALUATE
     run(y.evaluate_to(True)); inv(f)             # P reruns, so X does too
-    assert (p.runs, x.runs) == (2, 2) and st(x) == CannotEvaluate(None)
+    assert (p.runs, x.runs) == (2, 2) and st(x) is CANNOT_EVALUATE
     run(y.evaluate_to(True)); inv(f)             # nothing rewritten: nothing reruns
     assert (p.runs, x.runs) == (2, 2)
 
@@ -779,7 +779,7 @@ def test_removing_an_own_stop_behind_a_blocked_predecessor_releases_its_copy():
         z = add(s, T(s, slot(), "z"))
         b = add(thy, T(thy, slot(), "B", fail=True)); c = add(thy, T(thy, slot(), "C"))
         run(c.evaluate_to(True)); run(c.evaluate_to(False)); inv(f)
-        assert st(s)[1] == CannotEvaluate(a) and st(b) == CannotEvaluate(None)
+        assert st(s)[1] is NOT_EVALUATED and st(b) is CANNOT_EVALUATE
         return f, thy, s, b, c
     f, thy, s, b, c = build()
     run(locked(f, edit.delete(b)))
@@ -807,7 +807,7 @@ def test_own_stop_survives_being_blocked():
     g = add(thy, T(thy, slot(), "g"))
     for ignore in (True, True, False, True, False, True):
         run(g.evaluate_to(ignore))
-        assert e.runs == 1 and st(e) == CannotEvaluate(None)   # never rerun, never misreported
+        assert e.runs == 1 and st(e) is CANNOT_EVALUATE      # never rerun, never misreported
         inv(f)
 
 def test_random_interleavings_keep_the_invariants():

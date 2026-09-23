@@ -45,21 +45,21 @@ with statuses of its own (MODULE_STRUCTURE §4.1) — and `finished`
 | the node | mark |
 | --- | --- |
 | is `finished` | `success` |
-| has an operation of its own that is an obstacle: `cannot_evaluate` with no `blocked_by` (ARCHITECTURE §3.3) | `failed` |
-| has an operation of its own that is blocked: `cannot_evaluate` naming a `blocked_by` | `blocked by <id>` |
-| has an operation of its own that is `not_evaluated` | `not evaluated` |
+| has an operation of its own that is an obstacle: `cannot_evaluate` (ARCHITECTURE §3.3) | `failed` |
+| has an operation of its own that is `not_evaluated` — never run, invalidated, or blocked: after a stop in its tree, under a nesting node whose beginning failed, or in a tree one of whose resolved imports has no theory value | `not evaluated` |
 | every operation of its own ran | none |
 
 No mark therefore means: the node's own operations ran, and something
-under it, or something the node itself still owes, is unfinished.
-`blocked by` names the obstacle by its id in the shortest form; the
-obstacle is always in the forest, since every delete, amend and move
-invalidates from its position first (ARCHITECTURE §3.4).
+under it, or something the node itself still owes, is unfinished. What
+blocks a `not evaluated` node is not on its line: the `failed`
+marks say where the obstacles are, and the tool that ran the evaluation
+names the first stop in its answer (RENDER_BASELINES §6; MCP_SPECIFICATION
+§4).
 
 A class overrides `mark` to say more, normally only where the default
 says nothing — a `Theorem` whose statement ran and whose proof is not
 found is that case, and the word it answers is decided with the class
-(§8). The framework's four words are RENDER_BASELINES §5's; a class's
+(§8). The framework's words are RENDER_BASELINES §5's; a class's
 words are its own document's.
 
 ## 2. What each mode prints
@@ -113,11 +113,11 @@ Error:
 
 `Theory`'s rule: its two operations' messages — whole under `Recall`
 below depth 2, once per run (§4) elsewhere, never in `Briefing` — and
-only for an operation that is an obstacle, `cannot_evaluate` with no
-`blocked_by` (§1's second row), the one status a failed run of it leaves
+only for an operation that is an obstacle, `cannot_evaluate` (§1's second
+row), the one status a failed run of it leaves
 standing. An operation's recorded messages are its last run's, and that
 run is current exactly while the status it left stands, so an operation
-that is `not_evaluated`, blocked, or given `ready` without running shows
+that is `not_evaluated`, or given `ready` without running, shows
 none: a `Theory`'s `Error:` block accompanies a `failed` line and no
 other.
 
@@ -211,14 +211,14 @@ it ran and still owes its proof, and `theory_Y`, which imports
 ```
 session_A
 - theory_Base (success)
-- theory_X (blocked by definition_f)
+- theory_X (not evaluated)
   imports: Main
   - lemma_A
   - definition_f (failed)
     Error:
       Type unification failed: Clash of types "nat" and "bool"
       Type error in application: incompatible operand type
-  - lemma_P (blocked by definition_f)
+  - lemma_P (not evaluated)
 - theory_Y (not evaluated)
 ```
 

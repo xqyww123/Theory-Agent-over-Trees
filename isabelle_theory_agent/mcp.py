@@ -136,7 +136,7 @@ def _location(forest: Forest, position: str, anchor_id: str,
 async def _evaluate(forest: Forest, destination: Node) -> Node | None:
     """`evaluate` true (MCP_SPECIFICATION §3.2): run up to the change's
     natural destination under the lock the call holds, `ignore_error`
-    unset; the obstacle the walk stopped at, if one did."""
+    unset; the node the walk stopped at, if it stopped."""
     return (await forest._run(Evaluation(destination, False), Evaluating())).stopped_at
 
 

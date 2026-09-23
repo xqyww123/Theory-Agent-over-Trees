@@ -40,10 +40,12 @@ and its layout is fixed:
   `Session` deletes its folder.
 
 *(open, deferred)*: when the `.thy` files and the ROOT are written — the
-owner's inclination is when the agent declares its task done — and how the
-directory is kept equal to the forest, since a `.thy` left behind under a
-`master_dir` is loaded by Isabelle as a second theory (§5). The first run
-writes no `.thy` at all, so nothing turns on this yet.
+owner's inclination is when the agent declares its task done. Keeping the
+directory equal to the forest is no longer a correctness question
+*(2026-09-23, FOREST_WALK_PLAN.md §1 item 1)*: nothing is ever loaded from
+under the working directory, so a `.thy` left behind is never a second
+theory. The first run writes no `.thy` at all, so nothing turns on this
+yet.
 
 ## 2. Persistence *(approved 2026-09-04)*
 
@@ -128,7 +130,7 @@ The forest is stored in one SQLite database, not pickled.
   MODULE_STRUCTURE §4.1. `test_model.py` and `test_ids.py` pickle nodes
   today; they round-trip through the store instead.
 
-## 3. `Theory`'s attribute table *(approved 2026-09-04; revised 2026-09-08)*
+## 3. `Theory`'s attribute table *(approved 2026-09-04; revised 2026-09-08 and 2026-09-23)*
 
 The table of record is SESSION_AND_THEORY.md §2, which since 2026-09-08
 also carries the two recorded, never stored fields `beginning_errors` and
@@ -137,8 +139,8 @@ trailing underscore. In brief:
 
 | Attribute | Type | |
 | --- | --- | --- |
-| `name` | the theory's short name, `str`: an Isabelle identifier — a letter, then letters, digits, underscores and primes; no dot, no hyphen | authored |
-| `imports` | `list[str]`, non-empty; each item as it would be written in the header's `imports` clause: `Main`, `HOL-Library.Multiset`, or a path such as `"lib/Rel"` | authored |
+| `name` | the theory's short name, `str`: a letter, then letters, digits and underscores; no dot, no hyphen, no prime | authored |
+| `imports` | `list[str]`, non-empty; each item a theory name, `<short name>` or `<session>.<short name>`: `Main`, `HOL-Library.Multiset`; no path, no `.thy` | authored |
 
 Its construct declares `children`, `items` being `#/$defs/Construct`, so
 a theory is created with its first declarations in one call.
@@ -157,15 +159,12 @@ a theory is created with its first declarations in one call.
 - `gen` checks the shape of `imports` and nothing more: resolving an import
   may load a theory from source, which is a write to `Thy_Info`, and `gen`
   must not write (MODULE_STRUCTURE §4.1). Whether an import exists is
-  reported by `begin_theory` at evaluation. §5 may add one forest-only
-  check.
+  reported by `begin_theory` at evaluation. No forest-only check is added
+  *(settled 2026-09-22, FOREST_WALK_PLAN.md §1 item 4)*.
 - Not in the first version: the header's `keywords` and `abbrevs` clauses.
 
-`Theory.gen` checks: the parent is a `Session` (`BadTheoryNodeParent`); the
-identifier grammar of `name` (`InvalidName`, rendering the agent's own
-spelling); the short name against the base heap through
-`check_new_theory_short_name`; `imports` non-empty with non-empty strings
-(`InvalidField`). The short name's uniqueness **within the forest and the
+`Theory.gen`'s checks are SESSION_AND_THEORY.md §2's. The short name's
+uniqueness **within the forest and the
 batch** is the framework's: `Theory` declares that its name lives in the
 forest-wide namespace of theory short names, and the framework — after
 the `taken` check of `edit._construct_siblings` — walks the pre-edit forest,
@@ -200,7 +199,7 @@ empty-forest hint — is PRINT.md.
 *(open)*: whether `parent_session` is checked against Isabelle's known
 sessions (needs a new ML callback) or only transcribed into the ROOT entry.
 
-## 5. How an import names a forest tree *(open)*
+## 5. How an import names a forest tree *(settled 2026-09-22, FOREST_WALK_PLAN.md §1 item 4)*
 
 Facts, from the Isabelle source (`Resources.import_name`) and an
 in-process probe (`scratchpad/probe_imports`, 2026-09-04):
@@ -215,17 +214,23 @@ in-process probe (`scratchpad/probe_imports`, 2026-09-04):
   file `T/A.thy` it fails with Isabelle's `No such file: ".../T/A.thy"
   … for theory "T.A"`; with such a file present (a stale one, under §1)
   it silently loads a second theory `T.A`, and a later theory importing
-  both fails with `Duplicate theory name` far from the cause (verified).
+  both fails with `Duplicate theory name` far from the cause (verified;
+  no longer reachable, since nothing is loaded by path or from under the
+  working directory, FOREST_WALK_PLAN.md §1 items 1 and 2).
 - Whatever the rule, the forest's import graph (§6) must recognise both
   the bare and the qualified spelling of a forest tree, or the importing
   tree runs before its import is in the table.
 
-What TAT does about the bare cross-session import is not decided.
+Settled: the bare cross-session import gets no check of its own. `T.A`
+names no forest tree, no base-heap theory and no file the Isabelle
+session layout knows, so the header fails with RENDER_BASELINES §3's
+sentence naming `T.A`, which shows the agent what its bare name was taken
+for.
 
-## 6. `Forest._evaluate` *(approved 2026-09-04)*
+## 6. `Forest._evaluate` *(approved 2026-09-04; implemented 2026-09-23, FOREST_WALK_PLAN.md)*
 
 What §6 settles: the import graph; the order and mode in which trees run;
-how a stop crosses an import edge; what invalidation means at the
+how a stop crosses an import dependency; what invalidation means at the
 `Session` layer, including after an edit that changes or removes a
 qualified name (R4 of the plan review); the theory table's removal; the
 two ends of a `Theory` root's slot chain; and `Session`'s framework
@@ -270,7 +275,7 @@ round trip per tree. The call's `ignore_error` applies to every tree it
 runs. When several trees stop, the call reports the first in tree order
 (MCP_SPECIFICATION §4); each stopped tree's own report is in its nodes.
 `Forest._evaluate` carries the reported stop for both forest-level stops
-— the order constraint's and the import edge's — since the recursion
+— the order constraint's and the import dependency's — since the recursion
 returns no `stopped_at` from a blocked or invalidating walk.
 
 The forest reads a tree's `imports` and a `Session`'s `name` directly:
@@ -281,15 +286,16 @@ through the same `TAT_node` every plugin class goes through, so the
 checks of PLUGIN_SYSTEM §5 apply to them and they head the registration
 order. Their ML evaluators stay in `TAT_Common_Nodes.ML`.
 
-**A stop crossing an import edge.** Before a tree runs, the forest looks
+**A stop crossing an import dependency.** Before a tree runs, the forest looks
 at the `Theory` nodes of its direct imports. If any does not have both its
 operations `ready` — the ending alone does not do: after a failed header
 the ending is `ready` and no theory value exists (the `Theory` root's slot
-chain, below) — the tree is not run but walked in the blocked mode already
-defined for a failed opening — `Evaluating(blocked_by=X)`, `X` the
-stopped node — so every node in it becomes `cannot_evaluate` with the
-same `blocked_by`, and the result reports `X`. Trees that do not import
-the stopped tree run normally. No new mode is needed.
+chain, below) — the tree is not run but walked whole in the `Invalidating`
+mode, like a tree violating the order constraint, so every node in it is
+`not_evaluated`, and the result reports the import's `Theory` node
+*(2026-09-23, FOREST_WALK_PLAN.md §1 item 16: a blocked node is
+`not_evaluated`, no status names its obstacle; §3.3, the walk)*. Trees that
+do not import the stopped tree run normally. No new mode is needed.
 
 **Invalidation at the `Session` layer.** The routing lives in
 `Forest._evaluate` alone. A `Seeking` position is resolved upward to the
@@ -300,24 +306,26 @@ independent unless the graph says otherwise. `Session._evaluate` raises
 a walk that reaches one is a framework bug. Three rules complete it:
 
 - Whenever a tree's `Theory` ending goes from `ready` to anything else,
-  its transitive importers become `not_evaluated` (each walked in the
-  `Invalidating` mode). This is a property of the status, enforced in the
-  ending's status setter on the guard `on_invalidated` already uses — old
-  `ready`, new not `ready`; not the release guard, which stays silent when
-  `ready` becomes an own stop, exactly the case a tree without a theory
-  value is — so it covers `evaluate_to` on an inner node as well as every
-  edit. The setter needs the forest and the graph, so the status setters
-  become `async`; every caller already is. The recursion ends because a
-  status leaves `ready` at most once per walk, so each tree is
-  invalidated at most once.
-- Every edit snapshots, per tree identity, the pair (qualified name,
-  resolved import set) before and after itself; a tree whose pair changed —
-  its `Session` renamed, itself renamed, moved into another `Session`, or
-  a name it imports vanished or appeared — is invalidated whole, with its
-  transitive importers. The snapshot is the framework's, once, in the edit
-  entry; no edit path has to remember which names it disturbed. This is
-  the mechanism behind ARCHITECTURE §3.4's "editing a `Session`
-  invalidates every tree under it".
+  its direct importers become `not_evaluated` (each walked in the
+  `Invalidating` mode), and their endings carry the rule on to the
+  transitive importers. This is a property of the status, enforced in the
+  ending's status setter after the assignment — not on the release guard,
+  which stays silent when `ready` becomes an own stop, exactly the case a
+  tree without a theory value is — so it covers `evaluate_to` on an inner
+  node as well as every edit. The setter needs the forest and the graph,
+  so the ending's setter becomes `async`; every caller already is. The
+  recursion ends because the setter assigns before it fires, so within one
+  cascade no ending leaves `ready` twice.
+- Every edit takes, per tree identity, the record (qualified name,
+  resolved imports — the `Theory` nodes themselves) before and after
+  itself; a tree whose record changed — its `Session` renamed, itself
+  renamed, moved into another `Session`, a tree it imports vanished,
+  appeared or replaced by an `amend` — is invalidated whole, the setter's
+  rule carrying the rest.
+  The record is the framework's, once, in the edit entry; no edit path has
+  to remember which names it disturbed. This is the mechanism behind
+  ARCHITECTURE §3.4's "editing a `Session` invalidates every tree under
+  it".
 - A qualified name that vanished is removed from the ML theory table in
   the same operation (a new callback, `TAT.theory_delete`, and
   `Theories.delete`), so `Loader.resolve` can never hand an importer a
@@ -338,7 +346,7 @@ after a successful `end`, and after a failed `end`, whose copy-through
 copies the open theory's state; empty after a failed header, whose
 copy-through copies an input nobody wrote, so that the ending is `ready`
 (ARCHITECTURE §3.2) with an empty slot and no theory value in the table.
-This is why the import-edge rule above asks for
+This is why the import-dependency rule above asks for
 both of the `Theory`'s operations `ready`, never the ending alone.
 
 **`Unchained_Node`, `Session` and `Forest`.** A `Session`'s trees, and the
@@ -406,11 +414,13 @@ at every step that touches the ML side.
    2026-09-09, superseding the earlier intention to put it under
    `TAT_Error`).
 4. **The forest walk** (§6): the import graph, the order constraint's stop,
-   transitive imports before `T`, stops across import edges, invalidation of
-   importers, the pre/post graph comparison, `TAT.theory_delete`.
+   transitive imports before `T`, stops across import dependencies,
+   invalidation of importers, the record compared before and after every
+   edit, `TAT.theory_delete`.
    Tests: the fake-table suite gains multi-tree forests, and pins the
    order constraint's sentence from RENDER_BASELINES §3 the way the
-   exception renderings are pinned.
+   exception renderings are pinned. *(Done 2026-09-23, after step 5's
+   tools; the implementation plan and its record: FOREST_WALK_PLAN.md.)*
 5. **The tools and the entry point**: `mcp.py` with `edit`, `move`,
    `delete` (TOOL_SCHEMAS.md — `insert_after` is `edit.insert` at
    `index + 1`; `HoldsNoChildren` and `ProtectedNode` are refused here,
@@ -443,5 +453,5 @@ at every step that touches the ML side.
    `test/routing_forest.py` retires with step 4.
 
 Out of this plan, in the order they are likely needed afterwards: `recall`,
-`evaluate_to` and `status` as tools (TOOL_SCHEMAS.md §5); the renderings
-(PRINT.md); the import question (§5); compilation (§1); `construct`.
+`evaluate_to` and `status` as tools (TOOL_SCHEMAS.md §5); compilation
+(§1); `construct`.

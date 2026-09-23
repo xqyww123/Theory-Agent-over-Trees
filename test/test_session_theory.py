@@ -13,19 +13,19 @@ import pytest
 import test_model as tm
 from baselines import DOCS, fenced_lines
 from invariants import assert_invariants, assert_store_mirrors
-from routing_forest import Routing_Forest
 from test_model import CONN, locked, run
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent import edit, isabelle_driver
 from isabelle_theory_agent.exceptions import (
     BadSessionNodeParent, BadTheoryNodeParent, DuplicateTheoryShortName,
-    InvalidField, InvalidName, TAT_InternalError)
+    InvalidField, InvalidName, ReservedTheoryName, TAT_InternalError)
 from isabelle_theory_agent.model import (
-    INVALIDATING, NOT_EVALUATED, READY, CannotEvaluate, EvaluationResult, Session, Theory)
+    CANNOT_EVALUATE, INVALIDATING, NOT_EVALUATED, READY, EvaluationResult, Session, Theory)
 from isabelle_theory_agent.store import Forest_Store
 
-HEAP = {"List": "HOL.List"}       # the fake base heap: short name -> long name
+HEAP = {"List": "HOL.List", "Main": "Main"}   # the fake base heap: short name -> long name
+RESERVED = {"FOL"}                # global in the fake Isabelle session layout, loaded nowhere
 
 
 # Three `Theory` fakes against the fake state slot table, each standing for
@@ -33,12 +33,14 @@ HEAP = {"List": "HOL.List"}       # the fake base heap: short name -> long name
 
 class Fake_Theory(Theory):
     """Header and `end` both pass: the beginning writes the first child's
-    slot, the ending writes the owned resulting slot."""
+    slot, the ending writes the owned resulting slot and the fake theory
+    table, as the real one does through `end_theory`."""
     async def _eval_beginning_opr(self):
         tm.TABLE.values[self._state_after_beginning().name] = f"begin {self.name}"
         return True
     async def _eval_ending_opr(self):
         tm.TABLE.values[self._state_after_ending.name] = f"end {self.name}"
+        tm.TABLE.theories.add(self.qualified_name())
         return True
 
 class Failing_Header_Theory(Fake_Theory):
@@ -62,7 +64,7 @@ KINDS = {"session": Session, "theory": Theory, "fake_theory": Fake_Theory,
          "t": tm.T}                                          # `t`: a theory's child
 
 
-class Forest_Under_Test(Routing_Forest):
+class Forest_Under_Test(M.Forest):
     def __init__(self, conn=CONN, store=None, kinds=KINDS):
         super().__init__(M.Conversation(conn, Path(".")),
                          store if store is not None else Forest_Store(":memory:"), kinds)
@@ -73,7 +75,11 @@ def table(monkeypatch):
     tm.TABLE.clear()
     tm.TABLE.install(monkeypatch)
     async def check_new_theory_short_name(conn, name):
-        return HEAP.get(name)
+        if name in HEAP:
+            return isabelle_driver.Taken(HEAP[name])
+        if name in RESERVED:
+            return isabelle_driver.Reserved()
+        return isabelle_driver.Free()
     monkeypatch.setattr(isabelle_driver, "check_new_theory_short_name",
                         check_new_theory_short_name)
 
@@ -131,7 +137,7 @@ def test_a_session_with_its_theories_in_one_call():
     assert (s.kind, x.kind) == ("session", "theory")
     assert [f.id_of(n) for n in (s, x, y, a)] == ["session_Arith", "theory_X", "theory_Y", "t_a"]
     assert f.resolve("session_Arith.theory_Y.t_a") is a
-    assert x.header() == "theory X\n  imports Main\nbegin"
+    assert x.header() == 'theory X\n  imports "Main"\nbegin'
     assert not f.is_finished() and s._operations_ready() and not x._operations_ready()
     inv(f)
 
@@ -140,12 +146,12 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     store = Forest_Store(tmp_path / "TAT.sqlite")
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session(
-        "Arith", theory("X", "Main", "HOL-Library.Multiset", '"lib/Rel"'),
+        "Arith", theory("X", "Main", "HOL-Library.Multiset"),
         options=[{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}],
         description="Arithmetic")])
     assert s.options == [{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}]
     assert s.description == "Arithmetic"
-    assert s.sub_nodes[0].header() == 'theory X\n  imports Main HOL-Library.Multiset "lib/Rel"\nbegin'
+    assert s.sub_nodes[0].header() == 'theory X\n  imports "Main" "HOL-Library.Multiset"\nbegin'
     before = shape(f)
     store.close()
     f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite"))
@@ -211,13 +217,13 @@ def test_the_owned_slot_under_each_outcome_of_a_tree():
 
     r = run(bad_end.evaluate_to(False))
     assert r.stopped_at is bad_end                           # an own stop at the ending
-    assert tm.st(bad_end) == (READY, CannotEvaluate(None)) and bad_end.ending_errors
+    assert tm.st(bad_end) == (READY, CANNOT_EVALUATE) and bad_end.ending_errors
     assert values[bad_end._state_after_ending.name] == "begin BadEnd"   # copied through
     inv(f)
 
     r = run(bad_header.evaluate_to(False))
     assert r == EvaluationResult(None, INVALIDATING)          # not a stop for its successors
-    assert tm.st(bad_header) == (CannotEvaluate(None), READY)
+    assert tm.st(bad_header) == (CANNOT_EVALUATE, READY)
     assert bad_header.beginning_errors and not bad_header.is_finished()
     assert bad_header._state_after_ending.name not in values
     inv(f)
@@ -226,6 +232,8 @@ def test_the_owned_slot_under_each_outcome_of_a_tree():
         assert tree.state.name not in values                 # nobody writes a tree's input
     # invalidating a tree releases what it wrote; deleting one, its whole slot set
     run(good.evaluate_to(False, evaluate=False))
+    assert tm.st(good) == (NOT_EVALUATED, NOT_EVALUATED) and tm.st(a) is NOT_EVALUATED
+    assert a.state.name not in values and good._state_after_ending.name not in values
     inv(f)
     for tree in (bad_end, bad_header):
         run(locked(f, edit.delete(tree)))
@@ -302,29 +310,31 @@ def test_where_a_session_and_a_theory_may_live():
 
 def test_names():
     f, s, x, y, a = arith()
-    # a theory's short name is an Isabelle identifier, judged by the class as
-    # the agent spelt it, with the theory-name rendering; a trailing
-    # underscore is legal there and is the framework's grammar to refuse,
-    # with the rendering that names that rule
-    for bad in ("Foo-Bar", "A.B", "1x", "", "x y"):
+    # a theory's short name takes the theory-name grammar, judged by the
+    # class as the agent spelt it, with the theory-name rendering: no
+    # hyphen, no dot, no prime; a trailing underscore is legal there and is
+    # the framework's grammar to refuse, with the rendering that names that
+    # rule
+    for bad in ("Foo-Bar", "A.B", "1x", "", "x y", "P'_2"):
         with pytest.raises(InvalidName) as e:
             insert(f, s, 0, [theory(bad)])
-        assert (e.value.name, e.value.theory_name) == (bad, True)
+        assert (e.value.name, e.value.grammar) == (bad, "theory name")
     with pytest.raises(InvalidName) as e:
         insert(f, s, 0, [theory("x_")])
-    assert (e.value.name, e.value.theory_name) == ("x_", False)
-    (p,) = insert(f, s, 0, [theory("P'_2")])
-    assert p.id_component() == "theory_P'_2"
-    # a session's name may carry hyphens: the framework's grammar, judged on
-    # the agent's spelling, with the name rendering
-    for bad in ("Ch 2", "x-", "-x", "Ch.2"):
+    assert (e.value.name, e.value.grammar) == ("x_", "name")
+    # a session's name takes the session-name grammar, judged by the class
+    # first — strictly narrower than the framework's, whose rendering can
+    # therefore never fire for a session: interior hyphens, no prime
+    for bad in ("Ch 2", "x-", "-x", "Ch.2", "S'"):
         with pytest.raises(InvalidName) as e:
             insert(f, f, 0, [session(bad)])
-        assert (e.value.name, e.value.theory_name) == (bad, False)
+        assert (e.value.name, e.value.grammar) == (bad, "session name")
     (lib,) = insert(f, f, 0, [session("HOL-Library")])
     assert lib.name == "HOL-Library" and f.id_of(lib) == "session_HOL-Library"
     (sessions,) = insert(f, f, 0, [session("Sessions")])       # no name is reserved
     assert f.id_of(sessions) == "session_Sessions" and f.resolve("Sessions") is f
+    (p,) = insert(f, y, 0, [{"kind": "t", "name": "p'"}])      # every other node keeps the prime
+    assert p.id_component() == "t_p'"
     inv(f)
 
 
@@ -334,6 +344,12 @@ def test_a_theory_short_name_is_unique_everywhere():
     with pytest.raises(DuplicateTheoryShortName) as e:       # the base heap
         insert(f, s2, 0, [theory("List")])
     assert (e.value.short_name, e.value.holder) == ("List", "HOL.List")
+    with pytest.raises(DuplicateTheoryShortName) as e:       # a loaded global: taken, by itself
+        insert(f, s2, 0, [theory("Main")])
+    assert (e.value.short_name, e.value.holder) == ("Main", "Main")
+    with pytest.raises(ReservedTheoryName) as e:             # global in the layout, loaded nowhere
+        insert(f, s2, 0, [theory("FOL")])
+    assert e.value.name == "FOL"
     with pytest.raises(DuplicateTheoryShortName) as e:       # another session's tree
         insert(f, s2, 0, [theory("X")])
     assert (e.value.short_name, e.value.holder) == ("X", "theory_X")
@@ -356,24 +372,34 @@ COVERED = set()
 
 def test_the_field_checks():
     f, s, x, y, a = arith()
-    def refused(parent, raw, field, rendering=None):
+    def refused(parent, raw, field, reason):
         with pytest.raises(InvalidField) as e:
             insert(f, parent, 0, [raw])
-        assert e.value.field == field
-        if rendering is not None:
-            e.value.raw_ast_path = None            # the cause line alone
-            assert str(e.value) == rendering and rendering in REASONS
+        assert (e.value.field, e.value.reason) == (field, reason)
+        e.value.raw_ast_path = None                # the cause line alone
+        rendering = str(e.value)
+        if rendering in REASONS:
             COVERED.add(rendering)
-    refused(s, theory("Z") | {"imports": []}, "imports")
-    refused(s, theory("Z", "Main", ""), "imports[1]")
-    refused(f, session("S") | {"parent_session": ""}, "parent_session",
-            "The field `parent_session` must not be empty.")
-    refused(f, session("S", options=[{"name": "", "value": "x"}]), "options[0].name")
-    refused(f, session("S", options=[{"name": "document", "value": ""}]), "options[0].value")
+    empty, not_a_name = ("must not be empty",
+                         "must be a theory name without quotes; a path is not allowed")
+    refused(s, theory("Z") | {"imports": []}, "imports", empty)
+    refused(s, theory("Z", "Main", ""), "imports[1]", empty)   # judged empty before its shape
+    # an item is `<short name>` or `<session>.<short name>`, each half in
+    # the session-name grammar: no quotes, no path, no `.thy`, no third
+    # half, no prime in either half; the AFP's hyphenated names pass, and
+    # the header quotes every item
+    for item in ('"lib/Rel"', "lib/Rel", "Main.thy", "A.B.C", "S'.Foo", "S.Foo'", "-x"):
+        refused(s, theory("Z", "Main", item), "imports[1]", not_a_name)
+    (z,) = insert(f, s, 0, [theory("Z", "Main", "Launchbury.AList-Utils")])
+    assert z.header() == 'theory Z\n  imports "Main" "Launchbury.AList-Utils"\nbegin'
+    run(locked(f, edit.delete(z)))
+    refused(f, session("S") | {"parent_session": ""}, "parent_session", empty)
+    refused(f, session("S", options=[{"name": "", "value": "x"}]), "options[0].name", empty)
+    refused(f, session("S", options=[{"name": "document", "value": ""}]), "options[0].value",
+            empty)
     refused(f, session("S", options=[{"name": "document", "value": "pdf"},
                                      {"name": "document", "value": "false"}]),
-            "options[1].name",
-            "The field `options[1].name` sets the option `document` a second time.")
+            "options[1].name", "sets the option `document` a second time")
     assert f.sub_nodes == [s] and s.sub_nodes == [x, y]
     assert COVERED == REASONS
     inv(f)

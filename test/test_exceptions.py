@@ -13,7 +13,7 @@ from isabelle_theory_agent.exceptions import (
     ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
-    ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
+    ReservedTheoryName, ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
     TAT_IsabelleError, TAT_StartupError, UnexpectedChildren, UnexpectedField,
     UnknownKind)
 
@@ -139,10 +139,15 @@ def test_invalid_name():
           " continues with letters, digits, underscores, primes (') and"
           " interior hyphens, and does not end with a hyphen or an"
           " underscore.")
-    check(InvalidName(name="Foo-Bar", theory_name=True),
+    check(InvalidName(name="Foo-Bar", grammar="theory name"),
           "`Foo-Bar` is not a valid theory name: a theory name starts with a"
+          " letter and continues with letters, digits and underscores, with"
+          " no hyphen and no dot.")
+    check(InvalidName(name="S'", grammar="session name"),
+          "`S'` is not a valid session name: a session name starts with a"
           " letter and continues with letters, digits, underscores and"
-          " primes ('), with no hyphen and no dot.")
+          " interior hyphens, and does not end with a hyphen or an"
+          " underscore.")
 
 def test_duplicate_theory_short_name():
     check(DuplicateTheoryShortName(short_name="List", holder="HOL.List"),
@@ -152,6 +157,10 @@ def test_duplicate_theory_short_name():
                                    holder="constructs[1].children[0]"),
           "The theory name `Foo` is also used by `constructs[1].children[0]`"
           " of this call.")
+
+def test_reserved_theory_name():
+    check(ReservedTheoryName(name="FOL"),
+          "`FOL` is a reserved theory name; choose another name.")
 
 def test_holds_no_children():
     check(HoldsNoChildren(id="theory_X.lemma_P", kind="lemma"),
@@ -276,6 +285,7 @@ def test_groups():
     assert issubclass(NodeNotFound, ResolutionError)
     assert issubclass(MalformedRawAST, RawASTError)
     assert issubclass(DuplicateTheoryShortName, BadEdit)
+    assert issubclass(ReservedTheoryName, BadEdit)
     assert issubclass(BadSessionNodeParent, BadEdit)
     assert issubclass(BadTheoryNodeParent, BadEdit)
     assert issubclass(ConstructNotSupported, ConstructFailed)

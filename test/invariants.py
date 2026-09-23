@@ -15,18 +15,30 @@ the fake state slot table of `test_model.py` and the forest's real store
 - Mirror: the store loads back as this forest — same nodes in the same
   order with the same identities, kinds, names and fields — and holds no
   row of a node that has left (the plan's §2).
+- The theory table, two one-way statements over the fake one of
+  `test_model.py`, which the fakes' endings write: every tree answering
+  `_operations_ready()` has its qualified name in the table, and every
+  name in the table is the qualified name of a current tree.  Neither
+  converse holds — an entry stays after the tree is invalidated, and a
+  failed header leaves the ending `ready` with no value (EVALUATOR_DESIGN
+  §3).
+- A tree one of whose resolved imports does not answer
+  `_operations_ready()` is `not_evaluated` throughout: the premise the
+  `Theory` ending's rule rests on (ARCHITECTURE §3.4), since a tree runs
+  only after its imports have their theory value, and is invalidated
+  whole the moment one of them loses it.
 """
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
-from isabelle_theory_agent.model import READY, StdBlock
+from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY, StdBlock
 from test_model import NOT_RUN, Block, CONN, T, shape
 
 
 def _current(status, beginning=False):
     if beginning:
         return status is READY
-    return status is READY or M._is_own_stop(status)
+    return M._wrote(status)
 
 
 def _chained(parent):
@@ -48,7 +60,7 @@ def assert_invariants(forest, table):
                 assert child.state.name not in values, f"{child}: input written by nobody"
                 if isinstance(child, StdBlock):
                     wrote = (_current(child.evaluation_status_ending)
-                             and not M._is_own_stop(child.evaluation_status_beginning))
+                             and child.evaluation_status_beginning is not CANNOT_EVALUATE)
                     held = child.resulting_state().name in values
                     assert held == wrote, f"{child}: result held={held}, ending wrote={wrote}"
             continue
@@ -72,14 +84,14 @@ def assert_invariants(forest, table):
         if isinstance(node, T) and node._status is READY:
             assert values.get(node.state.name) == node.consumed, \
                 f"{node}: ready, consumed {node.consumed!r}, input now {values.get(node.state.name)!r}"
-        if isinstance(node, T) and M._is_own_stop(node._status):
+        if isinstance(node, T) and node._status is CANNOT_EVALUATE:
             # its copy-through stands, and still matches its input where that is current
             assert values.get(node.resulting_state().name) == node.copied, \
                 f"{node}: own stop, copied {node.copied!r}, result now {values.get(node.resulting_state().name)!r}"
             if node.state.name in values:
                 assert values[node.state.name] == node.copied, \
                     f"{node}: own stop copied {node.copied!r}, input now {values[node.state.name]!r}"
-        if isinstance(node, Block) and M._is_own_stop(node.evaluation_status_ending):
+        if isinstance(node, Block) and node.evaluation_status_ending is CANNOT_EVALUATE:
             assert values.get(node.resulting_state().name) == node.copied_end, \
                 f"{node}: ending own stop, copied {node.copied_end!r}"
         if isinstance(node, Block):
@@ -88,7 +100,7 @@ def assert_invariants(forest, table):
                     f"{node}: beginning ready, consumed {node.consumed_begin!r}"
             if node.evaluation_status_ending is READY:
                 if node.consumed_end is NOT_RUN:   # the failed opening's copy-through
-                    assert M._is_own_stop(node.evaluation_status_beginning), \
+                    assert node.evaluation_status_beginning is CANNOT_EVALUATE, \
                         f"{node}: ending ready without a run, yet the beginning stands"
                     assert (values.get(node.resulting_state().name)
                             == values.get(node.state.name)), \
@@ -96,6 +108,16 @@ def assert_invariants(forest, table):
                 else:
                     assert values.get(node._state_before_ending.name) == node.consumed_end, \
                         f"{node}: ending ready, consumed {node.consumed_end!r}"
+    trees = forest._trees()
+    for tree in trees:
+        if tree._operations_ready():
+            assert tree.qualified_name() in table.theories, \
+                f"{tree}: ready, but the theory table lacks {tree.qualified_name()}"
+        if not all(i._operations_ready() for i in forest._resolved_imports(tree)):
+            assert all(s is NOT_EVALUATED for n in tree._tree_order() for s in n._own_statuses()), \
+                f"{tree}: an import has no theory value, yet it holds a status"
+    assert table.theories <= {t.qualified_name() for t in trees}, \
+        f"the theory table names no current tree: {table.theories}"
 
 
 def assert_store_mirrors(forest, kinds, shape=shape):

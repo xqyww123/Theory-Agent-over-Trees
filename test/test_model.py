@@ -15,27 +15,31 @@ from isabelle_theory_agent import edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import (
     TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.model import (
-    NOT_EVALUATED, READY, INVALIDATING, CannotEvaluate, Isar_State_Slot)
+    CANNOT_EVALUATE, NOT_EVALUATED, READY, INVALIDATING, Isar_State_Slot)
 from isabelle_theory_agent.store import Forest_Store
 
 
 # --- a fake state slot table ------------------------------------------------
 
 class Table:
-    """The fake state slot table, and a recorder of every store's writes:
-    how many transactions opened, which nodes they touched, and which
-    stores are inside one right now."""
+    """The fake state slot table, the fake theory table beside it, and a
+    recorder of every store's writes: how many transactions opened, which
+    nodes they touched, and which stores are inside one right now."""
 
     def __init__(self):
         self.values: dict[str, str] = {}
         self.deleted: list[str] = []
-        self.calls: list[tuple] = []        # every round trip, in order
+        self.calls: list[tuple] = []        # every state slot round trip, in order
+        self.theories: set[str] = set()     # the fake theory table: the qualified names
+                                            # the fakes' endings wrote (test_session_theory)
+        self.theory_deletes: list[tuple[str, ...]] = []   # every theory_delete round trip
         self.transactions = 0
         self.touched: set[int] = set()      # nodes written or deleted
         self.open_stores: set = set()
 
     def clear(self):
         self.values.clear(); self.deleted.clear(); self.calls.clear()
+        self.theories.clear(); self.theory_deletes.clear()
         self.clear_writes()
 
     def clear_writes(self):
@@ -61,7 +65,11 @@ class Table:
             self.calls.append(("copy", src, dst))
             if src in self.values: self.values[dst] = self.values[src]
             else: self.values.pop(dst, None)
-        for f in (state_delete, state_exists, state_copy):
+        async def theory_delete(conn, names):
+            self._no_transaction_open()
+            self.theory_deletes.append(tuple(names))
+            self.theories.difference_update(names)
+        for f in (state_delete, state_exists, state_copy, theory_delete):
             monkeypatch.setattr(isabelle_driver, f.__name__, f)
         # Wrap the store itself, so every store is watched whoever made it.
         transaction, put, delete_node = (
@@ -270,18 +278,18 @@ def test_a_evaluate_inside_block():
 def test_b_own_stop_strict_then_ignore():
     f, thy, sec, t1, t2, t3, t4 = build(T1=True)
     r = run(t1.evaluate_to(False))
-    assert r.stopped_at is t1 and st(t1) == CannotEvaluate(None)
+    assert r.stopped_at is t1 and st(t1) is CANNOT_EVALUATE
     assert TABLE.values[t1.resulting_state().name] == "begin Section"   # the input copied through
     r = run(t4.evaluate_to(False))
     assert r.stopped_at is t1 and t1.runs == 1                          # not rerun
-    assert st(t2) == CannotEvaluate(t1) and st(t3) == CannotEvaluate(t1) and st(t4) == CannotEvaluate(t1)
-    assert st(sec) == (READY, CannotEvaluate(t1))
+    assert st(t2) is NOT_EVALUATED and st(t3) is NOT_EVALUATED and st(t4) is NOT_EVALUATED
+    assert st(sec) == (READY, NOT_EVALUATED)
     r = run(t4.evaluate_to(True))
     assert r == M.EvaluationResult(None, INVALIDATING)
     assert st(t2) is READY and st(t3) is READY and st(t4) is READY and st(sec) == (READY, READY)
     # a strict call again reports the stop and tears the tail down (R2 stance)
     r = run(t4.evaluate_to(False))
-    assert r.stopped_at is t1 and st(t4) == CannotEvaluate(t1)
+    assert r.stopped_at is t1 and st(t4) is NOT_EVALUATED
     assert t4.resulting_state().name in TABLE.deleted
 
 
@@ -289,15 +297,15 @@ def test_c_failed_opening():
     f, thy, sec, t1, t2, t3, t4 = build(Section="begin")
     r = run(t2.evaluate_to(False))
     assert r == M.EvaluationResult(None, INVALIDATING)
-    assert st(sec) == (CannotEvaluate(None), NOT_EVALUATED)
-    assert st(t1) == CannotEvaluate(sec) and st(t2) == CannotEvaluate(sec)
+    assert st(sec) == (CANNOT_EVALUATE, NOT_EVALUATED)
+    assert st(t1) is NOT_EVALUATED and st(t2) is NOT_EVALUATED
     r = run(t4.evaluate_to(False))
     assert r == M.EvaluationResult(None, INVALIDATING) and sec.begin_runs == 1   # not rerun
-    assert st(sec) == (CannotEvaluate(None), READY) and st(t3) is READY and st(t4) is READY
+    assert st(sec) == (CANNOT_EVALUATE, READY) and st(t3) is READY and st(t4) is READY
     assert TABLE.values[sec.resulting_state().name] == "begin Theory"           # input stands as result
     # a destination under the failed opening: visited, stays blocked, no rerun of the opening
     r = run(t1.evaluate_to(False))
-    assert r == M.EvaluationResult(None, INVALIDATING) and st(t1) == CannotEvaluate(sec)
+    assert r == M.EvaluationResult(None, INVALIDATING) and st(t1) is NOT_EVALUATED
     assert sec.begin_runs == 1
 
 
@@ -364,8 +372,8 @@ def test_finished_is_derived_and_owes_nothing_is_the_classes_part():
 def test_failed_ending_is_a_stop():
     f, thy, sec, t1, t2, t3, t4 = build(Section="end")
     r = run(t4.evaluate_to(False))
-    assert r.stopped_at is sec and st(sec) == (READY, CannotEvaluate(None))
-    assert st(t3) == CannotEvaluate(sec)
+    assert r.stopped_at is sec and st(sec) == (READY, CANNOT_EVALUATE)
+    assert st(t3) is NOT_EVALUATED
     r = run(t4.evaluate_to(False))
     assert r.stopped_at is sec and sec.end_runs == 1
 
@@ -410,7 +418,7 @@ def test_reopen_restores_the_forest_not_evaluated(tmp_path):
     r = run(thy2.sub_nodes[1].evaluate_to(True))
     assert r == M.EvaluationResult(None, INVALIDATING)
     assert st(thy2) == (READY, NOT_EVALUATED) and st(thy2.sub_nodes[0]) == (READY, READY)
-    assert st(thy2.sub_nodes[0].sub_nodes[0]) == CannotEvaluate(None)   # T1 still fails
+    assert st(thy2.sub_nodes[0].sub_nodes[0]) is CANNOT_EVALUATE      # T1 still fails
     assert_invariants(f2, TABLE)
     # a fresh identity after the reopen collides with no loaded one
     (new,) = run(locked(f2, edit.insert(thy2,0, [{"kind": "t", "name": "N"}], KINDS)))

@@ -1,7 +1,8 @@
 # The `Session` and `Theory` node classes
 
 Status: design, approved 2026-09-06, amended 2026-09-08 (the recorded
-fields, the name grammar, §3) and 2026-09-16 (§4); the classes are in `model.py`, their
+fields, the name grammar, §3), 2026-09-16 (§4) and 2026-09-22/23 (the name
+grammars, the `imports` items, the reserved names, §3); the classes are in `model.py`, their
 descriptions pinned by `test/test_descriptions.py` and §3's sentences by
 `test/test_session_theory.py`.
 
@@ -17,8 +18,7 @@ A class's agent-facing wording lives here: in §1 and §2 the `description`
 texts of its construct schema (PLUGIN_SYSTEM §3), beside its field
 table, one fenced line per description — a field with no line has no
 description — and in §3 the `InvalidField` reasons its gen checks supply;
-the rendering of a whole exception class its gen raises — its
-`Bad<Class>NodeParent` sentence, `Theory`'s theory-name `InvalidName` — is
+the rendering of each whole exception class its gen raises is
 RENDER_BASELINES §2's (EXCEPTIONS.md §3). Baseline tests pin the lines the
 way RENDER_BASELINES.md's are pinned.
 
@@ -63,17 +63,21 @@ supplied in quotes is unquoted first. Its `name` prefixes its trees' qualified n
 transparent to it (ARCHITECTURE §3.5), and what it emits is the ROOT entry
 and the directory, not Isar. `parent_session` is transcribed and nothing
 else: the prover sits on the base heap regardless (ARCHITECTURE §8), and an
-import the heap lacks is loaded from source.
+import the heap lacks is loaded from source when the Isabelle session
+layout knows its file.
 
 `Session.gen` checks: the parent is the forest root `Sessions`
-(`BadSessionNodeParent`); `parent_session`, and every option's `name` and
-`value`, are non-empty (`InvalidField`); no option name appears twice
-(`InvalidField`, naming the option). The name needs no check of the
-class's own: a session name is bound by nothing beyond the framework's
-name grammar (MCP_SPECIFICATION §2), whose interior hyphens it wants
-(`HOL-Library`), and the framework judges that grammar itself. Its trees
-are not chained: no tree's state is the next tree's input
-(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
+(`BadSessionNodeParent`); the name against the session name's grammar — a
+letter, then letters, digits, underscores and interior hyphens
+(`HOL-Library`), not ending in a hyphen or an underscore, and no prime,
+since the name becomes a path element — with its own rendering of
+`InvalidName` (RENDER_BASELINES §2), a grammar strictly narrower than the
+framework's (MCP_SPECIFICATION §2), whose sentence is a backstop that
+cannot fire for a `Session`; `parent_session`, and every option's `name`
+and `value`, are non-empty (`InvalidField`); no option name appears twice
+(`InvalidField`, naming the option). Its trees are not chained: no tree's
+state is the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
+§6).
 
 ## 2. `Theory`
 
@@ -89,8 +93,8 @@ putting the theory value into the theory table through `end_theory`
 
 | Field | Type | |
 | --- | --- | --- |
-| `name` | the theory's short name, `str`: an Isabelle identifier — a letter, then letters, digits, underscores and primes; no dot, no hyphen. The framework's name grammar (MCP_SPECIFICATION §2) applies as well, refusing a trailing underscore | authored |
-| `imports` | `list[str]`, non-empty; each item as written in the header's `imports` clause | authored |
+| `name` | the theory's short name, `str`: a letter, then letters, digits and underscores; no dot, no hyphen, and no prime, since the name becomes a path element. The framework's name grammar (MCP_SPECIFICATION §2) applies as well, refusing a trailing underscore | authored |
+| `imports` | `list[str]`, non-empty; each item a theory name in one of two shapes, `<short name>` or `<session>.<short name>`, each half in the session name's grammar (§1), so that the AFP's hyphenated theory names (`AList-Utils`) can be imported; no quotes, no path, no `.thy`. The header quotes every item | authored |
 | `beginning_errors`, `ending_errors` | `list[str]` each: what the last run of the operation reported, empty when it passed; held until the operation runs again and never stored, a loaded forest being `not_evaluated` throughout; shown only while the status that run left stands (PRINT.md §3) | recorded |
 
 Its construct declares `children`, `items` being `#/$defs/Construct`.
@@ -115,10 +119,13 @@ The theory's declarations
 
 The qualified name is `<Session name>.<name>`, computed, never stored.
 `Theory.gen` checks: the parent is a `Session` (`BadTheoryNodeParent`); the
-identifier grammar of `name` (`InvalidName`); the short name against the
-base heap through `check_new_theory_short_name`
-(`DuplicateTheoryShortName`); `imports` non-empty with non-empty strings
-(`InvalidField`). The short name's uniqueness within the forest and the
+theory name's grammar (`InvalidName`); the short name, through
+`check_new_theory_short_name`, against what Isabelle has loaded
+(`DuplicateTheoryShortName`, with the holder's long name) and against the
+names the Isabelle session layout declares global — `Main`, `FOL`, … —
+which no tree can bear (`ReservedTheoryName`, EVALUATOR_DESIGN §7);
+`imports` non-empty, each item non-empty and in one of its two shapes
+(`InvalidField`, §3). The short name's uniqueness within the forest and the
 batch is the framework's (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §3).
 Whether an import exists is reported by `begin_theory` at evaluation.
 
@@ -127,11 +134,13 @@ Whether an import exists is reported by `begin_theory` at evaluation.
 The two classes' gen checks render these sentences (RENDER_BASELINES §2's
 `InvalidField` shape, with the reason the class's own); the first for
 `parent_session`, an empty `imports`, an empty item of `imports`, and an
-empty option name or value:
+empty option name or value; the third for an item of `imports` that is
+not a theory name in one of its two shapes:
 
 ```
 The field `parent_session` must not be empty.
 The field `options[1].name` sets the option `document` a second time.
+The field `imports[1]` must be a theory name without quotes; a path is not allowed.
 ```
 
 ## 4. What they print
@@ -141,8 +150,8 @@ the line and the children are the framework's, and both classes take the
 framework's default `mark`. `Session` runs no operation, so it has no
 errors; `Theory` writes its two operations' messages — whole under
 `Recall` below depth 2, once per run elsewhere, never in `Briefing` — and
-only for an operation that is an obstacle, `cannot_evaluate` with no
-`blocked_by` (PRINT.md §3, §4).
+only for an operation that is an obstacle, `cannot_evaluate` (PRINT.md
+§3, §4).
 
 | mode | `Session` | `Theory` |
 | --- | --- | --- |

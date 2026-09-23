@@ -23,7 +23,7 @@ from isabelle_theory_agent import mcp, plugin
 from isabelle_theory_agent.exceptions import (
     HoldsNoChildren, InvalidField, MissingField, MoveBesideItself, MoveIntoOwnSubtree,
     NodeNotFound, ProtectedNode, RawASTError, TAT_Error, TAT_InternalError, UnexpectedField)
-from isabelle_theory_agent.model import CannotEvaluate, READY
+from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY
 
 
 class Block(tm.Block):                  # omissible like a `Theory`, so the tests' ids stay short
@@ -222,9 +222,9 @@ def test_evaluate_runs_to_the_last_new_node_and_names_a_stop():
     out = call(tools["edit"], action="insert_after", target_id="t_x",
                constructs=[t("bad", fail=True), t("after")], evaluate=True)
     bad, after = sec.sub_nodes[-2:]
-    assert tm.st(bad) == CannotEvaluate(None) and tm.st(after) == CannotEvaluate(bad)
+    assert tm.st(bad) is CANNOT_EVALUATE and tm.st(after) is NOT_EVALUATED
     assert out[0] == "Done: insert_after t_x; evaluation stopped at t_bad."
-    assert out[-3:] == ["  - t_bad (failed)", "  - t_after (blocked by t_bad)", "- t_c (not evaluated)"]
+    assert out[-3:] == ["  - t_bad (failed)", "  - t_after (not evaluated)", "- t_c (not evaluated)"]
 
 
 def test_edit_refusals_open_with_the_operation_and_leave_the_forest_alone():

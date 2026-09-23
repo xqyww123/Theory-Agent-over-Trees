@@ -86,7 +86,7 @@ Import resolution, in order:
 resolve name =
     our own table            (* trees this conversation evaluated to their end *)
   | Thy_Info.lookup_theory   (* the base heap *)
-  | load from source (§6)    (* a library theory the heap lacks *)
+  | load from source (§6)    (* a theory whose file the Isabelle session layout knows *)
 ```
 
 One producer means one slot per name, so two distinct `theory` values with one
@@ -96,7 +96,13 @@ join theories` (`:521`) — cannot be constructed. The invariant holds by shape.
 Everything the forest imports from outside itself is expected to be in the base
 heap. An import that is not there is loaded from source rather than refused, so
 that an agent which discovers a dependency mid-work is not stopped to wait for a
-heap rebuild.
+heap rebuild — from the file the Isabelle session layout knows under the
+name's session (`Resources.find_theory_file`), never by path, never under
+a qualified name whose short name the layout declares global (§7), and
+never from under the working directory, which the launcher keeps out of
+the layout (MODULE_STRUCTURE §5). An import found nowhere — no forest tree, no
+base-heap theory, no known file — fails the header with RENDER_BASELINES
+§3's sentence, under the name Isabelle resolved it to.
 
 ## 3. The theory table
 
@@ -104,7 +110,7 @@ A table from qualified theory name (§7) to `theory` value, written by the
 `Theory` root node's ending command — its `end` (§1). A second write
 overwrites: TAT re-evaluates on every edit.
 
-The table keeps no dependency edges: invalidation is the Python side's,
+The table keeps no import dependencies: invalidation is the Python side's,
 which marks every tree that imports a changed tree `not_evaluated`
 (ARCHITECTURE §3.4) and never requests a theory whose tree is not evaluated
 to its end (ARCHITECTURE §3.5), so an entry that is merely out of date is
@@ -152,8 +158,8 @@ site was missed (`Server.ML:640,643`).
 per-command results whenever the error slot is set, which is when they matter.
 
 **Output capture must actually be switched on.** Isa-REPL's `init_printers`
-(`REPL.ML:265`) has no callers, and `repl_server.sh:92` runs
-`REPL.disable_output ()`, so its `output` field is always empty.
+(`REPL.ML:265`) has no callers, and the `isabelle REPL` tool's `Isa_REPL.startup`
+handler runs `REPL.disable_output ()`, so its `output` field is always empty.
 
 **The evaluator must not own the files.** Isa-REPL deletes and rewrites the
 `.thy` (`REPL.ML:472-485`, `:521-528`). TAT is the compiler; two writers is one
@@ -190,9 +196,9 @@ the wrapper exists, is the one call outside it (MODULE_STRUCTURE §5).
   as a neutral element and release_all would swallow it whenever the residue
   holds real errors -- and residue errors are released only when the call
   was not cancelled.*)
-fun load options qualifier import =
+fun load options import =
   let
-    val result = Exn.capture_body (fn () => Thy_Info.use_theories options qualifier [import]);
+    val result = Exn.capture_body (fn () => Thy_Info.use_theories options "" [import]);
     val residue = map Exn.Exn (maps Task_Queue.group_status (Execution.reset ()));
     val _ =
       (case Exn.get_exn result of
@@ -239,7 +245,12 @@ Four conditions, all required together:
   runs anything. A node class's asynchronous work must not call
   `run_commands` while a load may run.
 
-Pass a path or a session-qualified name, not a bare name.
+`load` is handed the one name the Isabelle session layout gives the
+file: `<session>.<short name>`, or the short name alone when the layout
+declares it global — never a path, never a bare non-global name, and
+never a qualified name whose short name is global (§7) — under the empty
+qualifier, so that `use_theories`'s own resolution leaves it unchanged and
+the theory loads under exactly that name.
 
 Two hazards remain, both avoided by not doing something rather than by shape:
 
@@ -272,4 +283,12 @@ the qualifier; the qualified name it returns (`#theory_name`,
 such as `HOL-Library.Multiset`) is the only key for the theory table (§3); no
 file is ever loaded under two name forms; and a forest theory whose short name
 is already taken is rejected when it is created, not when something imports
-it.
+it. So is a name the Isabelle session layout declares global (`Main`,
+`FOL`, …): `Resources.theory_name` leaves such a name unqualified, and a
+tree so named would be keyed without its `Session` (`ReservedTheoryName`,
+answered by `Resources.global_theory`). The same names are refused as
+the short name of a qualified import: Isabelle answers `imports HOL.Main`
+by loading `Main.thy` a second time as a theory named `HOL.Main`, and a
+later theory importing both fails with `Duplicate theory name`; `fetch`
+refuses the name instead, with RENDER_BASELINES §3's sentence, so the
+error stands at the import that wrote it.

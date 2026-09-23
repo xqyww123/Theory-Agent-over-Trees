@@ -16,7 +16,7 @@ ML/TAT_Boot.ML                the boot: the protocol command `TAT.boot`, loaded 
 src/scala/tat.scala           the launcher: the Isabelle tools `TAT_new` and `TAT` (§5)
 lib/tat.jar                   the launcher compiled by `isabelle scala_build`; committed, as Isabelle_RPC's jar is
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the class that registers the tools
-ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5); its heap is a compile check nothing runs on
+ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
@@ -35,7 +35,11 @@ and as a compile check of the sources — the boot excepted, which only a
 starting process compiles (§5). A running conversation never sits
 on that heap: `Theory_Agent_over_Trees.thy`, and the theory defining each
 plugin the working directory records, are loaded from source on the base
-heap when the process starts (ARCHITECTURE §8).
+heap when the process starts (ARCHITECTURE §8). Its `directories "test"`
+puts `test/` among the session's theory search directories, so that a
+`.thy` there — the ML test's helper theory, the test plugin — is found by
+its session-qualified name, `Theory_Agent_over_Trees.<name>`, while
+declaring no theory there.
 
 One structure per file except the boot, which defines none, and two
 structures in all. Inside a file the body is
@@ -69,8 +73,10 @@ and reached only through five operations.
 ### 2.2 Theory table
 
 The map from qualified theory name (EVALUATOR_DESIGN §7) to `theory` value
-(EVALUATOR_DESIGN §3), locked like the state slot table. `put` overwrites and `lookup` reads;
-nothing else. The key of an entry `end_theory` writes is the theory value's
+(EVALUATOR_DESIGN §3), locked like the state slot table. `put` overwrites,
+`lookup` reads, and `delete` removes the names an edit made vanish
+(`TAT.theory_delete`, §2.6; EVALUATOR_DESIGN §3), a name it does not hold
+included. The key of an entry `end_theory` writes is the theory value's
 own long name — the same string §2.3's resolution produces.
 
 ### 2.3 Theory loader
@@ -78,17 +84,30 @@ own long name — the same string §2.3's resolution produces.
 Import resolution in the order of EVALUATOR_DESIGN §2, behind one
 `Resources.import_name` call (EVALUATOR_DESIGN §7):
 
-- `resolve` — the theory table, then `fetch`;
-- `fetch` — the base heap, then a load from source; also how the theories
-  the launcher names are fetched (§5), before any conversation exists;
+- `resolve` — the theory table, then `fetch`, under the name
+  `Resources.import_name` produced;
+- `fetch` — the base heap, then a load from source of a theory whose file
+  the Isabelle session layout knows under the name's session
+  (`Resources.find_theory_file`), nothing by path, and nothing under a
+  qualified name whose short name the layout declares global
+  (EVALUATOR_DESIGN §7); an import found nowhere, or so named, is refused
+  under the name Isabelle resolved it to, with RENDER_BASELINES §3's
+  sentence. Also how the theories the launcher names are fetched (§5),
+  before any conversation exists;
 - `load` — the `Thy_Info.use_theories` wrapper of EVALUATOR_DESIGN §6, under
   one lock, one theory per call, with `parallel_proofs` below 3, which the
   boot sets from the option before its first load (§5) and every load and
-  the conversation's start assert (`check_parallel_proofs`);
-- `check_new_theory_short_name` — rejects a new theory name whose short name —
-  the part after the last dot, which is what Isabelle compares
-  (EVALUATOR_DESIGN §7) — the base heap already uses; the forest side of that
-  check (MCP_SPECIFICATION §2) is Python's.
+  the conversation's start assert (`check_parallel_proofs`); handed the
+  name `find_theory_file` answered for, under the empty qualifier, which
+  leaves such a name unchanged;
+- `check_new_theory_short_name` — one of three answers about a new theory's
+  short name — the part after the last dot, which is what Isabelle
+  compares (EVALUATOR_DESIGN §7) — in this order: taken by a loaded
+  theory, with its long name (`Main` on a HOL heap); reserved, no loaded
+  theory bearing it but the Isabelle session layout declaring it global
+  (`FOL` on a HOL heap), so that Isabelle would leave a tree so named
+  unqualified; free. The forest side of the check (MCP_SPECIFICATION §2)
+  is Python's, and so is every rejection.
 
 ### 2.4 Running commands
 
@@ -209,7 +228,9 @@ and starts the conversation:
 3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
-   name), and `TAT.check_new_theory_short_name` (§2.3);
+   name), `TAT.theory_delete` on the theory table (§2.2's `delete`), and
+   `TAT.check_new_theory_short_name` (§2.3), whose three answers travel as
+   `["taken", <long name>]`, `["reserved"]` and `["free"]`;
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.6) with the collected package list, the
@@ -428,11 +449,9 @@ moves a value between slots by one copy (`edit.insert`, `edit.delete`,
 nothing, a node that has a result owns the slot for it, as `Theory` does
 with `_state_after_ending` (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 
-**Status.** A status is `NotEvaluated`, `Ready`, or
-`CannotEvaluate(blocked_by)` — the Python classes of ARCHITECTURE §3.2's
-`not_evaluated`, `ready` and `cannot_evaluate`, §3.3's `blocked_by` riding
-inside the third; the reason travels
-inside the value, so a `Ready` operation cannot carry a stale one. A `Leaf`
+**Status.** A status is `NotEvaluated`, `Ready` or `CannotEvaluate` — the
+Python classes of ARCHITECTURE §3.2's `not_evaluated`, `ready` and
+`cannot_evaluate`, one instance each. A `Leaf`
 has one, a `StdBlock` two — `evaluation_status_beginning` and
 `evaluation_status_ending` — and no node reads another's: the one question
 asked of a node from outside is `is_finished()`, which the framework
@@ -443,7 +462,12 @@ answers — every operation of the node and of its subtree `Ready`, and
 does (PLUGIN_SYSTEM §5). Every status write goes through one setter per
 operation, which releases the operation's resulting state when the status
 goes from written to unwritten — never on a rewrite; a loaded forest's
-statuses are all `NotEvaluated`.
+statuses are all `NotEvaluated`. The ending setter alone is `async`;
+`Theory`'s also carries ARCHITECTURE §3.4's rule: when the ending leaves `ready`,
+the tree's direct importers are walked whole in `Invalidating` mode under
+the same `Evaluation`, after the assignment — so within one cascade no
+ending leaves `ready` twice, a tree importing itself included — each
+ending so moved firing the rule for its own importers.
 
 **Hierarchy**, following AoA's (`class Leaf` :5333, `class NonLeaf_Node`
 :5449, `class StdBlock` :5836):
@@ -473,7 +497,10 @@ statuses are all `NotEvaluated`.
   and prints their shortest form; and, in the walk, keeps the import graph
   (recomputed whenever needed, never stored), routes a walk to the tree it
   concerns, invalidates every tree that imports a changed one, and runs a
-  tree's imports to their `end`.
+  tree's imports to their `end`; `_order_violation(node)` answers the
+  `imports` item that violates the order constraint (ARCHITECTURE §3.3),
+  and None off a violating `Theory`, so the tool may ask it of any node a
+  result names.
 
 `Conversation` is what one conversation is given and the forest does not
 store: the connection to the Isabelle side, and the working directory
@@ -496,45 +523,62 @@ never call a class's own callback;
 **The recursion** (ARCHITECTURE §3.5), entered through
 `Node.evaluate_to(ignore_error, evaluate)` and, for an edit's unconditional
 invalidation, `Forest._invalidate_from(position)`, under the forest's lock
-(above), starting from the forest. A walk's two constants
+(above), starting from the forest. Three shapes of destination: an
+evaluating walk has a destination node; an edit's invalidation seeks a
+`Location`; a whole-node invalidation — `evaluate_to` without `evaluate` on
+a node nothing chains, a `Theory`, or a `Session`, which stands for every
+tree under it (`Forest._invalidate_whole`) — has neither and starts in
+`Invalidating`. A walk's two constants
 and the states it releases travel in one `Evaluation`; where the walk is
 travels in an `EvaluationMode`:
 
 ```python
-class Evaluation:                    # one walk
-    destination: Node | None         # the node an evaluating walk runs up to and including;
+class Evaluation:                    # one walk: one per tree of the forest's evaluating walk,
+    destination: Node | None         # one for every other walk, each flushed by whoever created it
+                                     # — the node an evaluating walk runs up to and including;
                                      # none for an invalidate-only walk
     ignore_error: bool
-    def release(self, slot)          # deleted together when the walk ends
+    def release(self, slot)          # deleted together when the Evaluation is flushed
 
-EvaluationMode = Evaluating | Seeking | Invalidating
-class Evaluating: blocked_by: Node | None   # before the destination: run what is not Ready,
-                  rewritten: bool           # or, blocked, mark CannotEvaluate(blocked_by);
+EvaluationMode = Evaluating | Blocked | Seeking | Invalidating
+class Evaluating: rewritten: bool           # before the destination: run what is not Ready;
                                             # rewritten: the state here was written this walk,
                                             # so even a Ready node or an own stop runs again
+class Blocked                               # before the destination, where nothing can run:
+                                            # mark NotEvaluated, an own stop kept as it is
 class Seeking: destination: Location        # before the position without evaluating: touch nothing
-class Invalidating                          # past the destination: mark NotEvaluated
+class Invalidating                          # past the destination, or throughout a walk that
+                                            # invalidates trees whole: mark NotEvaluated
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    stopped_at: Node | None          # the obstacle that ended evaluation
+    stopped_at: Node | None          # the node evaluation stopped at, if it stopped
     mode: EvaluationMode             # the mode the node after this one runs under
 
 async def _evaluate(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult
 ```
 
-`Leaf` and `StdBlock` each write it; `StdBlock`'s runs the beginning, the
-children, then the ending, and nothing is skipped: a `Ready` operation is
-not rerun, but every node is visited. The mode changes in one place: the
+`Leaf`, `StdBlock` and `Forest` each write it; `StdBlock`'s runs the
+beginning, the children, then the ending, and nothing is skipped: a `Ready`
+operation is not rerun, but every node is visited. `Forest`'s handles each
+tree of the closure of the trees the destination stands for, in tree order,
+by the first of three cases that applies — the order constraint's stop, the
+stop crossing an import dependency, the run (ARCHITECTURE §3.3) — each
+tree under an `Evaluation` of its own, flushed when its walk ends, so a
+walk over several trees deletes what it released at each tree's end; a
+tree reaching the second case has every resolved import earlier in tree
+order and already handled, so its statuses are current. A seeking walk it
+routes to the one tree the position lies in, and walks nothing under a
+`Session` or the root. The mode changes in one place: the
 destination turns it into `Invalidating`, and a stop turns `Evaluating` into
-`Evaluating(stop)` unless `ignore_error`. An evaluating walk's destination
-is a node, reached at its ending; an invalidate-only walk's is a Location,
+`Blocked` unless `ignore_error`. An evaluating walk's destination
+is a node, reached at its ending; a seeking walk's is a Location,
 reached before the child standing there — so a nesting node at that
 position is invalidated whole, opening first — or, at the index after the
 last child, before the parent's ending. A nesting node whose beginning
-failed enters its children with itself as `blocked_by`; a nesting node
-whose child stopped cannot run its ending and is `CannotEvaluate` with the
-same obstacle. A blocked status never overwrites an own stop: an obstacle
+failed enters its children blocked; a nesting node whose child stopped
+cannot run its ending, which is `NotEvaluated`. A blocked walk never
+overwrites an own stop: an obstacle
 keeps reporting itself, and is not rerun until edited — or until the state
 under it is rewritten by this walk (ARCHITECTURE §3.3). A resulting state
 is released only when the status of the operation that writes it goes from
@@ -559,7 +603,9 @@ types right — against the class's declared argument schema
 `InvalidField` before the class is consulted. The JSON tool schemas are
 hand-written, as AoA's (`contrib/Isa-Mini/IsaMini/AoA/tools/`).
 
-An `edit` builds everything before it touches the forest:
+An `edit` takes the trees' record first — per tree, its qualified name
+and its resolved imports, the `Theory` nodes themselves
+(`Forest._record`) — and builds everything before it touches the forest:
 
 1. **Construct, detached.** Every construct, in submission order: the
    `children`-legality checks (`UnexpectedChildren`,
@@ -594,7 +640,13 @@ An `edit` builds everything before it touches the forest:
    other new slot stays empty, as befits `not_evaluated` nodes. A
    transaction that fails raises `TAT_DisasterError` (EXCEPTIONS.md §1):
    memory and the database have parted, and the conversation ends.
-4. **Completed events**, then the entry invalidates unconditionally; the
+4. **Completed events**, then the comparison of the record with the trees
+   as they now are (`Forest._invalidate_changed_trees`): a tree present in
+   both whose record changed is invalidated whole, its ending carrying
+   the invalidation on to its importers (§4.1), and every qualified name
+   that vanished is removed from the
+   ML theory table in one round trip (ARCHITECTURE §3.4; §4.3's
+   `theory_delete`); then the entry invalidates unconditionally, and the
    caller evaluates when the call's `evaluate` says so
    (MCP_SPECIFICATION §3.2).
 
@@ -627,7 +679,10 @@ node had, which is `delete`'s rule too.
 framework's ML side offers (§2.6): each knows the callback's name and the
 MessagePack shape of its arguments and result, and nothing else does; the
 framework's modules, and a `gen` reading over the wire, call these
-functions. A node class's own callback (§2.5) is not here: the class calls
+functions. `theory_delete` removes vanished qualified names from the
+theory table in one round trip; `check_new_theory_short_name` answers one
+of `Taken(holder)`, `Reserved()` and `Free()` (§2.3), the wire's tagged
+list read here and nowhere else. A node class's own callback (§2.5) is not here: the class calls
 it itself, through `call`, from its evaluation hooks (§4.1), the shape
 being between the class and its own ML half (ARCHITECTURE §6.2). `call`
 raises `TAT_IsabelleError` from an exception the callback let escape, or
@@ -921,13 +976,23 @@ order:
    `TAT requires parallel_proofs below 3, but the options give <n>`,
    exiting `2` — the boot restores the option's value, and every load
    asserts it below 3 (§2.3);
-3. under a `Console_Progress` and its interrupt handler, `Build.build_logic`
-   on `BASE` — default `ISABELLE_LOGIC` — with the `-d` directories and
-   `build_heap`, which builds and stores a missing or outdated base heap
-   first, the launcher exiting with the build's own code when it fails
-   (`contrib/Isabelle2025-2/src/Pure/ML/ml_console.scala`); then the
-   `Sessions.Background` for `BASE` over the `-d` directories, checked for
-   errors, and `Store.session_heaps` on it; then `Isabelle_Process.start`
+3. the `Sessions.Background` for `BASE` over the `-d` directories, checked
+   for errors — the Isabelle session layout (ARCHITECTURE §1) — and,
+   before anything is built or started, the refusal of a launch whose
+   layout has a session directory equal to or under the working
+   directory, both as canonical paths and compared on path elements
+   (`File.relative_path`), with `Isabelle session <name> is declared under
+   the working directory <path>; TAT never loads theories from there`,
+   exiting `2`: no theory is ever loaded from under the working directory
+   (EVALUATOR_DESIGN §2), and the layout is fixed for the life of the
+   process; then, under a `Console_Progress` and its interrupt handler,
+   `Build.build_logic` on `BASE` — default `ISABELLE_LOGIC` — with the
+   `-d` directories and `build_heap`, which builds and stores a missing or
+   outdated base heap first, the launcher exiting with the build's own
+   code when a session fails to build
+   (`contrib/Isabelle2025-2/src/Pure/ML/ml_console.scala`), every other
+   error exiting `2`; then `Store.session_heaps` on the background; then
+   `Isabelle_Process.start`
    on those heaps with an `isabelle.Session` that echoes nothing the
    process prints — whatever ends the conversation arrives in
    `TAT.finished` — with `ML/TAT_Boot.ML` as `use_prelude` and Isabelle's own
@@ -974,8 +1039,8 @@ boot sets it back to `Options.default_int "parallel_proofs"`
 with `Thy_Info.use_theories`, and then runs `TAT.start` (§2.6) through
 `Protocol_Command.run` with the arguments it was given; a failure before
 that hand-off is answered with `TAT.finished` carrying `1` and the
-failure's messages. The process's session environment lists every known
-Isabelle session's directory, so a theory is found by its session name
+failure's messages. The Isabelle session layout lists every known
+Isabelle session's directories, so a theory is found by its session name
 wherever a registered component or a ROOT under a `-d` directory declares
 that session; a heap-resident theory costs nothing to load. The handler
 forks because the protocol loop reads one message at a time and a loaded

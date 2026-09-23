@@ -26,6 +26,7 @@ language. A concept that needs a name gets one here first.
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
 | **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per conversation (EVALUATOR_DESIGN §1.1) |
 | **base heap** | the heap TAT's prover runs on, chosen by the launcher, with nothing of TAT in it (§8, §9) |
+| **Isabelle session layout** | the Isabelle process's map from each known Isabelle session to its directories, and the theories a ROOT marks `(global)`: what the launcher hands `Resources.init_session` at start (MODULE_STRUCTURE §5), and what `Resources.find_theory_file` and `Resources.global_theory` read (EVALUATOR_DESIGN §2, §7) |
 | **tree order** | depth-first, a node before its children, children in their own order |
 | **evaluate** | running a node's commands in Isabelle and recording what happened (§3) |
 | **emit** | a node writing its own Isar text (§4) |
@@ -40,7 +41,7 @@ language. A concept that needs a name gets one here first.
 | **anchor** | the node a Location is relative to: `edit`'s `target_id` under `append`, `insert_before` and `insert_after`, `move`'s `location.node_id` (TOOL_SCHEMAS.md) |
 | **print mode** | what a rendering is looking at: one of `Out_Focus`, `Briefing`, `Relative_Focus`, `Recall` (PRINT.md) |
 | **focus** | under `Relative_Focus`, a node the quickview prints detailed: one a tool call was about, or one within the call's depth under it; the quickview expands the path from the root to them (PRINT.md §2, §5) |
-| **mark** | the word in parentheses on a node's line that says its state, `success`, `not evaluated`, `failed`, `blocked by <id>`, or a class's own (PRINT.md §1) |
+| **mark** | the word in parentheses on a node's line that says its state, `success`, `not evaluated`, `failed`, or a class's own (PRINT.md §1) |
 | **quickview** | the rendering that ends the result of `edit`, `move`, `delete` and `evaluate_to` (PRINT.md §5) |
 | **briefing** | the rendering `POST /on-compaction` answers, which the agent's client puts into the agent's replaced context (PRINT.md §5, CLIENT_HOOKS.md) |
 | **seen set** | the conversation's record of what a class has shown the agent once; cleared when the agent's context is replaced (PRINT.md §4) |
@@ -209,16 +210,14 @@ its beginning and its ending, and so two statuses.
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
 | `ready` | the operation ran and its resulting slot is current |
-| `cannot_evaluate` | evaluation does not pass through (§3.3) |
+| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal: the node is an obstacle (§3.3) |
 
 A node whose own commands failed is still `ready` when its class can carry on
 regardless. A `Theorem` whose proof failed emits `sorry`, so the fact is declared
 and every later node still checks. A nesting node whose beginning command
 failed has that beginning `cannot_evaluate` and its ending `ready` without
 running: the framework copies the node's own input state straight into its
-resulting slot, and evaluation resumes after the block. (An ending is
-`cannot_evaluate` in a different situation: the beginning succeeded and a
-child then stopped — §3.5.)
+resulting slot, and evaluation resumes after the block.
 
 No node class reads another node's statuses: a node renders its own report,
 and the one question a class asks of another node is `finished`. The
@@ -245,9 +244,11 @@ succeeded.
 
 ### 3.3 Where evaluation stops
 
-A `cannot_evaluate` node is either the obstacle itself or sits after or under
-one, and records which: its `blocked_by` is empty in the first case and names
-the obstacle in the second.
+A `cannot_evaluate` node is an obstacle. What an obstacle blocks — after it
+in its tree, under it, or in a tree that imports its tree — is
+`not_evaluated`, like a node that never ran: which obstacle blocks it is
+not recorded on the node, and the tool that ran the evaluation names the
+first stop in its answer (§3.5, MCP_SPECIFICATION §4).
 
 A node whose failure would make everything after it report **derived errors**
 is an obstacle by the judgement of its node class. `Define` is the case: when
@@ -255,19 +256,42 @@ the defining command fails the constant does not exist, so every later node that
 mentions it fails with a message about the constant instead of about itself. A
 nesting node whose ending command failed is one too: a `Theory` whose `end`
 failed has no theory value. Such a node **stops** evaluation: everything after
-it in the tree is `cannot_evaluate` with that node as `blocked_by`.
+it in the tree is `not_evaluated`.
 
 A **nesting node whose beginning command failed** leaves its children no context
 to run in. Its beginning is `cannot_evaluate` and, like any obstacle, is not
 rerun until edited; its ending is `ready` (§3.2); every node under it is
-`cannot_evaluate` with that ancestor as `blocked_by`, and none of them runs
-while the ancestor stays as it is. This is not a stop: evaluation resumes after
-the block.
+`not_evaluated`, and none of them runs while the ancestor stays as it is.
+This is not a stop: evaluation resumes after the block.
+
+Two stops are the forest's, judged before a tree runs (§3.5). **The order
+constraint**: a tree comes after every forest tree it imports — within a
+`Session`, later in the list; across `Session`s, in a later `Session` — so
+that tree order is a dependency order. A tree importing a forest tree
+placed after it, or itself, is not run but walked whole in the
+`Invalidating` mode, `not_evaluated` throughout, and is a stop at its
+`Theory` node; no edit refuses the state, which legal edits
+reach, and the check runs before every run of the tree, so a repairing
+`move` clears it by itself. The forest answers which `imports` item
+offends (`_order_violation`, MODULE_STRUCTURE §4.1), and the tool composes
+RENDER_BASELINES §3's sentence from it. **The stop crossing an import
+dependency**: a tree one of whose resolved imports does not have both
+operations `ready` — a theory value exists only once the import's `end`
+has run; after a failed header the ending is `ready` and no value exists —
+is not run but walked whole in the `Invalidating` mode, `not_evaluated`
+throughout, and is a stop at that import's `Theory` node; when the import
+stopped for a reason of its own, that reason was recorded first, the
+import coming earlier in tree order, and is the one the call reports.
 
 `evaluate_to` takes an `ignore_error` flag for an agent that wants to see every
 error in one pass. With it set the walk carries on past a stop; a failed
-beginning is not passed — its children stay blocked (§3.3). The call then
-returns "continue", each error showing at its own node.
+beginning is not passed — its children stay blocked (§3.3) — and neither
+is a missing theory value: a tree importing one stays blocked, its nodes
+`not_evaluated`, and the stop is not reported. The
+call then returns "continue", each error showing at its own node, with one
+exception: the order constraint's stop is reported whatever the flag says,
+since the tree it concerns is `not_evaluated` throughout and nothing else
+records why.
 
 A stop is a fact about the forest, not about one call. Every `evaluate_to`
 returns either "continue" or "stopped at node X" to its caller (§3.5), and an
@@ -276,7 +300,7 @@ that finds it already evaluated and skips it — unless `ignore_error` is set. S
 every call stops at the same node until that node is edited. A node blocked by
 an obstacle, on the other hand, runs as soon as a call reaches it unblocked. A
 node that is both — its own obstacle, and after another — keeps reporting
-itself: a blocked status never overwrites an own stop, so it is neither rerun
+itself: a blocked walk never overwrites an own stop, so it is neither rerun
 nor misreported — until a walk rewrites the state under it, by rerunning a
 predecessor that had been blocked; then it runs again, on its new input.
 
@@ -286,18 +310,26 @@ Invalidating a node marks it and every node after it in its tree
 `not_evaluated`, and marks every tree that transitively imports that tree
 `not_evaluated` in whole. A tree's states are built on the theory values of the
 trees it imports, so a change anywhere in an imported tree invalidates all of an
-importing one.
+importing one. This is a property of the tree's `Theory` ending's status:
+whenever that ending was `ready` and no longer is, the tree's direct
+importers are walked whole in the `Invalidating` mode, each ending so
+moved carrying the rule on to its own importers, so that no transitive
+importer keeps a current result.
 
-Renaming a `Session` invalidates every tree under it — their qualified names
-carry its `name` — and, through the same rule, every tree that imports them;
-an edit that changes no tree's qualified name and no tree's resolved import
-set invalidates nothing (the mechanism: ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
-§6).
+No tree stays evaluated once a tree it transitively imports has been
+edited, renamed, moved, deleted or had its `Theory` node replaced;
+renaming a `Session` does that for every tree under it, since their
+qualified names carry its `name`; a reorder of trees or of `Session`s
+touches no tree. Every edit compares, per tree, its qualified name and its
+resolved imports — the `Theory` nodes themselves — before and after
+itself, and invalidates whole a tree for which either changed (the
+mechanism: MODULE_STRUCTURE §4.2).
 
 Whatever an operation wrote is released when the operation stops being
 current — its result, or the input it copied through on failing; the names
 stay with the node and re-evaluation writes them again. A walk collects what
-it releases and deletes it all in one round trip at its end. Deleting a node
+it releases and deletes it in one round trip at each tree's end and again
+when it ends. Deleting a node
 releases every state its subtree owns and cancels any work in flight on it.
 
 Inserting or deleting a node changes which slot its predecessor's resulting
@@ -326,14 +358,16 @@ lock, so two calls never interleave:
   directly — evaluation is transparent to the `Session` layer: it builds the
   import dependency graph over the trees, evaluates every tree the
   destination's tree transitively imports to its own `end` — a theory value
-  exists only once its theory is closed — in dependency order, then calls the
-  destination's tree. A `Session` as destination stands for all the trees
-  under it: the forest schedules each of them, to its `end`, through the same
-  graph.
+  exists only once its theory is closed — in tree order, which the order
+  constraint (§3.3) makes a dependency order, then calls the
+  destination's tree; a tree that violates the constraint, or whose import
+  has no theory value, is a stop instead (§3.3). A `Session` as destination
+  stands for all the trees under it, and the root for every tree: the
+  forest schedules each of them, to its `end`, through the same graph.
 - A **nesting node** runs its beginning command if it is not evaluated. If that
   command succeeded, now or earlier, it calls its children in order, and
   those after the one that contains the destination only to invalidate them;
-  if it failed, it still enters them, but to mark each one `cannot_evaluate`
+  if it failed, it still enters them, but to mark each one `not_evaluated`
   (§3.3) rather than to run it. A nesting node is reached at its ending
   command: it is the destination only once its children have run, so naming a
   `Theory` means the whole tree, `end` included.
@@ -348,17 +382,22 @@ the way: a `ready` operation is not rerun, but a nesting node whose ending
 is `ready` is still entered, since an obstacle passed under `ignore_error`
 may sit inside it.
 
-Without `evaluate` the same walk touches nothing before the destination, not
-even a node that is not `ready`, and invalidates from the destination on. Its
-destination is then a position — a parent and an index among its children —
-reached before whatever stands there, so a nesting node at that position is
-invalidated whole, opening first; the index after the last child names the
-parent's ending. That is what a deletion needs (§3.4): nothing new to run,
-only the successor and what follows to invalidate.
+Without `evaluate` the walk evaluates nothing and invalidates, in one of two
+forms. `evaluate_to` without `evaluate` names a node and invalidates it
+whole, opening first: for a node inside a tree, together with what follows
+it in that tree; for a `Theory`, the tree; for a `Session`, every tree
+under it. An edit's invalidation has a position — a parent and an index
+among its children — reached before whatever stands there: inside a tree,
+the node standing there whole, together with what follows it in that
+tree, the index after the last child naming the parent's ending; at the
+`Session` layer and the root, nothing — sibling trees are independent, and
+the trees an edit there disturbed are reached through the comparison of
+§3.4. That is what a deletion needs (§3.4): nothing new to run, only the
+successor and what follows in its tree to invalidate.
 
 Every call returns "continue" or "stopped at node X" (§3.3); after a stop the
-recursion goes on, marking what follows `cannot_evaluate` with X as
-`blocked_by`, and the answer travels up to the forest.
+recursion goes on, marking what follows `not_evaluated`, and the answer
+travels up to the forest.
 
 Editing a node marks it `not_evaluated` and invalidates everything after it
 through this walk — run without `evaluate` when the editing call's
@@ -531,7 +570,7 @@ nothing of TAT in it — and the forest sits on top of it, no tree
 in any heap
 (EVALUATOR_DESIGN §2). A `Session`'s `parent_session` is ROOT metadata, not a
 constraint on the heap: a library theory the base heap lacks is loaded from
-source. TAT's own theories
+source when the Isabelle session layout knows its file. TAT's own theories
 (§6.3) are never in the base heap: they are loaded from source when the
 process starts, and so are `Isabelle_RPC`'s theory, which they import, and
 the theories of `Performant_Isabelle_ML` it rests on — found through the

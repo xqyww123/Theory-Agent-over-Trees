@@ -2,13 +2,16 @@
 agent's constructs, and the four entries behind the `edit`, `move` and
 `delete` tools — `insert`, `amend`, `delete`, `move`.
 
-Every entry assumes the forest's lock held by the tool entry.  Each builds
-and checks everything before it touches the forest, so an aborted call
-needs no undoing; right after the commit — the pointer surgery — it stores
-what it changed in one transaction, before the completed events and with
-no await in between (the plan's §2); and it ends with the unconditional
-invalidation of MCP_SPECIFICATION §3.2.  Whether to also evaluate is the
-caller's, from the call's `evaluate` flag.
+Every entry assumes the forest's lock held by the tool entry.  Each takes
+the trees' record first (`Forest._record`), builds and checks everything
+before it touches the forest, so an aborted call needs no undoing; right
+after the commit — the pointer surgery — it stores what it changed in one
+transaction, before the completed events and with no await in between
+(the plan's §2); then compares the record with the trees as they now are
+(`Forest._invalidate_changed_trees`, ARCHITECTURE §3.4) — the same two
+lines in every entry, so none has to know which names it disturbed — and
+ends with the unconditional invalidation of MCP_SPECIFICATION §3.2.
+Whether to also evaluate is the caller's, from the call's `evaluate` flag.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     Returns the batch; its last element is the natural destination
     (MCP_SPECIFICATION §3.2)."""
     forest = parent.forest()
+    before = forest._record()
     taken: dict[str, Node | str] = {c.id_component(): c for c in parent.sub_nodes}
     nodes = await _construct_siblings(parent, raws, "constructs", taken,
                                       Edit_Call(forest, kinds))
@@ -76,6 +80,7 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
             assert n.parent is not None
             _completed(n.parent.on_added_child, n, "insert_or_delete")
             _completed(n.on_inserted)
+    await forest._invalidate_changed_trees(ev, before)
     await forest._run(ev, Seeking(Location(parent, index)))
     return nodes
 
@@ -87,6 +92,7 @@ async def amend(old: Node, raws: list[RawAST],
     it."""
     parent = parent_of(old)
     forest = parent.forest()
+    before = forest._record()
     taken: dict[str, Node | str] = {c.id_component(): c
                                     for c in parent.sub_nodes if c is not old}
     nodes = await _construct_siblings(parent, raws, "constructs", taken,
@@ -151,6 +157,7 @@ async def amend(old: Node, raws: list[RawAST],
             assert n.parent is not None
             _completed(n.parent.on_added_child, n, "insert_or_delete")
             _completed(n.on_inserted)
+    await forest._invalidate_changed_trees(ev, before)
     # A nesting replacement invalidates from its first child: the children
     # precede its own commands in the walk (MCP §3.2).
     if inherited:
@@ -169,6 +176,8 @@ async def delete(node: Node) -> NonLeaf_Node:
     Returns the parent it left, which the quickview focuses on
     (PRINT.md §5)."""
     parent = parent_of(node)
+    forest = parent.forest()
+    before = forest._record()
     for n in node._children_first():
         _gate(n.on_deleting, "delete")
     _gate(parent.on_removing_child, node, "insert_or_delete")
@@ -179,13 +188,13 @@ async def delete(node: Node) -> NonLeaf_Node:
         ev.release(s)
     del parent.sub_nodes[index]
     node.parent = None
-    forest = parent.forest()
     with forest.store.transaction():
         for n in node._tree_order():
             forest.store.delete_node(n.identity)
         forest._store_children(parent)
     for n in node._children_first():
         _completed(n.on_deleted, "delete")
+    await forest._invalidate_changed_trees(ev, before)
     await forest._run(ev, Seeking(Location(parent, index)))
     return parent
 
@@ -197,6 +206,7 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     position in `new_parent.sub_nodes` after the removal."""
     parent = parent_of(node)
     forest = parent.forest()
+    before = forest._record()
     p: Node | None = new_parent
     while p is not None:
         if p is node:
@@ -246,6 +256,7 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
             forest._store_children(new_parent)
     _completed(new_parent.on_added_child, node, "move")
     _completed(node.on_moved, old_location)
+    await forest._invalidate_changed_trees(ev, before)
     # Both tails: from the source successor's final position, and from the
     # moved node's — which takes its whole subtree.
     source_position = (Location(parent, successor.index_of()) if successor

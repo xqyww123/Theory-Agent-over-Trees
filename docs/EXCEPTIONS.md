@@ -138,16 +138,21 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          list (`constructs[0]`, `children[2]`; the
 │  │                          exception's raw_ast_path names that list):
 │  │                          the two ask for opposite remedies   [framework]
-│  ├─ InvalidName             name, theory_name — outside the name grammar
-│  │                          of MCP_SPECIFICATION §2, checked where
-│  │                          DuplicateName is [framework]; or, with
-│  │                          theory_name, outside the Isabelle identifier
-│  │                          a theory name must be         [Theory.gen]
+│  ├─ InvalidName             name, grammar — outside the grammar named:
+│  │                          the framework's name grammar of
+│  │                          MCP_SPECIFICATION §2, checked where
+│  │                          DuplicateName is [framework]; the theory
+│  │                          name's [Theory.gen]; the session name's
+│  │                          [Session.gen]; the three grammars are
+│  │                          RENDER_BASELINES §2's
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
 │  │                          (its full path in the call) already uses
 │  │                          the short name (MCP_SPECIFICATION §2)
 │  │                                                  [Theory.gen, framework]
+│  ├─ ReservedTheoryName      name — the Isabelle session layout declares
+│  │                          the name global, so no tree can bear it
+│  │                          (EVALUATOR_DESIGN §7)               [Theory.gen]
 │  ├─ UnexpectedChildren      kind, is_leaf — `children` may not appear
 │  │                          here: a Leaf can hold none (is_leaf), and an
 │  │                          amend's replacement inherits them; never
@@ -209,12 +214,12 @@ agent-facing wording, collected in RENDER_BASELINES.md. A reason a node
 class's `gen` supplies to a framework exception — `InvalidField`'s
 `<reason>`, whose shape alone is RENDER_BASELINES §2's — is approved in
 that class's document under docs/node_classes/ and pinned by that class's
-test, as `Session`'s and `Theory`'s two reasons are in SESSION_AND_THEORY
+test, as `Session`'s and `Theory`'s reasons are in SESSION_AND_THEORY
 §3 and test_session_theory.py. Every other test that meets a rendering
 asserts the exception's class and fields, or reads the line from the
 documents (TOOL_SCHEMAS §4's malformed-call block and RENDER_BASELINES
 §6's success lines by test_mcp.py, §5's node lines by test_print.py,
-§3's evaluation text by tat_framework_ml_test.py);
+§3's evaluation text by tat_framework_ml_test.py and test_forest_walk.py);
 the lines the framework writes itself — the `Cannot <opr> <target>`
 opening (RENDER_BASELINES §1), the `Done` line (§6) and a node's line
 with its mark (§5) — a test may also spell out with its own ids. No test
@@ -274,8 +279,8 @@ writes it.
 
 ## 6. What is deliberately not an exception
 
-- **Evaluation failure** is a status on the node — `cannot_evaluate`, with
-  its `blocked_by` (ARCHITECTURE §3.2, §3.3) — or a recorded
+- **Evaluation failure** is a status on the node — `cannot_evaluate`
+  (ARCHITECTURE §3.2, §3.3) — or a recorded
   outcome of its class, such as `Theorem`'s `proof = failed`
   (ARCHITECTURE §2.2), reported in the tool result. A failing proof is a
   normal day at work, not an exception.

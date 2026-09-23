@@ -16,7 +16,7 @@ from baselines import DOCS, fenced_blocks
 from isabelle_theory_agent import isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import (
-    BRIEFING, NOT_EVALUATED, OUT_FOCUS, RECALL, CannotEvaluate, Isar_State_Slot,
+    BRIEFING, CANNOT_EVALUATE, NOT_EVALUATED, OUT_FOCUS, RECALL, Isar_State_Slot,
     Relative_Focus, print_error)
 from isabelle_theory_agent.store import Forest_Store
 
@@ -49,7 +49,7 @@ class Lemma(Stub, M.Leaf):
 class Definition(Stub, M.Leaf):
     errors: list[str] = []
     def print_fields(self, indent, out, mode, depth):
-        if mode is not BRIEFING and M._is_own_stop(self._status):
+        if mode is not BRIEFING and self._status is CANNOT_EVALUATE:
             for message in self.errors:
                 print_error(indent, out, message)
 
@@ -119,11 +119,11 @@ def example_forest():
     theory(a, "Base", beginning=M.READY, ending=M.READY)
     x = theory(a, "X", beginning=M.READY)
     leaf(Lemma, x, "lemma", "A", status=M.READY)
-    f_ = leaf(Definition, x, "definition", "f", status=CannotEvaluate(None), errors=[
+    leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=[
         'Type unification failed: Clash of types "nat" and "bool"\n'
         'Type error in application: incompatible operand type'])
-    leaf(Lemma, x, "lemma", "P", status=CannotEvaluate(f_))
-    x.evaluation_status_ending = CannotEvaluate(f_)
+    leaf(Lemma, x, "lemma", "P", status=NOT_EVALUATED)              # blocked by definition_f
+    x.evaluation_status_ending = NOT_EVALUATED
     theory(a, "Y")
     return f, a, x
 
@@ -160,11 +160,10 @@ def test_the_lines_of_render_baselines_section_5():
     f = new_forest()
     a = session(f, "A")
     x = theory(a, "X", beginning=M.READY, ending=M.READY)
-    f_ = leaf(Definition, x, "definition", "f", status=CannotEvaluate(None), errors=["e"])
+    f_ = leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=["e"])
     p = leaf(Lemma, x, "lemma", "P")
     lines = []
-    for status, owes in ((M.READY, False), (NOT_EVALUATED, True), (CannotEvaluate(f_), True),
-                         (M.READY, True)):
+    for status, owes in ((M.READY, False), (NOT_EVALUATED, True), (M.READY, True)):
         p._status = status
         p._owes_nothing = lambda owes=owes: not owes          # type: ignore[method-assign]
         lines.append(render(f, p, OUT_FOCUS)[0])
@@ -190,10 +189,8 @@ def test_the_default_mark_first_row_wins():
     assert mark(p) is None                             # ran, owes its proof
     assert mark(q) == "not evaluated"
     assert mark(x) == "not evaluated"                  # its ending has not run
-    x.evaluation_status_ending = CannotEvaluate(g)     # blocked by another tree's node
-    assert mark(x) == "blocked by definition_g"
-    x.evaluation_status_beginning = CannotEvaluate(None)
-    assert mark(x) == "failed"                         # an own stop beats the blocked ending
+    x.evaluation_status_beginning = CANNOT_EVALUATE
+    assert mark(x) == "failed"                         # an own stop beats the ending's not evaluated
     empty = session(f, "Empty")
     assert mark(empty) == "success"                    # nothing under it, nothing owed
 
@@ -339,7 +336,7 @@ def test_detailed_is_a_focus_and_recall_above_the_grandchildren():
 def failing_theory():
     f = new_forest()
     a = session(f, "A")
-    x = theory(a, "X", beginning=CannotEvaluate(None), ending=M.READY)
+    x = theory(a, "X", beginning=CANNOT_EVALUATE, ending=M.READY)
     x.beginning_errors = ["header broke"]
     return f, a, x
 
@@ -385,7 +382,7 @@ def test_the_briefing_closure_clears_the_seen_set_and_renders_the_root():
 def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     f, a, x = failing_theory()
     x.evaluation_status_beginning, x.beginning_errors = M.READY, []
-    x.evaluation_status_ending, x.ending_errors = CannotEvaluate(None), ["end broke"]
+    x.evaluation_status_ending, x.ending_errors = CANNOT_EVALUATE, ["end broke"]
     render(f, f, focus(x))
     assert (x.identity, "ending") in f.conversation.seen
 
@@ -421,11 +418,11 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
 def test_messages_show_only_while_the_operation_is_an_own_stop():
     f, a, x = failing_theory()
     x.ending_errors = ["end broke"]                    # left by an earlier run
-    for status in (M.READY, NOT_EVALUATED, CannotEvaluate(x)):
+    for status in (M.READY, NOT_EVALUATED):
         x.evaluation_status_beginning = status         # the header's message: not standing
         assert "header broke" not in "".join(render(f, x, RECALL))
     assert "end broke" not in "".join(render(f, x, RECALL))   # the ending is READY: copied through
-    x.evaluation_status_ending = CannotEvaluate(None)
+    x.evaluation_status_ending = CANNOT_EVALUATE
     assert render(f, x, RECALL)[-2:] == ["  Error:", "    end broke"]
 
 

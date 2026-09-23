@@ -131,6 +131,9 @@ fun lookup (theories : T) name = Symtab.lookup (Synchronized.value theories) nam
 fun put (theories : T) thy =
   Synchronized.change theories (Symtab.update (Context.theory_long_name thy, thy))
 
+(*delete_safe: a tree whose header failed never stored a value*)
+fun delete (theories : T) names = Synchronized.change theories (fold Symtab.delete_safe names)
+
 end
 
 (*** Theory loader ***)
@@ -175,13 +178,20 @@ fun check_parallel_proofs () =
   then re-raised explicitly -- Par_Exn treats an interrupt as a neutral
   element (par_exn.ML) and release_all would swallow it whenever the residue
   holds real errors -- and residue errors are released only when the call
-  was not cancelled.*)
-fun load qualifier import =
+  was not cancelled.
+
+  The import is the one name the Isabelle session layout gives the file
+  (EVALUATOR_DESIGN §6): <session>.<short name>, or the short name alone when
+  the layout declares it global -- never a path, never a bare non-global
+  name, never a qualified name whose short name is global.  Under the empty
+  qualifier use_theories' own import_name leaves such a name unchanged, so
+  the theory loads under exactly this name.*)
+fun load import =
   Synchronized.change lock (fn () =>
     let
       val _ = check_parallel_proofs ()
       val result =
-        Exn.capture_body (fn () => Thy_Info.use_theories (Options.default ()) qualifier [import])
+        Exn.capture_body (fn () => Thy_Info.use_theories (Options.default ()) "" [import])
       val residue =
         Thread_Attributes.uninterruptible (fn _ => fn () =>
           map Exn.Exn (maps Task_Queue.group_status (Execution.reset ()))) ()
@@ -192,56 +202,61 @@ fun load qualifier import =
       val _ = Par_Exn.release_all (result :: residue)
     in () end)
 
-(*What load may be given (EVALUATOR_DESIGN §6): a session-qualified name when
-  the session layout knows the file, the file's own path when there is a
-  file -- never a bare name.  The path round-trips through use_theories' own
-  import_name to the same theory_name, because the qualifier passed along is
-  the same.  A qualified import in no known session resolves to a bare
-  loaded_theory_node (resources.ML) whose node_name is no file at all --
-  nothing anywhere provides it, so refuse by name rather than fabricate one
-  by cutting at the wrong dot.  Wording: RENDER_BASELINES.md.*)
-fun load_target theory_name node_name =
-  (case Resources.find_theory_file theory_name of
-    SOME _ => theory_name
-  | NONE =>
-      if Path.get_ext node_name = "thy"
-      then Path.implode (Path.drop_ext node_name)
-      else error ("Fail to load `" ^ theory_name ^ "` because it is not found."))
-
 (*The last two steps of EVALUATOR_DESIGN §2's order: the base heap, then a
-  load from source.  Also how a theory named to the launcher (§5) is
-  fetched, before any conversation -- so no theory table here.*)
-fun fetch qualifier pos {node_name, theory_name, ...} =
-  (case Thy_Info.lookup_theory theory_name of
-    SOME thy => thy
-  | NONE =>
-      (load qualifier (load_target theory_name node_name, pos);
-       Thy_Info.get_theory theory_name))
+  load from source -- of a theory whose file the Isabelle session layout
+  knows, nothing by path (§2.3), and never under a qualified name whose
+  short name the layout declares global (`HOL.Main`): Isabelle would load
+  the file a second time as a theory of that name, and a later theory
+  importing both dies of the duplicate short name (EVALUATOR_DESIGN §7).
+  Also how a theory named to the launcher (§5) is fetched, before any
+  conversation -- so no theory table here.  Wording: RENDER_BASELINES.md.*)
+fun fetch pos theory_name =
+  let
+    val global_short_name =
+      Long_Name.is_qualified theory_name andalso
+      is_some (Resources.global_theory (Long_Name.base_name theory_name))
+  in
+    (case Thy_Info.lookup_theory theory_name of
+      SOME thy => thy
+    | NONE =>
+        if is_some (Resources.find_theory_file theory_name) andalso not global_short_name
+        then (load (theory_name, pos); Thy_Info.get_theory theory_name)
+        else error ("Fail to load `" ^ theory_name ^ "` because it is not found."))
+  end
 
 (*Import resolution in the order of EVALUATOR_DESIGN §2, behind one
   Resources.import_name call (§7).*)
 fun resolve theories {session_name, master_dir} (import, pos) =
-  let val node = Resources.import_name session_name master_dir import in
-    (case Theories.lookup theories (#theory_name node) of
+  let val {theory_name, ...} = Resources.import_name session_name master_dir import in
+    (case Theories.lookup theories theory_name of
       SOME thy => thy
-    | NONE => fetch session_name pos node)
+    | NONE => fetch pos theory_name)
   end
 
-(*a theory the launcher names (§5): a session-qualified name, resolved
-  against no session and no directory -- an unqualified one would resolve
-  to a file under the process's current directory*)
+(*a theory the launcher names (§5), by its SESSION.THEORY name: the guard
+  refuses any unqualified name, even a global one fetch alone would load,
+  with the launcher's own sentence.  import_name supplies Isabelle's own
+  refusals of a `.thy` suffix and of a path-shaped name.*)
 fun fetch_named name =
   if Long_Name.is_qualified name
-  then fetch "" Position.none (Resources.import_name "" Path.current name)
+  then fetch Position.none (#theory_name (Resources.import_name "" Path.current name))
   else error ("The plugin theory must be fully qualified (SESSION.THEORY), but provided " ^
               quote name)
 
-(*The base-heap half of the short-name check (§2.3): the long name of the
-  theory whose short name `name` takes, or NONE when the name is free.  The
-  rejection and its wording are Python's (RENDER_BASELINES.md).*)
+(*The Isabelle half of the short-name check (§2.3), one of three answers in
+  this order: a loaded theory bears the short name -- its long name, which
+  for a global theory is the short name itself; none does but the Isabelle
+  session layout declares the name global -- reserved, since theory_name
+  would leave a tree so named unqualified; free.  The rejection and its
+  wording are Python's (RENDER_BASELINES.md).*)
+datatype short_name_answer = Taken of string | Reserved | Free
+
 fun check_new_theory_short_name name =
-  let val short = Long_Name.base_name name
-  in List.find (fn n => Long_Name.base_name n = short) (Thy_Info.get_names ()) end
+  let val short = Long_Name.base_name name in
+    (case List.find (fn n => Long_Name.base_name n = short) (Thy_Info.get_names ()) of
+      SOME long => Taken long
+    | NONE => if is_some (Resources.global_theory short) then Reserved else Free)
+  end
 
 end
 
@@ -499,7 +514,13 @@ fun register_callback {python_packages} f =
 
 local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
-fun framework_callbacks (slots : Slots.T) = [
+(*the three answers on the wire, a tagged list: ["taken", <long name>],
+  ["reserved"], ["free"]*)
+fun pack_short_name_answer (Loader.Taken long) = packList packString ["taken", long]
+  | pack_short_name_answer Loader.Reserved = packList packString ["reserved"]
+  | pack_short_name_answer Loader.Free = packList packString ["free"]
+
+fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
   Remote_Procedure_Calling.mk_callback
     {name = "TAT.state_copy",
      on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -516,10 +537,15 @@ fun framework_callbacks (slots : Slots.T) = [
      arg_schema = unpackString,
      ret_schema = packBool, function = Slots.exists slots, timeout = NONE},
   Remote_Procedure_Calling.mk_callback
+    {name = "TAT.theory_delete",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackList unpackString,
+     ret_schema = packUnit, function = Theories.delete theories, timeout = NONE},
+  Remote_Procedure_Calling.mk_callback
     {name = "TAT.check_new_theory_short_name",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackString,
-     ret_schema = packOption packString, function = Loader.check_new_theory_short_name,
+     ret_schema = pack_short_name_answer, function = Loader.check_new_theory_short_name,
      timeout = NONE}
 ]
 
@@ -540,7 +566,8 @@ fun start' procedure theories working_directory port =
       end_theory = end_theory theory_table}
     (*a registration reached through several ancestries counts once (§2.6)*)
     val regs = distinct (eq_fst op =) (maps (rev o Registrations.get) theories)
-    val callbacks = map (fn (_, {make, ...}) => make env) regs @ framework_callbacks slots
+    val callbacks =
+      map (fn (_, {make, ...}) => make env) regs @ framework_callbacks slots theory_table
     (*the dispatch table would silently keep one of two same-named callbacks*)
     val _ = (case duplicates (op =) (map #name callbacks)
               of [] => ()
