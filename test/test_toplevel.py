@@ -7,11 +7,11 @@ Run: python -m pytest test/test_toplevel.py
 
 import asyncio
 import os
-import socket
 from typing import Any, cast
 
 import pytest
 
+from harness import free_port
 from isabelle_theory_agent import toplevel
 from isabelle_theory_agent.exceptions import TAT_StartupError
 from isabelle_theory_agent.mcp_server import HOST
@@ -27,11 +27,6 @@ class Recorder:
         self.lines.append(msg)
         self.served.set()
 
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind((HOST, 0))
-        return s.getsockname()[1]
 
 
 def run(scenario):

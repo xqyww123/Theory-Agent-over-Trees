@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import fcntl
 import os
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import NoReturn
 
@@ -71,21 +71,30 @@ def _held(working_directory: Path) -> Generator[Callable[[int], None]]:
         os.close(fd)
 
 
+@asynccontextmanager
+async def conversation(python_packages: list[str], working_directory: str, port: int,
+                       connection: Connection
+                       ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, TAT_Server]]:
+    """One conversation, built in order — the lock, the store, the
+    plugins, the `Conversation`, the `Forest`, the server — and torn down
+    in reverse when the block ends; whoever holds it serves it."""
+    directory = Path(working_directory)
+    with _held(directory) as announce, Forest_Store(directory / DATABASE) as store:
+        loaded = plugin.load(python_packages)
+        forest = Forest(Conversation(connection, directory), store, loaded.kinds)
+        async with TAT_Server(port, mcp.tools(forest, loaded),
+                              mcp.on_compaction(forest)) as server:
+            announce(port)                  # listening: the hooks may call
+            yield forest, loaded, server
+
+
 @isabelle_remote_procedure("launch_TAT")
 async def launch_TAT(arg: tuple[list[str], str, int], connection: Connection) -> NoReturn:
     """`arg` as `TAT_Framework.start'` packs it: the packages the node class
     theories registered, the working directory, the port (MODULE_STRUCTURE
-    §2.6).  In order: the lock, the store, the `Conversation`, the plugins,
-    the `Forest`, the server; then the conversation, until its ending."""
+    §2.6).  The conversation, served until its ending."""
     python_packages, working_directory, port = arg
-    directory = Path(working_directory)
-    with _held(directory) as announce, Forest_Store(directory / DATABASE) as store:
-        conversation = Conversation(connection, directory)
-        loaded = plugin.load(python_packages)
-        forest = Forest(conversation, store, loaded.kinds)
-        async with TAT_Server(port, mcp.tools(forest, loaded),
-                              mcp.on_compaction(forest)) as server:
-            announce(port)                  # listening: the hooks may call
-            # a line nothing depends on, and the launcher does not echo (§5)
-            await connection.writeln(f"TAT is serving on {server.url}")
-            await server.serve()
+    async with conversation(python_packages, working_directory, port, connection) as (_, _, server):
+        # a line nothing depends on, and the launcher does not echo (§5)
+        await connection.writeln(f"TAT is serving on {server.url}")
+        await server.serve()

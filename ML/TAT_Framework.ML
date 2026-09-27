@@ -5,11 +5,12 @@ The framework of TAT's evaluator (docs/MODULE_STRUCTURE.md §2): state slots,
 the theory table, the theory loader, running commands, node classes, and the
 conversation.  Knows no node class.
 
-Everything a conversation owns -- its state slot table, its theory table, the
-callbacks -- is local to one call of `start`, as AoA's state table is local
-to one `IsaMini.AoA` call (contrib/Isa-Mini/Agent/agent_server.ML:937).
-A node class reaches the conversation only through the `env` handed to its
-registered function.
+A conversation's state slot table and theory table are created by one call
+of `start`, as AoA's state table is by one `IsaMini.AoA` call
+(contrib/Isa-Mini/Agent/agent_server.ML:937), and emptied by `TAT.reset`
+when a fresh conversation begins on the same process (docs/ARCHITECTURE.md
+§9); the callbacks are that call's too.  A node class reaches the
+conversation only through the `env` handed to its registered function.
 *)
 
 signature TAT_FRAMEWORK =
@@ -109,6 +110,9 @@ fun delete (slots : T) names = Synchronized.change slots (fold Symtab.delete_saf
 
 fun exists (slots : T) name = Symtab.defined (Synchronized.value slots) name
 
+(*a fresh conversation on the same process (docs/ARCHITECTURE.md §9)*)
+fun clear (slots : T) = Synchronized.change slots (K Symtab.empty)
+
 fun slot (slots : T) name : slot = {get = fn () => get slots name, put = put slots name}
 
 end
@@ -133,6 +137,8 @@ fun put (theories : T) thy =
 
 (*delete_safe: a tree whose header failed never stored a value*)
 fun delete (theories : T) names = Synchronized.change theories (fold Symtab.delete_safe names)
+
+fun clear (theories : T) = Synchronized.change theories (K Symtab.empty)
 
 end
 
@@ -546,6 +552,13 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackString,
      ret_schema = pack_short_name_answer, function = Loader.check_new_theory_short_name,
+     timeout = NONE},
+  (*a fresh conversation begins on the same process: both tables emptied*)
+  Remote_Procedure_Calling.mk_callback
+    {name = "TAT.reset",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackUnit,
+     ret_schema = packUnit, function = fn () => (Slots.clear slots; Theories.clear theories),
      timeout = NONE}
 ]
 

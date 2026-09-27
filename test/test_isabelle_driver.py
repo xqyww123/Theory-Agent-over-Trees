@@ -5,7 +5,7 @@ line of the package calls `Connection.callback`.  `Connection`'s other wire
 coroutines (`config_lookup`, `writeln`, `warning`, `tracing`) are round
 trips too, and a node class does not use them; they are not scanned for,
 since their names are ordinary.  The ML side of the rule is exercised by
-test/tat_framework_ml_test.py.  Run: python -m pytest test/test_isabelle_driver.py
+test/test_conversation.py.  Run: python -m pytest test/test_isabelle_driver.py
 """
 
 import asyncio
@@ -113,10 +113,16 @@ def test_call_is_the_one_door_to_the_wire():
     """Every round trip goes through `call` (EXCEPTIONS.md §1, MODULE_STRUCTURE
     §4.3): a node class calling `Connection.callback` itself would let an
     escaped ML exception arrive as a raw `IsabelleError`, which no boundary
-    expects.  Judged on the source: code lines only, comments left out."""
-    package = Path(isabelle_theory_agent.__file__).parent
-    hits = [(str(path.relative_to(package)), n) for path in sorted(package.rglob("*.py"))
+    expects — and a test case doing so would let a deadline cut the
+    two-phase exchange in the middle.  Judged on the source of the package
+    and of the suite: code lines only, comments left out; the door's one
+    call and this guard's own needle are the two lines that may name it."""
+    root = Path(isabelle_theory_agent.__file__).parent.parent
+    hits = [(str(path.relative_to(root)), n)
+            for folder in ("isabelle_theory_agent", "test")
+            for path in sorted((root / folder).rglob("*.py"))
             for n, line in enumerate(path.read_text().splitlines(), 1)
             if ".callback(" in line.split("#")[0]]
-    assert [f for f, _ in hits] == ["isabelle_driver.py"], \
+    assert [f for f, _ in hits] == ["isabelle_theory_agent/isabelle_driver.py",
+                                    "test/test_isabelle_driver.py"], \
         f"Connection.callback called outside isabelle_driver.call: {hits}"

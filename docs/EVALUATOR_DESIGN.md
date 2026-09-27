@@ -62,9 +62,10 @@ the Python side holds only names (ARCHITECTURE §3.1). Running a node is
 name". Re-evaluating a node writes the same name again; a name's value is
 removed when its node is invalidated or deleted (ARCHITECTURE §3.4).
 
-Each conversation has its own state slot table, created when the conversation
-starts and left to the garbage collector when it ends. Nothing outlives the
-conversation.
+Each conversation has its own state slot table, empty when the conversation
+begins and gone when it ends — with the Isabelle process, or emptied by
+`TAT.reset` when a fresh conversation begins on the same process
+(ARCHITECTURE §9). Nothing outlives the conversation.
 
 A node class's asynchronous work can reach this table while evaluation runs
 (ARCHITECTURE §9), so it is locked: a pure table under one

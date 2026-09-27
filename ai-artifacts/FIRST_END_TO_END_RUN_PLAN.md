@@ -368,8 +368,9 @@ node, unused.
 ## 7. Implementation order *(proposed)*
 
 Each step lands with its tests, passes review, and is committed before the
-next begins. The ML end-to-end test (`test/run_ml_framework_test.py`) runs
-at every step that touches the ML side.
+next begins. The Isabelle-backed cases of `python -m pytest test` run at
+every step that touches the ML side (steps 1–4 ran the ML end-to-end
+script `test/run_ml_framework_test.py`, which step 5 retired).
 
 1. **Persistence in the model** (§2): `Node_Rows` (in `store.py`),
    `to_store`/`from_store` on the hierarchy, `node.kind`,
@@ -446,11 +447,13 @@ at every step that touches the ML side.
    taking the theories, the working directory and the port, and
    `check_parallel_proofs` asserting below 3 (MODULE_STRUCTURE §2.6).
    Test: the tools are called and one tree is evaluated in Isabelle. The
-   test suite starts one Python RPC host, then one `isabelle TAT` per run
-   with that host's address exported as `RPC_Host` in its environment,
-   and reaches the tools through the `mcp` SDK's Streamable HTTP client;
-   `test/run_ml_framework_test.py` retires into it, and
-   `test/routing_forest.py` retires with step 4.
+   test suite starts one Python RPC host in the test process, then one
+   `isabelle TAT` per run with that host's address exported as `RPC_Host`
+   in its environment, gives every Isabelle-backed case a fresh
+   conversation through the framework callback `TAT.reset`, and reaches
+   the tools through the `mcp` SDK's Streamable HTTP client
+   (ai-artifacts/TEST_HARNESS_PLAN.md); `test/run_ml_framework_test.py`
+   retired into it, and `test/routing_forest.py` with step 4.
 
 Out of this plan, in the order they are likely needed afterwards: `recall`,
 `evaluate_to` and `status` as tools (TOOL_SCHEMAS.md §5); compilation

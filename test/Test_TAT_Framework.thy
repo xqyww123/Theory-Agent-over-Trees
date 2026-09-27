@@ -1,14 +1,15 @@
 theory Test_TAT_Framework
-  imports "../Theory_Agent_over_Trees"
+  imports Theory_Agent_over_Trees.Theory_Agent_over_Trees
 begin
 
-text \<open>The ML half of the framework test.  It registers node-class-style
-  callbacks against the state slot table and the theory pipeline, and starts
-  a conversation whose Python side is \<open>tat_framework_ml_test.py\<close>; every
-  assertion of the driven part lives there.  The two negative tests that
-  must not start a conversation (a duplicated callback name, a rejected
-  \<open>parallel_proofs\<close>) run below as plain ML.  Evaluate this theory to run the
-  test (\<open>test/run_ml_framework_test.py\<close> does).\<close>
+text \<open>The test plugin (ai-artifacts/TEST_HARNESS_PLAN.md §5): the plugin the
+  suite's \<open>isabelle TAT\<close> is started with.  It registers node-class-style
+  callbacks against the state slot table and the theory pipeline -- the
+  \<open>TAT_test.*\<close> probes the Isabelle-backed cases call -- and contributes no
+  node class; its Python package is \<open>tat_test_plugin\<close>, named twice below on
+  purpose.  The two checks that must fail before any conversation starts (a
+  duplicated callback name, a rejected \<open>parallel_proofs\<close>) run below as plain
+  ML while the theory loads.\<close>
 
 ML \<open>
 structure TAT_Test_Lib = struct
@@ -37,7 +38,7 @@ setup \<open>
 (*writes a state into the slot; the boolean picks which of two
   distinguishable states, so a copy that fabricates one is caught*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
-  TAT_Framework.register_callback {python_packages = ["tat_framework_ml_test"]} (fn env =>
+  TAT_Framework.register_callback {python_packages = ["tat_test_plugin"]} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.make",
       on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -69,7 +70,7 @@ setup \<open>
 let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.clear",
+      name = "TAT_test.delete",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packUnit,
@@ -83,7 +84,7 @@ setup \<open>
   the slot.  The package list is deliberately repeated: deduplication is the
   framework's (§2.6).*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
-  TAT_Framework.register_callback {python_packages = ["tat_framework_ml_test"]} (fn env =>
+  TAT_Framework.register_callback {python_packages = ["tat_test_plugin"]} (fn env =>
     Remote_Procedure_Calling.mk_callback {
       name = "TAT_test.begin",
       on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -220,9 +221,5 @@ in
   | Exn.Res _ => raise Fail "parallel_proofs = 3 was not rejected"
 end
 \<close>
-
-ML \<open>Remote_Procedure_Calling.load ["tat_framework_ml_test"]\<close>
-
-ML \<open>TAT_Framework.start' "TAT_test.drive" [\<^theory>] "" 0\<close>
 
 end

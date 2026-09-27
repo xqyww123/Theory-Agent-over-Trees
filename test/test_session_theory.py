@@ -2,7 +2,7 @@
 the plan's §6) against the fake state slot table: gen's checks and their
 approved wording, the unchained container under edits, moves, ids, the
 store round trip, and the slot chain of a tree whose header failed.
-Running a real header needs Isabelle: test/tat_framework_ml_test.py.
+Running a real header needs Isabelle: test/test_conversation.py.
 Run: python -m pytest test/test_session_theory.py
 """
 

@@ -5,17 +5,16 @@ HTTP client.  Run: python -m pytest test/test_mcp_server.py
 """
 
 import asyncio
-import socket
 from contextlib import asynccontextmanager
 
 import httpx
 import pytest
 import uvicorn
-from mcp import ClientSession, types
-from mcp.client.streamable_http import streamable_http_client
+from mcp import types
 from mcp.shared.exceptions import McpError
 
 from baselines import DOCS, fenced_lines
+from harness import client, free_port, text_of
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.mcp_server import (
@@ -32,12 +31,6 @@ INTERNAL, UNSAVED, GONE = fenced_lines(DOCS / "RENDER_BASELINES.md", "4.")
 SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 STRICT_SCHEMA = {"type": "object", "properties": {"field": {"type": "string"}},
                  "required": ["field"], "additionalProperties": False}
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind((HOST, 0))
-        return s.getsockname()[1]
 
 
 def run(scenario):
@@ -147,19 +140,6 @@ def hold_accepting(server: TAT_Server) -> asyncio.Event:
         await released.wait()
     server._uvicorn.main_loop = held                  # type: ignore[method-assign]
     return released
-
-
-@asynccontextmanager
-async def client(url: str):
-    async with streamable_http_client(url) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
-
-
-def text_of(result) -> str:
-    assert len(result.content) == 1 and result.content[0].type == "text"
-    return result.content[0].text
 
 
 def test_tools_are_advertised_and_a_result_is_the_bodys_text():

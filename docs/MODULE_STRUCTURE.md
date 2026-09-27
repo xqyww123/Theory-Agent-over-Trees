@@ -37,9 +37,9 @@ on that heap: `Theory_Agent_over_Trees.thy`, and the theory defining each
 plugin the working directory records, are loaded from source on the base
 heap when the process starts (ARCHITECTURE §8). Its `directories "test"`
 puts `test/` among the session's theory search directories, so that a
-`.thy` there — the ML test's helper theory, the test plugin — is found by
-its session-qualified name, `Theory_Agent_over_Trees.<name>`, while
-declaring no theory there.
+`.thy` there — `TAT_Lib_Helper`, the test plugin `Test_TAT_Framework` — is
+found by its session-qualified name, `Theory_Agent_over_Trees.<name>`,
+while declaring no theory there.
 
 One structure per file except the boot, which defines none, and two
 structures in all. Inside a file the body is
@@ -60,7 +60,7 @@ only a node class needs is in `TAT_Common_Nodes`.
 ### 2.1 State slots
 
 The state slot table (EVALUATOR_DESIGN §1.1): one per conversation, locked,
-and reached only through five operations.
+and reached only through six operations.
 
 | operation | used when |
 | --- | --- |
@@ -69,14 +69,16 @@ and reached only through five operations.
 | `copy` | one slot's state stands as another's: a class with no ending command, a failed node passed over (ARCHITECTURE §3.1), a node inserted or deleted (ARCHITECTURE §3.4). Afterwards the target holds what the source holds — nothing, when the source holds nothing |
 | `delete` | a node leaves `ready`, or is deleted; takes a list of names, so a batch is one round trip |
 | `exists` | the Python side asks whether a slot holds a state |
+| `clear` | a fresh conversation begins on the same Isabelle process (ARCHITECTURE §9): the whole table, between two conversations |
 
 ### 2.2 Theory table
 
 The map from qualified theory name (EVALUATOR_DESIGN §7) to `theory` value
 (EVALUATOR_DESIGN §3), locked like the state slot table. `put` overwrites,
-`lookup` reads, and `delete` removes the names an edit made vanish
+`lookup` reads, `delete` removes the names an edit made vanish
 (`TAT.theory_delete`, §2.6; EVALUATOR_DESIGN §3), a name it does not hold
-included. The key of an entry `end_theory` writes is the theory value's
+included, and `clear` empties the table when a fresh conversation begins
+(§2.1). The key of an entry `end_theory` writes is the theory value's
 own long name — the same string §2.3's resolution produces.
 
 ### 2.3 Theory loader
@@ -228,9 +230,10 @@ and starts the conversation:
 3. add the framework's own: `TAT.state_copy`, `TAT.state_delete` and
    `TAT.state_exists` on state slots (§2.1's `copy`, `delete` and `exists`;
    `get` and `put` ride inside the classes' own callbacks and need no wire
-   name), `TAT.theory_delete` on the theory table (§2.2's `delete`), and
+   name), `TAT.theory_delete` on the theory table (§2.2's `delete`),
    `TAT.check_new_theory_short_name` (§2.3), whose three answers travel as
-   `["taken", <long name>]`, `["reserved"]` and `["free"]`;
+   `["taken", <long name>]`, `["reserved"]` and `["free"]`, and `TAT.reset`,
+   which empties both tables (§2.1's and §2.2's `clear`);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.6) with the collected package list, the
@@ -682,7 +685,14 @@ framework's modules, and a `gen` reading over the wire, call these
 functions. `theory_delete` removes vanished qualified names from the
 theory table in one round trip; `check_new_theory_short_name` answers one
 of `Taken(holder)`, `Reserved()` and `Free()` (§2.3), the wire's tagged
-list read here and nowhere else. A node class's own callback (§2.5) is not here: the class calls
+list read here and nowhere else; `reset` empties the state slot table and
+the theory table — a fresh conversation begins on the same Isabelle
+process (ARCHITECTURE §9) — the first act of every conversation the test
+harness hands out, and called by nothing else: no case receives a
+conversation once the Isabelle-backed part of the run has ended, and a
+case that ends while a task it started is still inside a shielded round
+trip is harmless, because the ML side's dispatch serves one callback at a
+time. A node class's own callback (§2.5) is not here: the class calls
 it itself, through `call`, from its evaluation hooks (§4.1), the shape
 being between the class and its own ML half (ARCHITECTURE §6.2). `call`
 raises `TAT_IsabelleError` from an exception the callback let escape, or
@@ -915,9 +925,9 @@ lock and writing it, and between clearing it on release and closing the
 descriptor; a working directory whose lock
 file TAT cannot open is refused before that, `TAT cannot use
 <working directory> as its working directory: <strerror>` — opens the
-`Forest_Store` on `<working directory>/TAT.sqlite`; builds the
-`Conversation` (§4.1) from its connection and the working directory; loads
-the plugins (§4.4); builds the `Forest`; starts the server, a port that
+`Forest_Store` on `<working directory>/TAT.sqlite`; loads the plugins
+(§4.4); builds the `Conversation` (§4.1) from its connection and the
+working directory, and the `Forest`; starts the server, a port that
 cannot be bound being a `TAT_StartupError` too, `TAT cannot serve on
 127.0.0.1:<port>: <strerror>`, and prints
 `TAT is serving on http://127.0.0.1:<port>/mcp` to the Isabelle side, a

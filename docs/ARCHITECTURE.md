@@ -31,7 +31,7 @@ language. A concept that needs a name gets one here first.
 | **evaluate** | running a node's commands in Isabelle and recording what happened (§3) |
 | **emit** | a node writing its own Isar text (§4) |
 | **compile** | turning the forest into `.thy` files and a ROOT on disk (§4) |
-| **conversation** | one run of TAT, from Isabelle's call into Python until either process stops, the connection between them closes, or a bug or a `TAT_DisasterError` ends it from inside; one per working directory (§9) |
+| **conversation** | one run of TAT, from Isabelle's call into Python — or, within that call, from `TAT.reset` beginning a fresh conversation on the same Isabelle process — until either process stops, the connection between them closes, a bug or a `TAT_DisasterError` ends it from inside, or its host ends it to begin a fresh one; one per working directory (§9) |
 | **launcher** | `isabelle TAT`, the command that starts the Isabelle process on the chosen base heap and calls `TAT_Framework.start` (§9) |
 | **boot** | `ML/TAT_Boot.ML`, the one ML file the launcher loads into the Isabelle process before TAT's theory exists; it defines the protocol command `TAT.boot` (MODULE_STRUCTURE §5) |
 | **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation (§9), the ROOT, one folder per `Session` for its trees' `.thy` files (§4), and the hook files `TAT_new` writes for the agent clients (CLIENT_HOOKS.md) |
@@ -593,11 +593,18 @@ calls the Python procedure `launch_TAT` over `contrib/Isabelle_RPC`; Python
 drives Isabelle through that call's callbacks, and the call does not return:
 the conversation ends when either process stops, when the connection
 between them closes, or when a bug or a `TAT_DisasterError` ends it from
-inside (MODULE_STRUCTURE §4.6), the call then returning only by raising.
-AoA's entry has the same shape
-(`contrib/Isa-Mini/IsaMini/AoA/toplevel.py:174`). A conversation is bound to
-its Isabelle process, whose state slots hold everything evaluated: when that
-process goes, the conversation ends, and the next one on the same working
+inside (MODULE_STRUCTURE §4.6), the call then returning only by raising —
+or when its host ends it, within the same call, to begin a fresh
+conversation on the same Isabelle process. AoA's entry has the same shape
+(`contrib/Isa-Mini/IsaMini/AoA/toplevel.py:174`). What a conversation is
+bound to on the Isabelle side is its state — the state slot table and the
+theory table: both are empty when the conversation begins and gone when it
+ends, whether because the Isabelle process went or because a fresh
+conversation began on the same process through `TAT.reset`
+(MODULE_STRUCTURE §2.6). A theory loaded from source stays in `Thy_Info`,
+the process's cache, so a later conversation's import of it is answered by
+`Thy_Info.lookup_theory`, as a base-heap theory is (EVALUATOR_DESIGN §2),
+with the same theory value. The next conversation on the same working
 directory starts from the database, `not_evaluated` throughout (§4.1). One
 conversation per working directory: a second conversation on a directory
 whose lock file another holds is refused with a `TAT_StartupError`. A

@@ -17,7 +17,7 @@ import pytest
 
 from baselines import DOCS, fenced_blocks
 from isabelle_theory_agent.mcp_server import TAT_Server
-from test_mcp_server import free_port
+from harness import free_port
 
 pytestmark = pytest.mark.skipif(
     shutil.which("isabelle") is None or shutil.which("curl") is None,

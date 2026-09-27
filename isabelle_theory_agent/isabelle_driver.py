@@ -65,6 +65,14 @@ async def theory_delete(conn: Connection, names: list[str]) -> None:
     await call(conn, "TAT.theory_delete", names)
 
 
+async def reset(conn: Connection) -> None:
+    """Empty the state slot table and the theory table: a fresh conversation
+    begins on the same Isabelle process (ARCHITECTURE §9).  The first act of
+    every conversation the test harness hands out, and called by nothing
+    else; `Thy_Info`, the process's cache, stays."""
+    await call(conn, "TAT.reset", None)
+
+
 # The three answers of the short-name check (MODULE_STRUCTURE §2.3).
 
 @dataclass(frozen=True)
