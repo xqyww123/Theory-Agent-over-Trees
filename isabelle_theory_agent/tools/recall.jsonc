@@ -1,0 +1,9 @@
+// The `recall` tool (RECALL.md §3).
+{
+  "type": "object",
+  "properties": {
+    "node_id": { "type": "string", "description": "The id of the node to read. Leave it out to read sessions." }
+  },
+  "required": [],
+  "additionalProperties": false
+}

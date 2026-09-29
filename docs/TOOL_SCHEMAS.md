@@ -3,9 +3,10 @@
 Status: design draft. A section marked *(decided)* records the owner's
 ruling; *(proposed)* is not settled.
 
-The argument shape of every tool MCP_SPECIFICATION §1 names, and the first
-line a failed call renders. The JSON schemas are hand-written, one file per
-tool under `isabelle_theory_agent/tools/`, in the style of AoA's
+The argument shape of every tool MCP_SPECIFICATION §1 names — `recall`'s
+is RECALL.md §3 — and the first line a failed call renders. The JSON
+schemas are hand-written, one file per tool under
+`isabelle_theory_agent/tools/`, in the style of AoA's
 (`contrib/Isa-Mini/IsaMini/AoA/tools/`) though within the closed grammar
 of MODULE_STRUCTURE §4.4, which is narrower than AoA's — no `default`, no
 `anyOf`, no `minimum`; `edit`'s is completed at start from the loaded
@@ -158,4 +159,4 @@ would only repeat the tool the agent just called.
 
 ## 5. Undecided
 
-The argument shapes of `recall`, `construct`, `evaluate_to` and `status`.
+The argument shapes of `construct`, `evaluate_to` and `status`.

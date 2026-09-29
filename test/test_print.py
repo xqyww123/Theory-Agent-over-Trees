@@ -2,7 +2,7 @@
 fields and errors `Session` and `Theory` write (SESSION_AND_THEORY §4),
 the seen set, the forest root's three forms, `Forest.render` and its id
 index — pinned to the documents' own examples (PRINT.md §6, §7,
-RENDER_BASELINES §5).  Nothing here crosses the wire.
+RENDER_BASELINES §5, RECALL.md §2).  Nothing here crosses the wire.
 Run: python -m pytest test/test_print.py
 """
 
@@ -132,6 +132,20 @@ def test_the_quickview_of_print_md_section_7():
     f, a, x = example_forest()
     [example] = fenced_blocks(PRINT, "7.")
     assert render(f, f, focus(x)) == example
+
+
+def test_the_recall_of_recall_md_section_2():
+    """RECALL.md §2's forest: two sessions, the first finished."""
+    f = new_forest()
+    a = session(f, "A")
+    base = theory(a, "Base", beginning=M.READY, ending=M.READY)
+    proven = leaf(Lemma, base, "lemma", "A", status=M.READY)
+    proven._owes_nothing = lambda: True                    # type: ignore[method-assign]
+    b = session(f, "B", description="Sorting, verified.")
+    x = theory(b, "X", imports=("Main", "A.Base"))
+    leaf(Lemma, x, "lemma", "P")
+    [example] = fenced_blocks(DOCS / "RECALL.md", "2.")
+    assert render(f, f, RECALL) == example
 
 
 def test_the_root_forms_of_print_md_section_6():
@@ -354,6 +368,13 @@ def test_a_theory_prints_its_error_once_per_run_in_a_quickview_and_whole_in_reca
     assert render(f, f, focus(x))[-2:] == block
 
 
+def test_a_recall_that_writes_an_error_whole_records_it():
+    """RECALL.md §2: the quickview after a `recall` does not repeat it."""
+    f, a, x = failing_theory()
+    assert render(f, x, RECALL)[-2:] == ["  Error:", "    header broke"]
+    assert render(f, f, focus(x))[-1] == "  imports: Main"
+
+
 def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
     """SESSION_AND_THEORY §4's `Out_Focus` and on-the-path rows: a failed
     theory beside the focus, and one carrying the path to a focused
@@ -385,8 +406,10 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     x.evaluation_status_ending, x.ending_errors = CANNOT_EVALUATE, ["end broke"]
     render(f, f, focus(x))
     assert (x.identity, "ending") in f.conversation.seen
+    inside = []
 
     async def fails_the_same_way(conn, name, arg):
+        inside.append(render(f, x, RECALL)[-2:])      # a recall inside the round trip
         return ["end broke"]
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
 
@@ -394,6 +417,7 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
         assert not await x._eval_ending_opr()
     import asyncio
     asyncio.run(rerun())
+    assert inside == [["  Error:", "    end broke"]]   # the previous run's, still standing
     assert (x.identity, "ending") not in f.conversation.seen
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    end broke"]
 
@@ -415,6 +439,25 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke"]
 
 
+def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypatch):
+    """PRINT.md §4: the hook records the run's messages and discards their
+    key together, after the call — so a `recall`, which takes no lock,
+    landing inside the round trip reads the previous run's messages, and
+    the quickview after the rerun shows the new ones."""
+    f, a, x = failing_theory()
+    render(f, f, focus(x))
+    inside = []
+
+    async def fails_anew(conn, name, arg):
+        inside.append(render(f, x, RECALL))
+        return ["header broke anew"]
+    monkeypatch.setattr(isabelle_driver, "call", fails_anew)
+    import asyncio
+    asyncio.run(x._eval_beginning_opr())
+    assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke"]]
+    assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke anew"]
+
+
 def test_messages_show_only_while_the_operation_is_an_own_stop():
     f, a, x = failing_theory()
     x.ending_errors = ["end broke"]                    # left by an earlier run
@@ -426,10 +469,11 @@ def test_messages_show_only_while_the_operation_is_an_own_stop():
     assert render(f, x, RECALL)[-2:] == ["  Error:", "    end broke"]
 
 
-def test_recall_at_depth_two_shows_a_theory_s_errors_once_per_run():
+def test_recall_shows_a_theory_s_errors_whole_at_depth_one_and_once_per_run_at_depth_two():
     f, a, x = failing_theory()
     assert render(f, f, RECALL)[-2:] == ["  Error:", "    header broke"]   # depth 2: once
     assert "Error:" not in "".join(render(f, f, RECALL))
+    assert render(f, a, RECALL)[-2:] == ["    Error:", "      header broke"]   # depth 1: whole
 
 
 # --- Forest.render and the id index ----------------------------------------

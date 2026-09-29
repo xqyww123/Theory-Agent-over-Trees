@@ -33,6 +33,7 @@ are implemented.**
 | [docs/TOOL_SCHEMAS.md](docs/TOOL_SCHEMAS.md) | The tools' argument shapes and what a call renders |
 | [docs/PLUGIN_SYSTEM.md](docs/PLUGIN_SYSTEM.md) | How node classes register, and how their schemas complete the `edit` tool's |
 | [docs/PRINT.md](docs/PRINT.md) | Rendering: the modes, the marks, the errors, the forest root |
+| [docs/RECALL.md](docs/RECALL.md) | The `recall` tool: what it reads, what it renders, the call |
 | [docs/CLIENT_HOOKS.md](docs/CLIENT_HOOKS.md) | The hook files `TAT_new` writes for each agent client, and the endpoint they call |
 | [docs/RENDER_BASELINES.md](docs/RENDER_BASELINES.md) | The approved agent-facing wording: every error, and the lines the framework writes |
 | [docs/node_classes/SESSION_AND_THEORY.md](docs/node_classes/SESSION_AND_THEORY.md) | The `Session` and `Theory` node classes |

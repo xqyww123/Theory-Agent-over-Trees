@@ -102,7 +102,7 @@ class Bodies:
         names = ("echo", "strict", "slow", "slow_bug", "stubborn", "refused", "bug",
                  "disaster", "wire_dead", "escapes", "not_text", "plain")
         return [Tool(name, f"the {name} tool", STRICT_SCHEMA if name == "strict" else SCHEMA,
-                     getattr(self, name)) for name in names]
+                     getattr(self, name), read_only=name == "echo") for name in names]
 
 
 @asynccontextmanager
@@ -151,6 +151,8 @@ def test_tools_are_advertised_and_a_result_is_the_bodys_text():
             assert [t.name for t in listed.tools] == [t.name for t in bodies.tools()]
             assert listed.tools[0].description == "the echo tool"
             assert listed.tools[0].inputSchema == SCHEMA
+            assert [t.annotations for t in listed.tools[:2]] == [
+                types.ToolAnnotations(readOnlyHint=True), types.ToolAnnotations(readOnlyHint=False)]
             result = await session.call_tool("echo", {"text": "hi"})
             assert (text_of(result), result.isError) == ("echo hi", False)
             # the SDK's input validation is off: a call the schema would

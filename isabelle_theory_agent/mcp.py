@@ -15,9 +15,9 @@ import jsoncomment
 from . import edit
 from .exceptions import (
     HoldsNoChildren, MoveBesideItself, ProtectedNode, TAT_Error, TAT_InternalError)
-from .mcp_server import Tool
+from .mcp_server import Body, Tool
 from .model import (
-    BRIEFING, Evaluating, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node,
+    BRIEFING, Evaluating, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL,
     Relative_Focus)
 from .plugin import Loaded, check_call, validate_call_schema
 
@@ -33,20 +33,15 @@ _ACTION_POSITION = {"append": "into", "insert_before": "before", "insert_after":
 
 
 def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
-    """`edit`, `move` and `delete` (TOOL_SCHEMAS.md): each checks the call
-    against the schema it advertises, holds the forest's lock across the
-    change, the evaluation the call asks for and the quickview, names the
-    refused operation on a `TAT_Error` the change raises (EXCEPTIONS.md
-    §4), and answers the `Done` line over the quickview (PRINT.md §5)."""
-    # One object per tool is what the agent is told and what a call is held
-    # to (`plugin.check_call`); the constructs inside `edit`'s are
-    # `edit.py`'s to check, element by element.
-    schemas = {"edit": loaded.edit_schema, "move": _schema("move"), "delete": _schema("delete")}
-    for tool, schema in schemas.items():
-        validate_call_schema(schema, tool)
+    """`edit`, `move` and `delete` (TOOL_SCHEMAS.md): each holds the
+    forest's lock across the change, the evaluation the call asks for and
+    the quickview, names the refused operation on a `TAT_Error` the change
+    raises (EXCEPTIONS.md §4), and answers the `Done` line over the
+    quickview (PRINT.md §5).  And `recall` (RECALL.md), which renders the
+    node in `Recall` under no lock.  Every call is checked against its
+    tool's schema before the entry runs (`_tool`)."""
 
     async def run_edit(arguments: dict[str, Any]) -> str:
-        check_call(schemas["edit"], "edit", arguments)
         action, target_id = arguments["action"], arguments["target_id"]
         constructs = arguments["constructs"]
         async with forest.lock:
@@ -62,7 +57,6 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             return _done(forest, what, stopped, nodes, -1)
 
     async def run_move(arguments: dict[str, Any]) -> str:
-        check_call(schemas["move"], "move", arguments)
         source_id, location = arguments["source_id"], arguments["location"]
         position, node_id = location["position"], location["node_id"]
         where = f"{source_id} {position} {node_id}"   # the target phrase (TOOL_SCHEMAS.md §4)
@@ -75,16 +69,40 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             return _done(forest, what, stopped, [node], -1)
 
     async def run_delete(arguments: dict[str, Any]) -> str:
-        check_call(schemas["delete"], "delete", arguments)
         node_id = arguments["node_id"]
         async with forest.lock:
             with _operation("delete", node_id) as what:
                 parent = await edit.delete(_resolve(forest, node_id))
             return _done(forest, what, None, [parent], 0)
 
-    return [Tool("edit", "Edit Isabelle theory constructs", schemas["edit"], run_edit),
-            Tool("move", "Move an Isabelle theory construct", schemas["move"], run_move),
-            Tool("delete", "Delete an Isabelle theory construct", schemas["delete"], run_delete)]
+    async def run_recall(arguments: dict[str, Any]) -> str:
+        # `Forest.resolve`, not `_resolve`: a read may name the root
+        node = forest.resolve(arguments["node_id"]) if "node_id" in arguments else forest
+        return forest.render(node, RECALL)
+
+    return [_tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit,
+                  read_only=False),
+            _tool("move", "Move an Isabelle theory construct", _schema("move"), run_move,
+                  read_only=False),
+            _tool("delete", "Delete an Isabelle theory construct", _schema("delete"), run_delete,
+                  read_only=False),
+            _tool("recall", "Read an Isabelle theory construct with what is under it, briefer the"
+                  " deeper; read a construct itself to see it in full.", _schema("recall"),
+                  run_recall, read_only=True)]
+
+
+def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:
+    """One object per tool is what the agent is told and what a call is
+    held to: the schema validated as the tool is built
+    (`plugin.validate_call_schema`), and every call checked against it
+    before `run` sees it (`plugin.check_call`); the constructs inside
+    `edit`'s are `edit.py`'s to check, element by element."""
+    validate_call_schema(schema, name)
+
+    async def checked(arguments: dict[str, Any]) -> str:
+        check_call(schema, name, arguments)
+        return await run(arguments)
+    return Tool(name, description, schema, checked, read_only)
 
 
 @contextmanager

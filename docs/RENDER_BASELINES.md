@@ -243,7 +243,7 @@ server gives, and never an exception's own text:
 
 ```
 TAT has stopped: an internal error; this call did not complete.
-TAT has stopped: the forest could not be saved; this call did not complete.
+TAT has stopped: the sessions could not be saved; this call did not complete.
 TAT has stopped: Isabelle is gone; this call did not complete.
 ```
 

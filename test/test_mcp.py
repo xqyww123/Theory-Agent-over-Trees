@@ -1,11 +1,12 @@
 """The three forest-changing tools of `mcp.py` (TOOL_SCHEMAS.md,
-MODULE_STRUCTURE §4.6) on `test_model`'s fake classes: the advertised
-schemas against the documents, where each action and position puts or
-takes a node, the `evaluate` flag, the `Done` line and the quickview that
-follow, and every refusal — its class and fields, and the opening line
-the entry adds (RENDER_BASELINES §1); a malformed call's lines are read
-from TOOL_SCHEMAS §4.  The call check itself, on a schema of every shape
-it reads, is `test_plugin`'s.  Nothing here crosses the wire.
+MODULE_STRUCTURE §4.6) and `recall` (RECALL.md) on `test_model`'s fake
+classes: the advertised schemas against the documents, where each action
+and position puts or takes a node, the `evaluate` flag, the `Done` line
+and the quickview that follow, what `recall` renders, and every refusal
+— its class and fields, and the opening line the entry adds
+(RENDER_BASELINES §1); a malformed call's lines are read from
+TOOL_SCHEMAS §4 and RECALL.md §3.  The call check itself, on a schema of
+every shape it reads, is `test_plugin`'s.  Nothing here crosses the wire.
 Run: python -m pytest test/test_mcp.py
 """
 
@@ -16,13 +17,14 @@ import jsoncomment
 import pytest
 
 import test_model as tm
-from baselines import DOCS, fenced_blocks, stated
+from baselines import DOCS, fenced_blocks, fenced_lines, stated
 from test_model import T, add, slot
 
 from isabelle_theory_agent import mcp, plugin
 from isabelle_theory_agent.exceptions import (
-    HoldsNoChildren, InvalidField, MissingField, MoveBesideItself, MoveIntoOwnSubtree,
-    NodeNotFound, ProtectedNode, RawASTError, TAT_Error, TAT_InternalError, UnexpectedField)
+    AmbiguousId, HoldsNoChildren, InvalidField, MissingField, MoveBesideItself,
+    MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError, TAT_Error, TAT_InternalError,
+    UnexpectedField)
 from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY
 
 
@@ -33,6 +35,7 @@ class Block(tm.Block):                  # omissible like a `Theory`, so the test
 KINDS = {"t": T, "block": Block}
 EDIT_SCHEMA = mcp._schema("edit")       # the envelope, its `$defs` empty: the check reads no construct
 TOOL_SCHEMAS = DOCS / "TOOL_SCHEMAS.md"
+RECALL = DOCS / "RECALL.md"
 
 
 @pytest.fixture(autouse=True)
@@ -81,15 +84,19 @@ def names(parent):
 
 # --- what the server is given ------------------------------------------------
 
-def test_the_three_tools_their_descriptions_and_schemas_as_the_document_states_them():
+def test_the_four_tools_their_descriptions_and_schemas_as_the_documents_state_them():
     f, *_, tools = build()
-    assert list(tools) == ["edit", "move", "delete"]
-    assert [t.description for t in tools.values()] == stated(TOOL_SCHEMAS, "Tool description")
+    assert list(tools) == ["edit", "move", "delete", "recall"]
+    assert [t.description for t in tools.values()] == \
+        stated(TOOL_SCHEMAS, "Tool description") + stated(RECALL, "Tool description")
+    assert [t.read_only for t in tools.values()] == [False, False, False, True]
     parse = jsoncomment.JsonComment().loads
     [edit], [move], [delete] = (fenced_blocks(TOOL_SCHEMAS, s) for s in ("1.", "2.", "3."))
+    recall, _ = fenced_blocks(RECALL, "3.")
     assert EDIT_SCHEMA == parse("\n".join(edit))            # the envelope `Loaded.edit_schema` fills
     assert tools["move"].input_schema == parse("\n".join(move))
     assert tools["delete"].input_schema == parse("\n".join(delete))
+    assert tools["recall"].input_schema == parse("\n".join(recall))
     assert tools["edit"].input_schema is EDIT_SCHEMA       # `Loaded.edit_schema`, as given
     # `tools` validates what it advertises (`plugin.validate_call_schema`), naming the tool.
     broken = {**EDIT_SCHEMA, "properties": {**EDIT_SCHEMA["properties"], "extra": {"type": "null"}}}
@@ -356,3 +363,50 @@ def test_delete_shows_the_old_parent_with_what_is_left():
     assert lines[0] == "Cannot delete Sessions" and e.id == "Sessions"
     e, lines = refused(tools["delete"], NodeNotFound, node_id="t_a")
     assert lines[0] == "Cannot delete t_a" and e.id == "t_a"
+
+
+# --- recall -------------------------------------------------------------------
+
+def test_recall_renders_the_node_in_recall_and_the_sessions_without_an_id():
+    """RECALL.md §3: the lines are the framework's at `Recall`'s depths —
+    `t_x`, four levels down, is what tells `Recall` from the briefing and
+    from a whole-subtree quickview; `Sessions` reads what no id reads; a
+    read takes no lock (MCP_SPECIFICATION §5)."""
+    f, thy, sec, *_, tools = build()
+    inner = add(sec, Block(sec, slot(), "Inner", slot()))
+    add(inner, T(inner, slot(), "x"))
+    sessions = ["block_Theory (not evaluated)", "- block_Section (not evaluated)",
+                "  - t_a (not evaluated)", "  - t_b (not evaluated)",
+                "  - block_Inner (not evaluated)", "- t_c (not evaluated)"]
+    assert call(tools["recall"]) == sessions
+    assert call(tools["recall"], node_id="Sessions") == sessions
+    assert call(tools["recall"], node_id="block_Section") == [
+        "- block_Section (not evaluated)", "  - t_a (not evaluated)", "  - t_b (not evaluated)",
+        "  - block_Inner (not evaluated)", "    - t_x (not evaluated)"]
+
+    async def under_the_lock():
+        async with f.lock:
+            return await asyncio.wait_for(tools["recall"].run({}), timeout=1)
+    assert asyncio.run(under_the_lock()).splitlines() == sessions
+
+
+def test_recall_refusals_render_the_cause_alone():
+    """RECALL.md §3's block: its first two lines are RENDER_BASELINES §2's,
+    which test_exceptions ties to the classes; the third is `recall`'s
+    own.  Every refusal by class and fields, one line, no opening line,
+    the forest untouched."""
+    f, thy, sec, *_, tools = build()
+    other = add(thy, Block(thy, slot(), "Other", slot()))
+    add(other, T(other, slot(), "a"))                       # a second `a`: `t_a` is ambiguous
+    recall = tools["recall"]
+    _, [not_found, ambiguous, unexpected] = fenced_blocks(RECALL, "3.")
+    assert {not_found, ambiguous} <= set(fenced_lines(DOCS / "RENDER_BASELINES.md", "2."))
+    e, lines = refused(recall, NodeNotFound, node_id="t_z")
+    assert (e.id, e.opr, len(lines)) == ("t_z", None, 1)
+    e, lines = refused(recall, AmbiguousId, node_id="t_a")
+    assert (e.id, e.candidates, len(lines)) == ("t_a", ["block_Section.t_a", "block_Other.t_a"], 1)
+    e, lines = refused(recall, InvalidField, node_id=3)
+    assert (e.field, e.of_tool, len(lines)) == ("node_id", True, 1)
+    e, lines = refused(recall, UnexpectedField, id="t_c")
+    assert (e.holder, e.field, e.of_tool) == ("recall", "id", True) and lines == [unexpected]
+    assert names(thy) == ["Section", "c", "Other"] and names(sec) == ["a", "b"]

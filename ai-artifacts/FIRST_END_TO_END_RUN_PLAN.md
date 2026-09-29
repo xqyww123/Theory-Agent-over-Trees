@@ -453,8 +453,12 @@ script `test/run_ml_framework_test.py`, which step 5 retired).
    conversation through the framework callback `TAT.reset`, and reaches
    the tools through the `mcp` SDK's Streamable HTTP client
    (ai-artifacts/TEST_HARNESS_PLAN.md); `test/run_ml_framework_test.py`
-   retired into it, and `test/routing_forest.py` with step 4.
+   retired into it, and `test/routing_forest.py` with step 4. *(Done
+   2026-09-27; the harness's implementation plan and its record:
+   TEST_HARNESS_PLAN.md.)*
 
-Out of this plan, in the order they are likely needed afterwards: `recall`,
-`evaluate_to` and `status` as tools (TOOL_SCHEMAS.md §5); compilation
-(§1); `construct`.
+Out of this plan, in the order they are likely needed afterwards:
+`recall` *(done 2026-09-28: docs/RECALL.md, ai-artifacts/RECALL_PLAN.md)*;
+`evaluate_to` as a tool (TOOL_SCHEMAS.md §5); compilation (§1);
+`construct` (docs/CONSTRUCT_INTERACTION.md, into which `status` has
+folded as `check_construct`).

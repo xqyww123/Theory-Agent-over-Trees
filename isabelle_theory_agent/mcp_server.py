@@ -72,16 +72,21 @@ def envelope(client: str | None, briefing: str) -> tuple[bytes, str]:
     return json.dumps(shape(briefing)).encode(), "application/json"
 
 
+Body = Callable[[dict[str, Any]], Coroutine[Any, Any, str]]
+
+
 @dataclass(frozen=True)
 class Tool:
     """One tool as the server advertises and runs it (`mcp.py` builds
     them): `run` takes the call's arguments and returns the result's text,
     or raises — a `TAT_Error` for the agent, anything else ending the
-    conversation."""
+    conversation; `read_only` is advertised as MCP's `readOnlyHint`
+    (MCP_SPECIFICATION §5)."""
     name: str
     description: str
     input_schema: JSON_Schema
-    run: Callable[[dict[str, Any]], Coroutine[Any, Any, str]]
+    run: Body
+    read_only: bool
 
 
 def stopped(ended_by: BaseException) -> str:
@@ -90,7 +95,7 @@ def stopped(ended_by: BaseException) -> str:
     dead wire answers a round trip with, or the RPC host's cancellation of
     `launch_TAT` when the connection is gone; else a bug."""
     if isinstance(ended_by, TAT_DisasterError):
-        reason = "the forest could not be saved"
+        reason = "the sessions could not be saved"
     elif isinstance(ended_by, (ConnectionError, asyncio.CancelledError)):
         reason = "Isabelle is gone"
     else:
@@ -267,7 +272,8 @@ class TAT_Server:
 
     async def _list_tools(self) -> list[types.Tool]:
         return [types.Tool(name=tool.name, description=tool.description,
-                           inputSchema=tool.input_schema)
+                           inputSchema=tool.input_schema,
+                           annotations=types.ToolAnnotations(readOnlyHint=tool.read_only))
                 for tool in self._tools.values()]
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:

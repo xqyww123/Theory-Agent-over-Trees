@@ -217,9 +217,11 @@ that class's document under docs/node_classes/ and pinned by that class's
 test, as `Session`'s and `Theory`'s reasons are in SESSION_AND_THEORY
 §3 and test_session_theory.py. Every other test that meets a rendering
 asserts the exception's class and fields, or reads the line from the
-documents (TOOL_SCHEMAS §4's malformed-call block and RENDER_BASELINES
-§6's success lines by test_mcp.py, §5's node lines by test_print.py,
-§3's evaluation text by test_conversation.py and test_forest_walk.py);
+documents (TOOL_SCHEMAS §4's malformed-call block, RENDER_BASELINES §6's
+success lines and RECALL.md §3's refusal block by test_mcp.py,
+RENDER_BASELINES §5's node lines and RECALL.md §2's example by
+test_print.py, RENDER_BASELINES §3's evaluation text by
+test_conversation.py and test_forest_walk.py);
 the lines the framework writes itself — the `Cannot <opr> <target>`
 opening (RENDER_BASELINES §1), the `Done` line (§6) and a node's line
 with its mark (§5) — a test may also spell out with its own ids. No test

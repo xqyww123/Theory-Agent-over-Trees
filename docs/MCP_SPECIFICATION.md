@@ -36,8 +36,8 @@ do.
 Reading the forest: a node by id, or, with no id, the whole forest. It
 renders the node in depth (PRINT.md §5) and nothing else; the quickview,
 which ends the results of the tools that change the forest or evaluate
-it, renders the forest around the nodes the call was about. Its argument
-shape is undecided (TOOL_SCHEMAS.md §5); AoA's `recall` is the reference.
+it, renders the forest around the nodes the call was about. Its document,
+the call included, is RECALL.md.
 
 A `recall` of a node that has not been evaluated reports it as such. Reading
 never evaluates: TAT submits the commands, so nothing runs unless TAT asks for
@@ -245,8 +245,9 @@ Evaluation is synchronous, so a result arrives as the return of the call that
 caused it. The result of a call that holds the forest's lock — `edit`,
 `move`, `delete`, `evaluate_to` — describes the forest as of the moment the
 call released it; another agent's call may have changed it since
-(ARCHITECTURE §9). A read — `recall`, `status`, the future `query` — takes
-no lock and reads the forest in memory, never the database, as it stands
+(ARCHITECTURE §9). A read — `recall`, `status`, the future `query` — is
+advertised with MCP's `readOnlyHint`, takes no lock and reads the forest
+in memory, never the database, as it stands
 at that instant: whole (MODULE_STRUCTURE §4.2), and with evaluation
 possibly under way, since an evaluating call changes statuses one node at
 a time. Collecting the pending messages is `status`'s one write, and the

@@ -464,64 +464,144 @@ notes the round fit to commit once the five clauses are written.
 
 ## Remaining, in order
 
-**Found 2026-09-22, the order pending with the owner:** the plan's step
-4, the forest walk (`Forest._evaluate`, FIRST_END_TO_END_RUN_PLAN §6 —
-the import graph, the order constraint's stop, stops across import
-edges, invalidation of importers, `TAT.theory_delete`), was never
-implemented: `Forest._evaluate` raises `NotImplementedError`, and a
+**Found 2026-09-22, done 2026-09-23 before the harness:** the plan's
+step 4, the forest walk (`Forest._evaluate`, FIRST_END_TO_END_RUN_PLAN §6
+— the import graph, the order constraint's stop, stops across import
+dependencies, invalidation of importers, `TAT.theory_delete`), had never
+been implemented: `Forest._evaluate` raised `NotImplementedError`, and a
 smoke run against a real `isabelle TAT` (scratchpad
-`tools_review/e2e_tools.py`, output `e2e_tools.out`) shows every tool
+`tools_review/e2e_tools.py`, output `e2e_tools.out`) showed every tool
 call — `evaluate: false` included, since every entry ends with the
 invalidation walk — dying there, the server answering `TAT has stopped:
-an internal error` as designed. The suite passes because
-`test_model.OneTreeForest` supplies its own `_evaluate`. The author's
-recommendation: step 4 before the test harness. Another session is
-planning it (`ai-artifacts/FOREST_WALK_PLAN.md`, untracked, not ours):
-coordinate before touching `Forest._evaluate`.
+an internal error` as designed; the suite passed because
+`test_model.OneTreeForest` supplied its own `_evaluate`. It is now in
+(`ai-artifacts/FOREST_WALK_PLAN.md`, the implementation plan and its
+record); `test/routing_forest.py` is gone with it. Still open from that
+step, for the `evaluate_to` tool: where the order constraint's sentence
+goes in a call's answer (TOOL_SCHEMAS §4), composed from
+`Forest._order_violation`.
 
-3. f. **O1, next, as its own change with its own review** (the author's
-      call after ruling 5, `tools_review/ruling5.md` §3, the judge
-      recommending it with three amendments): check a tool call against
-      the schema the tool advertises, and delete the tool TypedDicts.
-      What goes: `Edit_Arguments`, `Location_Arguments`,
-      `Move_Arguments`, `Delete_Arguments`, `ACTIONS`/`POSITIONS`,
-      `_one_of`, the `minItems` refusal in `run_edit`,
-      `plugin.validate_call_schema`, `test_mcp.py::
-      test_the_advertised_schemas_bind_the_shapes_the_entries_enforce`,
-      and `_about_the_call` once nothing in `mcp.py` raises a shape error
-      itself. What comes: `plugin.check_call(schema, tool, arguments)`
-      walking a JSON Schema subset — `type` (object, array, string,
-      boolean, number/integer), `properties`, `required`,
-      `additionalProperties: false`, `enum`, `minItems`, nested objects —
-      raising the same three exceptions with the same sentences (a
-      type-phrase table beside `_JSON_NAMES`, kept inside RENDER_BASELINES
-      §2's vocabulary; `must be one of …` and `must not be empty` as
-      today), marked `of_tool` on the way out as today. The three
-      amendments: (1) `items` — descend into a typed `items`, and treat
-      the `$ref` to `Construct` as opaque, the elements being
-      `edit.py`'s; refuse any other `items`; (2) check the object the
-      agent is shown — `loaded.edit_schema` for `edit`, the `.jsonc`
-      files for the others; (3) the documents: MODULE_STRUCTURE §4.4
-      (the "one checker" sentence ends: the construct side keeps the
-      TypedDict checker, which types `gen`'s `raw`), §4.6, EXCEPTIONS §3's
-      `of_tool` row, TOOL_SCHEMAS §4's intro (already in the schema's
-      vocabulary). `_ACTION_POSITION` stays (its values are the schema's
-      enum, the dispatch exhaustive). Ruling 5's M12 (a `_tool` helper,
-      `check_call` returning the narrowed TypedDict) is superseded by
-      this and not applied. A prototype from the review — 254 passed, a
-      103-case differential of malformed calls rendering byte-identical
-      sentences — is in the scratchpad `tools_review/scratch5-relaxation/
-      repo3` (a scratch copy of the package; read it, do not copy it
-      blindly: it carries A1's mark-on-the-way-out but predates ruling
-      5's other items and ruling 6). Then a review round of the recipe,
-      then commit.
+3. f. **O1, implemented and reviewed 2026-09-22; a confirming round,
+      then commit — done, `e9cecd9`** (the author's call after ruling 5,
+      `tools_review/ruling5.md` §3, the judge recommending it with three
+      amendments): a tool call is checked against the schema the tool
+      advertises, and the tool TypedDicts are gone. Gone:
+      `Edit_Arguments`, `Location_Arguments`, `Move_Arguments`,
+      `Delete_Arguments`, `ACTIONS`/`POSITIONS`, `_one_of`, the
+      `minItems` refusal in `run_edit`, `_about_the_call` (nothing in
+      `mcp.py` raises a shape error now), the TypedDict
+      `validate_call_schema`, and `test_mcp.py::
+      test_the_advertised_schemas_bind_the_shapes_the_entries_enforce`.
+      Come: `plugin.check_call(schema, tool, arguments)` walking the
+      keywords `type` (`string`, `boolean`, `integer`, `number`, `array`,
+      `object`), `properties`, `required`, `additionalProperties: false`,
+      `enum` (on a string, an integer or a number; not a boolean, whose
+      values would render as Python's), `minItems`, `items`, nested
+      objects, raising the same three exceptions with the same sentences,
+      `of_tool` marked on the way out as before; the two checkers share
+      one table of the JSON types, `_JSON_TYPES` (Python shape and
+      RENDER_BASELINES §2's phrase, a NamedTuple), `_fits` serving both,
+      `_JSON_NAMES` mapping the grammar's scalars to JSON type names, and
+      one `_check_names` for the two name loops (a typo beats its own
+      hole, then a required one missing); `validate_call_schema(schema,
+      where)` refuses, where `tools` builds them, a schema that is not
+      well formed (`jsonschema`'s `check_schema` first, as `edit_schema`
+      and `_check_class` already do), a top that is not an object, and
+      one saying anything the check does not enforce or its sentences
+      cannot say (an unknown keyword, an unknown or union type, a
+      `minItems` other than 1, an `items` neither typed nor the
+      `Construct` `$ref`, an object without its three keywords, `$defs`
+      below the top) — the binding test's role, held in shape. The three
+      amendments applied: (1) `items` typed descends by index, the
+      `Construct` `$ref` is opaque, any other refused; (2) `tools` checks
+      `loaded.edit_schema` itself for `edit`, the `.jsonc` files for the
+      others, one `schemas` table advertised and enforced; (3) the
+      documents: MODULE_STRUCTURE §4.4 (the tool schema grammar defined,
+      the validator's two directions) / §4.6, EXCEPTIONS §3's `of_tool`
+      row, TOOL_SCHEMAS §1 (within §4.4's grammar, narrower than AoA's)
+      and §4's intro, RENDER_BASELINES §2's two `InvalidField` sentences
+      and its type phrases, `exceptions.py`'s header and `RawASTError`'s
+      comment. `_ACTION_POSITION` stays. Ruling 5's M12 is superseded.
+
+      **Owner's ruling (2026-09-22): `integer` is in, phrase `an
+      integer`** ("的确我们几乎都会用 integer 类型而非 number 类型", the
+      choice of phrase left to the author) — the author's own narrowing
+      of the plan (no `integer`, one phrase for a number) lifted on the
+      judge's O1 of ruling 7. So RENDER_BASELINES §2 lists six type
+      phrases; a tool schema may say `integer`; the construct grammar's
+      `int` renders `an integer` and refuses `1.5` again (ruling 7's A2,
+      a regression this change had introduced through the shared table:
+      `int` welded to `float`); `int | float` in a construct annotation
+      is refused at registration ("`float` makes `int` moot", the rule
+      `Any` already had — its only rendering would have been "an
+      integer or a number"), MODULE_STRUCTURE §4.4's grammar sentence
+      saying so.
+
+      Review 7 (2026-09-22; `tools_review/o1/BRIEF7.md`, `diff7.patch`,
+      `ruling7.md`, the workflow's result in `tasks/w8xe3fzhi.output`;
+      13 findings after dedupe, a fresh defender each, the judge fuzzing
+      40 000 schemas and running seven mutants): **READY WITH AUTHOR
+      ITEMS**, all applied — A1 the validator made total (the rows of
+      its table: a union `type`, a non-list `required`, `enum: 3`, a
+      string-typed top — 60 091 crashes in the fuzz before, 0 after);
+      A2 above; A3 a `boolean` (and now an `integer`) argument in
+      `test_plugin`'s synthetic schema, pinning the phrases the deleted
+      binding test had pinned; A4 `_check_names`; M1 the grammar
+      paragraph in §4.4; M2 TOOL_SCHEMAS §1's clause; M3 `_KEYWORDS`'s
+      comment and `enum` on numbers; M4 `check_call`'s precondition in
+      its docstring and §4.4; M5 the synthetic `constructs` given
+      `minItems: 1`, so the type-before-`minItems` order is pinned on
+      the shape the shipped schema has; M6 `test_mcp` feeds `tools` a
+      broken `edit` schema and expects the refusal naming `edit.extra`;
+      M7 §4.6 re-wrapped. Struck by the judge, not to re-raise: the
+      cross-argument order of two faults (the new order wins, nothing
+      pinned the old); EXCEPTIONS §3's `MissingField` row; "retypes
+      nothing off the schema"; splitting the validator's sentence in
+      four; widening `object`'s shape and `required`'s default as
+      mutation padding. 256 pass, pyright clean; the 135-call grid
+      (`tools_review/o1/diff_calls.py`, `old.jsonl` / `new2.jsonl`)
+      byte-identical through the committed checker and this one; of ten
+      mutants (`tools_review/o1/mut8`) eight are caught, the two
+      surviving being the struck pair.
+
+      Review 8 (2026-09-22, confirming, on the fixes above;
+      `tools_review/o1/BRIEF8.md`, `diff8_since_review7.patch`,
+      `ruling8.md`, `tasks/w52sgdiac.output`; 5 findings, a fresh
+      defender each): **READY WITH AUTHOR ITEMS** — every ruling-7 item
+      verified present (M7's re-wrap had only moved the orphan), the
+      `integer` ruling applied consistently, nothing for the owner. The
+      four items, all applied: the validator refuses an `enum` that is
+      empty or holds a value of another type (the one keyword of the
+      grammar whose value `check_schema` cannot see: `[]`, `["a", null]`,
+      `[1, true]` rendered "must be one of ." and Python's `None`/`True`
+      before), §4.4's paragraph saying so; the synthetic `at.line` given
+      an integer `enum` with a row, pinning that an `enum` is read
+      whatever the type; a `line: 1.0` row pinning that `integer` is a
+      Python `int` (a relaxation to `float.is_integer()` would hand `gen`
+      a float under an `int` annotation — the trap A2 repaired), with a
+      comment at the table entry; §4.6 re-wrapped without an orphan.
+      Struck: `_KEYWORDS` vs `_JSON_TYPES` "no longer tied" (the one live
+      case, `null`, is pinned twice); the re-wrap's rationale
+      (MODULE_STRUCTURE carries 19 such short lines); the `enum`
+      coverage item's severity (no shipped or AoA schema carries a
+      non-string enum). 256 pass, pyright clean, the 135-call grid
+      byte-identical (`new3.jsonl`). **Fit to commit.**
 
 4. Tests: one Python RPC host (`Isabelle_RPC_Host` launcher, address in
    `RPC_Host`), one `isabelle TAT` per run, the `mcp` SDK's Streamable
-   HTTP client; one tree evaluated in Isabelle; retire
-   `test/run_ml_framework_test.py` (and `Test_TAT_Framework.thy` with it),
-   `test/routing_forest.py`.
-5. Review of the whole step, commit.
+   HTTP client; one tree evaluated in Isabelle; `test/run_ml_framework_test.py`
+   retires into it. **Done 2026-09-27** (`ai-artifacts/TEST_HARNESS_PLAN.md`,
+   the plan and its record; commit `c922897`): the harness `test/harness.py`
+   and `test/conftest.py`, a fresh conversation per case through the
+   framework callback `TAT.reset`, the test plugin
+   `Theory_Agent_over_Trees.Test_TAT_Framework` with its package
+   `tat_test_plugin`, the 19 Isabelle-backed cases of
+   `test/test_conversation.py` — the step-5 case through the MCP client
+   among them — and `test/run_ml_framework_test.py` and
+   `test/tat_framework_ml_test.py` retired.
+5. Review of the whole step, commit. **Done 2026-09-27**: two plan
+   reviews, a re-read and an implementation review (TEST_HARNESS_PLAN.md
+   §11); commit `c922897`.
 
 ## Still unverified from the first-run list
 
@@ -557,3 +637,51 @@ broken down).
 - The review recipe (challengers → fresh defenders → judge, Opus, English)
   and its briefs/rulings are under the scratchpad `entry_review/`
   (BRIEF9.md, ruling10.md).
+
+## Where things stand after the harness (2026-09-28)
+
+- The harness is `c922897` on `main` (push only on the owner's word,
+  to `origin` only). The other session's untracked files
+  (`docs/node_classes/THEOREM.md`, `ai-artifacts/CONSTRUCT_DECISIONS.md`,
+  `ai-artifacts/AGENT_CLIENTS_MEASURED.md`, `ai-artifacts/probes/`) are
+  not this work's.
+- The suite: `python -m pytest test` — 306 cases, 39 s, one `isabelle
+  TAT` for the 19 Isabelle-backed cases (`test/test_conversation.py`);
+  `-m "not isabelle"` never starts Isabelle. The harness's design and
+  record: `ai-artifacts/TEST_HARNESS_PLAN.md` (§3, §4 the mechanism; §9
+  the measurements; §10 the known limits; §11 the four reviews).
+- The reviews' material: this session's scratchpad
+  `harness_review2/` — `BRIEF2.md`/`ruling2.json` (the plan's second
+  review), `reread.md`, `BRIEF_IMPL.md`/`ruling_impl.json` (the
+  implementation review), `diff_step5.patch`, `probe_escalation.py`.
+  Review runs take the model id `claude-opus-5-5` and effort `xhigh`
+  (Claude Code ≥ 2.1.280); a stopped run resumes with `TaskStop` then
+  `Workflow({scriptPath, resumeFromRunId})`.
+- Next, in FIRST_END_TO_END_RUN_PLAN.md §7's closing order: `recall`
+  (done later this day, the last bullet below), `evaluate_to` as a tool
+  (TOOL_SCHEMAS §5; its Isabelle-backed cases through the harness's
+  `client()`); compilation (§1's open item: the `.thy` files and the
+  ROOT); `construct` (the other session's design work,
+  CONSTRUCT_INTERACTION.md, THEOREM.md and CONSTRUCT_DECISIONS.md, into
+  which `status` has folded as `check_construct`).
+- The owner's decisions still open, none blocking: the three of
+  FOREST_WALK_PLAN.md §12 (where the order constraint's sentence goes in
+  a tool's answer — with `evaluate_to`; a variant sentence for a
+  self-import, or not; `CoreC++` unreachable under the theory-name
+  grammar); FIRST_END_TO_END §4's *(open)* check of `parent_session`
+  against Isabelle's known sessions; two memory proposals never ruled on
+  (the review model id and version above; the SIGINT-testing rule of
+  this file's measurement notes).
+- Still unverified (the list above): the start latency on a stock `HOL`
+  heap is now measured — 11.6 s to a connected client on 2026-09-21,
+  12.6 s to the conversation up on 2026-09-27.
+- Later on 2026-09-28: `recall` landed — its document docs/RECALL.md,
+  its plan and record ai-artifacts/RECALL_PLAN.md (§7, §8), the tool in
+  `mcp.py` with `tools/recall.jsonc`, `Theory`'s hooks recording a run's
+  messages and discarding their key together after the call (PRINT.md
+  §4), the stopped line reworded to "the sessions could not be saved"
+  (RENDER_BASELINES §4); the suite then 312 cases, 20 of them
+  Isabelle-backed (RECALL_PLAN §7). After its implementation review
+  (2026-09-29, RECALL_PLAN §8): every tool advertised with MCP's
+  `readOnlyHint` (`Tool.read_only`), and `mcp._tool` putting the call
+  check in front of every entry. Next: `evaluate_to` as a tool.

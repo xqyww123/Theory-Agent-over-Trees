@@ -127,15 +127,16 @@ What a class wants shown once, it remembers in the conversation's **seen
 set**, `Conversation.seen`: after writing the thing it adds a key of its
 own choosing, and before writing it checks. `Theory` keys its messages
 `(identity, "beginning")` and `(identity, "ending")`, and discards the key
-in the evaluation hook before the operation runs, so a run's messages
-show again after every run, identical or not. Every rendering that
-writes the thing records it, `Recall` included, so a quickview after a
-`recall` does not repeat it; a class checks the set to keep a quickview
-from repeating itself, never to abridge a rendering the agent asked for
-in depth. A deleted node's keys stay behind, harmlessly: the number of a
-deleted node is never handed out again (`store.next_identity` only
-grows), and an amend keeps the replaced node's identity on purpose
-(MCP_SPECIFICATION §3.1), the key following it.
+when the evaluation hook records the run's messages, after the operation
+has run, so a run's messages show again after every run, identical or
+not. Every rendering that writes the thing records it, `Recall` included,
+so a quickview after a `recall` does not repeat it; a class checks the
+set to keep a quickview from repeating itself, never to abridge a
+rendering the agent asked for in depth. A deleted node's keys stay
+behind, harmlessly: the number of a deleted node is never handed out
+again (`store.next_identity` only grows), and an amend keeps the replaced
+node's identity on purpose (MCP_SPECIFICATION §3.1), the key following
+it.
 
 `POST /on-compaction` clears the set whole (MODULE_STRUCTURE §4.6,
 CLIENT_HOOKS.md): the agent's context was replaced, and nothing it was

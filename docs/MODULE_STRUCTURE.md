@@ -771,17 +771,19 @@ result (MCP_SPECIFICATION §5); and deleting the node cancels it.
 `mcp.py` implements the tools of MCP_SPECIFICATION §1; the queue of
 pending messages (MCP_SPECIFICATION §5) lands here with `construct`, and
 the future `query` tool (MCP_SPECIFICATION §1.1) too. `tools(forest,
-loaded)` builds `edit`, `move` and `delete` (TOOL_SCHEMAS.md): the
-schemas from `tools/*.jsonc`, `edit`'s the assembled one of
-`Loaded.edit_schema`, each validated as the tools are built
-(`plugin.validate_call_schema`). Each call is first checked against the
-schema its tool advertises (`plugin.check_call`, §4.4), enums and
-`minItems` included, so the entry retypes nothing off the schema and
-dispatches on an `action` the check let through; then it holds the
-forest's lock across the change, the evaluation the call asks for and
-the quickview, naming the refused operation on a `TAT_Error` raised by
-the change (EXCEPTIONS.md §4) through one context manager, which also
-yields the phrase the `Done` line carries; the walk raises none
+loaded)` builds `edit`, `move` and `delete` (TOOL_SCHEMAS.md) and
+`recall` (RECALL.md §3) through one builder, `_tool`, which validates
+the schema as the tool is built (`plugin.validate_call_schema`) and
+checks every call against it before the entry runs (`plugin.check_call`,
+§4.4), enums and `minItems` included — so no entry can skip the check,
+and none retypes anything off the schema; `edit`'s dispatches on an
+`action` the check let through; the schemas come from `tools/*.jsonc`,
+`edit`'s the assembled one of `Loaded.edit_schema`. A forest-changing
+tool's entry then holds the forest's lock across the change, the
+evaluation the call asks for and the quickview, naming the refused
+operation on a `TAT_Error` raised by the change (EXCEPTIONS.md §4)
+through one context manager, which also yields the phrase the `Done`
+line carries; the walk raises none
 (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The change is `edit.py`'s
 entry with its Location (ARCHITECTURE §1) resolved here, once for both
 tools: `edit`'s `append`, `insert_before` and `insert_after` are `move`'s
@@ -790,16 +792,19 @@ anchor's index, one past it for `after`; for a move the index is counted
 after the node's removal, so a sibling before which the node stood
 loses one. Refused before the model: a leaf as an `into` anchor
 (`HoldsNoChildren`), `Sessions` anywhere but as one (`ProtectedNode`,
-raised by the one id resolution every entry goes through, which
-`_location` does for its anchor), and a `before`/`after` relative to
-the moved node itself (`MoveBesideItself`).
+raised by the one id resolution every forest-changing entry goes
+through, which `_location` does for its anchor), and a `before`/`after`
+relative to the moved node itself (`MoveBesideItself`).
 `evaluate` runs the walk through `Forest._run` under the lock already
 held (§4.1). The result is the `Done` line over `Forest.render(forest,
-Relative_Focus(…))` with PRINT.md §5's nodes and depth.
+Relative_Focus(…))` with PRINT.md §5's nodes and depth. `recall`'s entry
+resolves its id through `Forest.resolve`, `Sessions` included, and
+answers `Forest.render(node, Recall)` alone.
 `mcp_server.py` builds the server: one Streamable HTTP server on
 `127.0.0.1:<port>`, one endpoint `/mcp`, a low-level `mcp.server.Server`
-from the Python `mcp` SDK — TAT's own transport code, with no dependency on
-Isa-Mini; two lessons from AoA's
+from the Python `mcp` SDK, listing each tool with its description, its
+schema and its `readOnlyHint` (MCP_SPECIFICATION §5) — TAT's own
+transport code, with no dependency on Isa-Mini; two lessons from AoA's
 (`contrib/Isa-Mini/IsaMini/AoA/mcp_http_server.py`): the session manager's
 lifetime stays inside one asyncio task, and — unlike that file, which
 sleeps — the port is bound before anything is announced, never waited
@@ -861,7 +866,7 @@ memory goes with the conversation, and the database holds its last commit
 
 ```
 TAT has stopped: an internal error; this call did not complete.
-TAT has stopped: the forest could not be saved; this call did not complete.
+TAT has stopped: the sessions could not be saved; this call did not complete.
 TAT has stopped: Isabelle is gone; this call did not complete.
 ```
 

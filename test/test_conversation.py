@@ -558,6 +558,31 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)
 
 
+async def test_recall_through_the_wire(conversation):
+    """RECALL.md §3 through the MCP client: a call with no arguments at
+    all reads the sessions — the lone session at depth 1, its theories at
+    depth 2, where a failed header's message shows once per run and the
+    `edit`'s quickview has shown it; a `recall` of the failed theory, at
+    depth 0, shows the block whole (PRINT.md §3, §4, §6)."""
+    async with conversation.client() as session:
+        result = await session.call_tool("edit", {
+            "action": "append", "target_id": "Sessions", "evaluate": True,
+            "constructs": [{"kind": "session", "name": "TAT_RECALL", "parent_session": "HOL",
+                            "children": [theory("TAT_RECALL_A", "Main"),
+                                         theory("TAT_RECALL_B", "TAT_Nowhere.Nope")]}]})
+        text = text_of(result)
+        assert not result.isError and text.count("Error:") == 1, text
+        sessions = await session.call_tool("recall")
+        assert not sessions.isError and text_of(sessions).splitlines() == [
+            "session_TAT_RECALL", "parent_session: HOL",
+            "- theory_TAT_RECALL_A (success)", "  imports: Main",
+            "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope"], text_of(sessions)
+        failed = await session.call_tool("recall", {"node_id": "theory_TAT_RECALL_B"})
+        assert not failed.isError and text_of(failed).splitlines() == [
+            "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope",
+            "  Error:", "    " + NOT_FOUND], text_of(failed)
+
+
 async def test_a_fresh_conversation_forgets_the_previous_ones_state(conversation, probes):
     """`TAT.reset` (TEST_HARNESS_PLAN §2): the previous conversation's slot
     names — its own, kept across the restart; a fresh conversation's slots

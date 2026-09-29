@@ -1774,32 +1774,33 @@ class Theory(StdBlock):
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
     # operation's errors, empty when it passed (ARCHITECTURE §6.2), and
-    # whatever it lets escape is a bug (`isabelle_driver.call`).  The
-    # previous run's messages go before the call, so a failed call leaves
-    # none standing; and the run's key leaves the seen set, so its
-    # messages show again (PRINT.md §4).
+    # whatever it lets escape is a bug (`isabelle_driver.call`).  The run's
+    # messages replace the previous run's after the call, and the run's
+    # key leaves the seen set with them, so its messages show again
+    # (PRINT.md §4); a rendering inside the call — a `recall` takes no
+    # lock — reads the previous run's.
 
     async def _eval_beginning_opr(self):
         session = self.session()
         conversation = self.forest().conversation
-        conversation.seen.discard((self.identity, "beginning"))
-        self.beginning_errors = []
-        self.beginning_errors = await isabelle_driver.call(
+        errors = await isabelle_driver.call(
             conversation.connection, "TAT.Theory.begin",
             (self._state_after_beginning().to_msgpack(),
              (session.name,
               str(conversation.working_directory / session.name),   # the plan's §1
               self.header())))
-        return not self.beginning_errors
+        conversation.seen.discard((self.identity, "beginning"))
+        self.beginning_errors = errors
+        return not errors
 
     async def _eval_ending_opr(self):
         conversation = self.forest().conversation
-        conversation.seen.discard((self.identity, "ending"))
-        self.ending_errors = []
-        self.ending_errors = await isabelle_driver.call(
+        errors = await isabelle_driver.call(
             conversation.connection, "TAT.Theory.end",
             (self._state_before_ending.to_msgpack(), self._state_after_ending.to_msgpack()))
-        return not self.ending_errors
+        conversation.seen.discard((self.identity, "ending"))
+        self.ending_errors = errors
+        return not errors
 
 
 FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]
