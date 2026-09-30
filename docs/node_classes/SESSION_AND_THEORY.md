@@ -1,8 +1,9 @@
 # The `Session` and `Theory` node classes
 
 Status: design, approved 2026-09-06, amended 2026-09-08 (the recorded
-fields, the name grammar, §3), 2026-09-16 (§4) and 2026-09-22/23 (the name
-grammars, the `imports` items, the reserved names, §3); the classes are in `model.py`, their
+fields, the name grammar, §3), 2026-09-16 (§4), 2026-09-22/23 (the name
+grammars, the `imports` items, the reserved names, §3) and 2026-09-30
+(`parent_session`'s check, §3); the classes are in `model.py`, their
 descriptions pinned by `test/test_descriptions.py` and §3's sentences by
 `test/test_session_theory.py`.
 
@@ -75,9 +76,16 @@ since the name becomes a path element — with its own rendering of
 framework's (MCP_SPECIFICATION §2), whose sentence is a backstop that
 cannot fire for a `Session`; `parent_session`, and every option's `name`
 and `value`, are non-empty (`InvalidField`); no option name appears twice
-(`InvalidField`, naming the option). Its trees are not chained: no tree's
-state is the next tree's input (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md
-§6).
+(`InvalidField`, naming the option); last, `parent_session` is not the
+session's own name, and is the name of a `Session` the call keeps in the
+forest or adds before this one — `NodeConfig`'s `parent`, `role` and
+`batch_before`, MODULE_STRUCTURE §4.1; one the call adds after it is not
+built yet — or of a session the Isabelle session layout knows, asked
+through `is_known_session` (`InvalidField`, §3). Nothing checks it again:
+a parent deleted or renamed afterwards, or two sessions each the other's
+parent, surface when the ROOT is built. Its trees are not chained: no
+tree's state is the next tree's input
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 
 ## 2. `Theory`
 
@@ -132,13 +140,17 @@ Whether an import exists is reported by `begin_theory` at evaluation.
 ## 3. The `InvalidField` reasons
 
 The two classes' gen checks render these sentences (RENDER_BASELINES §2's
-`InvalidField` shape, with the reason the class's own); the first for
-`parent_session`, an empty `imports`, an empty item of `imports`, and an
-empty option name or value; the third for an item of `imports` that is
-not a theory name in one of its two shapes:
+`InvalidField` shape, with the reason the class's own): the first for an
+empty `parent_session`, an empty `imports`, an empty item of `imports`,
+and an empty option name or value; the second and third for
+`parent_session` naming no existing session, or the session itself (§1);
+the fourth for an option set twice; the last for an item of `imports`
+that is not a theory name in one of its two shapes:
 
 ```
 The field `parent_session` must not be empty.
+The field `parent_session` must name an existing session; `HOL-Libary` is not one.
+The field `parent_session` must not name the session itself.
 The field `options[1].name` sets the option `document` a second time.
 The field `imports[1]` must be a theory name without quotes; a path is not allowed.
 ```

@@ -76,7 +76,8 @@ The forest is stored in one SQLite database, not pickled.
   ```
 
   `from_store` takes the `NodeConfig` construction takes — `parent` the
-  rebuilt parent, `state` a fresh slot, `replacing` None — so a class's
+  rebuilt parent, `state` a fresh slot, `batch_before` empty, `role` an
+  `Insertion` — so a class's
   `from_store` is its `gen` with `rows` in place of `raw`: the same
   constructor call, a second slot from `Isar_State_Slot.assign` exactly as
   `gen` gets it. `Node_Rows` is a handle the framework makes for one node
@@ -196,8 +197,12 @@ class's agent-facing descriptions live (PLUGIN_SYSTEM.md §3).
 Rendering — `print`, `quickview`, the root's two renderings and the
 empty-forest hint — is PRINT.md.
 
-*(open)*: whether `parent_session` is checked against Isabelle's known
-sessions (needs a new ML callback) or only transcribed into the ROOT entry.
+`parent_session` is checked when the `Session` is created or amended
+*(decided 2026-09-30)*: it must name a `Session` the call keeps in the
+forest or adds before it, or a session the Isabelle session layout
+knows, the latter asked through the callback `TAT.is_known_session`
+(SESSION_AND_THEORY.md §1, §3; MODULE_STRUCTURE §2.3, §4.1). Nothing
+checks it again afterwards.
 
 ## 5. How an import names a forest tree *(settled 2026-09-22, FOREST_WALK_PLAN.md §1 item 4)*
 

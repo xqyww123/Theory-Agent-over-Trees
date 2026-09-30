@@ -14,7 +14,7 @@ from baselines import DOCS, fenced_lines
 from harness import text_of
 from isabelle_theory_agent import edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import (
-    DuplicateTheoryShortName, ReservedTheoryName, TAT_IsabelleError)
+    DuplicateTheoryShortName, InvalidField, ReservedTheoryName, TAT_IsabelleError)
 from isabelle_theory_agent.isabelle_driver import call
 from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY, Isar_State_Slot
 
@@ -85,6 +85,9 @@ class Probes:
 
     async def short_name(self, name: str) -> isabelle_driver.Short_Name_Answer:
         return await isabelle_driver.check_new_theory_short_name(self.conn, name)
+
+    async def known_session(self, name: str) -> bool:
+        return await isabelle_driver.is_known_session(self.conn, name)
 
     async def begun(self, header_src: str) -> Isar_State_Slot:
         """A theory begun into a fresh slot."""
@@ -184,6 +187,14 @@ async def test_the_short_name_check_answers_taken_reserved_and_free(probes):
     assert await probes.short_name("Main") == isabelle_driver.Taken("Main")
     assert await probes.short_name("FOL") == isabelle_driver.Reserved()
     assert await probes.short_name("TAT_Test_A_Fresh_Name") == isabelle_driver.Free()
+
+
+async def test_the_known_session_check_reads_the_whole_layout(probes):
+    """The Isabelle half of `parent_session`'s check (§2.3): the layout
+    lists every session Isabelle knows, in the base heap's ancestry or not."""
+    assert await probes.known_session("HOL") is True
+    assert await probes.known_session("HOL-Library") is True
+    assert await probes.known_session("HOL-Libary") is False
 
 
 async def test_commands_run_in_order_with_output_routed_to_their_own_records(probes):
@@ -457,6 +468,11 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     with pytest.raises(ReservedTheoryName) as e:
         await insert(sess, 1, [theory("FOL", "Main")])
     assert e.value.name == "FOL", str(e.value)
+    # the Isabelle half of `parent_session`'s check, in gen, over the wire
+    with pytest.raises(InvalidField) as e:
+        await insert(forest, 1, [{"kind": "session", "name": "TAT_E2E_B",
+                                  "parent_session": "HOL-Libary"}])
+    assert e.value.reason == "must name an existing session; `HOL-Libary` is not one", str(e.value)
 
     # an empty theory to its end: the header from a fresh toplevel state
     # into the slot before the ending, `end` into the resulting slot the

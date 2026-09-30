@@ -74,6 +74,20 @@ class RBlock(Recording, Block):
 KINDS = {"t": RT, "block": RBlock}
 
 
+class CT(RT):                                # a leaf recording what its gen is given
+    @classmethod
+    async def gen(cls, config, raw):
+        EVENTS.append((raw["name"], "gen", config))
+        return await super().gen(config, raw)
+
+
+def told():
+    """What each `gen` was given, read after the call: a `batch_before`
+    that were the framework's live list would have grown since."""
+    return [(name, [n.name for n in config.batch_before], config.role, config.replaces())
+            for name, _, config in events("gen")]
+
+
 class Nesting_RawAST(TypedDict):             # a declaration that nests itself
     child: NotRequired["Nesting_RawAST"]
 
@@ -436,6 +450,28 @@ def test_amend_batch_follows_the_replacement():
     assert thy.sub_nodes == [s9, u, c] and u.parent is thy
     assert u.state.name not in tm.TABLE.values    # its predecessor is fresh
     inv(f)
+
+def test_gen_is_told_the_batch_before_it_and_the_batch_s_role():
+    """`NodeConfig.batch_before` and `role` (MODULE_STRUCTURE §4.1): an
+    insertion's batch under `Insertion`, an amend's under `Amendment(old)`
+    with only its first construct replacing `old`, and a construct's
+    `children` a batch of their own, inserted."""
+    f, thy, sec, a, b, c = rbuild()
+    kinds = KINDS | {"ct": CT}
+    run(locked(f, edit.insert(thy, 1, [{"kind": "ct", "name": "p"},
+                                       {"kind": "ct", "name": "q"}], kinds)))
+    assert told() == [("p", [], M.Insertion(), None), ("q", ["p"], M.Insertion(), None)]
+    EVENTS.clear()
+    run(locked(f, edit.amend(c, [{"kind": "ct", "name": "c9"},
+                                 {"kind": "block", "name": "B",
+                                  "children": [{"kind": "ct", "name": "u"},
+                                               {"kind": "ct", "name": "v"}]},
+                                 {"kind": "ct", "name": "r"}], kinds)))
+    assert told() == [("c9", [], M.Amendment(c), c),
+                      ("u", [], M.Insertion(), None), ("v", ["u"], M.Insertion(), None),
+                      ("r", ["c9", "B"], M.Amendment(c), None)]
+    assert_invariants(f, tm.TABLE)
+
 
 def test_amend_across_kinds_leaves_no_field_of_the_old_class():
     f, thy, sec, a, b, c = rbuild()

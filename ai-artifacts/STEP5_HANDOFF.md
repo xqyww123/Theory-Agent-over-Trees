@@ -668,10 +668,9 @@ broken down).
   FOREST_WALK_PLAN.md §12 (where the order constraint's sentence goes in
   a tool's answer — with `evaluate_to`; a variant sentence for a
   self-import, or not; `CoreC++` unreachable under the theory-name
-  grammar); FIRST_END_TO_END §4's *(open)* check of `parent_session`
-  against Isabelle's known sessions; two memory proposals never ruled on
-  (the review model id and version above; the SIGINT-testing rule of
-  this file's measurement notes).
+  grammar); two memory proposals never ruled on (the review model id and
+  version above; the SIGINT-testing rule of this file's measurement
+  notes).
 - Still unverified (the list above): the start latency on a stock `HOL`
   heap is now measured — 11.6 s to a connected client on 2026-09-21,
   12.6 s to the conversation up on 2026-09-27.
@@ -685,3 +684,11 @@ broken down).
   (2026-09-29, RECALL_PLAN §8): every tool advertised with MCP's
   `readOnlyHint` (`Tool.read_only`), and `mcp._tool` putting the call
   check in front of every entry. Next: `evaluate_to` as a tool.
+- 2026-09-29/30: the `parent_session` check (its record and reviews:
+  ai-artifacts/PARENT_SESSION_CHECK.md): `Session.gen` refuses a parent
+  that is the session itself or names no `Session` the call keeps or
+  adds before it and no session the Isabelle session layout knows
+  (`TAT.is_known_session`); with it the node class contract's
+  `NodeConfig` gained `batch_before` and `role` and lost `replacing`
+  (MODULE_STRUCTURE §4.1). The suite then 315 cases, 21 Isabelle-backed.
+  `evaluate_to` is the other session's; next here: compilation (§1).

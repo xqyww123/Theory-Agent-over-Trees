@@ -264,6 +264,13 @@ fun check_new_theory_short_name name =
     | NONE => if is_some (Resources.global_theory short) then Reserved else Free)
   end
 
+(*The Isabelle half of `parent_session`'s check (§2.3): whether the Isabelle
+  session layout knows a session of the name.  Resources.check_session fails
+  on an unknown one; the context serves its report only.  The forest half
+  and the rejection are Python's (SESSION_AND_THEORY.md §1).*)
+fun is_known_session name =
+  can (Resources.check_session \<^context>) (name, Position.none)
+
 end
 
 (*** Running commands ***)
@@ -553,6 +560,11 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
      arg_schema = unpackString,
      ret_schema = pack_short_name_answer, function = Loader.check_new_theory_short_name,
      timeout = NONE},
+  Remote_Procedure_Calling.mk_callback
+    {name = "TAT.is_known_session",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackString,
+     ret_schema = packBool, function = Loader.is_known_session, timeout = NONE},
   (*a fresh conversation begins on the same process: both tables emptied*)
   Remote_Procedure_Calling.mk_callback
     {name = "TAT.reset",

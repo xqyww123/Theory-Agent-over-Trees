@@ -107,3 +107,10 @@ async def check_new_theory_short_name(conn: Connection, name: str) -> Short_Name
         case answer:
             raise TAT_IsabelleError(
                 f"the ML callback TAT.check_new_theory_short_name answered {answer!r}")
+
+
+async def is_known_session(conn: Connection, name: str) -> bool:
+    """Whether the Isabelle session layout knows a session of the name: the
+    Isabelle half of `parent_session`'s check (MODULE_STRUCTURE §2.3).  The
+    forest half, and the rejection, live in `Session`'s gen."""
+    return await call(conn, "TAT.is_known_session", name)

@@ -25,8 +25,9 @@ from .exceptions import (
     MalformedRawAST, MoveIntoOwnSubtree, TAT_Error, TAT_InternalError,
     UnexpectedChildren, UnknownKind)
 from .model import (
-    READY, Evaluation, Forest, Isar_State_Slot, Leaf, Location, Node, NodeConfig,
-    NonLeaf_Node, RawAST, Seeking, StdBlock, _completed, _wrote, is_valid_name)
+    READY, Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
+    NodeConfig, NonLeaf_Node, RawAST, Role, Seeking, StdBlock, _completed, _leaving, _wrote,
+    is_valid_name)
 from .plugin import check_construct
 
 
@@ -55,9 +56,8 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     (MCP_SPECIFICATION §3.2)."""
     forest = parent.forest()
     before = forest._record()
-    taken: dict[str, Node | str] = {c.id_component(): c for c in parent.sub_nodes}
-    nodes = await _construct_siblings(parent, raws, "constructs", taken,
-                                      Edit_Call(forest, kinds))
+    nodes = await _construct_siblings(parent, raws, "constructs", Edit_Call(forest, kinds),
+                                      Insertion())
     # Commit: pointer surgery plus the one copy of ARCHITECTURE §3.4 into
     # the first new node's slot — only when the predecessor operation wrote
     # it, judged with no round trip; every other new slot stays empty, as
@@ -87,16 +87,14 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
 
 async def amend(old: Node, raws: list[RawAST],
                 kinds: Mapping[str, type[Node]]) -> list[Node]:
-    """`amend`: `nodes[0]` is built with `replacing` set and takes `old`'s
-    position, state slot, identity number and children; `nodes[1:]` follow
-    it."""
+    """`amend`: `nodes[0]` is built as the replacement (`NodeConfig.replaces`)
+    and takes `old`'s position, state slot, identity number and children;
+    `nodes[1:]` follow it."""
     parent = parent_of(old)
     forest = parent.forest()
     before = forest._record()
-    taken: dict[str, Node | str] = {c.id_component(): c
-                                    for c in parent.sub_nodes if c is not old}
-    nodes = await _construct_siblings(parent, raws, "constructs", taken,
-                                      Edit_Call(forest, kinds, old), first_replaces=True)
+    call = Edit_Call(forest, kinds, Amendment(old))
+    nodes = await _construct_siblings(parent, raws, "constructs", call, call.role)
     replacement = nodes[0]
     inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []
     # Gates.
@@ -282,11 +280,8 @@ class Edit_Call:
     """What every construct built in one edit call shares."""
     forest: Forest
     kinds: Mapping[str, type[Node]]
-    replacing: Node | None = None    # the node an amend takes out of the forest,
-                                     # left out of every uniqueness check of the
-                                     # call; `NodeConfig.replacing`, which only the
-                                     # amend's first construct sees, is its
-                                     # per-construct twin
+    role: Role = Insertion()         # the call's: an amendment's `old` is left out
+                                     # of every uniqueness check of the call
     taken: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
                                      # the names the constructs built so far have
                                      # taken in each forest-wide namespace:
@@ -310,9 +305,10 @@ def _take_name(node: Node, full_path: str, call: Edit_Call) -> None:
     namespace = type(node).namespace
     if namespace is None:
         return
+    leaving = _leaving(call.role)
     for other in call.forest._all_nodes():
         theirs = type(other).namespace
-        if (other is not call.replacing and other.name == node.name
+        if (other is not leaving and other.name == node.name
                 and theirs is not None and theirs.name == namespace.name):
             raise namespace.duplicate(node.name, call.forest.id_of(other))
     taken = call.taken.setdefault(namespace.name, {})
@@ -322,32 +318,32 @@ def _take_name(node: Node, full_path: str, call: Edit_Call) -> None:
 
 
 async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname: str,
-                              taken: dict[str, Node | str], call: Edit_Call,
-                              first_replaces: bool = False, path: str = "") -> list[Node]:
-    """Step 1 of an edit: every construct in submission order, detached.
-    The framework checks the name the class set against the grammar and
-    the id component against the siblings: `taken` maps each surviving
-    sibling's id component to the node, each batch element's to its
-    coordinate — printed only at the raise — so `DuplicateName` points
-    either way.  A class with a `namespace` is then
-    checked across the forest and the call (`_take_name`); that holder may
-    sit in another list of the call, so it is recorded under the element's
-    full path — `path`, the enclosing construct's, plus the coordinate
-    (RENDER_BASELINES §2).  The check comes after the sibling checks and
-    after the element's children are built, so a class nesting its own
-    namespace blames the enclosing construct.  `first_replaces`: this is
-    an amend's top-level list, whose first element replaces
-    `call.replacing`.  The element's coordinate is prefixed onto an
-    exception here, around everything done for it — the framework's own
-    checks included (EXCEPTIONS.md §5)."""
-    nodes = []
+                              call: Edit_Call, role: Role, path: str = "") -> list[Node]:
+    """Step 1 of an edit: one batch, every construct in submission order,
+    built under `role` — an amend's top-level batch under
+    `Amendment(old)`, whose first element replaces it; every other batch
+    under `Insertion` — and detached.  The framework checks the name the
+    class set against the grammar and the id component against the
+    siblings: `taken` maps each surviving sibling's id component to the
+    node, each batch element's to its coordinate — printed only at the
+    raise — so `DuplicateName` points either way.  A class with a
+    `namespace` is then checked across the forest and the call
+    (`_take_name`); that holder may sit in another batch of the call, so
+    it is recorded under the element's full path — `path`, the enclosing
+    construct's, plus the coordinate (RENDER_BASELINES §2).  The check
+    comes after the sibling checks and after the element's children are
+    built, so a class nesting its own namespace blames the enclosing
+    construct.  The element's coordinate is prefixed onto an exception
+    here, around everything done for it — the framework's own checks
+    included (EXCEPTIONS.md §5)."""
+    taken: dict[str, Node | str] = {c.id_component(): c for c in parent.sub_nodes
+                                    if c is not _leaving(role)}
+    nodes: list[Node] = []
     for i, raw in enumerate(raws):
         coordinate = f"{listname}[{i}]"
         full_path = f"{path}.{coordinate}" if path else coordinate
         try:
-            node = await _construct_element(
-                raw, parent, call.replacing if first_replaces and i == 0 else None,
-                call, full_path)
+            node = await _construct_element(raw, parent, tuple(nodes), role, call, full_path)
             name = getattr(node, "name", None)
             if not isinstance(name, str):
                 raise TAT_InternalError(
@@ -366,8 +362,8 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname
     return nodes
 
 
-async def _construct_element(raw: RawAST, parent: NonLeaf_Node, replacing: Node | None,
-                             call: Edit_Call, path: str) -> Node:
+async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tuple[Node, ...],
+                             role: Role, call: Edit_Call, path: str) -> Node:
     forest, kinds = call.forest, call.kinds
     if not isinstance(raw, Mapping):
         raise MalformedRawAST(missing_kind=False)
@@ -379,6 +375,9 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, replacing: Node 
     if kind not in kinds:
         raise UnknownKind(kind, list(kinds))
     cls = kinds[kind]
+    config = NodeConfig(state=Isar_State_Slot.assign(parent.state.connection),
+                        parent=parent, batch_before=batch_before, role=role)
+    replacing = config.replaces()
     # The children-legality checks run before any gen (MODULE_STRUCTURE
     # §4.2): a Leaf holds no children, an amend's replacement inherits them.
     if "children" in raw:
@@ -393,9 +392,6 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, replacing: Node 
         raise ChildrenNotInheritable(forest.id_of(replacing), kind,
                                      len(replacing.sub_nodes))
     check_construct(cls, kind, raw)
-    config = NodeConfig(
-        state=Isar_State_Slot.assign(parent.state.connection),
-        parent=parent, replacing=replacing)
     node = await cls.gen(config, {k: v for k, v in raw.items()
                                   if k != "children"})
     if isinstance(node, NonLeaf_Node) and node.sub_nodes:
@@ -412,7 +408,7 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, replacing: Node 
             raise TAT_InternalError(
                 f"{cls.__name__} took children but is no nesting class")
         children = await _construct_siblings(
-            node, raw["children"], "children", {}, call, path=path)
+            node, raw["children"], "children", call, Insertion(), path=path)
         for child in children:                # the framework owns placement
             child.parent = node
         node.sub_nodes.extend(children)

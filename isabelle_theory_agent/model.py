@@ -325,8 +325,9 @@ class Node(ABC):
     def from_store(cls, config: NodeConfig, rows: Node_Rows) -> Self:
         """Rebuild the node from what `to_store` wrote: `gen` with `rows` in
         place of `raw` — `config.parent` the rebuilt parent, `config.state` a
-        fresh slot, `config.replacing` None.  Synchronous: nothing over the
-        wire.  Returns the node without children; the framework loads them."""
+        fresh slot, no batch and nothing leaving.  Synchronous: nothing over
+        the wire.  Returns the node without children; the framework loads
+        them."""
         raise TAT_InternalError(f"{cls.__name__} has no from_store")
 
     def __init__(self, parent: NonLeaf_Node | None, state: Isar_State_Slot):
@@ -919,20 +920,55 @@ class Unchained_Node(NonLeaf_Node):
 RawAST = Mapping[str, Any]
 
 
+@dataclass(frozen=True)
+class Insertion:
+    """The batch joins `parent`'s children and none of them leaves:
+    `append`, `insert_before`, `insert_after`, and every construct's
+    `children`, an amend's included."""
+
+
+@dataclass(frozen=True)
+class Amendment:
+    """`amend`: `old`, one of `parent`'s children, leaves the forest with
+    the call — every construct of the batch leaves it out of whatever it
+    looks up among the forest's nodes, uniqueness and existence alike;
+    never mutate it.  The batch's first construct takes its place, the
+    rest follow it."""
+    old: Node
+
+
+Role: TypeAlias = Insertion | Amendment
+
+
+def _leaving(role: Role) -> Node | None:
+    """The node the call takes out of the forest, if any."""
+    return role.old if isinstance(role, Amendment) else None
+
+
 class NodeConfig(NamedTuple):
     state: Isar_State_Slot   # the state before the node.  A name: the slot
                              # may hold nothing, and gen neither reads nor
                              # writes through it — only evaluation hooks may
                              # assume a slot holds a state
     parent: NonLeaf_Node     # never None: the forest root is not made this
-                             # way.  During an edit this may be a node not
-                             # yet in the forest
-    replacing: Node | None   # on the amend path, the node this construct
-                             # is replacing; None on every other path.  Read
-                             # it for exactly two things: leave it out of any
-                             # uniqueness check, and carry over recorded
-                             # fields the class judges still valid.
-                             # Read-only; never mutate it
+                             # way.  Its sub_nodes are the children before
+                             # the call; during an edit the parent may itself
+                             # be a node not yet in the forest
+    batch_before: tuple[Node, ...]
+                             # the batch's constructs built before this one,
+                             # in submission order.  Built, not placed:
+                             # fields, kind and identity set, `parent` the
+                             # one their gen was given, but not among its
+                             # children and not in the forest — read their
+                             # fields; never resolve, print or walk up from
+                             # them
+    role: Role               # what the call does to `parent`'s children
+
+    def replaces(self) -> Node | None:
+        """The node this construct takes the place of: an amendment's `old`
+        for the batch's first construct, else None.  Read it to carry over
+        recorded fields the class judges still valid."""
+        return _leaving(self.role) if not self.batch_before else None
 
 
 class Namespace(NamedTuple):
@@ -1069,7 +1105,7 @@ class Forest(Unchained_Node):
                 f"the forest database holds a node of kind `{kind}`, for which no"
                 " node class is loaded")
         config = NodeConfig(state=Isar_State_Slot.assign(parent.state.connection),
-                            parent=parent, replacing=None)
+                            parent=parent, batch_before=(), role=Insertion())
         node = cls.from_store(config, self.store.rows(identity))
         if isinstance(node, NonLeaf_Node) and node.sub_nodes:
             raise TAT_InternalError(
@@ -1576,7 +1612,21 @@ class Session(Unchained_Node):
                 raise InvalidField(f"options[{i}].name",
                                    f"sets the option `{option['name']}` a second time")
             seen.add(option["name"])
-        return cls(config.parent, config.state, raw["name"], raw["parent_session"],
+        # The parent: a session the call keeps in the forest or adds before
+        # this one, else one the Isabelle session layout knows; the last
+        # check, so a malformed construct costs no round trip
+        # (SESSION_AND_THEORY §1).
+        parent_session = raw["parent_session"]
+        if parent_session == raw["name"]:
+            raise InvalidField("parent_session", "must not name the session itself")
+        sessions = [s for s in (*config.parent.sub_nodes, *config.batch_before)
+                    if isinstance(s, Session) and s is not _leaving(config.role)]
+        in_forest = any(s.name == parent_session for s in sessions)
+        if not in_forest and not await isabelle_driver.is_known_session(
+                config.parent.conversation.connection, parent_session):
+            raise InvalidField("parent_session",
+                               f"must name an existing session; `{parent_session}` is not one")
+        return cls(config.parent, config.state, raw["name"], parent_session,
                    list(options), raw.get("description", ""))
 
     def on_moving(self, new_location):

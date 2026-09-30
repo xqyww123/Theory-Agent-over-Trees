@@ -26,6 +26,7 @@ from isabelle_theory_agent.store import Forest_Store
 
 HEAP = {"List": "HOL.List", "Main": "Main"}   # the fake base heap: short name -> long name
 RESERVED = {"FOL"}                # global in the fake Isabelle session layout, loaded nowhere
+KNOWN_SESSIONS = {"HOL", "HOL-Library"}       # the sessions the fake layout knows
 
 
 # Three `Theory` fakes against the fake state slot table, each standing for
@@ -82,6 +83,9 @@ def table(monkeypatch):
         return isabelle_driver.Free()
     monkeypatch.setattr(isabelle_driver, "check_new_theory_short_name",
                         check_new_theory_short_name)
+    async def is_known_session(conn, name):
+        return name in KNOWN_SESSIONS
+    monkeypatch.setattr(isabelle_driver, "is_known_session", is_known_session)
 
 
 def shape(forest):
@@ -394,6 +398,14 @@ def test_the_field_checks():
     assert z.header() == 'theory Z\n  imports "Main" "Launchbury.AList-Utils"\nbegin'
     run(locked(f, edit.delete(z)))
     refused(f, session("S") | {"parent_session": ""}, "parent_session", empty)
+    refused(f, session("S", parent_session="HOL-Libary"), "parent_session",
+            "must name an existing session; `HOL-Libary` is not one")
+    refused(f, session("S", parent_session="S"), "parent_session",
+            "must not name the session itself")
+    refused(f, session("S", parent_session="X"), "parent_session",
+            "must name an existing session; `X` is not one")     # X is a theory, not a session
+    refused(f, session("S", parent_session="S", options=[{"name": "", "value": "x"}]),
+            "options[0].name", empty)                             # the parent is judged last
     refused(f, session("S", options=[{"name": "", "value": "x"}]), "options[0].name", empty)
     refused(f, session("S", options=[{"name": "document", "value": ""}]), "options[0].value",
             empty)
@@ -402,4 +414,33 @@ def test_the_field_checks():
             "options[1].name", "sets the option `document` a second time")
     assert f.sub_nodes == [s] and s.sub_nodes == [x, y]
     assert COVERED == REASONS
+    inv(f)
+
+
+def test_a_parent_session_is_one_the_call_keeps_or_adds_before_or_one_the_layout_knows():
+    f, s, x, y, a = arith()                                    # session_Arith, under HOL
+    (lib,) = insert(f, f, 1, [session("Lib", parent_session="HOL-Library")])   # the layout
+    (app,) = insert(f, f, 2, [session("App", parent_session="Arith")])         # the forest
+    assert (lib.parent_session, app.parent_session) == ("HOL-Library", "Arith")
+    # a session of the same call counts once built: before this one, not after
+    p, q = insert(f, f, 3, [session("P"), session("Q", parent_session="P")])
+    assert q.parent_session == "P"
+    with pytest.raises(InvalidField) as e:
+        insert(f, f, 5, [session("R", parent_session="T"), session("T")])
+    assert (e.value.field, e.value.raw_ast_path) == ("parent_session", "constructs[0]")
+    assert f.sub_nodes == [s, lib, app, p, q]
+    # an amend: the node it replaces is leaving, for every construct of the
+    # batch; a kept name is back for the constructs after the first
+    with pytest.raises(InvalidField) as e:
+        run(locked(f, edit.amend(app, [session("App2", parent_session="App")], KINDS)))
+    assert e.value.reason == "must name an existing session; `App` is not one"
+    with pytest.raises(InvalidField) as e:
+        run(locked(f, edit.amend(app, [session("App2", parent_session="Lib"),
+                                       session("B", parent_session="App")], KINDS)))
+    assert e.value.raw_ast_path == "constructs[1]"
+    app2, b = run(locked(f, edit.amend(app, [session("App", parent_session="Lib"),
+                                             session("B", parent_session="App")], KINDS)))
+    assert (app2.parent_session, b.parent_session) == ("Lib", "App")
+    assert app2.identity == app.identity
+    assert f.sub_nodes == [s, lib, app2, b, p, q]
     inv(f)

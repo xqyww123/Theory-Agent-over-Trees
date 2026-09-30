@@ -109,7 +109,11 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
   theory bearing it but the Isabelle session layout declaring it global
   (`FOL` on a HOL heap), so that Isabelle would leave a tree so named
   unqualified; free. The forest side of the check (MCP_SPECIFICATION §2)
-  is Python's, and so is every rejection.
+  is Python's, and so is every rejection;
+- `is_known_session` — whether the Isabelle session layout knows a session
+  of the name (`Resources.check_session`): the Isabelle half of
+  `parent_session`'s check (node_classes/SESSION_AND_THEORY.md §1), whose
+  forest half and rejection are Python's.
 
 ### 2.4 Running commands
 
@@ -232,8 +236,9 @@ and starts the conversation:
    `get` and `put` ride inside the classes' own callbacks and need no wire
    name), `TAT.theory_delete` on the theory table (§2.2's `delete`),
    `TAT.check_new_theory_short_name` (§2.3), whose three answers travel as
-   `["taken", <long name>]`, `["reserved"]` and `["free"]`, and `TAT.reset`,
-   which empties both tables (§2.1's and §2.2's `clear`);
+   `["taken", <long name>]`, `["reserved"]` and `["free"]`,
+   `TAT.is_known_session` (§2.3), a boolean, and `TAT.reset`, which
+   empties both tables (§2.1's and §2.2's `clear`);
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.6) with the collected package list, the
@@ -354,21 +359,46 @@ object the agent submitted, `Mapping[str, Any]` — less `children`, which
 no `gen` ever sees (§4.2). Everything semantic lives in `gen`:
 
 ```python
+@dataclass(frozen=True)
+class Insertion:             # the batch joins `parent`'s children and none of them
+    pass                     # leaves: append / insert_before / insert_after, and
+                             # every construct's `children`, an amend's included
+
+@dataclass(frozen=True)
+class Amendment:             # amend: `old`, one of `parent`'s children, leaves the
+    old: Node                # forest with the call — every construct of the batch
+                             # leaves it out of whatever it looks up among the
+                             # forest's nodes, uniqueness and existence alike;
+                             # never mutate it. The batch's first construct takes
+                             # its place, the rest follow it
+
+Role = Insertion | Amendment
+
 class NodeConfig(NamedTuple):
     state: Isar_State_Slot   # the state before the node. A name: the slot may
                              # hold nothing, and gen neither reads nor writes
                              # through it — only evaluation hooks may assume a
                              # slot holds a state (see Events)
     parent: NonLeaf_Node     # never None: the forest root is not made this way.
-                             # During an edit this may be a node not yet in the
-                             # forest (a nesting node under construction)
-    replacing: Node | None   # on the amend path, the node this construct is
-                             # replacing; None on every other path. Read it for
-                             # exactly two things: leave it out of any uniqueness
-                             # check (it is leaving the forest), and carry over
-                             # recorded fields the class judges still valid —
-                             # Theorem keeps its proof when the statement is
-                             # unchanged. Read-only; never mutate it
+                             # Its sub_nodes are the children before the call;
+                             # during an edit the parent may itself be a node not
+                             # yet in the forest (a nesting node under construction)
+    batch_before: tuple[Node, ...]
+                             # the batch's constructs built before this one, in
+                             # submission order — the ones after it are not built
+                             # yet. Built, not placed: fields, kind and identity
+                             # set, `parent` the one their gen was given, but not
+                             # among its children and not in the forest; read
+                             # their fields, never resolve, print or walk up from
+                             # them
+    role: Role               # what the call does to `parent`'s children
+
+    def replaces(self) -> Node | None
+                             # the node this construct takes the place of: an
+                             # amendment's `old` for the batch's first construct,
+                             # else None. Read it to carry over recorded fields the
+                             # class judges still valid — Theorem keeps its proof
+                             # when the statement is unchanged
 
 @classmethod
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
@@ -626,9 +656,12 @@ and its resolved imports, the `Theory` nodes themselves
    node of the forest (less the node the amend replaces, which is
    leaving) or an earlier construct of the call already bears there
    (`DuplicateTheoryShortName`), finding the forest's by walking it.
-   The amend loop walks the whole submitted list,
-   `constructs[0]` built with `replacing` set; so every `raw_ast_path` indexes
-   the agent's own list.
+   Each construct is built with the batch's earlier constructs and its
+   batch's role in its `NodeConfig` (§4.1): an amend's batch under
+   `Amendment(old)`, its first element the replacement; a construct's
+   `children` are a batch of their own, inserted. The amend loop walks
+   the whole submitted list, so every `raw_ast_path` indexes the agent's
+   own list.
 2. **Gates.** The hooks that may still veto (§4.1's events), `BadEdit`
    their only voice.
 3. **Commit** — pointer surgery, which cannot fail, then one store
@@ -685,11 +718,12 @@ framework's modules, and a `gen` reading over the wire, call these
 functions. `theory_delete` removes vanished qualified names from the
 theory table in one round trip; `check_new_theory_short_name` answers one
 of `Taken(holder)`, `Reserved()` and `Free()` (§2.3), the wire's tagged
-list read here and nowhere else; `reset` empties the state slot table and
-the theory table — a fresh conversation begins on the same Isabelle
-process (ARCHITECTURE §9) — the first act of every conversation the test
-harness hands out, and called by nothing else: no case receives a
-conversation once the Isabelle-backed part of the run has ended, and a
+list read here and nowhere else; `is_known_session` answers whether the
+Isabelle session layout knows the name (§2.3); `reset` empties the state
+slot table and the theory table — a fresh conversation begins on the same
+Isabelle process (ARCHITECTURE §9) — the first act of every conversation
+the test harness hands out, and called by nothing else: no case receives
+a conversation once the Isabelle-backed part of the run has ended, and a
 case that ends while a task it started is still inside a shielded round
 trip is harmless, because the ML side's dispatch serves one callback at a
 time. A node class's own callback (§2.5) is not here: the class calls
