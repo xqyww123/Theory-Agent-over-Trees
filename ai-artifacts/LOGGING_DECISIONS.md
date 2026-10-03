@@ -945,10 +945,12 @@ pyright clean. The shapes decided by the author, none a design change:
   the declared fields (a misspelled field, a positional argument or a
   missing `message` is a type error — probed, `ai-artifacts/probes/log/`).
   `conversation.ending(exception, level=)` is the one method with a body:
-  it derives `class`, `message` and `traceback` from the exception.
+  `class` is the exception's class name, `message` the one line of
+  `traceback.format_exception_only` (module-qualified outside the
+  builtins, never empty, never raising), `traceback` the formatted one.
 - A field whose value is `None` is absent from `data`: this one rule is
   every "absent when" of LOGGING §4 (a compile's `start` without port and
-  client, `operation` without `messages`, `result` without `error`,
+  client, `operation` without `messages`, `result` without `class`,
   `client_refused` without `_meta`, …). Inside a value, `None` stays.
   Consequence: a `round_trip` whose callback returned `None` has no
   `result` field; `error` absent says it returned.
@@ -957,13 +959,13 @@ pyright clean. The shapes decided by the author, none a design change:
   the file could be written.
 - Field names where the table gives only a phrase: `start` —
   `version`, `pid`, `working_directory`, `python_packages`, `port`,
-  `client`; `ended` — `construction_jobs_cancelled`,
-  `evaluation_jobs_dropped`, `calls_cancelled`, `duration`; `result` —
-  `text`, `messages`, `trailer`, `error` (the `TAT_Error` class's name);
-  `hook.answer` — `judged`, `status`, `body`; `agent.created` —
-  `identity`, `main`, `first`; `stop_judged` — `allowed`, `stands`;
+  `client`; `ended` — `duration`; `result` — `text`, `messages`,
+  `trailer`, `class` (the `TAT_Error` class's name; the parameter is
+  `class_`); `hook.answer` — `judged`, `status`, `body`; `agent.created`
+  — `identity`, `main`, `first`; `stop_judged` — `allowed`, `stands`;
   `interruption_judged` — `allowed`, `holding_work`; `evaluation.stopped`
-  and `construction_cancelled` — `reason`; `walk_ended` — `outcome`,
+  — `reason`, `tree` (the importing tree, for `import_without_theory`);
+  `construction_cancelled` — `reason`; `walk_ended` — `outcome`,
   `slots_released`; `evaluation_dropped` — `dropped_by`; `message_posted`
   — `recipient`, `kind`, `source`, `interrupts`, `text`; `store.transaction`
   — `rows_written`, `nodes_deleted`; `_meta` spelled as MCP spells it.
@@ -1002,14 +1004,19 @@ sessions' pending work. The author's shapes:
   `stopped` and the new `connection_went(exn)` both use (the level of
   `ending` and the line of RENDER_BASELINES §4 come from the one test).
   It is an async context; `end(exn)` writes `ending` and cancels the
-  spawned tasks; the exit calls `end` for an escaping exception, waits for
-  the tasks and writes `ended`; `spawn(coroutine)` registers a task;
-  `entered`, `ended_by`, `wait()`, `forest`, `log`. `TAT_Server(ending,
-  port, tools, on_compaction)` holds it as the public attribute `ending`
-  and keeps no ending state; `serve` runs uvicorn's loop as a task and
-  waits on the ending (a loop that fails on its own enters the ending as a
-  bug). The jobs' counts in `ended` are written as zero until the jobs
-  exist.
+  spawned tasks; `spawn(coroutine)` registers a task; `unwound()` waits
+  for every spawned task; `entered`, `ended_by`, `wait()`, `forest`,
+  `log`. The server's exit is the drain: it enters the ending for
+  whatever escapes its block, stops accepting, waits for the requests in
+  flight and for `unwound()`, and stops — the stop in a `finally`, so a
+  cancellation during the drain (the RPC host's, 3 s after the connection
+  closes) skips none of it. The context's exit enters the ending for an
+  exception escaping the start, waits again only on paths that never
+  served, and writes `ended`, which carries the duration alone.
+  `TAT_Server(ending, port, tools, on_compaction)` holds it as the public
+  attribute `ending` and keeps no ending state; `serve` runs uvicorn's
+  loop as a task, waits on the ending (a loop that fails on its own enters
+  the ending as a bug), tells the loop to exit and raises `ended_by`.
 - `toplevel.conversation(python_packages, working_directory, connection,
   port=None)` is layers 1 and 2 of MODULE_STRUCTURE §4.6, yielding the
   `Forest`, the `Loaded` plugins and the lock's `announce`; `toplevel.
@@ -1035,9 +1042,9 @@ has only the plans tracked.
 **Step 3, `isabelle_driver.call(conversation, name, args)`** — written
 2026-10-03, uncommitted. `call` is the private `_call(connection, name,
 args, log)` plus the record; the record is written from the trip's done
-callback (`_completed`, where `_dropped` ran), so a trip whose caller was
+callback (`_trip_done`, where `_dropped` ran), so a trip whose caller was
 cancelled is still recorded when it completes: `round_trip` with the
-result or the error, `connection_lost` for a `ConnectionError`. The
+result or the error, a connection error included. The
 `error` text is an `IsabelleError`'s messages one per line, any other
 exception with its class (`ConnectionResetError: peer closed
 connection`). `reset` passes no log. `Isar_State_Slot` holds the
@@ -1051,13 +1058,13 @@ failure's; the Isabelle-backed suite passes (50), and a real case's
 **Step 4, the funnels** — written 2026-10-03, uncommitted; every test
 module of the plan gained its assertion on the records. The shapes:
 
-- The tool boundary (`TAT_Server._call_tool`) writes `tool.call` on
-  arrival, then one of: `result` (text, `is_error`, the `TAT_Error`'s
-  class as `error`), `given_up` (the checkpoint after the body raised
-  the client's cancellation: the answer went to nobody), `while_ending`
-  (answered with the ending's line — the call that entered the ending
-  included; a call arriving during the ending gets `while_ending` alone,
-  no `call`). `messages=[]` and `trailer=None` until the mailbox exists
+- The tool boundary (`TAT_Server._call_tool`) writes `tool.call` for
+  every call on arrival, then exactly one of: `result` (text, `is_error`,
+  the `TAT_Error`'s class as `class`), `given_up` (the checkpoint after
+  the body raised the client's cancellation: the answer went to nobody;
+  `text` absent when the body produced none), `while_ending` (answered
+  with the ending's line — the call that entered the ending and a call
+  arriving during it alike). `messages=[]` and `trailer=None` until the mailbox exists
   (the jobs session fills them). `current_agent` and `current_call` are
   NOT set at the boundary, because both are the client subclasses'
   knowledge (the jobs session's): the call's id comes from the call's own
@@ -1069,17 +1076,25 @@ module of the plan gained its assertion on the records. The shapes:
   only once the announcement matched, which was wrong).
 - The setters take `duration: float | None` as a third positional
   argument; `Node._stored(ev, index, new, duration)` writes `operation`
-  with `node=forest.id_of(node)`, `operation` one of `own`, `beginning`,
-  `ending`, `ran=duration is not None`, `status` the stored kind string,
-  `messages` only when it ran; `_timed(hook)` measures the three hook
-  calls. `Node._stopped(reason)` writes `stopped` with `command_failed`,
-  `order_constraint` or `import_without_theory`. `Forest._run` writes
-  `walk_started` (`destination` absent for an invalidation, `checks`
-  absent until the jobs' `checks` exists) and `walk_ended` (`outcome`
-  `continue` or the stop's id, `slots_released` from
-  `Evaluation.releases`, which `_handle_tree` sums over the trees' own
-  evaluations). `_invalidate_changed_trees` returns the trees it
-  invalidated for the `committed` record.
+  with `node=forest.full_id(node)`, `operation` one of `own`, `beginning`,
+  `ending`, `ran=duration is not None`, `status` and `messages` from
+  `_status_to_store(new)`, `messages` only when it ran; `_timed(hook)`
+  measures the three hook calls. `Forest._handle_tree` writes `stopped`
+  once per stop, with `command_failed`, `order_constraint` or
+  `import_without_theory` — for the last also `tree`, the importing tree
+  that was not run; its local `reason` carries no annotation, pyright
+  checking it against the event. `Forest._run` writes `walk_started`
+  (`checks` absent until the jobs' `checks` exists; `destination` absent
+  for an invalidation only because an edit's invalidation still goes
+  through `_run` — the decided target, funnels-2 of the review, in
+  [9779f8]'s rewrite: walk records belong to the evaluating walk alone,
+  `destination` is required, and an edit writes only its `operation`
+  records and `committed`) and `walk_ended` (`outcome` `continue` or the
+  stop's id, `slots_released` from `Evaluation.releases`, counted at each
+  `flush` as the names of its `state_delete` and summed by
+  `_handle_tree` over the trees' own evaluations).
+  `_invalidate_changed_trees` returns the trees it invalidated for the
+  `committed` record.
 - `edit._committed(forest, operation, location, *, created, removed,
   moved, invalidated)` after each of the four commit blocks; `operation`
   is the entry's name (`insert`, `amend`, `delete`, `move`); `created`
@@ -1089,8 +1104,12 @@ module of the plan gained its assertion on the records. The shapes:
   (`rows_written` as `[node, field]` pairs, `nodes_deleted`, `duration`)
   after the commit, `transaction_failed` before raising the
   `TAT_DisasterError`. Every test's store is built with `stand_ins.log()`.
-- Ids in the records are `Forest.id_of`'s shortest form, so the tests
-  compare against `f.id_of(node)`, not a spelled-out id.
+- Ids in the records are `Forest.full_id`'s — the full id, linear in the
+  node's depth — so the tests compare against `f.full_id(node)`, not a
+  spelled-out id; `id_of`'s shortest form is for text an agent reads, and
+  `resolve`'s exact match is `full_id(n) == id`. `id_of` keeps its own
+  loop: it deletes components of the chain one at a time, which a full id
+  as a string does not express.
 - The compilation session [9779f8] began its rewrite of the walk, the
   setters, the commit blocks and the store the same day; told the exact
   places of every record so its rewrite carries them.
@@ -1218,32 +1237,197 @@ The 28 author items are listed in the ruling. The owner: 「好，你先自行
 division approved. Written 2026-10-03 (the suite without Isabelle: 300
 pass, the 18 doc-drift failures unchanged):
 
-- Done: log-1 (`ending`'s `message` is `traceback.format_exception_only`'s
-  one line — for a class outside the builtins it carries the module,
-  `isabelle_theory_agent.exceptions.TAT_InternalError: …`), log-2
-  (`Literal` fields), log-5 (`class_` → `class`, the `_` suffix rule in
-  `_event`), log-6, start-2 (`Ending.unwound()`), start-3 (the drain is
-  `TAT_Server.__aexit__`; `serve` still stops accepting as soon as the
-  loop exits, so a call arriving after `serve` raised is refused at the
-  transport), start-4 (`asyncio.wait({main_loop})` + a test), start-5,
-  start-7 (both tests), driver-2 (`TAT.gone`), driver-4 (`_text` shared),
-  elegance-14's rename (`_trip_done`), funnels-1 (`Forest.full_id`),
-  funnels-3 (`_changed`, net effect; a test), funnels-5 (counted at
-  `flush`), funnels-8 (`_status_to_store`), elegance-3 (`stopped` once in
-  `_handle_tree`, with `tree`), boundary-1/2/3 (`Answer(text, is_error,
-  class_)`, `_run` refuses a non-text), tests-6, the six owner decisions.
+- Done in the code — the tests and the record lines the ruling also asked
+  for only in part, as the verification below found; the send-backs
+  closed the gaps: log-1 (`ending`'s `message` is
+  `traceback.format_exception_only`'s one line — for a class outside the
+  builtins it carries the module,
+  `isabelle_theory_agent.exceptions.TAT_InternalError: …`; the start-1
+  test on `Ending.end` was missing), log-2 (`Literal` fields), log-5
+  (`class_` → `class`; the suffix rule first ran after the `**` merge),
+  log-6, start-2 (`Ending.unwound()`; the server-level test missing),
+  start-3 (the drain is `TAT_Server.__aexit__`; `serve` still stops
+  accepting as soon as the loop exits, so a call arriving after `serve`
+  raised is refused at the transport; the window test missing),
+  start-4 (`asyncio.wait({main_loop})`; its test could not fail),
+  start-5, start-7 (both tests), driver-2 (`TAT.gone`; the docstrings
+  not), driver-4 (`_text` shared), elegance-14's rename (`_trip_done`),
+  funnels-1 (`Forest.full_id` in every record; not yet in `resolve`),
+  funnels-3 (`_changed`, net effect; the test_store test, not test_edit's
+  assertions), funnels-5 (counted at `flush`; no test), funnels-8
+  (`_status_to_store`), elegance-3 (`stopped` once in `_handle_tree`,
+  with `tree`), boundary-1/2/3 (`Answer(text, is_error, class_)`, `_run`
+  refuses a non-text; the name not put to the owner), tests-6, the six
+  owner decisions.
 - Done later the same day: log-3 (`baselines.event_tables` reads LOGGING
-  §4; test_log checks the categories, events and levels against it),
-  log-4 (one reader, `stand_ins.records`), tests-7, driver-5
-  (`Probes.conversation`; the stubs' `conn` left where it is a plain
-  name of a stand-in), start-8 (the leaf-exists case, `now` patched),
-  funnels-7 (b), tests-9 (the `committed` assertions for insert, two
-  moves, amend, delete, and `removed` in the children-first delete),
+  §4; test_log checks the categories, events and levels against it — the
+  names check with a hand-written exception for `ending`), log-4 (one
+  reader, `stand_ins.records`; the three wrappers kept as forwarders,
+  test_log's own fixture kept), tests-7, driver-5 (`Probes.conversation`;
+  the nine stubs' `conn` left, wrongly — they hold a `Conversation`),
+  start-8 (the leaf-exists case, `now` patched), funnels-7 (b) (the sum
+  asserted after the `ignore_error` walk, where it is 0 == 0), tests-9
+  (the `committed` assertions for insert, two moves, amend, delete, and
+  `removed` in the children-first delete; the third bullet not),
   boundary-4 (the notes; [682d5e] told). Waiting for [9779f8]'s rewrite:
-  funnels-7 (d), tests-2; handed to it: funnels-2, funnels-4, elegance-8
-  (acknowledged). The suite without Isabelle: 304 pass, the 18 doc-drift
-  failures unchanged; the Isabelle-backed suite: 52 pass.
-- Correction of this record's own lines above: records name nodes by
-  `Forest.full_id`, not `id_of`'s shortest form; `walk_started`'s
-  `destination` is absent today only because edits' invalidations still
-  go through `_run` (funnels-2, [9779f8]'s).
+  funnels-7 (d) and the second half of tests-2 (the first half, the
+  vacuous assertion deleted, is done). Handed to [9779f8], acknowledged:
+  funnels-2's code, funnels-4's guard, elegance-8. Still the author's,
+  after the rewrite: funnels-2 (iii), a test_edit assertion that a move
+  writes no `walk_started`; funnels-4's test, once the guard lands — a
+  second strict walk past the same stop writes no `operation` record for
+  nodes already stored as not_evaluated, while a change from ready to
+  not_evaluated is still recorded. The suite without Isabelle: 304 pass,
+  the 18 doc-drift failures unchanged; the Isabelle-backed suite: 52 pass.
+- Committed as `d9472b3` (TAT) and `67a504b` (Performant_Isabelle_ML)
+  on 「请提交」, 2026-10-03.
+
+**Verification of the fixes** (`review/LOGGING_FIXES_VERIFICATION.md`,
+Workflow `wf_c51d022f-526`, 31 verifiers + judge): **not accepted** — the
+production fixes are sound and match the ruling; what fails is tests the
+ruling asked for and left out, records marked "Done" with parts missing,
+docstrings naming the review, and one real defect: `TAT_Server.__aexit__`
+waits (requests, `unwound`) before the teardown with no `try/finally`, so
+the RPC host's cancellation 3 s after the connection closes skips
+`_stop_listening`/`aclose`/`shutdown`. 24 send-back items, all listed in
+that file — the next work, before anything else of the plan: the
+start-1/start-2/start-3/start-4/funnels-5/funnels-6/funnels-3/tests-9
+tests; the try/finally; `_handle_tree`'s duplicate `Literal`; log-3's
+exact names check and baselines docstring; log-4's leftovers in
+test_log; log-5's suffix rule applied before the `**` merge and the field
+list here; the two LOGGING §4 clauses added beyond the approved wording
+(`ended`: "each call's and each job's fate is in its own record";
+`round_trip`: "— the connection error, when the connection went —") to
+revert or put to the owner; the `_answer` name clash with the module
+function; driver-2/driver-5/boundary-2 docstrings and renames;
+funnels-1's `resolve`/`id_of` reuse; funnels-7 (b)'s assertion placed
+after the strict walk; telling [9779f8] about `_changed`, `flush`,
+`_status_to_store`, `full_id` in its files; and this record's "Done"
+lines corrected in place. The author's "Done" lines above were
+overstated for log-3, log-4, log-5, start-1/2/3/4, driver-2, driver-5,
+funnels-1/3/5/7(b), tests-9 and boundary-3; they are corrected in place,
+as are the step-1 to step-4 lines the verification named.
+
+**The two LOGGING §4 clauses stay** (owner, 2026-10-03: 「问题不大，在日志
+里的措辞不用那么谨慎，如果有更多信息量的话可以加上」): the `ended` row's
+"each call's and each job's fate is in its own record" and the
+`round_trip` row's "— the connection error, when the connection went —"
+are approved after the fact, and a clause that adds information to a
+LOGGING §4 row may be added without a fresh approval. That send-back item
+(elegance-6 + elegance-13's wording) is closed; the other 23 stand.
+
+**The send-backs** (2026-10-03). The production side, the author's:
+
+- `TAT_Server.__aexit__` runs the stop (`_stop_listening`,
+  `_running.aclose()`, `_uvicorn.shutdown`) in a `finally` after the
+  drain: the one defect. The order on the normal path is the approved one.
+- `_handle_tree`'s local `reason` lost its `Literal` annotation; `resolve`
+  matches exactly through `full_id`; `id_of` keeps its loop (step 4
+  above says why).
+- `_event` applies the `_` suffix rule to the declared parameters only,
+  computed once at declaration; a `**` entry is written under the name
+  given, as `note` writes it.
+- Put to the owner: the one sentence of CONSTRUCT_INTERACTION §9 ("`serve`
+  waits for the tasks to unwind before the store closes" — the server's
+  exit does); the name of the boundary's tuple, `Answer`, whose root the
+  jobs vocabulary uses for the agent's answer to a question (`answer`,
+  `Answered`, `BadAnswer`), and with it the method `_answer`, which shares
+  its name with the module's HTTP `_answer`.
+- [9779f8] told of `_changed`, the counting at `flush`, `_status_to_store`
+  in `_stored`, `full_id` (in `resolve` too), the one `stopped` write in
+  `_handle_tree`, and elegance-8's name from the design's phrase "the
+  edit's one store transaction".
+- The tests, written by three subagents briefed from the verification's
+  "Sent back" (one per file group), their diffs read by the author and
+  their mutation checks run in memory through pytest plugins, never by
+  editing the package. test_mcp_server: `end` with an exception whose
+  `__str__` raises, a task spawned (`wait()` returns, `entered`, the task
+  cancelled — the one test failing with `str(ended_by)` put before
+  `_entered.set()`); the connection going before `serve` with `slow` in
+  flight (the connection-gone line; `call`, `ending`, `while_ending`,
+  `ended` in timestamp order — fails, by hanging, without `end(exc)` in
+  the server's exit); a task reading the store while it unwinds, through
+  `served()` and `serve()` (fails without `unwound()` in the exit; sleeps
+  0.3 s past uvicorn's tick and shutdown); the host's cancellation during
+  the drain (nothing accepts, no connection left, the manager's run
+  closed, no cancel-scope error — fails without the `finally`); the
+  loop-failure test parametrized over "another door first" (`exn is
+  first`; the text `loop-bug`; a fresh POST refused — both fail with
+  `await main_loop` back); `slow_bug`'s `[(call, slow_bug), (given_up,
+  slow_bug)]`; the comment and docstrings; helpers `launched`
+  (`launch_TAT`'s shape) and `refused_at_the_transport`; `Recorder` and
+  `cancelled_by_the_host` imported from test_toplevel (a `Recorder` in
+  stand_ins would be cleaner — later). test_forest_walk: the two-importers
+  case (fails with `tree=` the first importer); the per-tree sum after the
+  strict walk, 4 = 2 + 2 (fails with the sum dropped or doubled); the
+  whole amend `committed` record, `invalidated` = the replacement
+  (renamed), B, C. test_edit: `nodes_deleted` on the real path — insert,
+  both moves and the amend `[]`, the delete `[a]`, the children-first
+  delete `[sec, a, b]` literal (fails with a deletion kept through a
+  later `put`); the childless block's amend, `slots_released == 3` (fails
+  under the old counting). test_store's comment. test_log: the names
+  check over every public method but `note`, the log-4 shape, a `**`
+  entry `path_` kept. test_isabelle_driver, test_toplevel, the nine stubs.
+- Departures from the ruling's letter, with the reason: `only` keeps its
+  two lines (the one-line form would drop "exactly one record"); `id_of`
+  keeps its loop (step 4 above); the amend's `nodes_deleted == []` is one
+  assertion beyond the ruling's three (it pins the delete-then-put path).
+- A consequence of the `finally` to know: the host's cancellation landing
+  mid-drain cuts the drain short, so a call still in flight then gets no
+  answer (`given_up` written) — as before start-3; the teardown now
+  completes where it was skipped.
+- The suite without Isabelle: 304 pass, 15 known doc-drift failures (the
+  14 of other sessions' documents and `test_on_compaction_answers_the_
+  briefing_in_the_clients_shape`, which goes with `/on-compaction`).
+  The Isabelle-backed suite (test_conversation, test_launcher): 26 pass,
+  the 3 known test_launcher failures (CLIENT_HOOKS §1's fenced blocks
+  moved by another session).
+  pyright: the package and test_mcp_server, test_log, baselines,
+  test_isabelle_driver, test_toplevel, test_store at 0; test_model and
+  test_session_theory (15) and test_forest_walk and test_edit (54, plus
+  one in the new two-importers test) carry errors from before this work
+  — the files' `f.sub_nodes[0].sub_nodes` idiom and `Node.runs`.
+- **Verified** (`review/LOGGING_SENDBACKS_VERIFICATION.md`, Workflow
+  `wf_62d19433-b05`, 23 verifiers + judge, Opus, xhigh, 20 minutes):
+  **accepted** — all 23 items done, every mutation check failing the
+  test it should, no send-back; the judge dismissed as hair-splitting
+  test_log iterating over LOGGING §4's categories only, the late call's
+  arguments not asserted, `_event`'s docstring showing the rule by its one
+  instance, `id_of`'s own root case, `Recorder` imported from
+  test_toplevel. One item for the owner: to confirm the `finally` in
+  `TAT_Server.__aexit__` and its consequence (above).
+- The boundary's tuple is `Result(text, is_error, class_)` (owner,
+  2026-10-03, 「赞同 Result」 — the design's word for what a tool call
+  returns: MODULE_STRUCTURE §4.6, LOGGING §4's `tool.result`, MCP's
+  `CallToolResult`); `_result_of(name, body)` decides it,
+  `_call_tool_result(text, is_error)` renders MCP's form; the HTTP
+  `_answer` keeps its name alone. CONSTRUCT_INTERACTION §9's sentence
+  reworded as proposed (owner, 「批准」).
+
+**Division with the jobs session [682d5e]** (2026-10-03, its question;
+the owner: 「按你推荐的最佳方式来分工」): step 7 — `fork_job`, `TAT.job_cancel`,
+`job_finished`, the wire shapes, the `TAT_InternalError` on `["bug", …]`
+and the ML records `job_forked`/`job_ended`/`report_undelivered` through
+`TAT_Framework.Log` captured at the fork — is [682d5e]'s whole; the
+author's step 7 becomes a review of that code against LOGGING §4. Batch
+3's order: [682d5e] lands `-c`, the two `TAT_Server` subclasses, `POST
+/hook`, `event_of_hook`, `agent_of_call` (and threads the client name
+into `start`); steps 9–11 sit on it; `hook.py` is CLIENT_HOOKS §1 and
+nothing beyond. Step 13 and [682d5e]'s smoke run are one live run, after
+both sides are in, with both plans' measurements taken in it.
+[682d5e] also adds `ClientRefused(TAT_StartupError)` with its `line`,
+`stopped()`'s branch answering it and RENDER_BASELINES §4's fourth and
+sixth lines (its two refusals: `clientInfo`, Claude Code's missing
+transcript); step 11 adds the sandbox check, the fifth line and the
+`client_refused` record on that class. Announced by [682d5e] for its
+steps: `TAT_Server` loses `on_compaction` (`/on-compaction` and
+`mcp.on_compaction` go with `POST /hook`; the server is built in
+`served()` from the client's subclass; `configure(working_directory)` a
+base method called before the port is bound, empty until step 10);
+`Tool.run` takes the calling `Agent`; `Ending.end` cancels the
+construction jobs and drops the evaluation jobs in its synchronous
+stretch — told to keep `_entered.set()` unconditional and `forest` None
+before the start built it. The SDK runs each message in a task of its
+own (`Server.run`, mcp 1.26.0: `tg.start_soon(self._handle_message, …)`),
+confirmed by [682d5e], so the context variables set in the handler reach
+no other request.

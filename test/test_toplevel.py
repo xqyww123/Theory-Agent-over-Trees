@@ -72,10 +72,6 @@ def log_directories(working_directory) -> list[Path]:
     return sorted((working_directory / ".tat" / "log").iterdir())
 
 
-def conversation_records(log_directory) -> list[dict]:
-    return stand_ins.records("conversation", log_directory)
-
-
 def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(tmp_path):
     async def scenario():
         port = free_port()
@@ -91,7 +87,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         assert DIRECTORY_NAME.match(log_directory.name)
         # the Isabelle side told the directory, absolute, right after `start`
         assert connection.calls == [("TAT.log_directory", str(log_directory.absolute()))]
-        records = conversation_records(log_directory)
+        records = stand_ins.records("conversation", log_directory)
         assert [r["event"] for r in records] == ["start", "store_opened", "plugins_loaded", "serving"]
         start, store_opened, plugins_loaded, serving = (r["data"] for r in records)
         assert start == {"version": start["version"], "pid": os.getpid(),
@@ -114,7 +110,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # `info`, then `ended` once the unwinding is over
         await cancelled_by_the_host(first)
         assert (tmp_path / "tat.lock").read_bytes() == b""
-        ending, ended = conversation_records(log_directory)[4:]
+        ending, ended = stand_ins.records("conversation", log_directory)[4:]
         assert (ending["event"], ending["level"]) == ("ending", "info")
         assert ending["data"]["class"] == "CancelledError"
         assert ended["event"] == "ended" and list(ended["data"]) == ["duration"]
@@ -145,14 +141,15 @@ def test_a_port_in_use_is_refused_and_leaves_no_lock_behind(tmp_path):
 def test_a_start_that_fails_after_the_log_exists_writes_ending_and_ended(tmp_path):
     """The store refusing the database (`TAT_StartupError`): the ending
     object's exit enters the ending and writes `ending` at `error` and
-    `ended` with zero counts; the error is raised out of the procedure."""
+    `ended`, which carries only the duration; the error is raised out of
+    the procedure."""
     (tmp_path / "TAT.sqlite").write_text("not a database")
     async def scenario():
         with pytest.raises(TAT_StartupError):
             await launch(tmp_path, free_port())
     run(scenario)
     [log_directory] = log_directories(tmp_path)
-    records = conversation_records(log_directory)
+    records = stand_ins.records("conversation", log_directory)
     assert [(r["event"], r["level"]) for r in records] == [
         ("start", "info"), ("ending", "error"), ("ended", "info")]
     assert records[1]["data"]["class"] == "TAT_StartupError"

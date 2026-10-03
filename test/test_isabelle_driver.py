@@ -1,6 +1,7 @@
 """`isabelle_driver.call`, the one door to the wire (MODULE_STRUCTURE §4.3):
 an exception the ML callback let escape is a bug, `TAT_IsabelleError`, and
-not a `TAT_Error` (EXCEPTIONS.md §1); every round trip is recorded in the
+not a `TAT_Error` (EXCEPTIONS.md §1); a connection error reaches the caller
+unwrapped (MODULE_STRUCTURE §4.3); every round trip is recorded in the
 conversation's log when it completes, whether or not its caller still
 waits (LOGGING.md §5); and it is the one door — no other line of the
 package calls `Connection.callback`.  `Connection`'s other wire coroutines
@@ -25,10 +26,11 @@ from isabelle_theory_agent.exceptions import TAT_Error, TAT_InternalError, TAT_I
 
 
 class Fake_Connection:
-    """Answers one callback and `TAT.reset`, interrupts one under a name no
-    ML callback bears, and lets every other raise as the RPC library does
-    when the ML side let an exception escape: one entry per message, a
-    message spanning lines."""
+    """Answers one callback and `TAT.reset`; under names no ML callback
+    bears, raises for `TAT.gone` the `ConnectionResetError` of a dead wire
+    and interrupts `TAT.interrupted`; lets every other raise as the RPC
+    library does when the ML side let an exception escape: one entry per
+    message, a message spanning lines."""
     async def callback(self, name, args):
         if name == "TAT.state_exists":
             return args == "held"
@@ -44,10 +46,6 @@ class Fake_Connection:
 
 def conversation(conn):
     return stand_ins.conversation(cast(Any, conn))
-
-
-def round_trips(conv) -> list[dict]:
-    return stand_ins.records("round_trip", conv.log.directory)
 
 
 async def settled():
@@ -68,7 +66,7 @@ def test_a_result_comes_back_and_an_escaped_exception_is_a_bug():
         'exception Bug "TAT.Theory.begin: tat-bug" raised (line 94)\nAt command "theory"\n'
         "second message")
     # each trip recorded as it completed: the result, or the error's messages
-    answered, failed = round_trips(conv)
+    answered, failed = stand_ins.records("round_trip", conv.log.directory)
     assert answered["event"] == "round_trip" and answered["data"] == {
         "name": "TAT.state_exists", "arguments": "held", "result": True,
         "duration": answered["data"]["duration"]}
@@ -85,7 +83,7 @@ def test_an_interrupt_is_treated_like_any_isabelle_error_for_now():
         asyncio.run(isabelle_driver.call(conv, "TAT.interrupted", ()))
     assert isinstance(e.value.__cause__, IsabelleInterrupt)
     assert str(e.value) == "the ML callback TAT.interrupted failed:\nInterrupt"
-    assert round_trips(conv)[0]["data"]["error"] == "Interrupt"
+    assert stand_ins.records("round_trip", conv.log.directory)[0]["data"]["error"] == "Interrupt"
 
 
 def test_reset_runs_on_a_bare_connection():
@@ -101,7 +99,7 @@ def test_a_connection_error_reaches_the_caller_unwrapped_and_is_the_trips_error(
     conv = conversation(Fake_Connection())
     with pytest.raises(ConnectionResetError):
         asyncio.run(isabelle_driver.call(conv, "TAT.gone", ()))
-    [record] = round_trips(conv)
+    [record] = stand_ins.records("round_trip", conv.log.directory)
     assert record["event"] == "round_trip" and record["data"] == {
         "name": "TAT.gone", "arguments": [], "error": "ConnectionResetError: peer closed connection",
         "duration": record["data"]["duration"]}
@@ -130,11 +128,11 @@ def test_a_cancelled_caller_unwinds_while_the_round_trip_completes():
         with pytest.raises(asyncio.CancelledError):
             await caller
         assert not conn.finished               # unwound before the wire answered
-        assert round_trips(conv) == []
+        assert stand_ins.records("round_trip", conv.log.directory) == []
         conn.release.set()
         await settled()
         assert conn.finished                   # the round trip ran to its end
-        [record] = round_trips(conv)
+        [record] = stand_ins.records("round_trip", conv.log.directory)
         assert record["data"]["name"] == "TAT.slow" and record["data"]["result"] == 1
     asyncio.run(scenario())
 
@@ -164,10 +162,10 @@ def test_an_abandoned_round_trips_failure_is_nobodys_and_not_reported():
         await settled()                        # the abandoned round trip fails now
         gc.collect()                           # its task is unreferenced; asyncio would report it here
         assert reported == []
-        [record] = round_trips(conv)
-        assert record["event"] == "round_trip" and record["data"]["name"] == "TAT.slow"
-        assert record["data"]["error"] == "ConnectionResetError: peer closed connection"
-        assert "result" not in record["data"] and "duration" in record["data"]
+        [record] = stand_ins.records("round_trip", conv.log.directory)
+        assert record["event"] == "round_trip" and record["data"] == {
+            "name": "TAT.slow", "arguments": 1, "error": "ConnectionResetError: peer closed connection",
+            "duration": record["data"]["duration"]}
     asyncio.run(scenario())
 
 

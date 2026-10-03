@@ -303,6 +303,20 @@ def test_blocked_by_a_leaf_inside_the_import():
     inv(f)
 
 
+def test_two_importers_of_one_import_without_theory_each_name_their_tree():
+    """Two trees importing one failed header (LOGGING.md §4): their
+    `stopped` records name the same import, and each the tree it kept from
+    running."""
+    f = forest(session("S", theory("A", kind="bad_header"), theory("B", "A"), theory("C", "A")))
+    a, b, c = f.sub_nodes[0].sub_nodes
+    run(f.evaluate_to(False))
+    assert [r["data"] for r in stand_ins.records("evaluation") if r["event"] == "stopped"] == [
+        {"node": f.full_id(a), "reason": "import_without_theory", "tree": f.full_id(b)},
+        {"node": f.full_id(a), "reason": "import_without_theory", "tree": f.full_id(c)}]
+    not_evaluated(b, c)
+    inv(f)
+
+
 def test_blocked_by_the_obstacle_of_the_item_written_first():
     f = forest(session("S", theory("A", kind="bad_header"), theory("B", kind="bad_header"),
                        theory("C", "B", "A")))
@@ -369,8 +383,6 @@ def test_each_tree_flushes_what_its_walk_released():
     x, x2 = insert(f, a, 0, [t("x", fail=True), t("x2")])
     y, y2 = insert(f, b, 0, [t("y", fail=True), t("y2")])
     run(f.evaluate_to(True))                                     # both trees written whole
-    # `walk_ended` counts the slots deleted over the trees' own flushes
-    assert stand_ins.records("evaluation")[-1]["data"]["slots_released"] == sum(map(len, deletes()))
     assert a.evaluation_status_ending is READY and b.evaluation_status_ending is READY
     inv(f)
     tm.TABLE.calls.clear()
@@ -379,6 +391,8 @@ def test_each_tree_flushes_what_its_walk_released():
     released = deletes()
     assert len(released) == 2 and released[0] and released[1], released
     assert released[0].isdisjoint(released[1])
+    # `walk_ended` counts the slots deleted over the trees' own flushes
+    assert stand_ins.records("evaluation")[-1]["data"]["slots_released"] == sum(map(len, released))
     assert released[0] == {x2.resulting_state().name, a._state_after_ending.name}
     assert released[1] == {y2.resulting_state().name, b._state_after_ending.name}
     inv(f)
@@ -473,10 +487,19 @@ def test_the_record_holds_the_imported_nodes_not_their_names():
     # fresh tree named A in the same call — every name stays, the tree
     # behind `A` does not
     f, s, u, a, b, c = two_sessions()
+    old_a = f.full_id(a)
     a2, a_new = run(locked(f, edit.amend(a, [theory("A2"), theory("A")], KINDS)))
     assert f._resolved_imports(b) == [a_new] and f._resolved_imports(c) == [a_new]
     not_evaluated(a2, a_new, b, c)
     assert tm.TABLE.theory_deletes == []
+    # the amend's `committed` record (LOGGING.md §4): invalidated, in tree
+    # order, the replacement, renamed, and both importers of the node
+    # behind `A`, whose names did not change
+    assert stand_ins.records("edit")[-1]["data"] == {
+        "operation": "amend", "parent": f.full_id(s), "index": 0,
+        "created": [[f.full_id(a2), "theory"], [f.full_id(a_new), "theory"]],
+        "removed": [old_a], "moved": [],
+        "invalidated": [f.full_id(a2), f.full_id(b), f.full_id(c)]}
     inv(f)
 
 

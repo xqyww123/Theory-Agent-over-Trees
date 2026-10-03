@@ -446,6 +446,23 @@ def test_amend_inherits_position_slot_identity_children():
     assert len(deletes()) == 1                    # one round trip releases all
     inv(f)
 
+def test_amending_a_childless_block_counts_each_deleted_slot_once():
+    """`walk_ended`'s `slots_released` (LOGGING.md §4) is the number of
+    names the walk's one `state_delete` named.  A block with no children
+    ends on the state its beginning wrote, so the amend releases that slot
+    twice; it is deleted, and counted, once."""
+    f, thy, sec, a, b, c = rbuild()
+    (e,) = run(locked(f, edit.insert(thy, 1, [{"kind": "block", "name": "E"}], KINDS)))
+    run(c.evaluate_to(False))
+    assert st(e) == (READY, READY)
+    tm.TABLE.calls.clear()
+    run(locked(f, edit.amend(e, [{"kind": "block", "name": "E2"}], KINDS)))
+    [(_, names)] = deletes()
+    walk_ended = stand_ins.records("evaluation")[-1]         # the amend's invalidation walk
+    assert walk_ended["event"] == "walk_ended"
+    assert walk_ended["data"]["slots_released"] == len(names) == 3
+    inv(f)
+
 def test_amend_may_keep_the_name():
     f, thy, sec, a, b, c = rbuild()
     (s,) = run(locked(f, edit.amend(
@@ -515,6 +532,10 @@ def test_delete_fires_children_first_and_a_gate_can_veto():
     subtree = [f.full_id(n) for n in sec._tree_order()]     # named before they detach
     run(locked(f, edit.delete(sec)))
     assert stand_ins.records("edit")[-1]["data"]["removed"] == subtree
+    # the store's `transaction` record (LOGGING.md §4): the subtree's
+    # identities, in tree order
+    assert stand_ins.records("store")[-1]["data"]["nodes_deleted"] == [
+        sec.identity, a.identity, b.identity]
     assert [e for e in EVENTS if e[1] in ("deleting", "deleted",
                                           "removing_child")] == [
         ("a", "deleting", "delete"),
@@ -624,31 +645,38 @@ def test_a_namespaced_name_collides_across_the_forest_and_the_batch():
 # --- one transaction per write operation, storing only what changed ----------
 
 def test_each_edit_is_one_transaction_touching_what_it_changed():
-    """One store transaction per edit, and after it the edit's `committed`
+    """One store transaction per edit, its `transaction` record naming the
+    nodes it deleted by identity, and after it the edit's `committed`
     record (LOGGING.md §4), naming what the edit changed by full ids."""
     def committed():
         return stand_ins.records("edit")[-1]["data"]
+    def nodes_deleted():
+        return stand_ins.records("store")[-1]["data"]["nodes_deleted"]
     f, thy, sec, a, b, c = rbuild()
     tm.TABLE.clear_writes()
     (u,) = run(locked(f, edit.insert(sec,1, [{"kind": "t", "name": "u"}], KINDS)))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {u.identity, sec.identity}
+    assert nodes_deleted() == []
     assert committed() == {"operation": "insert", "parent": f.full_id(sec), "index": 1,
                            "created": [[f.full_id(u), "t"]], "removed": [], "moved": [],
                            "invalidated": []}
     tm.TABLE.clear_writes()
     run(locked(f, edit.move(c, thy, 0)))                 # within one parent
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity}
+    assert nodes_deleted() == []
     assert committed() == {"operation": "move", "parent": f.full_id(thy), "index": 0,
                            "created": [], "removed": [], "moved": [f.full_id(c)], "invalidated": []}
     tm.TABLE.clear_writes()
     run(locked(f, edit.move(c, sec, 0)))                 # across parents
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity, sec.identity}
+    assert nodes_deleted() == []
     assert (committed()["parent"], committed()["index"], committed()["moved"]) == (
         f.full_id(sec), 0, [f.full_id(c)])
     tm.TABLE.clear_writes()
     old_sec, sec_index = f.full_id(sec), sec.index_of()
     (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}], KINDS)))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {s9.identity}
+    assert nodes_deleted() == []                         # one identity, its rows rewritten
     assert committed() == {"operation": "amend", "parent": f.full_id(thy), "index": sec_index,
                            "created": [[f.full_id(s9), "block"]], "removed": [old_sec],
                            "moved": [], "invalidated": []}
@@ -656,6 +684,7 @@ def test_each_edit_is_one_transaction_touching_what_it_changed():
     old_a, a_index = f.full_id(a), a.index_of()
     run(locked(f, edit.delete(a)))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {a.identity, s9.identity}
+    assert nodes_deleted() == [a.identity]
     assert committed() == {"operation": "delete", "parent": f.full_id(s9), "index": a_index,
                            "created": [], "removed": [old_a], "moved": [], "invalidated": []}
     inv(f)

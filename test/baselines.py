@@ -1,6 +1,8 @@
-"""Reading approved wording out of the documents (not a pytest module): a
-baseline test pins every fenced line of the sections that hold agent-facing
-text, so the code and the approved wording cannot drift apart."""
+"""Reading approved wording and the event tables out of the documents (not
+a pytest module): a baseline test pins every fenced line of the sections
+that hold agent-facing text, and the log's tests pin the events and their
+levels to LOGGING.md §4's tables, so the code and the documents cannot
+drift apart."""
 
 from pathlib import Path
 

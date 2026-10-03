@@ -104,7 +104,7 @@ rest major/minor. Owner's rulings on its owner items:
 The code fixes, applied with the owner's go-ahead (2026-09-15), to be
 re-reviewed (round 12):
 
-- `_call_tool` decides the answer (`_answer`) before its checkpoint; the
+- `_call_tool` decides the result (`_result_of`) before its checkpoint; the
   decision is total (`except Exception` enters the ending; a body that
   let a cancellation escape enters it with a `TAT_InternalError`); the
   ending's reason is read from one place, `self._ending`, an
@@ -280,7 +280,7 @@ the own-stop guard and the seen keys discarded in its hooks; `POST
 /on-compaction` in `mcp_server.py` (`_compaction`: the security check
 with the manager's settings, `is_post=False`; unknown `client` → 400
 before the closure; the closure's exception → `end` + empty 500; every
-answer through `_answer`), `mcp.on_compaction`; `_held(directory, port)`
+answer through the HTTP `_answer`), `mcp.on_compaction`; `_held(directory, port)`
 writing pid and port, the refusal reading the first line;
 `plugin._check_class` refusing `_operations_ready`, `print`, and
 coroutine `print_fields` / `mark`; `tat.scala`: the emptiness refusal, a

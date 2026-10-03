@@ -191,7 +191,7 @@ class Evaluation:
         self.destination = destination
         self.ignore_error = ignore_error
         self._released: set[str] = set()
-        self.releases = 0                    # the slots deleted over every flush: the `walk_ended` record's
+        self.releases = 0                    # the slots deleted over every flush: `walk_ended`'s `slots_released`
         self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
 
     def release(self, slot: Isar_State_Slot) -> None:
@@ -1355,7 +1355,7 @@ class Forest(Unchained_Node):
         matches = self._read(parts)
         if len(matches) > 1:
             for n in matches:
-                if [c.id_component() for c in self._chain(n)] == parts:
+                if self.full_id(n) == id:
                     return n
         if len(matches) == 1:
             return matches[0]
@@ -1608,7 +1608,6 @@ class Forest(Unchained_Node):
         `Evaluation`, flushed here, so a slot released for one tree is gone
         before a later tree of the walk could write it."""
         own = Evaluation(ev.destination, ev.ignore_error)
-        reason: Literal["command_failed", "order_constraint", "import_without_theory"]
         if self._order_violation(tree) is not None:
             await self._invalidate_trees(own, [tree])
             stop: Node | None = tree                      # reported whatever ignore_error says

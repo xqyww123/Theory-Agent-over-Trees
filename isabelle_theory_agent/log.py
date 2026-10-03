@@ -102,17 +102,18 @@ def _event(level: Level) -> Callable[[Callable[Concatenate[Any, P], None]],
     around a keyword), `level` the record's level; the body is never run."""
     def declare(signature_of: Callable[Concatenate[Any, P], None]) -> Callable[Concatenate[Any, P], None]:
         signature = inspect.signature(signature_of)
-        var_keyword = [p.name for p in signature.parameters.values() if p.kind is p.VAR_KEYWORD]
+        parameters = {name: p for name, p in signature.parameters.items() if name != "self"}
+        # each declared parameter's field, then the `**` parameter's entries as they are
+        fields = {name: name.removesuffix("_") for name, p in parameters.items() if p.kind is not p.VAR_KEYWORD}
+        var_keyword = [name for name, p in parameters.items() if p.kind is p.VAR_KEYWORD]
 
         @functools.wraps(signature_of)
         def method(self: Any, *args: P.args, **kwargs: P.kwargs) -> None:
             bound = signature.bind(self, *args, **kwargs)
             bound.apply_defaults()
-            data = dict(bound.arguments)
-            del data["self"]
+            data = {field: bound.arguments[name] for name, field in fields.items()}
             for name in var_keyword:
-                data.update(data.pop(name))
-            data = {name.removesuffix("_"): value for name, value in data.items()}
+                data.update(bound.arguments[name])
             self._log._write(self.category, signature_of.__name__, level, data)
         return method
     return declare

@@ -949,7 +949,7 @@ synchronous stretch, cancels every running construction job through the
 job's own `cancel(None)` — the run detached, its question withdrawn,
 `NOT_STARTED`, the task cancelled, nothing told — drops every evaluation
 job, and cancels every other spawned task, all without a round trip;
-`serve` waits for the tasks to unwind before the store closes.
+the server's exit waits for the tasks to unwind before the store closes.
 
 A job's settlement — a construction run's end (§3.2), an evaluation
 job's report (§3.3) — and a job's drop are each one synchronous step

@@ -57,20 +57,20 @@ class Table:
         assert not self.open_stores, "a store transaction is open across an await"
 
     def install(self, monkeypatch):
-        async def state_delete(conn, names):
+        async def state_delete(conversation, names):
             self._no_transaction_open()
             self.calls.append(("delete", tuple(names)))
             for n in names:
                 self.values.pop(n, None); self.deleted.append(n)
-        async def state_exists(conn, name):
+        async def state_exists(conversation, name):
             self._no_transaction_open()
             return name in self.values
-        async def state_copy(conn, src, dst):
+        async def state_copy(conversation, src, dst):
             self._no_transaction_open()
             self.calls.append(("copy", src, dst))
             if src in self.values: self.values[dst] = self.values[src]
             else: self.values.pop(dst, None)
-        async def theory_delete(conn, names):
+        async def theory_delete(conversation, names):
             self._no_transaction_open()
             self.theory_deletes.append(tuple(names))
             self.theories.difference_update(names)

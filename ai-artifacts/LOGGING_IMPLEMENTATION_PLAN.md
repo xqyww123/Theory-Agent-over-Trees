@@ -72,8 +72,8 @@ per category, one typed method per event, mirroring the files —
    and call `server.end`) adjusted to the ending object; test_toplevel's
    `Recorder` gains `server.logger`; the records `start`, `store_opened`,
    `plugins_loaded`, `ending`, `ended` appear in that order; a
-   `TAT_StartupError` at the store writes `ending` and `ended` with zero
-   counts; a conversation ended by the connection going writes `ending`
+   `TAT_StartupError` at the store writes `ending` and `ended` (the
+   duration alone); a conversation ended by the connection going writes `ending`
    at level `info`; a fresh working directory starts.
 3. **`isabelle_driver`** (MODULE_STRUCTURE §4.3). The private function of
    a connection; `call(conversation, name, args)` = that function plus the

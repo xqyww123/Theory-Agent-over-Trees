@@ -109,8 +109,8 @@ def test_an_exception_rolls_the_whole_operation_back_as_a_disaster(store):
     with store.transaction():
         store.put(3, "kind", "section")
     assert store.nodes() == [1, 3]
-    # the `store` records (LOGGING.md §4): one per transaction, the rows and
-    # the deletions of the one that failed named in `transaction_failed`
+    # the `store` records (LOGGING.md §4): one per transaction; the one that
+    # failed writes `transaction_failed`, which carries only its message
     records = stand_ins.records("store")
     assert [r["event"] for r in records] == ["transaction", "transaction_failed", "transaction"]
     assert records[0]["data"] == {"rows_written": [[1, "kind"]], "nodes_deleted": [],

@@ -75,7 +75,7 @@ class Forest_Under_Test(M.Forest):
 def table(monkeypatch):
     tm.TABLE.clear()
     tm.TABLE.install(monkeypatch)
-    async def check_new_theory_short_name(conn, name):
+    async def check_new_theory_short_name(conversation, name):
         if name in HEAP:
             return isabelle_driver.Taken(HEAP[name])
         if name in RESERVED:
@@ -83,7 +83,7 @@ def table(monkeypatch):
         return isabelle_driver.Free()
     monkeypatch.setattr(isabelle_driver, "check_new_theory_short_name",
                         check_new_theory_short_name)
-    async def is_known_session(conn, name):
+    async def is_known_session(conversation, name):
         return name in KNOWN_SESSIONS
     monkeypatch.setattr(isabelle_driver, "is_known_session", is_known_session)
 

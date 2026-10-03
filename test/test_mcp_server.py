@@ -5,7 +5,9 @@ HTTP client.  Run: python -m pytest test/test_mcp_server.py
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -16,10 +18,12 @@ from mcp.shared.exceptions import McpError
 import stand_ins
 from baselines import DOCS, fenced_lines
 from harness import client, free_port, text_of
+from isabelle_theory_agent import toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.mcp_server import (
     CLIENTS, HOST, ON_COMPACTION, TAT_Server, Tool, stopped, unknown_client)
+from test_toplevel import Recorder, cancelled_by_the_host
 
 
 def no_briefing() -> str:
@@ -124,6 +128,24 @@ async def serving(port: int, tools: list[Tool], on_compaction=no_briefing):
                 serve.exception()                     # retrieved: the tests inspect it themselves
 
 
+async def launched(tools: list[Tool], block: Callable[[TAT_Server], Awaitable[Any]]
+                   ) -> tuple[TAT_Server, asyncio.Task]:
+    """`launch_TAT`'s shape: an ending object and a server entered in a task
+    of their own, running `block` inside them — the task the RPC host
+    cancels; returned once the server listens."""
+    ending = stand_ins.ending()
+    server = TAT_Server(ending, free_port(), tools, no_briefing)
+    listening = asyncio.Event()
+
+    async def launch_TAT():
+        async with ending, server:
+            listening.set()
+            await block(server)
+    task = asyncio.create_task(launch_TAT())
+    await listening.wait()
+    return server, task
+
+
 async def ended(serve: asyncio.Task):
     """What `serve` raised: the exception, or `CancelledError` itself."""
     await asyncio.wait({serve})
@@ -143,6 +165,14 @@ def hold_accepting(server: TAT_Server) -> asyncio.Event:
         await released.wait()
     server._uvicorn.main_loop = held                  # type: ignore[method-assign]
     return released
+
+
+async def refused_at_the_transport(url: str):
+    """Nothing accepts a connection at `url`."""
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(httpx.ConnectError):
+            await http.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                            headers={"Accept": "application/json, text/event-stream"})
 
 
 def test_tools_are_advertised_and_a_result_is_the_bodys_text():
@@ -205,10 +235,11 @@ def test_a_tat_error_is_rendered_and_nothing_else_is():
                 bodies.release.set()
                 stubborn = await kept
                 assert (text_of(stubborn), stubborn.isError) == ("stubborn done", False)
-                # The records (LOGGING.md §4): a call then its result, a
-                # `TAT_Error` with its class; the three calls answered the
-                # ending's line, `while_ending`, written after `ending`; a
-                # call arriving during the ending has no `call` record.
+                # The records (LOGGING.md §4): every call has its `call`
+                # record, a call arriving during the ending included; then
+                # `result`, a `TAT_Error`'s with its class, or, for the three
+                # calls answered the ending's line, `while_ending`, written
+                # after `ending`.
                 tool_records = stand_ins.records("tool")
                 assert [(r["event"], r["data"]["tool"]) for r in tool_records] == [
                     ("call", "refused"), ("result", "refused"), ("call", "slow"), ("call", "stubborn"),
@@ -223,11 +254,7 @@ def test_a_tat_error_is_rendered_and_nothing_else_is():
                 assert ending_record["level"] == "error"
                 assert ending_record["data"]["message"] == "RuntimeError: tat-bug"
                 assert ending_record["ts"] <= tool_records[5]["ts"]
-                async with httpx.AsyncClient() as http:   # it stopped accepting
-                    with pytest.raises(httpx.ConnectError):
-                        await http.post(server.url,
-                                        json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
-                                        headers={"Accept": "application/json, text/event-stream"})
+                await refused_at_the_transport(server.url)   # it stopped accepting
         # `ended` once the unwinding is over: after the last call's answer
         [ended_record] = [r for r in stand_ins.records("conversation") if r["event"] == "ended"]
         assert ended_record["ts"] >= stand_ins.records("tool")[-1]["ts"]
@@ -286,10 +313,9 @@ def test_a_disaster_and_a_dead_wire_end_the_conversation_too(tool, ended_type, l
     ("not_text", TAT_InternalError, "the body of `not_text` returned a dict, not a text"),
     ("plain", TypeError, None)])
 def test_the_boundary_failing_is_a_bug_that_ends_the_conversation(tool, ended_type, message):
-    """A body letting a cancellation escape, returning what no result can
-    hold, or not being a coroutine at all: the agent gets the
-    internal-error line, never an SDK rendering, and the conversation
-    ends."""
+    """A body letting a cancellation escape, returning what is not a text,
+    or not being a coroutine at all: the agent gets the internal-error
+    line, never an SDK rendering, and the conversation ends."""
     async def scenario():
         port = free_port()
         async with serving(port, Bodies().tools()) as (server, serve), client(server.url) as session:
@@ -302,38 +328,51 @@ def test_the_boundary_failing_is_a_bug_that_ends_the_conversation(tool, ended_ty
     run(scenario)
 
 
-def test_uvicorns_loop_failing_on_its_own_still_drains(monkeypatch):
-    """start-4 of the review: the loop's own failure enters the ending as a
-    bug, and the calls in flight are still answered."""
+@pytest.mark.parametrize("another_door_first", [False, True])
+def test_uvicorns_loop_failing_on_its_own_still_drains(another_door_first):
+    """uvicorn's loop failing on its own is a bug that enters the ending,
+    unless another door was reached first (MODULE_STRUCTURE §4.6): `serve`
+    raises what ended the conversation and stops accepting, and the call
+    in flight is still answered."""
     async def scenario():
         port = free_port()
         bodies = Bodies()
-        async with stand_ins.ending() as ending, \
-                TAT_Server(ending, port, bodies.tools(), no_briefing) as server:
-            real_main_loop = server._uvicorn.main_loop
+        loop_fails = asyncio.Event()
 
-            async def failing():                         # fails once a body is in flight
-                await bodies.began("stubborn").wait()
-                server._uvicorn.should_exit = True
-                await real_main_loop()
-                raise RuntimeError("loop-bug")
+        async def failing():
+            await loop_fails.wait()
+            raise RuntimeError("loop-bug")
+
+        async with serving(port, bodies.tools()) as (server, serve):
             server._uvicorn.main_loop = failing          # type: ignore[method-assign]
-            serve = asyncio.create_task(server.serve())
             async with client(server.url) as session:
+                # the SDK's `call_tool` lists the tools once, to check the
+                # result's shape: here, not after the answer, when nothing
+                # accepts
                 await session.list_tools()
                 kept = asyncio.create_task(session.call_tool("stubborn", {}))
-                await asyncio.wait({serve}, timeout=1)   # the loop has failed: the ending is entered
-                assert serve.done() and isinstance(serve.exception(), RuntimeError)
-                bodies.release.set()
+                await bodies.began("stubborn").wait()
+                first = RuntimeError("first") if another_door_first else None
+                if first is not None:
+                    server.ending.end(first)
+                loop_fails.set()
+                exn = await ended(serve)
+                bodies.release.set()                  # before any assertion: the exit waits for it
                 stubborn = await kept
                 assert (text_of(stubborn), stubborn.isError) == ("stubborn done", False)
+                if first is not None:
+                    assert exn is first
+                else:
+                    assert isinstance(exn, RuntimeError) and str(exn) == "loop-bug"
+                await refused_at_the_transport(server.url)
             assert stand_ins.events("tool")[-1] == "result"
     run(scenario)
 
 
 def test_the_ending_waits_for_a_task_still_unwinding_before_ended():
-    """start-7 of the review, on `Ending` alone: a spawned task that catches
-    its cancellation and keeps unwinding is waited for; `ended` comes after."""
+    """On `Ending` alone (MODULE_STRUCTURE §4.6): a spawned task that
+    catches its cancellation and keeps unwinding is waited for; `ended`
+    comes after."""
     seen: list[str] = []
 
     async def scenario():
@@ -354,6 +393,25 @@ def test_the_ending_waits_for_a_task_still_unwinding_before_ended():
     run(scenario)
 
 
+def test_an_exception_whose_str_fails_still_enters_the_ending():
+    """`end` enters the ending in one synchronous stretch whatever the
+    exception (MODULE_STRUCTURE §4.6): `wait` returns and the spawned task
+    is cancelled."""
+    class Unspeakable(Exception):
+        def __str__(self):
+            raise RuntimeError("no words")
+
+    async def scenario():
+        async with stand_ins.ending() as ending:
+            spawned = ending.spawn(asyncio.Event().wait())
+            ending.end(Unspeakable())
+            await ending.wait()
+            assert ending.entered
+            await asyncio.wait({spawned})
+            assert spawned.cancelled()
+    run(scenario)
+
+
 def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
     """The RPC host cancelling `launch_TAT` (the connection gone): a call in
     flight is answered `Isabelle is gone`, and `serve` raises the
@@ -369,6 +427,95 @@ def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
             assert waiting.isError and text_of(waiting) == GONE
             assert await ended(serve) is asyncio.CancelledError
     run(scenario)
+
+
+def test_what_escapes_the_servers_block_before_serve_enters_the_ending_at_its_exit():
+    """The connection gone before `serve` ran: the server's exit enters the
+    ending and drains (MODULE_STRUCTURE §4.6) — the call in flight is
+    answered `Isabelle is gone`, between `ending` and `ended`."""
+    async def scenario():
+        bodies = Bodies()
+
+        async def gone_before_serve(_):
+            await bodies.began("slow").wait()
+            raise ConnectionResetError("peer closed connection")
+
+        server, launch = await launched(bodies.tools(), gone_before_serve)
+        async with client(server.url) as session:
+            result = await session.call_tool("slow", {})
+        assert result.isError and text_of(result) == GONE
+        assert isinstance(await ended(launch), ConnectionResetError)
+        assert "slow" not in bodies.finished
+        call_record, while_ending = stand_ins.records("tool")
+        ending_record, ended_record = stand_ins.records("conversation")
+        assert [r["event"] for r in (call_record, ending_record, while_ending, ended_record)] == [
+            "call", "ending", "while_ending", "ended"]
+        assert call_record["ts"] <= ending_record["ts"] <= while_ending["ts"] <= ended_record["ts"]
+    run(scenario)
+
+
+def test_a_task_unwinding_after_the_ending_still_reads_the_store(tmp_path):
+    """The server's exit waits for the spawned tasks to unwind before it
+    stops, so before the store closes (MODULE_STRUCTURE §4.6)."""
+    read = []
+
+    async def reader(forest):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # past where the server would stop without waiting: uvicorn's
+            # loop tick and its shutdown take 0.1 s each
+            await asyncio.sleep(0.3)
+            read.append(forest.store.nodes())
+            raise
+
+    async def scenario():
+        async with toplevel.served([], str(tmp_path), free_port(), cast(Any, Recorder())
+                                   ) as (forest, _, server):
+            forest.conversation.ending.spawn(reader(forest))
+            serve = asyncio.create_task(server.serve())
+            await asyncio.sleep(0)                    # the reader and `serve` waiting
+            await cancelled_by_the_host(serve)
+    run(scenario)
+    assert read == [[]]
+
+
+def test_a_cancellation_during_the_drain_still_stops_the_server(caplog):
+    """The RPC host's cancellation reaching `launch_TAT` while the server's
+    exit waits for a call in flight (MODULE_STRUCTURE §4.6): the server
+    stops regardless — nothing accepts, no connection is left, the session
+    manager's run is closed."""
+    async def scenario():
+        bodies = Bodies()
+        server, launch = await launched(bodies.tools(), TAT_Server.serve)
+        draining = asyncio.Event()
+        idle_wait = server._idle.wait
+
+        async def waiting_for_the_calls():
+            draining.set()
+            await idle_wait()
+        server._idle.wait = waiting_for_the_calls     # type: ignore[method-assign]
+
+        async def agent():
+            async with client(server.url) as session:
+                await session.call_tool("stubborn", {})
+
+        calling = asyncio.create_task(agent())
+        await bodies.began("stubborn").wait()
+        server.ending.end(RuntimeError("tat-bug"))
+        await draining.wait()
+        launch.cancel()
+        bodies.release.set()
+        assert await ended(launch) is asyncio.CancelledError
+        await refused_at_the_transport(server.url)
+        assert not server._uvicorn.server_state.connections
+        assert server._manager._task_group is None
+        calling.cancel()                              # its call is answered by nobody: the server stopped
+        await asyncio.wait({calling})
+    run(scenario)
+    # the manager's run was closed in its own task: nothing left for the
+    # loop to close, which anyio refuses from another task
+    assert [r for r in caplog.records if r.exc_info and "cancel scope" in str(r.exc_info[1])] == []
 
 
 @pytest.mark.parametrize("tool", ["slow", "slow_bug"])
@@ -403,8 +550,10 @@ def test_a_clients_cancellation_leaves_the_body_to_finish(tool):
                 exn = await ended(serve)
                 assert isinstance(exn, RuntimeError) and str(exn) == "late-bug"
                 # the body produced no answer: `given_up` without a text
-                [_, given_up] = stand_ins.records("tool")
-                assert given_up["event"] == "given_up" and "text" not in given_up["data"]
+                records = stand_ins.records("tool")
+                assert [(r["event"], r["data"]["tool"]) for r in records] == [
+                    ("call", "slow_bug"), ("given_up", "slow_bug")]
+                assert "text" not in records[1]["data"]
     run(scenario)
 
 

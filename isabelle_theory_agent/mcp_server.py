@@ -253,19 +253,22 @@ class TAT_Server:
         """The one drain (MODULE_STRUCTURE §4.6): whatever escapes the block
         enters the ending; once it is entered, nothing new is accepted, the
         calls in flight are answered and the spawned tasks unwound, and only
-        then does the server stop — so the store is still open for them."""
+        then does the server stop — so the store is still open for them.
+        The stop comes even when the drain is cancelled."""
         if exc is not None:
             self.ending.end(exc)
-        if self.ending.entered:
-            self._stop_accepting()
-            while self._requests:
-                await self._idle.wait()
-            await self.ending.unwound()
-        self._stop_listening()              # nothing accepts while the manager unwinds
-        # the manager first: joining its handlers ends every stream a client
-        # held open, so the connections close and uvicorn's shutdown returns
-        await self._running.aclose()
-        await self._uvicorn.shutdown(sockets=[self._socket])
+        try:
+            if self.ending.entered:
+                self._stop_accepting()
+                while self._requests:
+                    await self._idle.wait()
+                await self.ending.unwound()
+        finally:
+            self._stop_listening()          # nothing accepts while the manager unwinds
+            # the manager first: joining its handlers ends every stream a client
+            # held open, so the connections close and uvicorn's shutdown returns
+            await self._running.aclose()
+            await self._uvicorn.shutdown(sockets=[self._socket])
 
     async def serve(self) -> NoReturn:
         """Serve until the conversation's ending, then raise what ended it;
@@ -377,9 +380,9 @@ class TAT_Server:
         started = time.monotonic()
         tool = self._tools.get(name)
         if self.ending.entered:
-            answer: Answer | None = None    # the ending answers
+            result: Result | None = None    # the ending answers
         elif tool is None:
-            answer = Answer(f"unknown tool `{name}`", True, None)
+            result = Result(f"unknown tool `{name}`", True, None)
         else:
             # The body runs as a task of its own, outside the request's
             # cancel scope, and the wait is shielded: neither a client's
@@ -388,24 +391,24 @@ class TAT_Server:
             body = self.ending.spawn(_run(tool, arguments))
             with anyio.CancelScope(shield=True):
                 await asyncio.wait({body})
-            answer = self._answer(name, body)
+            result = self._result_of(name, body)
         duration = time.monotonic() - started
         try:
             # a cancellation that arrived meanwhile passes here: the SDK has
             # answered the client itself, and this call is nobody's to answer
             await anyio.lowlevel.checkpoint()
         except asyncio.CancelledError:
-            log.given_up(tool=name, text=None if answer is None else answer.text, messages=[],
+            log.given_up(tool=name, text=None if result is None else result.text, messages=[],
                          duration=duration)
             raise
-        if answer is None:
+        if result is None:
             log.while_ending(tool=name)
-            return _result(stopped(self.ending.ended_by), is_error=True)
-        log.result(tool=name, is_error=answer.is_error, text=answer.text, messages=[],
-                   trailer=None, class_=answer.class_, duration=duration)
-        return _result(answer.text, answer.is_error)
+            return _call_tool_result(stopped(self.ending.ended_by), is_error=True)
+        log.result(tool=name, is_error=result.is_error, text=result.text, messages=[],
+                   trailer=None, class_=result.class_, duration=duration)
+        return _call_tool_result(result.text, result.is_error)
 
-    def _answer(self, name: str, body: asyncio.Task[str]) -> Answer | None:
+    def _result_of(self, name: str, body: asyncio.Task[str]) -> Result | None:
         """What the body did decides (MODULE_STRUCTURE §4.6): its text; a
         `TAT_Error`, rendered; anything else enters the ending, which
         answers — None.  The boundary itself failing is a bug like any
@@ -416,17 +419,18 @@ class TAT_Server:
             else:
                 exn = body.exception()
                 if exn is None:
-                    return Answer(body.result(), False, None)
+                    return Result(body.result(), False, None)
                 if isinstance(exn, TAT_Error):
-                    return Answer(str(exn), True, type(exn).__name__)
+                    return Result(str(exn), True, type(exn).__name__)
                 self.ending.end(exn)
         except Exception as bug:
             self.ending.end(bug)
         return None
 
 
-class Answer(NamedTuple):
-    """A tool call's answer as the boundary records it: the text, whether
+class Result(NamedTuple):
+    """A tool call's result as the boundary decides it — what the client is
+    answered and what the `tool.result` record carries: the text, whether
     it is an error, and the `TAT_Error`'s class when one refused the call."""
     text: str
     is_error: bool
@@ -441,7 +445,7 @@ async def _run(tool: Tool, arguments: dict[str, Any]) -> str:
     return text
 
 
-def _result(text: str, is_error: bool) -> types.CallToolResult:
+def _call_tool_result(text: str, is_error: bool) -> types.CallToolResult:
     return types.CallToolResult(content=[types.TextContent(type="text", text=text)],
                                 isError=is_error)
 

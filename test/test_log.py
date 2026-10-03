@@ -17,34 +17,32 @@ import pytest
 import stand_ins
 from baselines import DOCS, event_tables
 from isabelle_theory_agent.isabelle_driver import IsaTerm
-from isabelle_theory_agent.log import Log, current_agent, current_call
+from isabelle_theory_agent.log import current_agent, current_call
 
 TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$")
-LOGGER = "tat.test.log"
 
 
 @pytest.fixture
-def log(tmp_path):
-    return Log(tmp_path, logging.getLogger(LOGGER))
+def log():
+    return stand_ins.log()
 
 
-def records(directory: Path, category: str) -> list[dict]:
-    return stand_ins.records(category, directory)       # the suite's one reader of a log file
-
-
-def only(directory: Path, category: str) -> dict:
-    [record] = records(directory, category)
+def only(category: str) -> dict:
+    [record] = stand_ins.records(category)
     return record
 
 
+def public_methods(category) -> dict[str, inspect.Signature]:
+    """A category's public methods but `note`: by LOGGING §4, its events."""
+    return {name: inspect.signature(method) for name, method in inspect.getmembers(category, callable)
+            if not name.startswith("_") and name != "note"}
+
+
 def event_methods(category) -> list[tuple[str, inspect.Signature]]:
-    """The declared events of a category: its public methods but `note`,
-    whose parameters are all keyword (`ending` is the one exception and
-    has its own case)."""
-    return [(name, inspect.signature(method)) for name, method in inspect.getmembers(category, callable)
-            if not name.startswith("_") and name != "note"
-            and all(p.kind in (p.KEYWORD_ONLY, p.VAR_KEYWORD)
-                    for p in inspect.signature(method).parameters.values())]
+    """The declared events among them: those whose parameters are all
+    keyword (`ending` has a body and its own case)."""
+    return [(name, signature) for name, signature in public_methods(category).items()
+            if all(p.kind in (p.KEYWORD_ONLY, p.VAR_KEYWORD) for p in signature.parameters.values())]
 
 
 def sample_arguments(signature: inspect.Signature) -> dict:
@@ -63,22 +61,21 @@ TABLES = {category: table for category, table in event_tables(DOCS / "LOGGING.md
           if category != "isabelle"}
 
 
-def test_every_event_method_writes_one_record_into_its_category(log, tmp_path):
+def test_every_event_method_writes_one_record_into_its_category(log):
     """The categories and their events are exactly LOGGING §4's tables, each
     method declared at the table's level; the method's name is the event,
     its category's name the file, its fields the record's `data`; `ts` in
     the documented form; no agent and no call outside any context."""
-    assert sorted(f.name for f in Path(tmp_path).iterdir()) == []
+    assert list(log.directory.iterdir()) == []
     assert TABLES["conversation"]["ending"] == "info or error"     # the one method with a body
     for category, table in TABLES.items():
         attribute = getattr(log, category)
+        assert set(public_methods(attribute)) == set(table), category
         declared = event_methods(attribute)
-        assert {event for event, _ in declared} | ({"ending"} if category == "conversation"
-                                                   else set()) == set(table), category
         for event, signature in declared:
             arguments = sample_arguments(signature)
             getattr(attribute, event)(**arguments)
-            record = records(tmp_path, category)[-1]
+            record = stand_ins.records(category)[-1]
             assert record["category"] == category
             assert record["event"] == event
             assert record["level"] == table[event], event
@@ -87,8 +84,8 @@ def test_every_event_method_writes_one_record_into_its_category(log, tmp_path):
             # a parameter `class_` is the field `class`
             assert record["data"] == {name.removesuffix("_"): value for name, value in arguments.items()}
             assert list(record) == ["ts", "category", "event", "level", "data"]
-        assert len(records(tmp_path, category)) == len(declared)
-    assert sorted(f.name for f in Path(tmp_path).iterdir()) == sorted(f"{c}.jsonl" for c in TABLES)
+        assert len(stand_ins.records(category)) == len(declared)
+    assert sorted(f.name for f in log.directory.iterdir()) == sorted(f"{c}.jsonl" for c in TABLES)
 
 
 def test_a_field_whose_value_is_none_is_absent(log):
@@ -96,24 +93,24 @@ def test_a_field_whose_value_is_none_is_absent(log):
     client; a clean `operation` carries an empty list, a write no run
     produced carries no `messages`."""
     log.conversation.start(version="0.1", pid=7, working_directory="/w", python_packages=["p"])
-    assert only(log.directory, "conversation")["data"] == {
+    assert only("conversation")["data"] == {
         "version": "0.1", "pid": 7, "working_directory": "/w", "python_packages": ["p"]}
     log.evaluation.operation(node="n1", operation="own", ran=True, status="passed", messages=[], duration=0.5)
     log.evaluation.operation(node="n1", operation="own", ran=False, status="blocked")
-    clean, blocked = records(log.directory, "evaluation")
+    clean, blocked = stand_ins.records("evaluation")
     assert clean["data"]["messages"] == []
     assert "messages" not in blocked["data"] and "duration" not in blocked["data"]
     # inside a value, None stays: arguments are recorded whole
     log.tool.call(tool="edit", arguments={"target_id": None, "constructs": [None]})
-    assert only(log.directory, "tool")["data"]["arguments"] == {"target_id": None, "constructs": [None]}
+    assert only("tool")["data"]["arguments"] == {"target_id": None, "constructs": [None]}
 
 
 def test_a_note_lands_in_the_named_category(log):
     log.store.note("checkpoint taken", rows=3, why=None)
-    record = only(log.directory, "store")
+    record = only("store")
     assert record["event"] == "note" and record["level"] == "debug"
     assert record["data"] == {"message": "checkpoint taken", "rows": 3}
-    assert records(log.directory, "conversation") == []
+    assert stand_ins.records("conversation") == []
 
 
 def test_agent_and_call_come_from_the_context_variables(log):
@@ -124,7 +121,7 @@ def test_agent_and_call_come_from_the_context_variables(log):
         current_call.set("toolu_01Hx")
         log.tool.call(tool="print", arguments={})
     contextvars.copy_context().run(body)
-    record = only(log.directory, "tool")
+    record = only("tool")
     assert record["agent"] == "a3f9c1" and record["call"] == "toolu_01Hx"
     assert list(record) == ["ts", "category", "event", "level", "agent", "call", "data"]
 
@@ -135,10 +132,10 @@ def test_agent_and_call_come_from_the_context_variables(log):
     async def child():
         log.store.note("from the child task")
     asyncio.run(scenario())
-    child_record = only(log.directory, "store")
+    child_record = only("store")
     assert child_record["agent"] == "main" and child_record["call"] == "toolu_02"
     log.store.note("outside")
-    assert "agent" not in records(log.directory, "store")[-1]
+    assert "agent" not in stand_ins.records("store")[-1]
 
 
 def test_ending_takes_the_exception_and_the_level(log, caplog):
@@ -151,9 +148,9 @@ def test_ending_takes_the_exception_and_the_level(log, caplog):
     try:
         raise RuntimeError("a bug")
     except RuntimeError as bug:
-        with caplog.at_level(logging.WARNING, logger=LOGGER):
+        with caplog.at_level(logging.WARNING, logger=stand_ins.LOGGER):
             log.conversation.ending(bug, level="error")
-    gone_record, bug_record = records(log.directory, "conversation")
+    gone_record, bug_record = stand_ins.records("conversation")
     assert gone_record["level"] == "info"
     assert gone_record["data"]["class"] == "ConnectionResetError"
     assert gone_record["data"]["message"] == "ConnectionResetError: peer closed"
@@ -168,10 +165,10 @@ def test_ending_survives_an_exception_whose_str_fails_and_names_a_bare_one(log, 
     class Unspeakable(Exception):
         def __str__(self):
             raise RuntimeError("no words")
-    with caplog.at_level(logging.WARNING, logger=LOGGER):
+    with caplog.at_level(logging.WARNING, logger=stand_ins.LOGGER):
         log.conversation.ending(Unspeakable(), level="error")
         log.conversation.ending(AssertionError(), level="error")
-    unspeakable, bare = (r["data"]["message"] for r in records(log.directory, "conversation"))
+    unspeakable, bare = (r["data"]["message"] for r in stand_ins.records("conversation"))
     # the one-line form names a class outside the builtins by its module
     assert unspeakable == f"{__name__}.{Unspeakable.__qualname__}: <exception str() failed>"
     assert bare == "AssertionError"
@@ -179,20 +176,24 @@ def test_ending_survives_an_exception_whose_str_fails_and_names_a_bare_one(log, 
 
 
 def test_the_field_class_is_written_from_the_parameter_class_(log):
+    """The trailing `_` is dropped from a declared parameter only; a `**`
+    parameter's entry keeps its name, as in `note`."""
     log.tool.result(tool="edit", is_error=True, text="refused", messages=[], trailer=None,
                     class_="NodeNotFound", duration=0.1)
-    assert only(log.directory, "tool")["data"]["class"] == "NodeNotFound"
+    assert only("tool")["data"]["class"] == "NodeNotFound"
+    log.agent.compaction(learned_from="post_compact", seen_cleared=0, path_="/p")
+    assert only("agent")["data"] == {"learned_from": "post_compact", "seen_cleared": 0, "path_": "/p"}
 
 
 def test_a_warning_or_error_record_is_also_sent_to_the_logger(log, caplog):
-    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=stand_ins.LOGGER):
         log.agent.check_failed(check="transcript", message="The transcript moved.", path="/t")
         log.store.transaction_failed(message="disk full")
         log.tool.call(tool="print", arguments={})
         log.store.note("quiet")
     assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
         (logging.ERROR, "The transcript moved."), (logging.ERROR, "disk full")]
-    assert only(log.directory, "agent")["data"] == {
+    assert only("agent")["data"] == {
         "check": "transcript", "message": "The transcript moved.", "path": "/t"}
 
 
@@ -202,40 +203,40 @@ def test_a_lone_surrogate_round_trips(log):
     log.tool.call(tool="print", arguments={"text": text})
     raw = (log.directory / "tool.jsonl").read_bytes()
     assert "∀x. P x".encode() in raw and b"\\ud800" in raw
-    assert only(log.directory, "tool")["data"]["arguments"]["text"] == text
+    assert only("tool")["data"]["arguments"]["text"] == text
 
 
 def test_an_isaterm_is_written_as_its_unicode(log):
     term = IsaTerm.from_isabelle("\\<forall>x. P x")
     log.evaluation.operation(node=1, operation="own", ran=True, status="failed",
                              messages=[term], duration=1.0)
-    assert only(log.directory, "evaluation")["data"]["messages"] == ["∀x. P x"]
+    assert only("evaluation")["data"]["messages"] == ["∀x. P x"]
 
 
 def test_any_other_value_json_cannot_hold_is_written_as_its_str(log):
     log.conversation.start(version="0.1", pid=1, working_directory=Path("/w"), python_packages=[])
-    assert only(log.directory, "conversation")["data"]["working_directory"] == "/w"
+    assert only("conversation")["data"]["working_directory"] == "/w"
 
 
 def test_a_value_that_will_not_encode_is_reported_once_and_raises_nothing(log, caplog):
     class Unspeakable:
         def __str__(self):
             raise RuntimeError("no words")
-    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=stand_ins.LOGGER):
         log.tool.call(tool="print", arguments=Unspeakable())
         log.tool.call(tool="print", arguments=Unspeakable())
         log.tool.call(tool="print", arguments={})       # the writer goes on
     assert [r.getMessage() for r in caplog.records] == [
         f"TAT could not write its log file {log.directory / 'tool.jsonl'}: no words. "
         "Later failures are not reported."]
-    assert [r["data"] for r in records(log.directory, "tool")] == [{"tool": "print", "arguments": {}}]
+    assert [r["data"] for r in stand_ins.records("tool")] == [{"tool": "print", "arguments": {}}]
 
 
 def test_a_file_that_cannot_be_opened_is_reported_once_and_later_failures_are_silent(log, caplog):
     """The category's file is a directory here, which refuses `open` for
     any user; the error record's message still reaches the logger."""
     (log.directory / "store.jsonl").mkdir()
-    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=stand_ins.LOGGER):
         log.store.transaction(rows_written=[[1, "proof"]], nodes_deleted=[], duration=0.1)
         log.store.transaction_failed(message="disk full")
         log.store.transaction(rows_written=[], nodes_deleted=[2], duration=0.1)
@@ -244,4 +245,4 @@ def test_a_file_that_cannot_be_opened_is_reported_once_and_later_failures_are_si
         (logging.ERROR, f"TAT could not write its log file {log.directory / 'store.jsonl'}: "
                         "Is a directory. Later failures are not reported."),
         (logging.ERROR, "disk full")]
-    assert only(log.directory, "tool")["data"] == {"tool": "print", "arguments": {}}
+    assert only("tool")["data"] == {"tool": "print", "arguments": {}}

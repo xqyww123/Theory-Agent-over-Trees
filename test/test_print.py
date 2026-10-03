@@ -430,7 +430,7 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     assert (x.identity, "ending") in f.conversation.seen
     inside = []
 
-    async def fails_the_same_way(conn, name, arg):
+    async def fails_the_same_way(conversation, name, arg):
         inside.append(render(f, x, RECALL)[-2:])      # a recall inside the round trip
         return ["end broke"]
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
@@ -445,7 +445,7 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     render(f, f, focus(x))
     assert (x.identity, "beginning") in f.conversation.seen
 
-    async def fails_the_same_way(conn, name, arg):
+    async def fails_the_same_way(conversation, name, arg):
         return ["header broke"]
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "beginning")
@@ -462,7 +462,7 @@ def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypa
     render(f, f, focus(x))
     inside = []
 
-    async def fails_anew(conn, name, arg):
+    async def fails_anew(conversation, name, arg):
         inside.append(render(f, x, RECALL))
         return ["header broke anew"]
     monkeypatch.setattr(isabelle_driver, "call", fails_anew)
