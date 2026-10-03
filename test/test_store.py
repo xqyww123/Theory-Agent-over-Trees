@@ -9,6 +9,7 @@ import threading
 import msgpack
 import pytest
 
+import stand_ins
 from isabelle_theory_agent.exceptions import (
     TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.store import SCHEMA_VERSION, Forest_Store, IncompatibleStore
@@ -16,7 +17,7 @@ from isabelle_theory_agent.store import SCHEMA_VERSION, Forest_Store, Incompatib
 
 @pytest.fixture
 def store(tmp_path):
-    with Forest_Store(tmp_path / "TAT.sqlite") as s:
+    with Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log()) as s:
         yield s
 
 
@@ -44,11 +45,11 @@ def test_what_put_accepts_get_reads_back_after_reopen(tmp_path):
     path = tmp_path / "f.sqlite"
     value = {2: "a", True: "b", 2.5: "c", b"k": "d", None: {7: [{"x": 1}]}}
     assert len(value) == 5                       # True is not 2: five key kinds
-    with Forest_Store(path) as s:
+    with Forest_Store(path, stand_ins.log()) as s:
         with s.transaction():
             s.put(1, "d", value)
         assert s.get(1, "d") == value
-    with Forest_Store(path) as s:
+    with Forest_Store(path, stand_ins.log()) as s:
         assert s.get(1, "d") == value
 
 
@@ -108,6 +109,15 @@ def test_an_exception_rolls_the_whole_operation_back_as_a_disaster(store):
     with store.transaction():
         store.put(3, "kind", "section")
     assert store.nodes() == [1, 3]
+    # the `store` records (LOGGING.md §4): one per transaction, the rows and
+    # the deletions of the one that failed named in `transaction_failed`
+    records = stand_ins.records("store")
+    assert [r["event"] for r in records] == ["transaction", "transaction_failed", "transaction"]
+    assert records[0]["data"] == {"rows_written": [[1, "kind"]], "nodes_deleted": [],
+                                  "duration": records[0]["data"]["duration"]}
+    assert records[1]["level"] == "error" and records[1]["data"] == {
+        "message": "Forest_Store: a write operation failed after its commit in memory: to_store broke"}
+    assert records[2]["data"]["rows_written"] == [[3, "kind"]]
 
 
 def _nested(depth: int) -> list:
@@ -194,12 +204,12 @@ def test_node_rows_keeps_the_framework_fields_read_only(store):
 
 def test_identities_are_fresh_across_reopen(tmp_path):
     path = tmp_path / "f.sqlite"
-    with Forest_Store(path) as s:
+    with Forest_Store(path, stand_ins.log()) as s:
         assert [s.next_identity() for _ in range(2)] == [1, 2]      # outside a transaction
         with s.transaction():
             assert s.next_identity() == 3
             s.put(3, "kind", "theory")
-    with Forest_Store(path) as s:
+    with Forest_Store(path, stand_ins.log()) as s:
         assert s.nodes() == [3]
         assert s.fields(3) == {"kind": "theory"}
         assert s.next_identity() == 4
@@ -215,26 +225,26 @@ def test_a_rolled_back_identity_is_handed_out_again(store):
 
 def test_schema_version_mismatch_is_refused(tmp_path):
     path = tmp_path / "f.sqlite"
-    Forest_Store(path).close()
+    Forest_Store(path, stand_ins.log()).close()
     conn = sqlite3.connect(path)
     conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
                  (msgpack.packb(SCHEMA_VERSION + 1),))
     conn.commit()
     conn.close()
     with pytest.raises(IncompatibleStore, match=f"schema version {SCHEMA_VERSION + 1}") as e:
-        Forest_Store(path)
+        Forest_Store(path, stand_ins.log())
     assert isinstance(e.value, TAT_StartupError)
 
 
 def test_a_corrupt_meta_blob_is_a_startup_error(tmp_path):
     path = tmp_path / "f.sqlite"
-    Forest_Store(path).close()
+    Forest_Store(path, stand_ins.log()).close()
     conn = sqlite3.connect(path)
     conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (b"\xc1",))
     conn.commit()
     conn.close()
     with pytest.raises(TAT_StartupError, match="meta is not readable"):
-        Forest_Store(path)
+        Forest_Store(path, stand_ins.log())
 
 
 @pytest.mark.parametrize("damage", [
@@ -243,32 +253,32 @@ def test_a_corrupt_meta_blob_is_a_startup_error(tmp_path):
 ])
 def test_a_damaged_identity_counter_is_a_startup_error(tmp_path, damage):
     path = tmp_path / "f.sqlite"
-    Forest_Store(path).close()
+    Forest_Store(path, stand_ins.log()).close()
     conn = sqlite3.connect(path)
     conn.execute(damage)
     conn.commit()
     conn.close()
     with pytest.raises(TAT_StartupError, match="`next_identity` is not an identity"):
-        Forest_Store(path)
+        Forest_Store(path, stand_ins.log())
 
 
 def test_an_old_sqlite_library_is_a_startup_error(tmp_path, monkeypatch):
     monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 36, 0))
     monkeypatch.setattr(sqlite3, "sqlite_version", "3.36.0")
     with pytest.raises(TAT_StartupError, match="3.37.0 or newer"):
-        Forest_Store(tmp_path / "f.sqlite")
+        Forest_Store(tmp_path / "f.sqlite", stand_ins.log())
 
 
 def test_an_unopenable_path_is_a_startup_error(tmp_path):
     with pytest.raises(TAT_StartupError, match="unable to open"):
-        Forest_Store(tmp_path / "nope" / "f.sqlite")
+        Forest_Store(tmp_path / "nope" / "f.sqlite", stand_ins.log())
 
 
 def test_a_file_that_is_not_a_database_is_a_startup_error(tmp_path):
     path = tmp_path / "f.sqlite"
     path.write_bytes(b"this is not a database, and longer than a header\n" * 4)
     with pytest.raises(TAT_StartupError, match="f.sqlite"):
-        Forest_Store(path)
+        Forest_Store(path, stand_ins.log())
 
 
 def test_other_threads_are_refused(store):
@@ -288,10 +298,12 @@ def test_other_threads_are_refused(store):
 
 
 CRASH_SCRIPT = """
-import os, sys
+import logging, os, sys
+from pathlib import Path
 sys.path.insert(0, sys.argv[2])
+from isabelle_theory_agent.log import Log
 from isabelle_theory_agent.store import Forest_Store
-s = Forest_Store(sys.argv[1])
+s = Forest_Store(sys.argv[1], Log(Path(sys.argv[1]).parent, logging.getLogger("crash")))
 with s.transaction():
     s.put(1, "kind", "theory")
     s.put(1, "name", "X")
@@ -309,7 +321,7 @@ def test_a_process_dying_mid_operation_leaves_the_last_committed_forest(tmp_path
     proc = subprocess.run([sys.executable, "-c", CRASH_SCRIPT, str(path), repo],
                           capture_output=True, text=True)
     assert proc.returncode == 17, proc.stderr
-    with Forest_Store(path) as s:
+    with Forest_Store(path, stand_ins.log()) as s:
         assert s.nodes() == [1]
         assert s.fields(1) == {"kind": "theory", "name": "X"}
         assert s.fields(2) == {}

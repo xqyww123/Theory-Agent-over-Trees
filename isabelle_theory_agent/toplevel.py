@@ -110,7 +110,7 @@ async def conversation(python_packages: list[str], working_directory: str, conne
             log.conversation.start(
                 version=version("isabelle_theory_agent"), pid=os.getpid(),
                 working_directory=str(directory), python_packages=python_packages, port=port)
-            with Forest_Store(directory / DATABASE) as store:
+            with Forest_Store(directory / DATABASE, log) as store:
                 log.conversation.store_opened(schema_version=SCHEMA_VERSION, nodes=len(store.nodes()))
                 loaded = plugin.load(python_packages)
                 log.conversation.plugins_loaded(

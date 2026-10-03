@@ -281,7 +281,8 @@ class Harness:
                         self.serving = (request, forest.conversation.ending)
                         request.handed_over.set_result(Handle(
                             self, request, forest=forest, kinds=loaded.kinds, connection=connection,
-                            url=server.url, working_directory=request.working_directory))
+                            url=server.url, working_directory=request.working_directory,
+                            log=forest.conversation.log))
                         await server.serve()
                 except Next:
                     pass

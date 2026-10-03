@@ -9,6 +9,7 @@ Run: python -m pytest test/test_forest_walk.py
 
 import pytest
 
+import stand_ins
 import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, fenced_lines
@@ -245,12 +246,35 @@ def test_a_self_import_is_a_stop():
 def test_blocked_by_a_failed_header():
     f = forest(session("S", theory("A", kind="bad_header"), theory("B", "A")))
     a, b = f.sub_nodes[0].sub_nodes
+    stand_ins.records("evaluation").clear()
+    walk_start = len(stand_ins.records("evaluation"))
     r = run(b.evaluate_to(False))
     assert RUNS == ["begin A"]                                   # no stop of A's own
     assert isinstance(st(a)[0], M.CannotEvaluate) and st(a)[1] is READY
     assert st(b) == NE and r.stopped_at is a                     # the import's Theory node
     assert mark(a) == "failed" and mark(b) == "not evaluated"
     inv(f)
+    # The walk's records (LOGGING.md §4): a run writes `operation` with its
+    # messages, a write no run produced — the copy that stands in for a
+    # failed beginning's ending, an invalidation — without them; the stop
+    # names the import whose theory value is missing.
+    records = stand_ins.records("evaluation")[walk_start:]
+    id_a, id_b = f.id_of(a), f.id_of(b)
+    assert records[0]["event"] == "walk_started" and records[0]["data"] == {
+        "destination": id_b, "ignore_error": False}
+    operations = {(r["data"]["node"], r["data"]["operation"]): r["data"]
+                  for r in records if r["event"] == "operation"}
+    begin_a = operations[id_a, "beginning"]
+    assert begin_a["ran"] and begin_a["status"] == "cannot_evaluate" and "duration" in begin_a
+    assert begin_a["messages"] == ["No such file: TAT_Nowhere.thy"]   # the fake header's failure
+    end_a = operations[id_a, "ending"]
+    assert not end_a["ran"] and end_a["status"] == "ready" and "messages" not in end_a
+    assert all(not op["ran"] and op["status"] == "not_evaluated"
+               for (node, _), op in operations.items() if node.startswith(id_b))
+    assert [(r["data"]["node"], r["data"]["reason"]) for r in records if r["event"] == "stopped"] == [
+        (id_a, "import_without_theory")]
+    assert records[-1]["event"] == "walk_ended" and records[-1]["data"]["outcome"] == id_a
+    assert records[-1]["data"]["slots_released"] >= 0 and "duration" in records[-1]["data"]
 
 
 def test_blocked_by_a_failed_end():

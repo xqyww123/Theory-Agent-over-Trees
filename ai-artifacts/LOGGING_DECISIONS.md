@@ -1026,7 +1026,67 @@ sessions' pending work. The author's shapes:
   RENDER_BASELINES §4 (the jobs session had widened it to four when the
   fourth line was added; the fifth and sixth are this design's).
 
-Not committed: the working tree also carries the compilation session's
-uncommitted code (its statuses and invalidation recursion in `model.py`,
-`edit.py`, `store.py` and the tests), which a commit of `model.py` would
-sweep in; the owner decides.
+Committed 2026-10-03 as `bd48a93` on the owner's 「请提交，请继续」, with
+the sibling sessions' uncommitted work swept in and named in the message
+(the CLAUDE.md rule for the shared tree); `ai-artifacts/probes/` and the
+review directories stay untracked, as the precedent under `ai-artifacts/`
+has only the plans tracked.
+
+**Step 3, `isabelle_driver.call(conversation, name, args)`** — written
+2026-10-03, uncommitted. `call` is the private `_call(connection, name,
+args, log)` plus the record; the record is written from the trip's done
+callback (`_completed`, where `_dropped` ran), so a trip whose caller was
+cancelled is still recorded when it completes: `round_trip` with the
+result or the error, `connection_lost` for a `ConnectionError`. The
+`error` text is an `IsabelleError`'s messages one per line, any other
+exception with its class (`ConnectionResetError: peer closed
+connection`). `reset` passes no log. `Isar_State_Slot` holds the
+`Conversation`; every caller passes it; `Forest` methods use
+`self.conversation`. Tests: `test_isabelle_driver.py` asserts the records
+in every case, including the cancelled caller's and the abandoned
+failure's; the Isabelle-backed suite passes (50), and a real case's
+`round_trip.jsonl` was read back: a unit-returning callback has no
+`result` field, as decided above.
+
+**Step 4, the funnels** — written 2026-10-03, uncommitted; every test
+module of the plan gained its assertion on the records. The shapes:
+
+- The tool boundary (`TAT_Server._call_tool`) writes `tool.call` on
+  arrival, then one of: `result` (text, `is_error`, the `TAT_Error`'s
+  class as `error`), `given_up` (the checkpoint after the body raised
+  the client's cancellation: the answer went to nobody), `while_ending`
+  (answered with the ending's line — the call that entered the ending
+  included; a call arriving during the ending gets `while_ending` alone,
+  no `call`). `messages=[]` and `trailer=None` until the mailbox exists
+  (the jobs session fills them). `current_agent` and `current_call` are
+  NOT set at the boundary: the design's `call` is the announcement's
+  `tool_use_id`, known only once `agent_of_call` matches the
+  announcement — the jobs session sets both there (the plan's step 4
+  sentence corrected).
+- The setters take `duration: float | None` as a third positional
+  argument; `Node._stored(ev, index, new, duration)` writes `operation`
+  with `node=forest.id_of(node)`, `operation` one of `own`, `beginning`,
+  `ending`, `ran=duration is not None`, `status` the stored kind string,
+  `messages` only when it ran; `_timed(hook)` measures the three hook
+  calls. `Node._stopped(reason)` writes `stopped` with `command_failed`,
+  `order_constraint` or `import_without_theory`. `Forest._run` writes
+  `walk_started` (`destination` absent for an invalidation, `checks`
+  absent until the jobs' `checks` exists) and `walk_ended` (`outcome`
+  `continue` or the stop's id, `slots_released` from
+  `Evaluation.releases`, which `_handle_tree` sums over the trees' own
+  evaluations). `_invalidate_changed_trees` returns the trees it
+  invalidated for the `committed` record.
+- `edit._committed(forest, operation, location, *, created, removed,
+  moved, invalidated)` after each of the four commit blocks; `operation`
+  is the entry's name (`insert`, `amend`, `delete`, `move`); `created`
+  every node that entered, in tree order, as `[id, kind]`; `removed` ids
+  taken before the nodes detached.
+- `Forest_Store(path, log)`; `transaction()` writes `transaction`
+  (`rows_written` as `[node, field]` pairs, `nodes_deleted`, `duration`)
+  after the commit, `transaction_failed` before raising the
+  `TAT_DisasterError`. Every test's store is built with `stand_ins.log()`.
+- Ids in the records are `Forest.id_of`'s shortest form, so the tests
+  compare against `f.id_of(node)`, not a spelled-out id.
+- The compilation session [9779f8] began its rewrite of the walk, the
+  setters, the commit blocks and the store the same day; told the exact
+  places of every record so its rewrite carries them.

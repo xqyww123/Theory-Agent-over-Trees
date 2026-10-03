@@ -8,6 +8,7 @@ from typing import NotRequired, TypedDict
 
 import pytest
 
+import stand_ins
 import test_model as tm
 from invariants import assert_invariants, assert_store_mirrors
 from test_model import Block, T, add, locked, run, slot, st
@@ -128,6 +129,15 @@ def test_insert_nested_and_completed_order():
     assert thy.sub_nodes == [sec, c, s2]
     assert [n.name for n in s2.sub_nodes] == ["x", "y"]
     assert all(n.parent is s2 for n in s2.sub_nodes)
+    # the edit's one `committed` record (LOGGING.md §4), after its store
+    [committed] = stand_ins.records("edit")
+    x, y = s2.sub_nodes
+    assert committed["event"] == "committed" and committed["data"] == {
+        "operation": "insert", "parent": f.id_of(thy), "index": 2,
+        "created": [[f.id_of(s2), "block"], [f.id_of(x), "t"], [f.id_of(y), "t"]],
+        "removed": [], "moved": [], "invalidated": []}
+    assert stand_ins.events("store")[-1] == "transaction"
+    assert stand_ins.records("store")[-1]["ts"] <= committed["ts"]
     assert EVENTS == [                        # tree order over what entered
         ("Theory", "added_child", "S2", "insert_or_delete"),
         ("S2", "inserted"),

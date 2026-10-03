@@ -1,8 +1,10 @@
 """What a case that runs without Isabelle builds in place of the product's
 start: a `Log` and an `Ending` on the case's temporary directory, and a
 `Conversation` on them.  `conftest.py`'s autouse fixture sets `directory`
-for every case, so no `Log` ever writes into the repository."""
+for every case, so no `Log` ever writes into the repository.  `records`
+reads a log back, the case's or a conversation's."""
 
+import json
 import logging
 from pathlib import Path
 
@@ -29,3 +31,19 @@ def conversation(conn) -> Conversation:
     """A `Conversation` for a case that touches no working directory."""
     the_log = log()
     return Conversation(conn, Path("."), the_log, Ending(the_log))
+
+
+def records(category: str, log_directory: Path | None = None) -> list[dict]:
+    """The records of one category's file, each line parsed on its own
+    (LOGGING.md §6); the case's log by default, none when the file is not
+    there."""
+    base = log_directory if log_directory is not None else directory
+    assert base is not None, "a log directory: the case's, or a conversation's"
+    path = base / f"{category}.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_bytes().split(b"\n") if line]
+
+
+def events(category: str, log_directory: Path | None = None) -> list[str]:
+    return [r["event"] for r in records(category, log_directory)]

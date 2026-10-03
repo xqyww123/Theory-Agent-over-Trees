@@ -208,6 +208,23 @@ def test_a_tat_error_is_rendered_and_nothing_else_is():
                 assert (text_of(stubborn), stubborn.isError) == ("stubborn done", False)
                 exn = await ended(serve)
                 assert isinstance(exn, RuntimeError) and str(exn) == "tat-bug"
+                # The records (LOGGING.md §4): a call then its result, a
+                # `TAT_Error` with its class; the three calls answered the
+                # ending's line, `while_ending`, written after `ending`; a
+                # call arriving during the ending has no `call` record.
+                tool_records = stand_ins.records("tool")
+                assert [(r["event"], r["data"]["tool"]) for r in tool_records] == [
+                    ("call", "refused"), ("result", "refused"), ("call", "slow"), ("call", "stubborn"),
+                    ("call", "bug"), ("while_ending", "bug"), ("while_ending", "slow"),
+                    ("while_ending", "echo"), ("result", "stubborn")]
+                refused_record = tool_records[1]["data"]
+                assert (refused_record["is_error"], refused_record["error"]) == (True, "NodeNotFound")
+                assert refused_record["text"] == str(NodeNotFound("theory_X", []))
+                assert tool_records[0]["data"]["arguments"] == {}
+                assert tool_records[-1]["data"]["is_error"] is False and "error" not in tool_records[-1]["data"]
+                [ending_record] = [r for r in stand_ins.records("conversation") if r["event"] == "ending"]
+                assert ending_record["level"] == "error" and ending_record["data"]["message"] == "tat-bug"
+                assert ending_record["ts"] <= tool_records[5]["ts"]
                 async with httpx.AsyncClient() as http:   # it stopped accepting
                     with pytest.raises(httpx.ConnectError):
                         await http.post(server.url,
@@ -322,6 +339,10 @@ def test_a_clients_cancellation_leaves_the_body_to_finish(tool):
                 later = await session.call_tool("echo", {"text": "on"})
                 assert (text_of(later), later.isError) == ("echo on", False)
                 assert "slow" in bodies.finished and not serve.done()
+                # the body's answer, received by nobody: `given_up`, not `result`
+                assert [(r["event"], r["data"]["tool"]) for r in stand_ins.records("tool")] == [
+                    ("call", "slow"), ("given_up", "slow"), ("call", "echo"), ("result", "echo")]
+                assert stand_ins.records("tool")[1]["data"]["text"] == "slow done"
             else:
                 exn = await ended(serve)
                 assert isinstance(exn, RuntimeError) and str(exn) == "late-bug"

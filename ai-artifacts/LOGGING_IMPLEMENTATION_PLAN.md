@@ -87,8 +87,10 @@ per category, one typed method per event, mirroring the files —
    `test_a_cancelled_caller_unwinds_while_the_round_trip_completes`
    asserts the record once the trip completes.
 4. **The funnels this session owns.** The tool boundary (`tool`
-   `call`/`result`/`given_up`/`while_ending`; `current_call` set there;
-   `current_agent` set once `agent_of_call` exists — the jobs session's),
+   `call`/`result`/`given_up`/`while_ending`; `current_call` and
+   `current_agent` are both set where `agent_of_call` matches the
+   announcement — the jobs session's — since the design's `call` is the
+   announcement's `tool_use_id`, which the boundary alone does not know),
    the status setters (`operation`, with the duration argument and the
    status's messages), `Forest_Store.transaction` (`store`), the edit's
    commit block (`edit` `committed`), the walk (`evaluation`

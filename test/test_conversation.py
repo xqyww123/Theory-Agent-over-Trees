@@ -10,6 +10,7 @@ import time
 import pytest
 from Isabelle_RPC_Host import IsabelleError
 
+import stand_ins
 from baselines import DOCS, fenced_lines
 from harness import text_of
 from isabelle_theory_agent import edit, isabelle_driver, model as M
@@ -47,8 +48,8 @@ class Probes:
     state's discriminator back, so a copy that fabricated a state instead of
     mirroring the source would be caught."""
 
-    def __init__(self, connection):
-        self.conn = connection
+    def __init__(self, conversation):
+        self.conn = conversation            # the model's `Conversation`: the connection and the log
 
     def slot(self) -> Isar_State_Slot:
         return Isar_State_Slot.assign(self.conn)
@@ -99,7 +100,7 @@ class Probes:
 
 @pytest.fixture
 def probes(conversation) -> Probes:
-    return Probes(conversation.connection)
+    return Probes(conversation.forest.conversation)
 
 
 # --- the harness itself -------------------------------------------------------
@@ -109,8 +110,16 @@ async def test_a_fresh_conversation_holds_nothing(conversation):
     connection that answers, and the kind table holding `theory` and
     `session`.  What `TAT.reset` forgets is the reset case's, below."""
     assert list(conversation.forest.sub_nodes) == []
-    assert await isabelle_driver.state_exists(conversation.connection, "nobody") is False
+    assert await isabelle_driver.state_exists(conversation.forest.conversation, "nobody") is False
     assert "theory" in conversation.kinds and "session" in conversation.kinds
+    # the conversation's log (LOGGING.md §2): under the working directory,
+    # the start recorded, the round trip just made recorded with its result
+    assert conversation.log.directory.parent == conversation.working_directory / ".tat" / "log"
+    assert stand_ins.events("conversation", conversation.log.directory) == [
+        "start", "store_opened", "plugins_loaded", "serving"]
+    [trip] = stand_ins.records("round_trip", conversation.log.directory)
+    assert trip["data"] == {"name": "TAT.state_exists", "arguments": "nobody", "result": False,
+                            "duration": trip["data"]["duration"]}
 
 
 async def test_restart_serves_the_next_conversation_on_the_same_directory(conversation):
@@ -123,7 +132,7 @@ async def test_restart_serves_the_next_conversation_on_the_same_directory(conver
     assert renewed.working_directory == directory
     with pytest.raises(RuntimeError, match="use the handle `restart\\(\\)` returned"):
         conversation.forest
-    assert await isabelle_driver.state_exists(renewed.connection, "nobody") is False
+    assert await isabelle_driver.state_exists(renewed.forest.conversation, "nobody") is False
 
 
 # --- state slots (MODULE_STRUCTURE §2.1) ----------------------------------------
@@ -173,7 +182,7 @@ async def test_state_slots_through_the_probes(conversation, probes):
     await probes.make(a, True)
     await probes.make(b, False)
     assert await a.is_initialized() and await b.is_initialized()
-    await isabelle_driver.state_delete(conversation.connection, [a.name, b.name, c.name])
+    await isabelle_driver.state_delete(conversation.forest.conversation, [a.name, b.name, c.name])
     for s in (a, b, c):
         assert not await s.is_initialized()
 
@@ -615,11 +624,11 @@ async def test_a_fresh_conversation_forgets_the_previous_ones_state(conversation
     u = await probes.begun("theory TAT_Test_B imports TAT_Test_A begin")
     names = [t.name, u.name]
     for name in names:
-        assert await isabelle_driver.state_exists(conversation.connection, name) is True
+        assert await isabelle_driver.state_exists(conversation.forest.conversation, name) is True
 
     renewed = await conversation.restart()
-    fresh = Probes(renewed.connection)
+    fresh = Probes(renewed.forest.conversation)
     for name in names:
-        assert await isabelle_driver.state_exists(renewed.connection, name) is False
+        assert await isabelle_driver.state_exists(renewed.forest.conversation, name) is False
     await fresh.begin_fails("theory TAT_Test_B imports TAT_Test_A begin",
                             expect=not_found("TAT_TEST.TAT_Test_A"))

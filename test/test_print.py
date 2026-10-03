@@ -33,7 +33,7 @@ CONN = typing.cast(typing.Any, object())
 PRINT = DOCS / "PRINT.md"
 
 
-def slot(): return Isar_State_Slot.assign(CONN)
+def slot(): return Isar_State_Slot.assign(stand_ins.conversation(CONN))
 
 
 # --- the node classes of the examples --------------------------------------
@@ -78,7 +78,7 @@ def enter(parent, n, kind):
 
 
 def new_forest():
-    return M.Forest(stand_ins.conversation(CONN), Forest_Store(":memory:"), KINDS)
+    return M.Forest(stand_ins.conversation(CONN), Forest_Store(":memory:", stand_ins.log()), KINDS)
 
 
 def session(forest, name, parent_session="HOL", options=(), description=""):
@@ -416,9 +416,9 @@ def rerun(x, operation):
     async def go():
         ev = M.Evaluation(None, False)
         if operation == "beginning":
-            x._set_beginning(ev, await x._eval_beginning_opr())
+            x._set_beginning(ev, *await M._timed(x._eval_beginning_opr()))
         else:
-            await x._set_ending(ev, await x._eval_ending_opr())
+            await x._set_ending(ev, *await M._timed(x._eval_ending_opr()))
     asyncio.run(go())
 
 

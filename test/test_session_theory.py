@@ -68,7 +68,7 @@ KINDS = {"session": Session, "theory": Theory, "fake_theory": Fake_Theory,
 class Forest_Under_Test(M.Forest):
     def __init__(self, conn=CONN, store=None, kinds=KINDS):
         super().__init__(stand_ins.conversation(conn),
-                         store if store is not None else Forest_Store(":memory:"), kinds)
+                         store if store is not None else Forest_Store(":memory:", stand_ins.log()), kinds)
 
 
 @pytest.fixture(autouse=True)
@@ -147,7 +147,7 @@ def test_a_session_with_its_theories_in_one_call():
 
 
 def test_the_fields_are_kept_and_stored(tmp_path):
-    store = Forest_Store(tmp_path / "TAT.sqlite")
+    store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session(
         "Arith", theory("X", "Main", "HOL-Library.Multiset"),
@@ -158,7 +158,7 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     assert s.sub_nodes[0].header() == 'theory X\n  imports "Main" "HOL-Library.Multiset"\nbegin'
     before = shape(f)
     store.close()
-    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite"))
+    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log()))
     assert shape(f2) == before
     s2 = f2.sub_nodes[0]
     assert isinstance(s2, Session) and s2.parent is f2
@@ -169,7 +169,7 @@ def test_the_fields_are_kept_and_stored(tmp_path):
 def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(tmp_path):
     """COMPILATION.md §4: a rerun stores what it finds; a tree the walk does
     not enter keeps its stored statuses, messages included."""
-    store = Forest_Store(tmp_path / "TAT.sqlite")
+    store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session(
         "S", theory("Good", kind="fake_theory"), theory("BadHeader", kind="failing_header_theory"))])
@@ -179,7 +179,7 @@ def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(t
     assert tm.st(good) == (READY, READY)
     assert isinstance(tm.st(bad)[0], M.CannotEvaluate)
     store.close()
-    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite"))
+    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log()))
     good2, bad2 = f2.sub_nodes[0].sub_nodes
     assert good2.last_evaluation_statuses() == (READY, READY)
     beginning = bad2.last_evaluation_statuses()[0]

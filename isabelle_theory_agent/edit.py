@@ -17,7 +17,7 @@ Whether to also evaluate is the caller's, from the call's `evaluate` flag.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .exceptions import (
@@ -29,6 +29,17 @@ from .model import (
     NodeConfig, NonLeaf_Node, RawAST, Ready, Role, Seeking, StdBlock, _completed, _leaving,
     _wrote, is_valid_name)
 from .plugin import check_construct
+
+
+def _committed(forest: Forest, operation: str, location: Location, *,
+               created: Sequence[Node] = (), removed: Sequence[str] = (),
+               moved: Sequence[Node] = (), invalidated: Sequence[Node] = ()) -> None:
+    """The `edit` record `committed` (LOGGING.md §4), written after the
+    edit's one store; `removed` are ids, taken while the nodes still stood."""
+    forest.conversation.log.edit.committed(
+        operation=operation, parent=forest.id_of(location.parent), index=location.index,
+        created=[[forest.id_of(n), n.kind] for n in created], removed=list(removed),
+        moved=[forest.id_of(n) for n in moved], invalidated=[forest.id_of(t) for t in invalidated])
 
 
 def _gate(hook, *args) -> None:
@@ -76,13 +87,15 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
             assert n.parent is not None
             _completed(n.parent.on_added_child, n, "insert_or_delete")
             _completed(n.on_inserted)
-    await forest._invalidate_changed_trees(ev, before)
+    invalidated = await forest._invalidate_changed_trees(ev, before)
     await forest._run(ev, Seeking(Location(parent, index)), store=False)
     with forest.store.transaction():      # the one store of the edit (MODULE_STRUCTURE §4.2)
         for node in nodes:
             forest._store_subtree(node)
         forest._store_children(parent)
         forest._store_written_rows(ev)
+    _committed(forest, "insert", Location(parent, index),
+               created=[n for root in nodes for n in root._tree_order()], invalidated=invalidated)
     return nodes
 
 
@@ -94,6 +107,7 @@ async def amend(old: Node, raws: list[RawAST],
     parent = parent_of(old)
     forest = parent.forest()
     before = forest._record()
+    removed = [forest.id_of(old)]
     call = Edit_Call(forest, kinds, Amendment(old))
     nodes = await _construct_siblings(parent, raws, "constructs", call, call.role)
     replacement = nodes[0]
@@ -148,7 +162,7 @@ async def amend(old: Node, raws: list[RawAST],
             assert n.parent is not None
             _completed(n.parent.on_added_child, n, "insert_or_delete")
             _completed(n.on_inserted)
-    await forest._invalidate_changed_trees(ev, before)
+    invalidated = await forest._invalidate_changed_trees(ev, before)
     # A nesting replacement invalidates from its first child: the children
     # precede its own commands in the walk (MCP §3.2).
     if inherited:
@@ -166,6 +180,9 @@ async def amend(old: Node, raws: list[RawAST],
         if nodes[1:]:
             forest._store_children(parent)
         forest._store_written_rows(ev)
+    _committed(forest, "amend", Location(parent, index), removed=removed,
+               created=[replacement, *(n for root in nodes[1:] for n in root._tree_order())],
+               invalidated=invalidated)
     return nodes
 
 
@@ -182,6 +199,7 @@ async def delete(node: Node) -> NonLeaf_Node:
         _gate(n.on_deleting, "delete")
     _gate(parent.on_removing_child, node, "insert_or_delete")
     index = node.index_of()
+    removed = [forest.id_of(n) for n in node._tree_order()]
     ev = Evaluation(None, False)
     await parent._carry_forward(index, node, ev)   # the one remote step, before any pointer moves
     for s in node._states_inside():   # released with the walk's: one round trip
@@ -190,13 +208,14 @@ async def delete(node: Node) -> NonLeaf_Node:
     node.parent = None
     for n in node._children_first():
         _completed(n.on_deleted, "delete")
-    await forest._invalidate_changed_trees(ev, before)
+    invalidated = await forest._invalidate_changed_trees(ev, before)
     await forest._run(ev, Seeking(Location(parent, index)), store=False)
     with forest.store.transaction():      # the one store of the edit (MODULE_STRUCTURE §4.2)
         for n in node._tree_order():
             forest.store.delete_node(n.identity)
         forest._store_children(parent)
         forest._store_written_rows(ev)
+    _committed(forest, "delete", Location(parent, index), removed=removed, invalidated=invalidated)
     return parent
 
 
@@ -253,7 +272,7 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     new_parent.sub_nodes.insert(new_index, node)
     _completed(new_parent.on_added_child, node, "move")
     _completed(node.on_moved, old_location)
-    await forest._invalidate_changed_trees(ev, before)
+    invalidated = await forest._invalidate_changed_trees(ev, before)
     # Both tails: from the source successor's final position, and from the
     # moved node's — which takes its whole subtree.
     source_position = (Location(parent, successor.index_of()) if successor
@@ -265,6 +284,7 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
         if new_parent is not parent:
             forest._store_children(new_parent)
         forest._store_written_rows(ev)
+    _committed(forest, "move", new_location, moved=[node], invalidated=invalidated)
 
 
 def parent_of(node: Node) -> NonLeaf_Node:
@@ -379,7 +399,7 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
     if kind not in kinds:
         raise UnknownKind(kind, list(kinds))
     cls = kinds[kind]
-    config = NodeConfig(state=Isar_State_Slot.assign(parent.state.connection),
+    config = NodeConfig(state=Isar_State_Slot.assign(parent.state.conversation),
                         parent=parent, batch_before=batch_before, role=role)
     replacing = config.replaces()
     # The children-legality checks run before any gen (MODULE_STRUCTURE

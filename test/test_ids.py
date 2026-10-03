@@ -17,7 +17,7 @@ from isabelle_theory_agent.store import Forest_Store
 CONN = typing.cast(typing.Any, object())
 
 
-def slot(): return Isar_State_Slot.assign(CONN)
+def slot(): return Isar_State_Slot.assign(stand_ins.conversation(CONN))
 
 
 # --- stub node classes: ids need no evaluation ------------------------------
@@ -71,7 +71,7 @@ def mk_block(cls, parent, name):
 
 def new_forest(store=None):
     return M.Forest(stand_ins.conversation(CONN),           # nothing here touches the directory
-                    store if store is not None else Forest_Store(":memory:"), KINDS)
+                    store if store is not None else Forest_Store(":memory:", stand_ins.log()), KINDS)
 
 
 @pytest.fixture

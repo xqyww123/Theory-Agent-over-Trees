@@ -33,14 +33,18 @@ as a list.
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import msgpack
 
 from .exceptions import TAT_DisasterError, TAT_InternalError, TAT_StartupError
+
+if TYPE_CHECKING:
+    from .log import Log
 
 SCHEMA_VERSION = 1
 SQLITE_MINIMUM = (3, 37, 0)          # STRICT tables; the library Python links, not a package
@@ -85,11 +89,16 @@ class MissingRow(KeyError):
 
 class Forest_Store:
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, log: Log):
+        """`log` is the conversation's, for the `store` records of every
+        transaction (LOGGING.md §4)."""
         if sqlite3.sqlite_version_info < SQLITE_MINIMUM:
             raise TAT_StartupError(
                 f"TAT needs SQLite {'.'.join(map(str, SQLITE_MINIMUM))} or newer;"
                 f" this Python links {sqlite3.sqlite_version}")
+        self._log = log
+        self._written: list[tuple[int, str]] = []     # the open transaction's rows
+        self._deleted: list[int] = []                 # and the nodes it deleted
         try:
             # autocommit mode: the only transactions are the explicit ones below
             self._conn = sqlite3.connect(path, isolation_level=None, check_same_thread=True)
@@ -140,12 +149,17 @@ class Forest_Store:
         suite's fake driver asserts it at every round trip."""
         if self._conn.in_transaction:
             raise TAT_InternalError("Forest_Store: a transaction is already open")
+        self._written, self._deleted = [], []
+        started = time.monotonic()
         try:
             with self._transaction():
                 yield
         except Exception as e:
-            raise TAT_DisasterError(
-                f"Forest_Store: a write operation failed after its commit in memory: {e}") from e
+            message = f"Forest_Store: a write operation failed after its commit in memory: {e}"
+            self._log.store.transaction_failed(message=message)
+            raise TAT_DisasterError(message) from e
+        self._log.store.transaction(rows_written=self._written, nodes_deleted=self._deleted,
+                                    duration=time.monotonic() - started)
 
     @contextmanager
     def _transaction(self) -> Generator[None]:
@@ -180,6 +194,7 @@ class Forest_Store:
                 (node, field, blob))
         except sqlite3.IntegrityError as e:     # STRICT: a node or field of the wrong type
             raise TAT_InternalError(f"Forest_Store: field `{field}` of node {node}: {e}") from e
+        self._written.append((node, field))
 
     def get(self, node: int, field: str) -> Any:
         """`MissingRow`, a KeyError, when the node has no such field; a stored
@@ -197,6 +212,7 @@ class Forest_Store:
     def delete_node(self, node: int) -> None:
         self._writing()
         self._conn.execute("DELETE FROM fields WHERE node = ?", (node,))
+        self._deleted.append(node)
 
     def nodes(self) -> list[int]:
         return [node for (node,) in self._conn.execute(

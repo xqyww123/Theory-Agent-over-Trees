@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, NoReturn, TypeVar
+from typing import Any, NamedTuple, NoReturn, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
@@ -361,41 +361,73 @@ class TAT_Server:
                 for tool in self._tools.values()]
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+        log = self.ending.log.tool
         if self.ending.entered:
+            log.while_ending(tool=name)
             return _result(stopped(self.ending.ended_by), is_error=True)
+        log.call(tool=name, arguments=arguments)
+        started = time.monotonic()
         tool = self._tools.get(name)
         if tool is None:
-            return _result(f"unknown tool `{name}`", is_error=True)
-        # The body runs as a task of its own, outside the request's cancel
-        # scope, and the wait is shielded: neither a client's cancellation
-        # nor the SDK's unwind reaches it mid-edit.  `asyncio.wait` never
-        # cancels what it waits on.
-        body = self.ending.spawn(_run(tool, arguments))
-        with anyio.CancelScope(shield=True):
-            await asyncio.wait({body})
-        answer = self._answer(name, body)
-        # a cancellation that arrived meanwhile passes here: the SDK has
-        # answered the client itself, and this call is nobody's to answer
-        await anyio.lowlevel.checkpoint()
-        return answer
+            answered: Answered | None = Answered.of(f"unknown tool `{name}`", True, None)
+        else:
+            # The body runs as a task of its own, outside the request's
+            # cancel scope, and the wait is shielded: neither a client's
+            # cancellation nor the SDK's unwind reaches it mid-edit.
+            # `asyncio.wait` never cancels what it waits on.
+            body = self.ending.spawn(_run(tool, arguments))
+            with anyio.CancelScope(shield=True):
+                await asyncio.wait({body})
+            answered = self._answered(name, body)
+        duration = time.monotonic() - started
+        try:
+            # a cancellation that arrived meanwhile passes here: the SDK has
+            # answered the client itself, and this call is nobody's to answer
+            await anyio.lowlevel.checkpoint()
+        except asyncio.CancelledError:
+            if answered is not None:
+                log.given_up(tool=name, text=answered.text, messages=[], duration=duration)
+            raise
+        if answered is None:                # the ending answers
+            log.while_ending(tool=name)
+            return _result(stopped(self.ending.ended_by), is_error=True)
+        log.result(tool=name, is_error=answered.is_error, text=answered.text, messages=[],
+                   trailer=None, error=answered.error, duration=duration)
+        return answered.result
 
-    def _answer(self, name: str, body: asyncio.Task[str]) -> types.CallToolResult:
+    def _answered(self, name: str, body: asyncio.Task[str]) -> Answered | None:
         """What the body did decides (MODULE_STRUCTURE §4.6): its text; a
         `TAT_Error`, rendered; anything else enters the ending, which
-        answers.  The boundary itself failing is a bug like any other."""
+        answers — None.  The boundary itself failing is a bug like any
+        other."""
         try:
             if body.cancelled():            # the ending's, or a cancellation the body let escape
                 self.ending.end(TAT_InternalError(f"the body of `{name}` was cancelled"))
             else:
                 exn = body.exception()
                 if exn is None:
-                    return _result(body.result(), is_error=False)
+                    return Answered.of(body.result(), False, None)
                 if isinstance(exn, TAT_Error):
-                    return _result(str(exn), is_error=True)
+                    return Answered.of(str(exn), True, type(exn).__name__)
                 self.ending.end(exn)
         except Exception as bug:
             self.ending.end(bug)
-        return _result(stopped(self.ending.ended_by), is_error=True)
+        return None
+
+
+class Answered(NamedTuple):
+    """A tool call's answer, rendered, with what the boundary records of it:
+    the text, whether it is an error, and the `TAT_Error`'s class when one
+    refused the call."""
+    result: types.CallToolResult
+    text: str
+    is_error: bool
+    error: str | None
+
+    @classmethod
+    def of(cls, text: str, is_error: bool, error: str | None) -> Answered:
+        """Rendering first: a text no result can hold is the boundary's bug."""
+        return cls(_result(text, is_error), text, is_error, error)
 
 
 async def _run(tool: Tool, arguments: dict[str, Any]) -> str:
