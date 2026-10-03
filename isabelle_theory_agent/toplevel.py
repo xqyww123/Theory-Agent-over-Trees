@@ -21,7 +21,7 @@ from typing import NoReturn
 
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 
-from . import mcp, plugin
+from . import isabelle_driver, mcp, plugin
 from .exceptions import TAT_StartupError
 from .log import Log, now
 from .mcp_server import Ending, TAT_Server
@@ -110,6 +110,7 @@ async def conversation(python_packages: list[str], working_directory: str, conne
             log.conversation.start(
                 version=version("isabelle_theory_agent"), pid=os.getpid(),
                 working_directory=str(directory), python_packages=python_packages, port=port)
+            await isabelle_driver.log_directory(conv, log.directory)
             with Forest_Store(directory / DATABASE, log) as store:
                 log.conversation.store_opened(schema_version=SCHEMA_VERSION, nodes=len(store.nodes()))
                 loaded = plugin.load(python_packages)

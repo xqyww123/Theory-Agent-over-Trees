@@ -100,7 +100,7 @@ Arguments, results and payloads are recorded whole, never cut.
 | `client_connected` | info | the `clientInfo` of the MCP `initialize`: name, version |
 | `client_refused` | error | the same, and `message`: what refused it (CONSTRUCT_INTERACTION §8); the call's `_meta` when a call's sandbox policy did |
 | `ending` | info or error | what ended the conversation: its class, `message`, the traceback; `info` when the connection went, `error` otherwise |
-| `ended` | info | written by the ending object's exit once the unwinding is over (MODULE_STRUCTURE §4.6): the construction jobs cancelled, the evaluation jobs dropped, the calls cancelled, how long the unwinding took — zero counts for a start or a compile that failed; a compile that returns normally writes neither `ending` nor `ended` |
+| `ended` | info | written by the ending object's exit once the unwinding is over (MODULE_STRUCTURE §4.6): how long the unwinding took; each call's and each job's fate is in its own record; a compile that returns normally writes neither `ending` nor `ended` |
 
 An RPC host that the Isabelle process started — the default; not one
 started elsewhere under `RPC_Host` (ARCHITECTURE §9) — exits as soon as
@@ -114,7 +114,7 @@ end, the manager's SIGTERM or an interrupt at the terminal, leaves no
 | --- | --- | --- |
 | `call` | info | the tool, the arguments as received |
 | `result` | info | the tool, `is_error`, the body's text, the messages delivered with it, the trailer, the `TAT_Error`'s class when there is one, the duration |
-| `given_up` | info | the tool, the text the body produced, the messages that would have gone with it, the duration: the body finished after its client had given up on the call, and nobody received the answer (MODULE_STRUCTURE §4.6) |
+| `given_up` | info | the tool, the text the body produced — when it produced one — the messages that would have gone with it, the duration: the body finished after its client had given up on the call, and nobody received the answer (MODULE_STRUCTURE §4.6) |
 | `unannounced` | error | the tool, the call's `_meta`, `message` (CONSTRUCT_INTERACTION §8) |
 | `while_ending` | info | the tool: a call answered with the ending's line |
 
@@ -152,7 +152,7 @@ A refused edit is a `tool` `result` with its `TAT_Error`.
 | --- | --- | --- |
 | `walk_started` | info | the destination, `ignore_error`, `checks` |
 | `operation` | info | the node, which operation — its own, its beginning, its ending — whether it ran, the status written with its `messages` (ARCHITECTURE §3.2; an empty list for a clean run; absent when no run produced the write), the duration |
-| `stopped` | info | the node, and why: its own command failed (a stop, ARCHITECTURE §3.3), the order constraint, an import with no theory value |
+| `stopped` | info | the node, and why: its own command failed (a stop, ARCHITECTURE §3.3), the order constraint, an import with no theory value — then also the importing tree, which was not run |
 | `walk_ended` | info | `continue` or the stop, the slots released, the duration |
 
 ### `job`
@@ -177,8 +177,7 @@ A refused edit is a `tool` `result` with its `TAT_Error`.
 
 | event | level | data |
 | --- | --- | --- |
-| `round_trip` | info | the callback's name, its arguments, its result or the error, the duration |
-| `connection_lost` | info | the connection error |
+| `round_trip` | info | the callback's name, its arguments, its result or the error — the connection error, when the connection went — the duration |
 
 ### `store`
 
@@ -205,9 +204,11 @@ Written by the Isabelle side: what the Python side cannot see.
 
 **The Python side.** One object, `Log`, in `log.py`, held by the
 `Conversation`: a Python process may host several conversations
-(ARCHITECTURE §9), so nothing is configured for the process. Each event is
-a method whose parameters are the event's fields; `note(category, message,
-**fields)` is the free one. The method stamps `ts`, `agent` and `call`,
+(ARCHITECTURE §9), so nothing is configured for the process. It has one
+attribute per category, mirroring the files; each event is a method of
+its category's attribute, whose parameters are the event's fields
+(`log.tool.call(...)`), and every category has `note(message, **fields)`,
+the free one. The method stamps `ts`, `agent` and `call`,
 encodes the line and appends it: it opens the category's file for
 appending (`open(path, "ab")`), writes the line, which is written whole
 or raises, and closes the file. The `Log` therefore holds no open file
@@ -226,9 +227,8 @@ conversations, and the Python side records it nowhere.
 The named events are written where the design already funnels everything,
 so that none can be bypassed: the tool boundary and the `/hook` path in
 `mcp_server.py`; `isabelle_driver.call`, which every round trip of a
-conversation goes through, and which writes `round_trip` — or
-`connection_lost`, when the trip fails with a connection error — from
-the trip's completion callback, so whether or not its caller still waits;
+conversation goes through, and which writes `round_trip` from the trip's
+completion callback, so whether or not its caller still waits;
 the status setters of `model.py`, which
 every write of an evaluation status goes through, and which are handed
 the duration of the hook that ran, or none; `Forest_Store.transaction`;

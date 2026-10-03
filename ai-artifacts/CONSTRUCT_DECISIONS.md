@@ -1105,7 +1105,10 @@ verbatim, `X` standing for a full node id.
   runs `eval_prf_str` — and reads nothing from AoA's store and changes
   nothing in it (「确认」). TAT writes no limit formula and no handling
   of the replay's failure classes. How AoA hands the times over with the
-  proof is the AoA round's.
+  proof is the AoA round's. *Superseded in part (2026-10-03, §15):* the
+  construction reads and writes AoA's store through AoA's own path; the
+  check still reads nothing from it; the times come back with the text
+  from `hammer_or_AoA`.
 - THEOREM §7's clause "the same goal is what `Proof_Job` hands to
   `run_AoA`" is deleted (2026-10-01, 「赞同删掉」; answers the readers'
   O9): how TAT drives AoA stays whole with the AoA round. What stays
@@ -1307,21 +1310,23 @@ compacted agent, the `compact_boundary` on disk before the agent's next
 
 ## 13. Deferred to the AoA round
 
-The drive path, driver and budget — a bound on how many constructions
-run at once included (2026-10-01) —, the proof store, the question
-kinds, cancellation on the AoA side, how AoA hands over a proof's replay
-times and exports its replay of one record (the time limit itself is
-decided, §11), a job that continues through a context change and repairs a
-stored proof (`start` handing `_run` the outcome it clears; `_run`
-ending with a replay instead of `passed`). Two requirements of the
-owner's bind the round (2026-09-22, "关键的，AoA 中的 request_lemma …
-这个 request report 要上报给 TAT 的 the running agent"; "我们需要某种机制告诉
-AoA 它正运行在 TAT 下并以能跟 TAT 通讯"; restored 2026-09-30 after the
-author had dropped them from this list on 2026-09-27): AoA's `request`
-tool reports to the TAT agent driving the job, as a question that agent
-answers, instead of adding subgoals in AoA's own global environment; and
-AoA is told it runs under TAT and given a way to talk to TAT. What
-`product` holds is decided (§2).
+Decided on 2026-10-03 and moved to §15: the drive path, driver and
+budget, the bound on how many constructions run at once (2026-10-01),
+the proof store, how AoA hands over a proof's replay times, and the
+function it exports for the replay of one record (the time limit itself
+was decided in §11). Still deferred: the question kinds; a job that
+continues through a context change and repairs a stored proof (`start`
+handing `_run` the outcome it clears; `_run` ending with a replay
+instead of `passed`); to measure, not to design, cancellation on the
+AoA side. Two requirements of the owner's bind the round (2026-09-22,
+"关键的，AoA 中的 request_lemma … 这个 request report 要上报给 TAT 的 the
+running agent"; "我们需要某种机制告诉 AoA 它正运行在 TAT 下并以能跟 TAT
+通讯"; restored 2026-09-30 after the author had dropped them from this
+list on 2026-09-27): AoA's `request` tool reports to the TAT agent
+driving the job, as a question that agent answers, instead of adding
+subgoals in AoA's own global environment; and AoA is told it runs under
+TAT and given a way to talk to TAT. What `product` holds is decided
+(§2).
 
 ## 14. Withdrawn
 
@@ -1404,3 +1409,98 @@ and stored halves and the walk's record of change. Withdrawn on
 2026-10-01: `Theorem`'s `construct` field and its rule under `evaluate:
 false`; the refusals of a single `construct` (`ConstructAlreadyRunning`
 and `Proof_Job`'s three sentences); "`construct` takes one node".
+Withdrawn on 2026-10-03 (§15): the proof check's goal built from the
+statement by a second `theorem_cmd`; `Theorem`'s evaluation as one
+transition; the compile hook writing the proof stores from the forest's
+proofs; "TAT changes nothing in AoA's proof store" as said of the
+construction.
+
+## 15. The AoA round: the drive path (2026-10-03)
+
+Decided in the forked session on 2026-10-03; THEOREM.md §1, §5–§7,
+CONSTRUCT_INTERACTION §10, OPEN_QUESTIONS §2, ARCHITECTURE §2.1, §3.1,
+§9, MODULE_STRUCTURE §4.1, §4.3 and COMPILATION.md state it.
+
+- The drive path (「我认为应该第一条，但不是从陈述建出目标。Theorem node 的
+  evaluation 需要记录 the state after opening the proof goal 且尚未开始证明的
+  Toplevel.state，并调用框架接口赋予一个 slot … 然后 the Construction job
+  把这个 slot 发给 a callback 然后 the callback 取得 Proof state 然后调用
+  AoA 的（标准）启动接口」): `Theorem`'s evaluation applies two
+  transitions instead of one — the `lemma` command's own
+  (`Toplevel.local_theory_to_proof` of `Specification.theorem_cmd`),
+  whose result, the goal open and no step taken, goes into a slot the
+  class owns; then the admit (`Toplevel.end_proof
+  Proof.global_skip_proof`, the toplevel half of `Isar_Cmd.skip_proof`),
+  into the resulting slot. The construction job hands that slot to the
+  class's third callback, `TAT.Theorem.construct`, which takes the
+  `Proof.state` and its goal and runs AoA's standard entry on it; the
+  proof check replays the stored product on the same goal instead of
+  rebuilding it from the statement — the two now work on one goal by
+  construction. The author's shapes, told to the owner: the slot is
+  `goal_state`; further slots are a class-level declaration the
+  framework mints with `state`, releases with the operation's resulting
+  state in every setter taking an operation from written to unwritten,
+  deletes with the node and reassigns empty on load, so no class can
+  forget one; the invariant that `goal_state` holds a state exactly
+  while the node's instant status is `ready`, which keeps a loaded
+  forest — `not_evaluated` throughout — from starting a construction on
+  an empty slot.
+- The standard entry is `hammer_or_AoA` with Sledgehammer first
+  (「保留」), as the `aoa` method itself: the proof store looked up,
+  then Sledgehammer, then the agent, the proof written back. The owner
+  allowed the change to Isa-Mini this needs (「允许」): `hammer_or_AoA`
+  returns the replay times beside the text, in the store's
+  standard-machine form, and the per-record replay inside
+  `Proof_Store_AoA.store_hit_replay` is exported for the check.
+- The proof store is written, and read, through AoA's own path
+  (「我认为还是需要写 proof store 文件的。这样就可以继续写 `by aoa` 了」), so
+  emission keeps `by aoa` (ARCHITECTURE §2.1 stands). Verified in the
+  code the same day: the store file is `<master directory of the
+  theory>/<short name>.proof-store` (`Phi_Proof_Store.store_path`,
+  contrib/auto_sledgehammer/library/cache_file.ML), which for TAT's
+  in-process theory is the emitted file's own folder, the header's
+  `master_dir` and `file_path()` being one; the key is the hash of the
+  subgoals, the theory's short name and the context's assumptions
+  (`Hasher.all_goals`, `hash_in_context'`), the same at construction
+  and at a build of the file; the store appends only into an existing,
+  writable directory and otherwise warns once per location ("cached
+  proofs will be read but not recorded") and skips; the write-back is a
+  dependent fork of the proof's future with `interrupts = true`. Hence
+  the framework makes the `Session`'s folder before the tree's theory
+  begins, with the compile's function; a compile removes only `.thy`
+  files and the ROOT and leaves the store; the store file travels with
+  the theory files, as AoA's convention is. The owner knows the working
+  directory now gains `.proof-store` files during a conversation, not
+  only at a compile (「确认，誊进文档」). The check keeps reading nothing
+  from the store; §11's clause is superseded in that part only.
+- The driver and the per-run budget are Isabelle's configuration
+  (`AoA_driver`; Minilang's default budget), TAT adding no setting
+  (「沿用 Isabelle 的配置」).
+- The number of constructions running at once: unbounded by default; the
+  user may bound it through an Isabelle environment variable (「建议默认
+  无限制，但允许用户限制，通过 isabelle 环境变量」). The author's shape: the
+  bound is the framework's, around the run wrapper's `await
+  self._run()`, so a waiting run is `RUNNING` and a cancellation while it
+  waits detaches it like any other. Pending the owner: the variable's
+  name and the sentence for a value that is not a positive integer; how
+  a waiting run shows, if not as `proving`.
+- Pending the owner too: what happens when the `Session`'s folder cannot
+  be made before the theory begins — a symbolic link or a file at its
+  path, the cases the compile refuses (COMPILATION.md §4).
+- Verified the same day, so that the drive path rests on measured
+  facts: AoA is entered from ML, `hammer_or_AoA` → `raw_AoA` → the
+  remote procedure `IsaMini.AoA` (contrib/Isa-Mini/IsaMini/AoA/toplevel.py:191),
+  whose Python side runs the LLM client and serves it the Minilang tools
+  over an HTTP MCP server; `run_AoA` returns the text with its times,
+  `hammer_or_AoA` the text alone; AoA's `request` tool today is a hint
+  to the planning agent and, for a worker, a general lemma proved by a
+  headless prover in AoA's global environment; an Isabelle interrupt of
+  the forked task reaches Python as a callback failure that
+  `interrupts_are_cancellations` turns into a cancellation, after which
+  the driver closes its client. To verify at implementation: that TAT's
+  process serves `IsaMini.AoA`; how soon the Python half learns of an
+  interrupt; that AoA's `group = NONE` forks end with the job.
+- What stays the round's is §13's remainder: the question kinds, AoA
+  told it runs under TAT, a job continuing through a context change
+  (until then the context change cancels and the construction is
+  started again).

@@ -285,11 +285,10 @@ def test_b_own_stop_strict_then_ignore():
     r = run(t1.evaluate_to(False))
     assert r.stopped_at is t1 and st(t1) is CANNOT_EVALUATE
     assert TABLE.values[t1.resulting_state().name] == "begin Section"   # the input copied through
-    # the walk's own stop, recorded once with its reason (LOGGING.md §4)
-    stopped = [r for r in stand_ins.records("evaluation") if r["event"] == "stopped"]
-    assert [(r["data"]["node"], r["data"]["reason"]) for r in stopped] == [(f.id_of(t1), "command_failed")]
+    # the walk's outcome names the stop (LOGGING.md §4); the `stopped` record
+    # is `Forest._handle_tree`'s, which this one-tree fake bypasses
     assert stand_ins.events("evaluation")[-1] == "walk_ended"
-    assert stand_ins.records("evaluation")[-1]["data"]["outcome"] == f.id_of(t1)
+    assert stand_ins.records("evaluation")[-1]["data"]["outcome"] == f.full_id(t1)
     r = run(t4.evaluate_to(False))
     assert r.stopped_at is t1 and t1.runs == 1                          # not rerun
     assert st(t2) is NOT_EVALUATED and st(t3) is NOT_EVALUATED and st(t4) is NOT_EVALUATED

@@ -44,8 +44,9 @@ the construction job's outcome (CONSTRUCT_INTERACTION §3.1):
 `product` being the proof: the method text AoA writes to its proof
 store, such as `(simp add: …)` or `aoa_replay "…"`, with the two times of
 its replay — the thread's CPU time and the wall time, in milliseconds,
-as AoA records them beside a proof — which the proof check derives its
-limits from (§7); it is stored. The proof check's outcome — `RUNNING`, `PASSED`, `FAILED` —
+as AoA records them beside a proof, in the standard-machine form its
+store holds — which the proof check derives its limits from (§7); it is
+stored. The proof check's outcome — `RUNNING`, `PASSED`, `FAILED` —
 is read through the framework's `check_outcome()`: `RUNNING` while a
 running proof check is on the node, the stored check otherwise, which
 is cleared when a stored status of the node leaves `ready`, when a proof
@@ -53,6 +54,19 @@ construction starts, or when another check takes its place, and by
 nothing else (CONSTRUCT_INTERACTION §3.3, ARCHITECTURE §4.1). The mark
 (§7), `_check()` (§7), emission (§5) and the failure block (§8) read it
 there.
+
+One thing more the node holds in the process and never stores:
+`goal_state`, a state slot the class owns beside the node's own — the
+one name in its `owned_slots` (ARCHITECTURE §3.1, MODULE_STRUCTURE
+§4.1) — holding the `Toplevel.state`
+in which the statement's goal stands open and no proof step has been
+taken — what the evaluation's first transition yields (§6). It holds a
+state exactly while the node's instant status is `ready`: the framework
+mints it with `state`, releases it with the node's resulting state
+whenever the status leaves `ready`, deletes it with the node, and on
+load reassigns it empty, like `state`; only the evaluation callback
+writes it. The proof construction and the proof check both work on the
+goal it holds (§7).
 
 The construction job is compulsory: the node is finished only when
 `proof` is `SUCCEEDED` and the proof check `PASSED` (ARCHITECTURE §3.2,
@@ -207,7 +221,10 @@ lemma rev_length:
   `Token.print_name`; every other name bare.
 - `by aoa` when `proof` is `SUCCEEDED` and the proof check's stored
   outcome (§1) is `PASSED`; `sorry` otherwise — an unchecked proof is
-  written as `sorry`.
+  written as `sorry`. A build of the file finds the proof in the
+  theory's proof store, `<short name>.proof-store` beside the file,
+  where the construction's AoA call recorded it (§7), and replays it
+  without searching.
 - The whole text in the `\<name>` form (`IsaTerm.ascii`, §2); the file
   reads as Unicode in jEdit all the same.
 
@@ -216,27 +233,33 @@ lemma rev_length:
 The evaluator runs the statement and admits it, never a proof
 (ARCHITECTURE §3.6), and never runs the `text` command. It goes through
 the ML interfaces. `Theorem._eval_opr` sends the class's callback
-`TAT.Theorem.evaluate` the input slot, the resulting slot, and the
-statement as structure — `kind`, `name`, the `for_any` variables with
-their types, the premises, the conclusion — each `IsaTerm` as its
-`ascii` (§2). The ML side builds one transition and applies it to the
-input slot's state:
+`TAT.Theorem.evaluate` the input slot, the node's `goal_state` slot
+(§1), the resulting slot, and the statement as structure — `kind`,
+`name`, the `for_any` variables with their types, the premises, the
+conclusion — each `IsaTerm` as its `ascii` (§2). The ML side builds two
+transitions and applies them in turn to the input slot's state: the
+`lemma` command's own, and the half of `sorry` that ends a toplevel
+goal (`Isar_Cmd.skip_proof`):
 
 ```
-Toplevel.local_theory NONE NONE
-  (Specification.theorem_cmd … Element.Fixes / Element.Assumes / Element.Shows …
-   #> Proof.global_skip_proof true)
+Toplevel.local_theory_to_proof NONE NONE
+  (Specification.theorem_cmd … Element.Fixes / Element.Assumes / Element.Shows …)
+|> Toplevel.command_errors true
+
+Toplevel.end_proof Proof.global_skip_proof
 |> Toplevel.command_errors true
 ```
 
-— the shape of `begin_theory`, no `run_span` envelope, no proof step —
-and writes the resulting state into the resulting slot: at theory level
+— the shape of `begin_theory`, no `run_span` envelope, no proof step.
+The first's result, the goal open and no step taken, is written into
+`goal_state`, where the proof construction and the proof check find
+their goal (§7); the second's into the resulting slot: at theory level
 the same four steps as a hand-written `theory_init … exit_global`, and
 inside a future `Context` or `Locale` the statement is checked in that
 context, as ARCHITECTURE §2 promises. An interrupt and a `Bug` are
-re-raised; any other error is the statement's: no state is written, the callback
-answers the messages, and `_eval_opr` returns `CannotEvaluate` with
-them — the node is an obstacle. Otherwise the callback answers what the
+re-raised; any other error is the statement's: no state is written into
+either slot, the callback answers the messages, and `_eval_opr` returns
+`CannotEvaluate` with them — the node is an obstacle. Otherwise the callback answers what the
 run reported beside its success and, for the fact's name, each
 variable's and each premise's, whether `Thy_Header.print_name` would
 quote it in this theory; `_eval_opr` returns `Ready` with those
@@ -247,26 +270,45 @@ is not a failure: Isabelle accepts it quoted at every use.
 The proof check is started apart from the evaluation, by the framework's
 `start_evaluation_job()` (CONSTRUCT_INTERACTION §3.3): with the job
 already on the node, `Proof_Check._start` calls the class's second
-callback `TAT.Theorem.check` with the input slot, the statement as
-above, the stored `product` — the text and its times — and the job's
-`id`; the callback forks the
-check as a Future task (§7) and returns.
+callback `TAT.Theorem.check` with the node's `goal_state` slot, the
+stored `product` — the text and its times — and the job's `id`; the
+callback forks the check as a Future task (§7) and returns. The proof
+construction's callback, `TAT.Theorem.construct`, is the class's third
+(§7).
 
 ## 7. The jobs and the mark
 
 ### `Proof_Job`
 
 `title()` is `proof construction`, `title(plural=True)` `proof
-constructions`; `compulsory` is true. Its `_run` drives AoA (deferred:
-the drive path, driver and budget, the proof store, the questions it
-asks — under two requirements of the owner's: AoA's `request` reports to
-the TAT agent driving the job, as a question it answers, and AoA is told
-it runs under TAT; CONSTRUCT_INTERACTION §10) and, on success, attaches
+constructions`; `compulsory` is true. Its `_run` calls the class's third
+callback `TAT.Theorem.construct` with the node's `goal_state` slot (§1,
+§6) and the job's `id`, and waits for the report. The callback takes the
+slot's `Proof.state` (`Toplevel.proof_of`), its context and goal
+(`Proof.goal`), and forks through the framework's `fork_job`
+(MODULE_STRUCTURE §2.4) one call of AoA's `hammer_or_AoA`
+(`contrib/Isa-Mini/Agent/agent_server.ML`) on them — what the `aoa`
+method does on a goal: the proof store looked up first, then
+Sledgehammer, then the AoA agent, and the proof found written back into
+the store, all on AoA's own path with both store switches on; the driver
+and the budget are what Isabelle's configuration gives AoA
+(`AoA_driver`, Minilang's default budget), TAT setting neither. The
+report brings the product: the method text and its two times in the
+store's standard-machine form, which `hammer_or_AoA` is extended to
+return beside the text. How many runs are inside their AoA call at once
+is bounded by an Isabelle environment variable, unbounded when it is
+unset (its name: DOC_SYNC_LIST); a run waiting for its turn is
+`RUNNING`. AoA's Python half, the remote procedure `IsaMini.AoA`, is
+served by TAT's own process (to verify at implementation), so a
+question the search asks reaches the job through the process's job
+table (CONSTRUCT_INTERACTION §3.3); the questions themselves — AoA's
+`request` as a question to the owner, what it asks and what the answer
+does, and AoA being told it runs under TAT — are the AoA round's
+remainder (CONSTRUCT_INTERACTION §10). On success the run attaches
 `Proof_Check.passed(node)` to the node and returns `SUCCEEDED` with the
-proof, text and times, as `product`: a run that reaches its end saw no context change
-(the default `_on_context_change` below), so the proof AoA verified
-holds in the current context and the node is `proven` from the run's
-settlement on.
+product: a run that reaches its end saw no context change (the default
+`_on_context_change` below), so the proof AoA verified holds in the
+current context and the node is `proven` from the run's settlement on.
 `_check()` answers whether a proof can be constructed on the node as it
 stands; a node it answers false for is skipped by `construct` and by
 automatic construction, with no sentence of its own:
@@ -298,23 +340,22 @@ Its sentences (the rest are the framework's defaults from `title`):
 `Theorem.evaluation_job_class`. `title()` is `proof check`,
 `title(plural=True)` `proof checks`. `make` is the default; `_start`
 calls `TAT.Theorem.check` (§6) once the framework has put the job on the
-node. Its work, the Future task the callback forks: the goal is built
-in ML from the statement in the input slot's context —
-`Specification.theorem_cmd` on the slot's local theory, the function
-the evaluation's transition (§6) calls, and `Proof.goal` of the
-`Proof.state` it yields; no Toplevel transition — and the stored
-`product`, the text with its times, is replayed on that goal through a
-function exported from AoA: the part of
+node. Its work, the Future task the callback forks: the goal is
+`Proof.goal` of the `Proof.state` the node's `goal_state` slot holds
+(§1, §6) — the goal the construction worked on; no Toplevel transition
+— and the stored `product`, the text with its times, is replayed on
+that goal through a function exported from AoA: the part of
 `Proof_Store_AoA.store_hit_replay`
 (`contrib/Isa-Mini/Agent/proof_store_AoA.ML`) that takes one record,
 derives the replay limits from its times
 (`Phi_Proof_Store.replay_limits`) and evaluates its text as a method on
 the goal (`Phi_Sledgehammer_Solver.eval_prf_str`). TAT writes no limit
-of its own, reads nothing from AoA's proof store and changes nothing in
-it. A `product` of the form `aoa_replay "<b64>"` is itself a method
+of its own; the check reads nothing from AoA's proof store, which only
+the construction's AoA call reads and writes (`Proof_Job` above). A
+`product` of the form `aoa_replay "<b64>"` is itself a method
 that re-runs the recorded Minilang commands; one Sledgehammer found is
 a plain method text such as `metis …`. The check and the construction
-are about the same statement. A theorem out is `PASSED` and is
+work on the same goal, the one `goal_state` holds. A theorem out is `PASSED` and is
 discarded. No theorem — the method failing, subgoals left, a limit
 exceeded — is `FAILED` with an empty message: the replay reports a
 class of failure and no text, and the agent can only have the proof

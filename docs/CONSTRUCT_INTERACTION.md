@@ -974,20 +974,33 @@ synchronous commit block, before its store write (MODULE_STRUCTURE
 
 ## 10. The AoA round
 
-Deferred to it: the drive path, driver and budget — a bound on how many
-constructions run at once among them, one `construct` on a theory or
-one evaluation being able to start many —, the proof store, the
-question kinds, cancellation on the AoA side, how AoA hands over a
-proof's replay times with the proof, the function it exports for
-replaying one record (THEOREM.md §7), a job that continues through a
-context change and repairs a stored proof — for which `start` would have to hand `_run` the
-outcome it clears, since the node no longer holds it while the run goes,
-and whose `_run` would end with a replay instead of `Proof_Check.passed`.
-Two requirements of the owner's bind it: AoA's `request` tool, which
+Decided on 2026-10-03 and stated in THEOREM.md §6–§7: the drive path —
+`Proof_Job._run` through the class's callback `TAT.Theorem.construct` on
+the `goal_state` slot the evaluation fills, one call of AoA's
+`hammer_or_AoA` forked through `fork_job`, the proof store read and
+written on AoA's own path, the product returned with its times —, the
+driver and the budget from Isabelle's configuration, the bound on
+concurrent runs from an Isabelle environment variable, the function AoA
+exports for the replay of one record, and emission keeping `by aoa`.
+
+Still the round's: the question kinds — AoA's `request` tool, which
 today lets the AoA agent add subgoals in AoA's own global environment,
 reports instead to the TAT agent that drives the job, as a question that
-agent answers (§3.4); and AoA is told that it runs under TAT and given a
-way to talk to TAT. What `product` holds is decided, the method text AoA
-writes to its proof store, and so is the proof check: a replay of that
+agent answers (§3.4): its text and schema, what the answer means, what
+AoA does while it waits and after; AoA being told that it runs under TAT
+and given a way to talk to TAT — the task kind the `IsaMini.AoA` call
+carries, and the words; a job that continues through a context change
+and repairs a stored proof — for which `start` would have to hand `_run`
+the outcome it clears, since the node no longer holds it while the run
+goes, and whose `_run` would end with a replay instead of
+`Proof_Check.passed` —, until which a context change cancels the run and
+the construction is started again. To measure at implementation, not to
+design: cancellation on the AoA side — how soon the Python half learns
+of the interrupt of the forked task, and that AoA's own `group = NONE`
+forks end with the job —, and that TAT's process serves `IsaMini.AoA`.
+The two requirements of the owner's bind the remainder: AoA's `request`
+reports to the TAT agent as a question, and AoA is told it runs under
+TAT. What `product` holds is decided, the method text AoA writes to its
+proof store with its times, and so is the proof check: a replay of that
 text under limits derived from the times recorded with it, with no
 reason shown when it fails (THEOREM.md §1, §7).

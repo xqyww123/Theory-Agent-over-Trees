@@ -79,18 +79,20 @@ per category, one typed method per event, mirroring the files —
    a connection; `call(conversation, name, args)` = that function plus the
    record, written from the trip's done-callback where `_dropped` runs
    today, so it is written whether or not the caller still waits —
-   `round_trip` when the trip completes, `connection_lost` when it fails
-   with a connection error; `reset` on a bare connection;
+   `round_trip`, with the result or the error, the connection error
+   included; `reset` on a bare connection;
    `Isar_State_Slot` holds the `Conversation`. Every caller updated.
    *Test:* `test_isabelle_driver.py`: a round trip writes one
    `round_trip` record with the duration, an error one with the error;
    `test_a_cancelled_caller_unwinds_while_the_round_trip_completes`
    asserts the record once the trip completes.
 4. **The funnels this session owns.** The tool boundary (`tool`
-   `call`/`result`/`given_up`/`while_ending`; `current_call` and
-   `current_agent` are both set where `agent_of_call` matches the
-   announcement — the jobs session's — since the design's `call` is the
-   announcement's `tool_use_id`, which the boundary alone does not know),
+   `call`/`result`/`given_up`/`while_ending`; the two context variables
+   are the jobs session's to set, in its `TAT_Server` subclasses:
+   `current_call` from the call's own `_meta`, each client's key, at the
+   top of the handler, and `current_agent` from `agent_of_call`, before
+   `tool.call` is written — not reset in the body's `finally`, which
+   would strip `result` and `given_up`),
    the status setters (`operation`, with the duration argument and the
    status's messages), `Forest_Store.transaction` (`store`), the edit's
    commit block (`edit` `committed`), the walk (`evaluation`

@@ -120,6 +120,25 @@ def test_an_exception_rolls_the_whole_operation_back_as_a_disaster(store):
     assert records[2]["data"]["rows_written"] == [[3, "kind"]]
 
 
+def test_the_transaction_record_is_the_net_effect(store):
+    """A node deleted and written again in one transaction is written, not
+    deleted; a row put twice is one row; a node written then deleted is
+    deleted (LOGGING.md §4)."""
+    with store.transaction():
+        store.put(1, "kind", "theory")
+        store.put(2, "kind", "lemma")
+    with store.transaction():
+        store.delete_node(1)
+        store.put(1, "kind", "section")
+        store.put(1, "kind", "text")
+        store.put(1, "name", "intro")
+        store.put(2, "name", "P")
+        store.delete_node(2)
+    first, second = (r["data"] for r in stand_ins.records("store"))
+    assert first["rows_written"] == [[1, "kind"], [2, "kind"]] and first["nodes_deleted"] == []
+    assert second["rows_written"] == [[1, "kind"], [1, "name"]] and second["nodes_deleted"] == [2]
+
+
 def _nested(depth: int) -> list:
     value: list = []
     for _ in range(depth):

@@ -185,8 +185,9 @@ Written by the Isabelle side: what the Python side cannot see.
 
 One object, `Log`, in `log.py`, held by the `Conversation`: a Python
 process may host several conversations, so nothing is configured for the
-process. Each event is a method whose parameters are the event's fields;
-`note(category, message, **fields)` is the free one. The method stamps
+process. One attribute per category; each event is a method of its
+category's attribute, whose parameters are the event's fields, and every
+category has `note(message, **fields)`, the free one. The method stamps
 `ts`, `seq`, `agent` and `call`, encodes the line and appends it with one
 write, flushed.
 

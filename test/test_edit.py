@@ -133,8 +133,8 @@ def test_insert_nested_and_completed_order():
     [committed] = stand_ins.records("edit")
     x, y = s2.sub_nodes
     assert committed["event"] == "committed" and committed["data"] == {
-        "operation": "insert", "parent": f.id_of(thy), "index": 2,
-        "created": [[f.id_of(s2), "block"], [f.id_of(x), "t"], [f.id_of(y), "t"]],
+        "operation": "insert", "parent": f.full_id(thy), "index": 2,
+        "created": [[f.full_id(s2), "block"], [f.full_id(x), "t"], [f.full_id(y), "t"]],
         "removed": [], "moved": [], "invalidated": []}
     assert stand_ins.events("store")[-1] == "transaction"
     assert stand_ins.records("store")[-1]["ts"] <= committed["ts"]
@@ -512,7 +512,9 @@ def test_amend_replacement_refuses_children_and_leaves():
 
 def test_delete_fires_children_first_and_a_gate_can_veto():
     f, thy, sec, a, b, c = rbuild()
+    subtree = [f.full_id(n) for n in sec._tree_order()]     # named before they detach
     run(locked(f, edit.delete(sec)))
+    assert stand_ins.records("edit")[-1]["data"]["removed"] == subtree
     assert [e for e in EVENTS if e[1] in ("deleting", "deleted",
                                           "removing_child")] == [
         ("a", "deleting", "delete"),
@@ -622,22 +624,40 @@ def test_a_namespaced_name_collides_across_the_forest_and_the_batch():
 # --- one transaction per write operation, storing only what changed ----------
 
 def test_each_edit_is_one_transaction_touching_what_it_changed():
+    """One store transaction per edit, and after it the edit's `committed`
+    record (LOGGING.md §4), naming what the edit changed by full ids."""
+    def committed():
+        return stand_ins.records("edit")[-1]["data"]
     f, thy, sec, a, b, c = rbuild()
     tm.TABLE.clear_writes()
     (u,) = run(locked(f, edit.insert(sec,1, [{"kind": "t", "name": "u"}], KINDS)))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {u.identity, sec.identity}
+    assert committed() == {"operation": "insert", "parent": f.full_id(sec), "index": 1,
+                           "created": [[f.full_id(u), "t"]], "removed": [], "moved": [],
+                           "invalidated": []}
     tm.TABLE.clear_writes()
     run(locked(f, edit.move(c, thy, 0)))                 # within one parent
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity}
+    assert committed() == {"operation": "move", "parent": f.full_id(thy), "index": 0,
+                           "created": [], "removed": [], "moved": [f.full_id(c)], "invalidated": []}
     tm.TABLE.clear_writes()
     run(locked(f, edit.move(c, sec, 0)))                 # across parents
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity, sec.identity}
+    assert (committed()["parent"], committed()["index"], committed()["moved"]) == (
+        f.full_id(sec), 0, [f.full_id(c)])
     tm.TABLE.clear_writes()
+    old_sec, sec_index = f.full_id(sec), sec.index_of()
     (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}], KINDS)))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {s9.identity}
+    assert committed() == {"operation": "amend", "parent": f.full_id(thy), "index": sec_index,
+                           "created": [[f.full_id(s9), "block"]], "removed": [old_sec],
+                           "moved": [], "invalidated": []}
     tm.TABLE.clear_writes()
+    old_a, a_index = f.full_id(a), a.index_of()
     run(locked(f, edit.delete(a)))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {a.identity, s9.identity}
+    assert committed() == {"operation": "delete", "parent": f.full_id(s9), "index": a_index,
+                           "created": [], "removed": [old_a], "moved": [], "invalidated": []}
     inv(f)
 
 

@@ -5,6 +5,8 @@ class end to end, the tools through the MCP client, and what a fresh
 conversation forgets.  Run: python -m pytest test/test_conversation.py
 """
 
+import asyncio
+import json
 import time
 
 import pytest
@@ -48,23 +50,23 @@ class Probes:
     state's discriminator back, so a copy that fabricated a state instead of
     mirroring the source would be caught."""
 
-    def __init__(self, conversation):
-        self.conn = conversation            # the model's `Conversation`: the connection and the log
+    def __init__(self, conversation: M.Conversation):
+        self.conversation = conversation
 
     def slot(self) -> Isar_State_Slot:
-        return Isar_State_Slot.assign(self.conn)
+        return Isar_State_Slot.assign(self.conversation)
 
     async def make(self, slot: Isar_State_Slot, top: bool) -> None:
-        await call(self.conn, "TAT_test.make", (slot.to_msgpack(), top))
+        await call(self.conversation, "TAT_test.make", (slot.to_msgpack(), top))
 
     async def is_toplevel(self, slot: Isar_State_Slot) -> bool:
-        return await call(self.conn, "TAT_test.is_toplevel", slot.to_msgpack())
+        return await call(self.conversation, "TAT_test.is_toplevel", slot.to_msgpack())
 
     async def delete(self, slot: Isar_State_Slot) -> None:
-        await call(self.conn, "TAT_test.delete", slot.to_msgpack())
+        await call(self.conversation, "TAT_test.delete", slot.to_msgpack())
 
     async def begin(self, slot: Isar_State_Slot, header_src: str, session: str = "TAT_TEST") -> None:
-        await call(self.conn, "TAT_test.begin", (slot.to_msgpack(), (session, "", header_src)))
+        await call(self.conversation, "TAT_test.begin", (slot.to_msgpack(), (session, "", header_src)))
 
     async def begin_fails(self, header_src: str, expect: str, session: str = "TAT_TEST") -> None:
         with pytest.raises(TAT_IsabelleError) as e:
@@ -72,24 +74,24 @@ class Probes:
         assert expect in str(e.value), str(e.value)
 
     async def run(self, src: Isar_State_Slot, dst: Isar_State_Slot, text: str) -> list:
-        return await call(self.conn, "TAT_test.run", (src.to_msgpack(), (dst.to_msgpack(), text)))
+        return await call(self.conversation, "TAT_test.run", (src.to_msgpack(), (dst.to_msgpack(), text)))
 
     async def run_parallel(self, a: Isar_State_Slot, b: Isar_State_Slot, text_a: str, text_b: str):
-        return await call(self.conn, "TAT_test.run_parallel",
+        return await call(self.conversation, "TAT_test.run_parallel",
                           (a.to_msgpack(), (b.to_msgpack(), (text_a, text_b))))
 
     async def end(self, slot: Isar_State_Slot) -> None:
-        await call(self.conn, "TAT_test.end", slot.to_msgpack())
+        await call(self.conversation, "TAT_test.end", slot.to_msgpack())
 
     async def operation(self, outcome: str) -> tuple[Isar_State_Slot, list]:
         sl = self.slot()
-        return sl, await call(self.conn, "TAT_test.operation", (sl.to_msgpack(), outcome))
+        return sl, await call(self.conversation, "TAT_test.operation", (sl.to_msgpack(), outcome))
 
     async def short_name(self, name: str) -> isabelle_driver.Short_Name_Answer:
-        return await isabelle_driver.check_new_theory_short_name(self.conn, name)
+        return await isabelle_driver.check_new_theory_short_name(self.conversation, name)
 
     async def known_session(self, name: str) -> bool:
-        return await isabelle_driver.is_known_session(self.conn, name)
+        return await isabelle_driver.is_known_session(self.conversation, name)
 
     async def begun(self, header_src: str) -> Isar_State_Slot:
         """A theory begun into a fresh slot."""
@@ -117,9 +119,17 @@ async def test_a_fresh_conversation_holds_nothing(conversation):
     assert conversation.log.directory.parent == conversation.working_directory / ".tat" / "log"
     assert stand_ins.events("conversation", conversation.log.directory) == [
         "start", "store_opened", "plugins_loaded", "serving"]
-    [trip] = stand_ins.records("round_trip", conversation.log.directory)
+    told, trip = stand_ins.records("round_trip", conversation.log.directory)
+    assert told["data"]["name"] == "TAT.log_directory" and "result" not in told["data"]
     assert trip["data"] == {"name": "TAT.state_exists", "arguments": "nobody", "result": False,
                             "duration": trip["data"]["duration"]}
+    # the Isabelle side's own file (LOGGING.md §5): every callback it ran,
+    # the two above included, once the directory was told
+    isabelle = stand_ins.records("isabelle", conversation.log.directory)
+    callbacks = [r["data"] for r in isabelle if r["event"] == "callback"]
+    assert [c["name"] for c in callbacks][-2:] == ["TAT.log_directory", "TAT.state_exists"]
+    assert all(c["outcome"] == "returned" and c["duration"] >= 0 for c in callbacks)
+    assert all(r["category"] == "isabelle" and "agent" not in r and "call" not in r for r in isabelle)
 
 
 async def test_restart_serves_the_next_conversation_on_the_same_directory(conversation):
@@ -372,7 +382,7 @@ async def test_output_is_isolated_between_concurrent_runs(probes):
 
 # --- the loader (MODULE_STRUCTURE §2.3, EVALUATOR_DESIGN §2) -------------------------
 
-async def test_an_import_in_no_heap_loads_from_source_by_its_session_qualified_name(probes):
+async def test_an_import_in_no_heap_loads_from_source_by_its_session_qualified_name(conversation, probes):
     """TAT_Lib_Helper.thy next to this file, which the Isabelle session
     layout knows through the repository ROOT's `directories "test"`.
     `Thy_Info` is the process's (TEST_HARNESS_PLAN §2): no other case loads
@@ -385,6 +395,10 @@ async def test_an_import_in_no_heap_loads_from_source_by_its_session_qualified_n
     recs = await probes.run(v, v, 'lemma "tat_lib_y = 1" by (simp add: tat_lib_y_def)')
     assert not errors(recs), recs
     assert await probes.short_name("TAT_Lib_Helper") == isabelle_driver.Taken(helper)
+    # the loader's record (LOGGING.md §4), in this conversation's log
+    [loaded] = [r["data"] for r in stand_ins.records("isabelle", conversation.log.directory)
+                if r["event"] == "theory_loaded"]
+    assert loaded["name"] == helper and loaded["duration"] > 0
 
 
 async def test_an_import_found_nowhere_is_refused_under_the_name_isabelle_resolved(probes):
@@ -424,7 +438,7 @@ async def test_each_span_parses_against_the_state_it_runs_in(probes):
 
 # --- an exception escaping a callback is a bug (EXCEPTIONS.md §1) ----------------
 
-async def test_an_exception_escaping_a_callback_is_a_bug(probes):
+async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     async def escapes(outcome: str, expect: str) -> None:
         with pytest.raises(TAT_IsabelleError) as e:
             await probes.operation(outcome)
@@ -438,6 +452,50 @@ async def test_an_exception_escaping_a_callback_is_a_bug(probes):
     await escapes("bug", "tat-bug")                     # a framework Bug propagates
     await escapes("nothing", "a state and no message, or messages and no state")
     await escapes("both", "a state and no message, or messages and no state")
+    # The records (LOGGING.md §4): on the Isabelle side the wrapper's
+    # `callback` for every run, `raised` for the three that escaped, and
+    # `bug` for each Bug -- the explicit one and the two `operation` raises;
+    # on the Python side the round trip's error.
+    isabelle = stand_ins.records("isabelle", conversation.log.directory)
+    outcomes = [r["data"]["outcome"] for r in isabelle
+                if r["event"] == "callback" and r["data"]["name"] == "TAT_test.operation"]
+    assert outcomes == ["returned", "returned", "raised", "raised", "raised"]
+    bugs = [r for r in isabelle if r["event"] == "bug"]
+    assert [(r["level"], r["data"]["callback"]) for r in bugs] == [("error", "TAT_test.operation")] * 3
+    assert bugs[0]["data"]["message"] == "tat-bug"
+    trips = [r["data"] for r in stand_ins.records("round_trip", conversation.log.directory)
+             if r["data"]["name"] == "TAT_test.operation"]
+    assert "tat-bug" in trips[2]["error"] and "result" in trips[0]
+
+
+async def test_a_log_the_isabelle_side_cannot_write_stops_nothing(conversation, probes):
+    """LOGGING.md §5: the Isabelle side drops a record it cannot write and
+    reports nothing; here its file is replaced by a directory."""
+    path = conversation.log.directory / "isabelle.jsonl"
+    path.unlink()
+    path.mkdir()
+    sl, msgs = await probes.operation("ok")
+    assert msgs == [] and await probes.is_toplevel(sl) is True
+    with pytest.raises(TAT_IsabelleError):
+        await probes.operation("bug")
+    assert path.is_dir() and list(path.iterdir()) == []
+    # the Python side's own records are untouched
+    assert stand_ins.events("round_trip", conversation.log.directory)[-2:] == ["round_trip"] * 2
+
+
+async def test_the_launcher_prints_the_log_path_and_follows_warnings(harness, conversation):
+    """LOGGING.md §7: the launcher learned the directory from the Isabelle
+    side and printed it; a `warning` record appended to any file of the
+    directory is printed as it is written, a line that is not JSON skipped."""
+    directory = conversation.log.directory
+    record = {"ts": "2026-10-01T07:24:05.039123Z", "category": "agent", "event": "note",
+              "level": "warning", "data": {"message": "The transcript moved."}}
+    (directory / "agent.jsonl").write_text("not json\n" + json.dumps(record) + "\n")
+    expected = [f"Log: {directory}", "### The transcript moved. (agent.jsonl, 07:24:05.039123Z)"]
+    deadline = time.monotonic() + 10
+    while not all(line in harness.child_output() for line in expected):
+        assert time.monotonic() < deadline, harness.child_output()
+        await asyncio.sleep(0.2)
 
 
 # --- the Theory node class, end to end (SESSION_AND_THEORY §2) -------------------
@@ -453,9 +511,9 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     theory_deletes: list[list[str]] = []
     real_theory_delete = isabelle_driver.theory_delete
 
-    async def recording_theory_delete(conn, names):
+    async def recording_theory_delete(conversation, names):
         theory_deletes.append(list(names))
-        await real_theory_delete(conn, names)
+        await real_theory_delete(conversation, names)
     monkeypatch.setattr(isabelle_driver, "theory_delete", recording_theory_delete)
 
     async def insert(parent, index, raws):

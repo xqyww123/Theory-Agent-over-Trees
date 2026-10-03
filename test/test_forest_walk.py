@@ -246,7 +246,6 @@ def test_a_self_import_is_a_stop():
 def test_blocked_by_a_failed_header():
     f = forest(session("S", theory("A", kind="bad_header"), theory("B", "A")))
     a, b = f.sub_nodes[0].sub_nodes
-    stand_ins.records("evaluation").clear()
     walk_start = len(stand_ins.records("evaluation"))
     r = run(b.evaluate_to(False))
     assert RUNS == ["begin A"]                                   # no stop of A's own
@@ -256,10 +255,10 @@ def test_blocked_by_a_failed_header():
     inv(f)
     # The walk's records (LOGGING.md §4): a run writes `operation` with its
     # messages, a write no run produced — the copy that stands in for a
-    # failed beginning's ending, an invalidation — without them; the stop
-    # names the import whose theory value is missing.
+    # failed beginning's ending — without them; the stop names the import
+    # whose theory value is missing, and the tree it kept from running.
     records = stand_ins.records("evaluation")[walk_start:]
-    id_a, id_b = f.id_of(a), f.id_of(b)
+    id_a, id_b = f.full_id(a), f.full_id(b)
     assert records[0]["event"] == "walk_started" and records[0]["data"] == {
         "destination": id_b, "ignore_error": False}
     operations = {(r["data"]["node"], r["data"]["operation"]): r["data"]
@@ -269,12 +268,10 @@ def test_blocked_by_a_failed_header():
     assert begin_a["messages"] == ["No such file: TAT_Nowhere.thy"]   # the fake header's failure
     end_a = operations[id_a, "ending"]
     assert not end_a["ran"] and end_a["status"] == "ready" and "messages" not in end_a
-    assert all(not op["ran"] and op["status"] == "not_evaluated"
-               for (node, _), op in operations.items() if node.startswith(id_b))
-    assert [(r["data"]["node"], r["data"]["reason"]) for r in records if r["event"] == "stopped"] == [
-        (id_a, "import_without_theory")]
+    [stop] = [r["data"] for r in records if r["event"] == "stopped"]
+    assert stop == {"node": id_a, "reason": "import_without_theory", "tree": id_b}
     assert records[-1]["event"] == "walk_ended" and records[-1]["data"]["outcome"] == id_a
-    assert records[-1]["data"]["slots_released"] >= 0 and "duration" in records[-1]["data"]
+    assert records[-1]["data"]["slots_released"] == 0 and "duration" in records[-1]["data"]
 
 
 def test_blocked_by_a_failed_end():
@@ -294,6 +291,12 @@ def test_blocked_by_a_leaf_inside_the_import():
     r = run(c.evaluate_to(False))
     assert r.stopped_at is x and RUNS == ["begin A", "x"]        # the leaf, reported once
     assert st(a) == (READY, NOT_EVALUATED)
+    # one `stopped` per tree that stopped (LOGGING.md §4): the leaf's own
+    # stop; then, for each importer, the import with no theory value
+    assert [r["data"] for r in stand_ins.records("evaluation") if r["event"] == "stopped"] == [
+        {"node": f.full_id(x), "reason": "command_failed"},
+        {"node": f.full_id(a), "reason": "import_without_theory", "tree": f.full_id(b)},
+        {"node": f.full_id(b), "reason": "import_without_theory", "tree": f.full_id(c)}]
     # the importer, and a third tree importing it, are blocked: not run
     not_evaluated(b, c)
     assert mark(b) == mark(c) == "not evaluated"
@@ -366,6 +369,8 @@ def test_each_tree_flushes_what_its_walk_released():
     x, x2 = insert(f, a, 0, [t("x", fail=True), t("x2")])
     y, y2 = insert(f, b, 0, [t("y", fail=True), t("y2")])
     run(f.evaluate_to(True))                                     # both trees written whole
+    # `walk_ended` counts the slots deleted over the trees' own flushes
+    assert stand_ins.records("evaluation")[-1]["data"]["slots_released"] == sum(map(len, deletes()))
     assert a.evaluation_status_ending is READY and b.evaluation_status_ending is READY
     inv(f)
     tm.TABLE.calls.clear()

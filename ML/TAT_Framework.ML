@@ -19,6 +19,10 @@ sig
   exception Bug of string             (*an invariant TAT broke -- the framework's or
                                         a node class's; a callback never turns it
                                         into data*)
+  val bug_message : exn -> string option
+                                      (*the first Bug in an exception: bare, in a
+                                        Par_Exn or in an Exn.EXCEPTIONS; found before
+                                        any interrupt the exception holds beside it*)
 
   (*** State slots (§2.1) ***)
   type slot = {
@@ -56,7 +60,9 @@ sig
     {python_packages : string list} ->    (*the class's Python half; imported at
                                             conversation start, filling the kind
                                             table (§4.4)*)
-    (env -> Remote_Procedure_Calling.callback') -> theory -> theory
+    (env -> ('a, 'b) Remote_Procedure_Calling.callback) -> theory -> theory
+                                          (*the record; the framework makes the wire
+                                            callback, logging every run (§2.5)*)
 
   (*** Conversation (§2.6) ***)
   val start' : string -> theory list -> string -> int -> unit
@@ -77,6 +83,97 @@ struct
   one TAT raises on purpose -- the framework or a node class -- which a
   callback's exception handling lets through.*)
 exception Bug of string
+
+(*A Bug may arrive wrapped: inside the Par_Exn a parallel load releases, or
+  inside an Exn.EXCEPTIONS.  One test for `operation`, the callback wrapper
+  and fork_job; a Bug beside an interrupt is still a Bug.*)
+fun bug_message (Bug message) = SOME message
+  | bug_message (Exn.EXCEPTIONS exns) = get_first bug_message exns
+  | bug_message exn =
+      (case Par_Exn.dest exn of
+        SOME exns => get_first bug_message exns
+      | NONE => NONE)
+
+(*** The log (docs/LOGGING.md §5) ***)
+
+structure Log = struct
+
+(*JSON, enough for one record's line: Isabelle/ML has no JSON of its own*)
+datatype json =
+  String of string | Int of int | Real of real | Bool of bool |
+  Array of json list | Object of (string * json) list
+
+local
+  fun escape c =
+    (case c of
+      #"\"" => "\\\"" | #"\\" => "\\\\" | #"\n" => "\\n" | #"\r" => "\\r" | #"\t" => "\\t"
+    | _ =>
+        if Char.ord c < 32
+        then "\\u" ^ StringCvt.padLeft #"0" 4 (Int.fmt StringCvt.HEX (Char.ord c))
+        else str c)
+in
+  fun string_of (String s) = enclose "\"" "\"" (String.translate escape s)
+    | string_of (Int i) = signed_string_of_int i
+    | string_of (Real r) = Real.fmt (StringCvt.FIX (SOME 6)) r
+    | string_of (Bool b) = if b then "true" else "false"
+    | string_of (Array xs) = enclose "[" "]" (commas (map string_of xs))
+    | string_of (Object fields) =
+        enclose "{" "}" (commas (map (fn (k, v) => string_of (String k) ^ ":" ^ string_of v) fields))
+end
+
+fun seconds time = Real (Time.toReal time)
+
+(*a record's `ts`: UTC, to the microsecond*)
+fun timestamp () =
+  let
+    val now = Time.now ()
+    val micro = Time.toMicroseconds now mod 1000000
+  in
+    Date.fmt "%Y-%m-%dT%H:%M:%S" (Date.fromTimeUniv now) ^ "." ^
+    StringCvt.padLeft #"0" 6 (LargeInt.toString micro) ^ "Z"
+  end
+
+(*One conversation's log: the records made before the Python side has named
+  the directory, held latest first; then the file isabelle.jsonl there.  A
+  write never raises and reports nothing: what stops it stops the Python
+  side too, which reports.*)
+datatype state = Held of string list | Writing of Path.T
+type T = state Synchronized.var
+
+fun create () : T = Synchronized.var "TAT.log" (Held [])
+
+(*The process's current log, an empty one from this file's load, so the
+  theories a start loads before the conversation begins are recorded;
+  TAT.reset installs a fresh one; a job keeps the one it found at its fork.*)
+val current : T Synchronized.var = Synchronized.var "TAT.log.current" (create ())
+fun get_current () = Synchronized.value current
+fun renew () = Synchronized.change current (K (create ()))
+
+val never_raising = Event_Log.never_raising (K ())
+
+fun record (log : T) {event, level, data} =
+  never_raising (fn () =>
+    let
+      val line =
+        string_of (Object [("ts", String (timestamp ())), ("category", String "isabelle"),
+          ("event", String event), ("level", String level), ("data", Object data)]) ^ "\n"
+    in
+      Synchronized.change log
+        (fn Held lines => Held (line :: lines)
+          | writing as Writing path => (File.append path line; writing))
+    end)
+
+(*the Python side names the directory once it exists (LOGGING.md §5): the
+  records held so far go there first*)
+fun tell (log : T) directory =
+  never_raising (fn () =>
+    let val path = Path.append directory (Path.basic "isabelle.jsonl") in
+      Synchronized.change log
+        (fn Held lines => (if null lines then () else File.append_list path (rev lines); Writing path)
+          | Writing _ => Writing path)
+    end)
+
+end
 
 (*** State slots ***)
 
@@ -110,8 +207,9 @@ fun delete (slots : T) names = Synchronized.change slots (fold Symtab.delete_saf
 
 fun exists (slots : T) name = Symtab.defined (Synchronized.value slots) name
 
-(*a fresh conversation on the same process (docs/ARCHITECTURE.md §9)*)
-fun clear (slots : T) = Synchronized.change slots (K Symtab.empty)
+(*a fresh conversation on the same process (docs/ARCHITECTURE.md §9): how
+  many it cleared, for the `reset` record*)
+fun clear (slots : T) = Synchronized.change_result slots (fn tab => (Symtab.size tab, Symtab.empty))
 
 fun slot (slots : T) name : slot = {get = fn () => get slots name, put = put slots name}
 
@@ -138,7 +236,8 @@ fun put (theories : T) thy =
 (*delete_safe: a tree whose header failed never stored a value*)
 fun delete (theories : T) names = Synchronized.change theories (fold Symtab.delete_safe names)
 
-fun clear (theories : T) = Synchronized.change theories (K Symtab.empty)
+fun clear (theories : T) =
+  Synchronized.change_result theories (fn tab => (Symtab.size tab, Symtab.empty))
 
 end
 
@@ -196,6 +295,8 @@ fun load import =
   Synchronized.change lock (fn () =>
     let
       val _ = check_parallel_proofs ()
+      val loaded_before = Thy_Info.get_names ()
+      val start = Time.now ()
       val result =
         Exn.capture_body (fn () => Thy_Info.use_theories (Options.default ()) "" [import])
       val residue =
@@ -206,6 +307,15 @@ fun load import =
           SOME exn => if Exn.is_interrupt_proper exn then Exn.reraise exn else ()
         | NONE => ())
       val _ = Par_Exn.release_all (result :: residue)
+      (*the record `theory_loaded` (LOGGING.md §4), one per theory the load
+        added, each with the load's whole duration*)
+      val duration = Log.seconds (Time.now () - start)
+      val log = Log.get_current ()
+      val _ =
+        List.app (fn name =>
+            Log.record log {event = "theory_loaded", level = "info",
+              data = [("name", Log.String name), ("duration", duration)]})
+          (subtract (op =) loaded_before (Thy_Info.get_names ()))
     in () end)
 
 (*The last two steps of EVALUATOR_DESIGN §2's order: the base heap, then a
@@ -525,8 +635,40 @@ structure Registrations = Theory_Data
   val merge = Library.merge (eq_fst op =)
 )
 
+(*The framework makes every wire callback itself (§2.5), around the record's
+  function: the log event `callback` -- how long the function ran, whether
+  it returned, raised or was interrupted -- and `bug` when a Bug left it;
+  the result released as it arrived.  The log is the one current when the
+  callback began, so TAT.reset's own record lands in the conversation it
+  ends.*)
+fun make_callback ({name, on_interrupt, arg_schema, ret_schema, function, timeout}
+                   : ('a, 'b) Remote_Procedure_Calling.callback) =
+  Remote_Procedure_Calling.mk_callback
+    {name = name, on_interrupt = on_interrupt, arg_schema = arg_schema, ret_schema = ret_schema,
+     timeout = timeout,
+     function = fn arg =>
+       let
+         val log = Log.get_current ()
+         val start = Time.now ()
+         val result = Exn.capture_body (fn () => function arg)
+         val outcome =
+           (case result of
+             Exn.Res _ => "returned"
+           | Exn.Exn exn => if Exn.is_interrupt exn then "interrupted" else "raised")
+         val _ =
+           Log.record log {event = "callback", level = "info",
+             data = [("name", Log.String name), ("duration", Log.seconds (Time.now () - start)),
+                     ("outcome", Log.String outcome)]}
+         val _ =
+           (case Option.mapPartial bug_message (Exn.get_exn result) of
+             SOME message =>
+               Log.record log {event = "bug", level = "error",
+                 data = [("message", Log.String message), ("callback", Log.String name)]}
+           | NONE => ())
+       in Exn.release result end}
+
 fun register_callback {python_packages} f =
-  Registrations.map (cons (serial (), {python_packages = python_packages, make = f}))
+  Registrations.map (cons (serial (), {python_packages = python_packages, make = make_callback o f}))
 
 (*** Conversation ***)
 
@@ -538,44 +680,71 @@ fun pack_short_name_answer (Loader.Taken long) = packList packString ["taken", l
   | pack_short_name_answer Loader.Reserved = packList packString ["reserved"]
   | pack_short_name_answer Loader.Free = packList packString ["free"]
 
+(*The Python side names the log directory, absolute (LOGGING.md §5, §7):
+  the records held so far go there, and the launcher is told, as
+  TAT.finished tells it.  The one framework callback a compile's command
+  carries too (COMPILATION.md §5).*)
+val log_directory =
+  make_callback
+    {name = "TAT.log_directory",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackString,
+     ret_schema = packUnit,
+     function = fn directory =>
+       (Log.tell (Log.get_current ()) (Path.explode directory);
+        Output.protocol_message [Markup.function "TAT.log_directory"] [XML.Encode.string directory]),
+     timeout = NONE}
+
 fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
-  Remote_Procedure_Calling.mk_callback
+  make_callback
     {name = "TAT.state_copy",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackPair (unpackString, unpackString),
      ret_schema = packUnit, function = Slots.copy slots, timeout = NONE},
-  Remote_Procedure_Calling.mk_callback
+  make_callback
     {name = "TAT.state_delete",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackList unpackString,
      ret_schema = packUnit, function = Slots.delete slots, timeout = NONE},
-  Remote_Procedure_Calling.mk_callback
+  make_callback
     {name = "TAT.state_exists",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackString,
      ret_schema = packBool, function = Slots.exists slots, timeout = NONE},
-  Remote_Procedure_Calling.mk_callback
+  make_callback
     {name = "TAT.theory_delete",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackList unpackString,
      ret_schema = packUnit, function = Theories.delete theories, timeout = NONE},
-  Remote_Procedure_Calling.mk_callback
+  make_callback
     {name = "TAT.check_new_theory_short_name",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackString,
      ret_schema = pack_short_name_answer, function = Loader.check_new_theory_short_name,
      timeout = NONE},
-  Remote_Procedure_Calling.mk_callback
+  make_callback
     {name = "TAT.is_known_session",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackString,
      ret_schema = packBool, function = Loader.is_known_session, timeout = NONE},
-  (*a fresh conversation begins on the same process: both tables emptied*)
-  Remote_Procedure_Calling.mk_callback
+  log_directory,
+  (*a fresh conversation begins on the same process: both tables emptied,
+    recorded into this conversation's log, which a fresh one then replaces
+    (LOGGING.md §5); the futures cancelled are the jobs', none yet*)
+  make_callback
     {name = "TAT.reset",
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackUnit,
-     ret_schema = packUnit, function = fn () => (Slots.clear slots; Theories.clear theories),
+     ret_schema = packUnit,
+     function = fn () =>
+       let
+         val slots_cleared = Slots.clear slots
+         val theories_cleared = Theories.clear theories
+         val _ =
+           Log.record (Log.get_current ()) {event = "reset", level = "info",
+             data = [("futures_cancelled", Log.Int 0), ("slots_cleared", Log.Int slots_cleared),
+                     ("theories_cleared", Log.Int theories_cleared)]}
+       in Log.renew () end,
      timeout = NONE}
 ]
 

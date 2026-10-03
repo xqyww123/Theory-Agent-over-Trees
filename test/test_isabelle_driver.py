@@ -12,7 +12,6 @@ test/test_conversation.py.  Run: python -m pytest test/test_isabelle_driver.py
 
 import asyncio
 import gc
-import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -35,6 +34,8 @@ class Fake_Connection:
             return args == "held"
         if name == "TAT.reset":
             return None
+        if name == "TAT.gone":                 # what the RPC library raises for a dead wire
+            raise ConnectionResetError("peer closed connection")
         if name == "TAT.interrupted":
             raise IsabelleInterrupt(["Interrupt"], None)
         raise IsabelleError([f'exception Bug "{name}: tat-bug" raised (line 94)\nAt command "theory"',
@@ -46,9 +47,7 @@ def conversation(conn):
 
 
 def round_trips(conv) -> list[dict]:
-    """The `round_trip.jsonl` records of the conversation's log."""
-    path = conv.log.directory / "round_trip.jsonl"
-    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    return stand_ins.records("round_trip", conv.log.directory)
 
 
 async def settled():
@@ -95,6 +94,19 @@ def test_reset_runs_on_a_bare_connection():
     asyncio.run(isabelle_driver.reset(cast(Any, Fake_Connection())))
 
 
+def test_a_connection_error_reaches_the_caller_unwrapped_and_is_the_trips_error():
+    """The connection going is the conversation's ending, not a bug
+    (MODULE_STRUCTURE §4.3): no `TAT_IsabelleError`; the one record names
+    the trip and carries the error."""
+    conv = conversation(Fake_Connection())
+    with pytest.raises(ConnectionResetError):
+        asyncio.run(isabelle_driver.call(conv, "TAT.gone", ()))
+    [record] = round_trips(conv)
+    assert record["event"] == "round_trip" and record["data"] == {
+        "name": "TAT.gone", "arguments": [], "error": "ConnectionResetError: peer closed connection",
+        "duration": record["data"]["duration"]}
+
+
 def test_a_cancelled_caller_unwinds_while_the_round_trip_completes():
     """The shield of MODULE_STRUCTURE §4.3: the caller sees its cancellation
     at once; the round trip in flight is neither cancelled nor waited for,
@@ -129,8 +141,8 @@ def test_a_cancelled_caller_unwinds_while_the_round_trip_completes():
 
 def test_an_abandoned_round_trips_failure_is_nobodys_and_not_reported():
     """The dropped round trip fails after its caller has gone: nothing is
-    raised anywhere, asyncio does not report it as unhandled, and a
-    connection error is the record `connection_lost`."""
+    raised anywhere, asyncio does not report it as unhandled, and the trip
+    is recorded with its error."""
     class Failing_Connection:
         def __init__(self):
             self.release = asyncio.Event()
@@ -153,8 +165,9 @@ def test_an_abandoned_round_trips_failure_is_nobodys_and_not_reported():
         gc.collect()                           # its task is unreferenced; asyncio would report it here
         assert reported == []
         [record] = round_trips(conv)
-        assert record["event"] == "connection_lost"
-        assert record["data"] == {"error": "ConnectionResetError: peer closed connection"}
+        assert record["event"] == "round_trip" and record["data"]["name"] == "TAT.slow"
+        assert record["data"]["error"] == "ConnectionResetError: peer closed connection"
+        assert "result" not in record["data"] and "duration" in record["data"]
     asyncio.run(scenario())
 
 

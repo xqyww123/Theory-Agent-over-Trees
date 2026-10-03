@@ -39,8 +39,7 @@ setup \<open>
   distinguishable states, so a copy that fabricates one is caught*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = ["tat_test_plugin"]} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.make",
+    {name = "TAT_test.make",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env, unpackBool),
       ret_schema = packUnit,
@@ -55,8 +54,7 @@ setup \<open>
   which escapes the callback unconverted (docs/EXCEPTIONS.md §1)*)
 let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.is_toplevel",
+    {name = "TAT_test.is_toplevel",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packBool,
@@ -69,8 +67,7 @@ setup \<open>
 (*deletes through the slot handle: the `put NONE` route*)
 let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.delete",
+    {name = "TAT_test.delete",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packUnit,
@@ -85,8 +82,7 @@ setup \<open>
   framework's (§2.6).*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = ["tat_test_plugin"]} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.begin",
+    {name = "TAT_test.begin",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env,
                      unpackTuple3 (unpackString, unpackString, unpackString)),
@@ -104,8 +100,7 @@ setup \<open>
   leaves the target slot deleted -- `put NONE`.*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.run",
+    {name = "TAT_test.run",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env,
                      unpackPair (#slot_unpacker env, unpackString)),
@@ -126,8 +121,7 @@ setup \<open>
   do overlap, only routing by id keeps the buffers apart.*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.run_parallel",
+    {name = "TAT_test.run_parallel",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env,
                      unpackPair (#slot_unpacker env, unpackPair (unpackString, unpackString))),
@@ -150,8 +144,7 @@ setup \<open>
   message, all three escaping the callback*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.operation",
+    {name = "TAT_test.operation",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = unpackPair (#slot_unpacker env, unpackString),
       ret_schema = packList packString,
@@ -173,8 +166,7 @@ setup \<open>
   conversation's theory table*)
 let open MessagePackBinIO.Pack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
-    Remote_Procedure_Calling.mk_callback {
-      name = "TAT_test.end",
+    {name = "TAT_test.end",
       on_interrupt = Remote_Procedure_Calling.Reraise,
       arg_schema = #slot_unpacker env,
       ret_schema = packUnit,
@@ -188,8 +180,7 @@ ML \<open>
 let
   fun reg name =
     TAT_Framework.register_callback {python_packages = []} (fn _ =>
-      Remote_Procedure_Calling.mk_callback {
-        name = name,
+      {name = name,
         on_interrupt = Remote_Procedure_Calling.Reraise,
         arg_schema = MessagePackBinIO.Unpack.unpackUnit,
         ret_schema = MessagePackBinIO.Pack.packUnit, function = I, timeout = NONE})

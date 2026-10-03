@@ -8,7 +8,6 @@ Run: python -m pytest test/test_toplevel.py
 """
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -18,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+import stand_ins
 from harness import free_port
 from isabelle_theory_agent import toplevel
 from isabelle_theory_agent.exceptions import TAT_StartupError
@@ -27,16 +27,21 @@ DIRECTORY_NAME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{6}Z$")
 
 
 class Recorder:
-    """What `launch_TAT` says to the Isabelle side; `served` once it has;
-    the RPC host's logger, which the `Log` reports to."""
+    """What `launch_TAT` says to the Isabelle side — the lines, and the
+    round trips, answered with nothing; `served` once it has served; the RPC
+    host's logger, which the `Log` reports to."""
     def __init__(self):
         self.lines: list[str] = []
+        self.calls: list[tuple[str, Any]] = []
         self.served = asyncio.Event()
         self.server = SimpleNamespace(logger=logging.getLogger("tat.test.toplevel"))
 
     async def writeln(self, msg: str) -> None:
         self.lines.append(msg)
         self.served.set()
+
+    async def callback(self, name: str, args: Any) -> None:
+        self.calls.append((name, args))
 
 
 def run(scenario):
@@ -68,8 +73,7 @@ def log_directories(working_directory) -> list[Path]:
 
 
 def conversation_records(log_directory) -> list[dict]:
-    lines = (log_directory / "conversation.jsonl").read_text().splitlines()
-    return [json.loads(line) for line in lines]
+    return stand_ins.records("conversation", log_directory)
 
 
 def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(tmp_path):
@@ -85,6 +89,8 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # named by its moment (LOGGING.md §2), the start recorded in order
         [log_directory] = log_directories(tmp_path)
         assert DIRECTORY_NAME.match(log_directory.name)
+        # the Isabelle side told the directory, absolute, right after `start`
+        assert connection.calls == [("TAT.log_directory", str(log_directory.absolute()))]
         records = conversation_records(log_directory)
         assert [r["event"] for r in records] == ["start", "store_opened", "plugins_loaded", "serving"]
         start, store_opened, plugins_loaded, serving = (r["data"] for r in records)
@@ -111,9 +117,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         ending, ended = conversation_records(log_directory)[4:]
         assert (ending["event"], ending["level"]) == ("ending", "info")
         assert ending["data"]["class"] == "CancelledError"
-        assert ended["event"] == "ended" and ended["data"] == {
-            "construction_jobs_cancelled": 0, "evaluation_jobs_dropped": 0, "calls_cancelled": 0,
-            "duration": ended["data"]["duration"]}
+        assert ended["event"] == "ended" and list(ended["data"]) == ["duration"]
 
         # the lock is released: the next conversation on the directory
         # starts, with a log directory of its own
@@ -153,17 +157,29 @@ def test_a_start_that_fails_after_the_log_exists_writes_ending_and_ended(tmp_pat
         ("start", "info"), ("ending", "error"), ("ended", "info")]
     assert records[1]["data"]["class"] == "TAT_StartupError"
     assert "Traceback" in records[1]["data"]["traceback"]
-    assert records[2]["data"] == {
-        "construction_jobs_cancelled": 0, "evaluation_jobs_dropped": 0, "calls_cancelled": 0,
-        "duration": records[2]["data"]["duration"]}
+    assert list(records[2]["data"]) == ["duration"]
     assert (tmp_path / "tat.lock").read_bytes() == b""
 
 
-def test_a_log_directory_that_cannot_be_made_is_a_startup_error(tmp_path):
-    """`.tat/log` taken by a file: refused with LOGGING §2's sentence, after
-    the lock and before the store, which is never opened."""
-    (tmp_path / ".tat").mkdir()
-    (tmp_path / ".tat" / "log").write_text("")
+MOMENT = "2026-10-01T07:24:05.039123Z"
+
+
+def a_file_at_the_logs(wd):
+    (wd / ".tat").mkdir()
+    (wd / ".tat" / "log").write_text("")
+
+
+def the_leaf_existing(wd):
+    (wd / ".tat" / "log" / MOMENT.replace(":", "-")).mkdir(parents=True)
+
+
+@pytest.mark.parametrize("obstacle", [a_file_at_the_logs, the_leaf_existing])
+def test_a_log_directory_that_cannot_be_made_is_a_startup_error(tmp_path, monkeypatch, obstacle):
+    """`.tat/log` taken by a file, or the directory existing already (it is
+    made exclusively): refused with LOGGING §2's sentence, after the lock
+    and before the store, which is never opened."""
+    monkeypatch.setattr(toplevel, "now", lambda: MOMENT)
+    obstacle(tmp_path)
     async def scenario():
         with pytest.raises(TAT_StartupError) as refused:
             await launch(tmp_path, free_port())
@@ -171,6 +187,7 @@ def test_a_log_directory_that_cannot_be_made_is_a_startup_error(tmp_path):
     run(scenario)
     assert not (tmp_path / "TAT.sqlite").exists()
     assert (tmp_path / "tat.lock").read_bytes() == b""
+    assert not list((tmp_path / ".tat").rglob("*.jsonl"))       # the existing leaf gained nothing
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")

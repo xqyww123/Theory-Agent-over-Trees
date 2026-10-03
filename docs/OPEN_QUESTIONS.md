@@ -14,21 +14,28 @@ omissibility flags (MCP_SPECIFICATION §2.1).
 
 **Blocks:** a `Theorem` that is ever proven.
 
-What connects `Proof_Job` to AoA is deferred to a design round of its own
-(CONSTRUCT_INTERACTION §10): the drive path, driver and budget — a bound
-on how many constructions run at once included —, the proof store, the
-kinds of question the search asks, cancellation on the AoA side, how AoA
-hands over a proof's replay times and exports its replay of one record,
-and whether a construction job continues through a context change and repairs its
-stored proof — today the default `_on_context_change` cancels it, and the
-proof check finds a stale proof wanting. Two requirements bind that
-round: AoA's `request` tool, which today lets the AoA agent add subgoals
+The drive path is decided (2026-10-03; THEOREM.md §6–§7,
+CONSTRUCT_INTERACTION §10): the evaluation records the state in which
+the goal stands open in the class's `goal_state` slot; the construction
+job calls AoA's `hammer_or_AoA` on it through the class's callback, the
+proof store read and written on AoA's own path, the product and its
+times returned; the check replays the product on the same goal; the
+driver and the budget are Isabelle's configuration; the bound on
+concurrent runs is an Isabelle environment variable; emission keeps
+`by aoa`. What remains of the round: the kinds of question the search
+asks — AoA's `request` tool, which today lets the AoA agent add subgoals
 in AoA's own global environment, reports instead to the TAT agent that
 drives the job, as a question that agent answers (CONSTRUCT_INTERACTION
-§3.4); and AoA is told that it runs under TAT and given a way to talk to
-TAT. What `product` holds is decided: the method text AoA writes to its
-proof store (THEOREM.md §1); the proof check replays it under limits
-derived from the times recorded with it (THEOREM.md §7).
+§3.4): its text and schema, what the answer means, what AoA does
+meanwhile; AoA being told that it runs under TAT and given a way to
+talk to TAT; and whether a construction job continues through a context
+change and repairs its stored proof — today the default
+`_on_context_change` cancels it and the construction is started again.
+To measure at implementation: cancellation on the AoA side, and that
+TAT's process serves `IsaMini.AoA`. What `product` holds is decided: the
+method text AoA writes to its proof store with its times (THEOREM.md
+§1); the proof check replays it under limits derived from those times
+(THEOREM.md §7).
 
 ## 3. Where the `aoa` proof method lives
 

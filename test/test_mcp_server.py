@@ -199,15 +199,12 @@ def test_a_tat_error_is_rendered_and_nothing_else_is():
                 listed = await session.list_tools()   # not a tool call: answered as ever
                 assert [t.name for t in listed.tools] == [t.name for t in bodies.tools()]
                 accepting.set()
-                try:                                  # it waits for `stubborn`'s call
-                    done, _ = await asyncio.wait({serve}, timeout=0.5)
-                    assert not done
-                finally:
-                    bodies.release.set()
+                exn = await ended(serve)              # `serve` raises at once; the drain is the exit's
+                assert isinstance(exn, RuntimeError) and str(exn) == "tat-bug"
+                assert not kept.done()                # `stubborn` is still in flight, still to be answered
+                bodies.release.set()
                 stubborn = await kept
                 assert (text_of(stubborn), stubborn.isError) == ("stubborn done", False)
-                exn = await ended(serve)
-                assert isinstance(exn, RuntimeError) and str(exn) == "tat-bug"
                 # The records (LOGGING.md §4): a call then its result, a
                 # `TAT_Error` with its class; the three calls answered the
                 # ending's line, `while_ending`, written after `ending`; a
@@ -216,20 +213,25 @@ def test_a_tat_error_is_rendered_and_nothing_else_is():
                 assert [(r["event"], r["data"]["tool"]) for r in tool_records] == [
                     ("call", "refused"), ("result", "refused"), ("call", "slow"), ("call", "stubborn"),
                     ("call", "bug"), ("while_ending", "bug"), ("while_ending", "slow"),
-                    ("while_ending", "echo"), ("result", "stubborn")]
+                    ("call", "echo"), ("while_ending", "echo"), ("result", "stubborn")]
                 refused_record = tool_records[1]["data"]
-                assert (refused_record["is_error"], refused_record["error"]) == (True, "NodeNotFound")
+                assert (refused_record["is_error"], refused_record["class"]) == (True, "NodeNotFound")
                 assert refused_record["text"] == str(NodeNotFound("theory_X", []))
                 assert tool_records[0]["data"]["arguments"] == {}
-                assert tool_records[-1]["data"]["is_error"] is False and "error" not in tool_records[-1]["data"]
+                assert tool_records[-1]["data"]["is_error"] is False and "class" not in tool_records[-1]["data"]
                 [ending_record] = [r for r in stand_ins.records("conversation") if r["event"] == "ending"]
-                assert ending_record["level"] == "error" and ending_record["data"]["message"] == "tat-bug"
+                assert ending_record["level"] == "error"
+                assert ending_record["data"]["message"] == "RuntimeError: tat-bug"
                 assert ending_record["ts"] <= tool_records[5]["ts"]
                 async with httpx.AsyncClient() as http:   # it stopped accepting
                     with pytest.raises(httpx.ConnectError):
                         await http.post(server.url,
                                         json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
                                         headers={"Accept": "application/json, text/event-stream"})
+        # `ended` once the unwinding is over: after the last call's answer
+        [ended_record] = [r for r in stand_ins.records("conversation") if r["event"] == "ended"]
+        assert ended_record["ts"] >= stand_ins.records("tool")[-1]["ts"]
+        assert list(ended_record["data"]) == ["duration"]
     run(scenario)
 
 
@@ -279,9 +281,11 @@ def test_a_disaster_and_a_dead_wire_end_the_conversation_too(tool, ended_type, l
     run(scenario)
 
 
-@pytest.mark.parametrize("tool, ended_type", [
-    ("escapes", TAT_InternalError), ("not_text", Exception), ("plain", TypeError)])
-def test_the_boundary_failing_is_a_bug_that_ends_the_conversation(tool, ended_type):
+@pytest.mark.parametrize("tool, ended_type, message", [
+    ("escapes", TAT_InternalError, "the body of `escapes` was cancelled"),
+    ("not_text", TAT_InternalError, "the body of `not_text` returned a dict, not a text"),
+    ("plain", TypeError, None)])
+def test_the_boundary_failing_is_a_bug_that_ends_the_conversation(tool, ended_type, message):
     """A body letting a cancellation escape, returning what no result can
     hold, or not being a coroutine at all: the agent gets the
     internal-error line, never an SDK rendering, and the conversation
@@ -293,8 +297,60 @@ def test_the_boundary_failing_is_a_bug_that_ends_the_conversation(tool, ended_ty
             assert result.isError and text_of(result) == INTERNAL
             exn = await ended(serve)
             assert isinstance(exn, ended_type)
-            if tool == "escapes":
-                assert str(exn) == "the body of `escapes` was cancelled"
+            if message is not None:
+                assert str(exn) == message
+    run(scenario)
+
+
+def test_uvicorns_loop_failing_on_its_own_still_drains(monkeypatch):
+    """start-4 of the review: the loop's own failure enters the ending as a
+    bug, and the calls in flight are still answered."""
+    async def scenario():
+        port = free_port()
+        bodies = Bodies()
+        async with stand_ins.ending() as ending, \
+                TAT_Server(ending, port, bodies.tools(), no_briefing) as server:
+            real_main_loop = server._uvicorn.main_loop
+
+            async def failing():                         # fails once a body is in flight
+                await bodies.began("stubborn").wait()
+                server._uvicorn.should_exit = True
+                await real_main_loop()
+                raise RuntimeError("loop-bug")
+            server._uvicorn.main_loop = failing          # type: ignore[method-assign]
+            serve = asyncio.create_task(server.serve())
+            async with client(server.url) as session:
+                await session.list_tools()
+                kept = asyncio.create_task(session.call_tool("stubborn", {}))
+                await asyncio.wait({serve}, timeout=1)   # the loop has failed: the ending is entered
+                assert serve.done() and isinstance(serve.exception(), RuntimeError)
+                bodies.release.set()
+                stubborn = await kept
+                assert (text_of(stubborn), stubborn.isError) == ("stubborn done", False)
+            assert stand_ins.events("tool")[-1] == "result"
+    run(scenario)
+
+
+def test_the_ending_waits_for_a_task_still_unwinding_before_ended():
+    """start-7 of the review, on `Ending` alone: a spawned task that catches
+    its cancellation and keeps unwinding is waited for; `ended` comes after."""
+    seen: list[str] = []
+
+    async def scenario():
+        released = asyncio.Event()
+        async with stand_ins.ending() as ending:
+            async def body():
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    await released.wait()
+                    seen.extend(stand_ins.events("conversation"))
+            ending.spawn(body())
+            await asyncio.sleep(0)
+            ending.end(RuntimeError("over"))
+            asyncio.get_running_loop().call_later(0.05, released.set)
+        assert seen == ["ending"]
+        assert stand_ins.events("conversation") == ["ending", "ended"]
     run(scenario)
 
 
@@ -346,6 +402,9 @@ def test_a_clients_cancellation_leaves_the_body_to_finish(tool):
             else:
                 exn = await ended(serve)
                 assert isinstance(exn, RuntimeError) and str(exn) == "late-bug"
+                # the body produced no answer: `given_up` without a text
+                [_, given_up] = stand_ins.records("tool")
+                assert given_up["event"] == "given_up" and "text" not in given_up["data"]
     run(scenario)
 
 

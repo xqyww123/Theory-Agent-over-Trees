@@ -98,7 +98,8 @@ def _event(level: Level) -> Callable[[Callable[Concatenate[Any, P], None]],
                                      Callable[Concatenate[Any, P], None]]:
     """Declares an event method: its name is the event, its keyword
     parameters are the record's fields (a `**` parameter's entries among
-    them), `level` the record's level; the body is never run."""
+    them; a parameter named `class_` for the field `class`, PEP 8's way
+    around a keyword), `level` the record's level; the body is never run."""
     def declare(signature_of: Callable[Concatenate[Any, P], None]) -> Callable[Concatenate[Any, P], None]:
         signature = inspect.signature(signature_of)
         var_keyword = [p.name for p in signature.parameters.values() if p.kind is p.VAR_KEYWORD]
@@ -111,6 +112,7 @@ def _event(level: Level) -> Callable[[Callable[Concatenate[Any, P], None]],
             del data["self"]
             for name in var_keyword:
                 data.update(data.pop(name))
+            data = {name.removesuffix("_"): value for name, value in data.items()}
             self._log._write(self.category, signature_of.__name__, level, data)
         return method
     return declare
@@ -155,14 +157,16 @@ class _Conversation(_Category):
 
     def ending(self, ended_by: BaseException, *, level: Literal["info", "error"]) -> None:
         """What ended the conversation: `info` when the connection went,
-        `error` otherwise (§4)."""
+        `error` otherwise (§4).  `message` is Python's one-line form of the
+        exception, class first, which the standard library renders even
+        when the exception's own `str` fails."""
         self._log._write(self.category, "ending", level, {
-            "class": type(ended_by).__name__, "message": str(ended_by),
+            "class": type(ended_by).__name__,
+            "message": "".join(traceback.format_exception_only(ended_by)).rstrip("\n"),
             "traceback": "".join(traceback.format_exception(ended_by))})
 
     @_event("info")
-    def ended(self, *, construction_jobs_cancelled: int, evaluation_jobs_dropped: int,
-              calls_cancelled: int, duration: float) -> None: ...
+    def ended(self, *, duration: float) -> None: ...
 
 
 class _Tool(_Category):
@@ -173,10 +177,10 @@ class _Tool(_Category):
 
     @_event("info")
     def result(self, *, tool: str, is_error: bool, text: str, messages: list[Any], trailer: Any,
-               error: str | None = None, duration: float) -> None: ...
+               class_: str | None = None, duration: float) -> None: ...
 
     @_event("info")
-    def given_up(self, *, tool: str, text: str, messages: list[Any], duration: float) -> None: ...
+    def given_up(self, *, tool: str, text: str | None, messages: list[Any], duration: float) -> None: ...
 
     @_event("error")
     def unannounced(self, *, tool: str, _meta: Any, message: str) -> None: ...
@@ -192,7 +196,9 @@ class _Hook(_Category):
     def request(self, *, payload: Any) -> None: ...
 
     @_event("info")
-    def answer(self, *, judged: str, status: int, body: Any, duration: float) -> None: ...
+    def answer(self, *, judged: Literal["announcement", "interruption", "stop", "compaction",
+                                        "session_start", "ignored"],
+               status: int, body: Any, duration: float) -> None: ...
 
 
 class _Agent(_Category):
@@ -206,7 +212,9 @@ class _Agent(_Category):
                         boundaries: list[Any]) -> None: ...
 
     @_event("info")
-    def compaction(self, *, learned_from: str, seen_cleared: int, **facts: Any) -> None: ...
+    def compaction(self, *, learned_from: Literal["compact_boundary", "transcript_path_changed",
+                                                  "session_start", "post_compact"],
+                   seen_cleared: int, **facts: Any) -> None: ...
 
     @_event("debug")
     def seen(self, *, key: Any) -> None: ...
@@ -228,8 +236,9 @@ class _Edit(_Category):
     category = "edit"
 
     @_event("info")
-    def committed(self, *, operation: str, parent: Any, index: Any, created: list[Any],
-                  removed: list[Any], moved: list[Any], invalidated: list[Any]) -> None: ...
+    def committed(self, *, operation: Literal["insert", "amend", "delete", "move"], parent: Any,
+                  index: Any, created: list[Any], removed: list[Any], moved: list[Any],
+                  invalidated: list[Any]) -> None: ...
 
 
 class _Evaluation(_Category):
@@ -239,11 +248,14 @@ class _Evaluation(_Category):
     def walk_started(self, *, destination: Any, ignore_error: bool, checks: Any) -> None: ...
 
     @_event("info")
-    def operation(self, *, node: Any, operation: str, ran: bool, status: Any,
-                  messages: list[Any] | None = None, duration: float | None = None) -> None: ...
+    def operation(self, *, node: Any, operation: Literal["own", "beginning", "ending"], ran: bool,
+                  status: Any, messages: list[Any] | None = None,
+                  duration: float | None = None) -> None: ...
 
     @_event("info")
-    def stopped(self, *, node: Any, reason: Any) -> None: ...
+    def stopped(self, *, node: Any,
+                reason: Literal["command_failed", "order_constraint", "import_without_theory"],
+                tree: Any = None) -> None: ...
 
     @_event("info")
     def walk_ended(self, *, outcome: Any, slots_released: int, duration: float) -> None: ...
@@ -259,7 +271,9 @@ class _Job(_Category):
     def construction_settled(self, *, node: Any, outcome: str, message: str | None = None) -> None: ...
 
     @_event("info")
-    def construction_cancelled(self, *, node: Any, reason: str | None = None) -> None: ...
+    def construction_cancelled(self, *, node: Any,
+                               reason: Literal["NODE_DELETED", "NODE_AMENDED", "CONTEXT_CHANGED"] | None = None
+                               ) -> None: ...
 
     @_event("info")
     def evaluation_started(self, *, node: Any, id: Any, starter: str) -> None: ...
@@ -299,9 +313,6 @@ class _Round_Trip(_Category):
     @_event("info")
     def round_trip(self, *, name: str, arguments: Any, result: Any = None, error: str | None = None,
                    duration: float) -> None: ...
-
-    @_event("info")
-    def connection_lost(self, *, error: str) -> None: ...
 
 
 class _Store(_Category):

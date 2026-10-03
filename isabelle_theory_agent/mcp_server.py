@@ -119,11 +119,12 @@ class Ending:
     conversation has besides running.  `toplevel.conversation()` enters it
     as a context right after the `Log` and hands it to the `Conversation`
     and to the server.  It holds the `Log`, the `Forest` once that is
-    built, and the tasks it cancels and waits for: the tool bodies the
-    server runs through `spawn`, later a construction job's run.  Whichever
-    door is reached first calls `end`, which enters the ending once; the
-    context's exit enters it for an exception escaping the start, waits for
-    the tasks to unwind, and writes `ended`."""
+    built, and the tasks it cancels and `unwound` waits for: the tool
+    bodies the server runs through `spawn`, later a construction job's run.
+    Whichever door is reached first calls `end`, which enters the ending
+    once; the server's exit drains (the calls answered, the tasks unwound);
+    the context's exit enters it for an exception escaping the start and
+    writes `ended`."""
 
     def __init__(self, log: Log):
         self.log = log
@@ -132,7 +133,6 @@ class Ending:
         self._entered = asyncio.Event()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._since = 0.0                   # when `end` ran
-        self._calls_cancelled = 0
 
     @property
     def entered(self) -> bool:
@@ -149,8 +149,8 @@ class Ending:
         await self._entered.wait()
 
     def spawn(self, coroutine: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
-        """A task of the conversation's: cancelled by `end`, waited for at
-        the exit."""
+        """A task of the conversation's: cancelled by `end`, waited for by
+        `unwound`."""
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -166,11 +166,15 @@ class Ending:
         self._since = time.monotonic()
         self.log.conversation.ending(
             ended_by, level="info" if connection_went(ended_by) else "error")
-        running = [task for task in self._tasks if not task.done()]
-        self._calls_cancelled = len(running)
-        for task in running:
+        for task in self._tasks:
             task.cancel()
         self._entered.set()
+
+    async def unwound(self) -> None:
+        """Every spawned task has ended: the server waits for this before it
+        stops, so before the store closes (MODULE_STRUCTURE §4.6)."""
+        while self._tasks:
+            await asyncio.wait(set(self._tasks))
 
     async def __aenter__(self) -> Ending:
         return self
@@ -180,12 +184,8 @@ class Ending:
             self.end(exc)
         if self._ended_by is None:          # a compile that returned
             return
-        if self._tasks:
-            await asyncio.wait(set(self._tasks))
-        # the jobs' counts are written once the jobs exist (CONSTRUCT_INTERACTION §3)
-        self.log.conversation.ended(
-            construction_jobs_cancelled=0, evaluation_jobs_dropped=0,
-            calls_cancelled=self._calls_cancelled, duration=time.monotonic() - self._since)
+        await self.unwound()                # nothing left on the serving path
+        self.log.conversation.ended(duration=time.monotonic() - self._since)
 
 
 class TAT_Server:
@@ -249,20 +249,29 @@ class TAT_Server:
             raise
         return self
 
-    async def __aexit__(self, *_: object) -> None:
+    async def __aexit__(self, _: object, exc: BaseException | None, __: object) -> None:
+        """The one drain (MODULE_STRUCTURE §4.6): whatever escapes the block
+        enters the ending; once it is entered, nothing new is accepted, the
+        calls in flight are answered and the spawned tasks unwound, and only
+        then does the server stop — so the store is still open for them."""
+        if exc is not None:
+            self.ending.end(exc)
+        if self.ending.entered:
+            self._stop_accepting()
+            while self._requests:
+                await self._idle.wait()
+            await self.ending.unwound()
         self._stop_listening()              # nothing accepts while the manager unwinds
         # the manager first: joining its handlers ends every stream a client
-        # held open, so the connections close and uvicorn's shutdown returns,
-        # and it is where a body the ending cancelled is waited out (§4.3)
+        # held open, so the connections close and uvicorn's shutdown returns
         await self._running.aclose()
         await self._uvicorn.shutdown(sockets=[self._socket])
 
     async def serve(self) -> NoReturn:
-        """Serve until the conversation's ending; then stop accepting, let
-        what is still in flight be answered, and raise what ended the
-        conversation.  Cancelled — the RPC host ending `launch_TAT`'s call
-        because the connection is gone — it enters the ending itself and
-        raises that cancellation the same way."""
+        """Serve until the conversation's ending, then raise what ended it;
+        the drain is the exit's.  Cancelled — the RPC host ending
+        `launch_TAT`'s call because the connection is gone — it enters the
+        ending itself and raises that cancellation the same way."""
         main_loop = asyncio.ensure_future(self._uvicorn.main_loop())
         main_loop.add_done_callback(self._main_loop_done)
         try:
@@ -270,10 +279,10 @@ class TAT_Server:
         except asyncio.CancelledError as gone:
             self.ending.end(gone)
         self._uvicorn.should_exit = True
-        await main_loop                              # returns once told to exit
-        self._stop_accepting()
-        while self._requests:
-            await self._idle.wait()
+        # returns once the loop was told to exit, or once it failed on its
+        # own, which `_main_loop_done` has entered as a bug
+        await asyncio.wait({main_loop})
+        self._stop_accepting()              # the exit does the rest of the drain
         raise self.ending.ended_by
 
     def _main_loop_done(self, main_loop: asyncio.Task[None]) -> None:
@@ -361,15 +370,16 @@ class TAT_Server:
                 for tool in self._tools.values()]
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+        """Every call writes `call`, then exactly one of `result`,
+        `given_up` and `while_ending` (LOGGING.md §4)."""
         log = self.ending.log.tool
-        if self.ending.entered:
-            log.while_ending(tool=name)
-            return _result(stopped(self.ending.ended_by), is_error=True)
         log.call(tool=name, arguments=arguments)
         started = time.monotonic()
         tool = self._tools.get(name)
-        if tool is None:
-            answered: Answered | None = Answered.of(f"unknown tool `{name}`", True, None)
+        if self.ending.entered:
+            answer: Answer | None = None    # the ending answers
+        elif tool is None:
+            answer = Answer(f"unknown tool `{name}`", True, None)
         else:
             # The body runs as a task of its own, outside the request's
             # cancel scope, and the wait is shielded: neither a client's
@@ -378,24 +388,24 @@ class TAT_Server:
             body = self.ending.spawn(_run(tool, arguments))
             with anyio.CancelScope(shield=True):
                 await asyncio.wait({body})
-            answered = self._answered(name, body)
+            answer = self._answer(name, body)
         duration = time.monotonic() - started
         try:
             # a cancellation that arrived meanwhile passes here: the SDK has
             # answered the client itself, and this call is nobody's to answer
             await anyio.lowlevel.checkpoint()
         except asyncio.CancelledError:
-            if answered is not None:
-                log.given_up(tool=name, text=answered.text, messages=[], duration=duration)
+            log.given_up(tool=name, text=None if answer is None else answer.text, messages=[],
+                         duration=duration)
             raise
-        if answered is None:                # the ending answers
+        if answer is None:
             log.while_ending(tool=name)
             return _result(stopped(self.ending.ended_by), is_error=True)
-        log.result(tool=name, is_error=answered.is_error, text=answered.text, messages=[],
-                   trailer=None, error=answered.error, duration=duration)
-        return answered.result
+        log.result(tool=name, is_error=answer.is_error, text=answer.text, messages=[],
+                   trailer=None, class_=answer.class_, duration=duration)
+        return _result(answer.text, answer.is_error)
 
-    def _answered(self, name: str, body: asyncio.Task[str]) -> Answered | None:
+    def _answer(self, name: str, body: asyncio.Task[str]) -> Answer | None:
         """What the body did decides (MODULE_STRUCTURE §4.6): its text; a
         `TAT_Error`, rendered; anything else enters the ending, which
         answers — None.  The boundary itself failing is a bug like any
@@ -406,32 +416,29 @@ class TAT_Server:
             else:
                 exn = body.exception()
                 if exn is None:
-                    return Answered.of(body.result(), False, None)
+                    return Answer(body.result(), False, None)
                 if isinstance(exn, TAT_Error):
-                    return Answered.of(str(exn), True, type(exn).__name__)
+                    return Answer(str(exn), True, type(exn).__name__)
                 self.ending.end(exn)
         except Exception as bug:
             self.ending.end(bug)
         return None
 
 
-class Answered(NamedTuple):
-    """A tool call's answer, rendered, with what the boundary records of it:
-    the text, whether it is an error, and the `TAT_Error`'s class when one
-    refused the call."""
-    result: types.CallToolResult
+class Answer(NamedTuple):
+    """A tool call's answer as the boundary records it: the text, whether
+    it is an error, and the `TAT_Error`'s class when one refused the call."""
     text: str
     is_error: bool
-    error: str | None
-
-    @classmethod
-    def of(cls, text: str, is_error: bool, error: str | None) -> Answered:
-        """Rendering first: a text no result can hold is the boundary's bug."""
-        return cls(_result(text, is_error), text, is_error, error)
+    class_: str | None
 
 
 async def _run(tool: Tool, arguments: dict[str, Any]) -> str:
-    return await tool.run(arguments)        # a malformed tool fails as its body fails
+    text = await tool.run(arguments)        # a malformed tool fails as its body fails
+    if not isinstance(text, str):
+        raise TAT_InternalError(
+            f"the body of `{tool.name}` returned a {type(text).__name__}, not a text")
+    return text
 
 
 def _result(text: str, is_error: bool) -> types.CallToolResult:

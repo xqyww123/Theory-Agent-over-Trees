@@ -21,18 +21,20 @@ struct
 
 (*** Operations (§2.5) ***)
 
-(*What is never data: a Bug, and an interrupt of either kind -- bare, or
-  hidden in the Par_Exn a parallel load releases (Par_Exn keeps a breakdown,
-  dropping only a proper interrupt) or in an Exn.EXCEPTIONS.  A wrapper
-  holding one of them beside a genuine error propagates whole: the error is
-  not reported as data.*)
-fun escapes (TAT_Framework.Bug _) = true
-  | escapes (Exn.EXCEPTIONS exns) = exists escapes exns
-  | escapes exn =
+(*What is never data: a Bug (TAT_Framework.bug_message finds one however
+  wrapped), and an interrupt of either kind -- bare, or hidden in the
+  Par_Exn a parallel load releases (Par_Exn keeps a breakdown, dropping only
+  a proper interrupt) or in an Exn.EXCEPTIONS.  A wrapper holding one of
+  them beside a genuine error propagates whole: the error is not reported
+  as data.*)
+fun interrupted (Exn.EXCEPTIONS exns) = exists interrupted exns
+  | interrupted exn =
       Exn.is_interrupt exn orelse
       (case Par_Exn.dest exn of
-        SOME exns => exists escapes exns
+        SOME exns => exists interrupted exns
       | NONE => false)
+
+fun escapes exn = is_some (TAT_Framework.bug_message exn) orelse interrupted exn
 
 (*The callback's side of docs/EXCEPTIONS.md §1: every failure of the operation
   is data, and what escapes is a bug.  A run's success is a state, written
@@ -68,8 +70,7 @@ local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
 (*the header, from a fresh toplevel state, into the first child's slot*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
-  Remote_Procedure_Calling.mk_callback {
-    name = "TAT.Theory.begin",
+  {name = "TAT.Theory.begin",
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackPair (#slot_unpacker env,
                    unpackTuple3 (unpackString, unpackString, unpackString)),
@@ -85,8 +86,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
   result into the theory table -- before the slot is written, so a table
   write that fails leaves no state the framework does not know of*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
-  Remote_Procedure_Calling.mk_callback {
-    name = "TAT.Theory.end",
+  {name = "TAT.Theory.end",
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackPair (#slot_unpacker env, #slot_unpacker env),
     ret_schema = packList packString,

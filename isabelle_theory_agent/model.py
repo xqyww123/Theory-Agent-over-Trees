@@ -191,16 +191,16 @@ class Evaluation:
         self.destination = destination
         self.ignore_error = ignore_error
         self._released: set[str] = set()
-        self.releases = 0                    # how many, over every flush: the `walk_ended` record's
+        self.releases = 0                    # the slots deleted over every flush: the `walk_ended` record's
         self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
 
     def release(self, slot: Isar_State_Slot) -> None:
         self._released.add(slot.name)
-        self.releases += 1
 
     async def flush(self, conversation: Conversation) -> None:
         if self._released:
             await isabelle_driver.state_delete(conversation, sorted(self._released))
+            self.releases += len(self._released)
             self._released.clear()
 
 
@@ -402,18 +402,10 @@ class Node(ABC):
         forest = self.forest()
         forest.conversation.seen.discard((self.identity, operation))
         ev.stored.add(self)
+        kind, messages = _status_to_store(new)
         forest.conversation.log.evaluation.operation(
-            node=forest.id_of(self), operation=operation or "own", ran=duration is not None,
-            status=_STATUS_KINDS[type(new)],
-            messages=([m.unicode for m in getattr(new, "messages", ())]
-                      if duration is not None else None),
-            duration=duration)
-
-    def _stopped(self, reason: str) -> None:
-        """The walk stopped at this node (LOGGING.md §4): `command_failed`,
-        `order_constraint` or `import_without_theory`."""
-        forest = self.forest()
-        forest.conversation.log.evaluation.stopped(node=forest.id_of(self), reason=reason)
+            node=forest.full_id(self), operation=operation or "own", ran=duration is not None,
+            status=kind, messages=messages if duration is not None else None, duration=duration)
 
     def id_component(self) -> Id_Component:
         """The node's one component of an id, `<kind>_<name>`
@@ -719,7 +711,6 @@ class Leaf(Node):
                 self._set_status(ev, status, duration)
             if not isinstance(self._status, Ready) and not ev.ignore_error:
                 stop = self
-                self._stopped("command_failed")
             return EvaluationResult(stop, self._mode_after(ev, mode, stop, ran))
         if isinstance(mode, Seeking):
             return EvaluationResult(None, mode)
@@ -985,7 +976,6 @@ class StdBlock(NonLeaf_Node):
             stop = None                                   # an ending that failed stays a stop until edited
             if not isinstance(self.evaluation_status_ending, Ready) and not ev.ignore_error:
                 stop = self
-                self._stopped("command_failed")
             return EvaluationResult(stop, self._mode_after(ev, mode, stop, ended))
 
         # Not running here: blocked, past the destination, or seeking.  A
@@ -1380,6 +1370,14 @@ class Forest(Unchained_Node):
             raise NodeNotFound(id, near)
         raise AmbiguousId(id, [self.id_of(m) for m in matches])
 
+    def full_id(self, node: Node) -> Id:
+        """The full id (MCP_SPECIFICATION §2): the components of the node's
+        ancestors and its own, dotted; `Sessions` for the root.  Linear in
+        the node's depth, so the one the log's records use."""
+        if node is self:
+            return "Sessions"
+        return ".".join(c.id_component() for c in self._chain(node))
+
     def id_of(self, node: Node) -> Id:
         """The shortest form: starting from the full id, repeatedly delete —
         among the output-omissible components whose deletion still resolves
@@ -1470,14 +1468,14 @@ class Forest(Unchained_Node):
         evaluating walk, whose trees each did their own (`_handle_tree`)."""
         assert self.lock.locked(), "a walk runs under the forest lock"
         log = self.conversation.log.evaluation
-        log.walk_started(destination=None if ev.destination is None else self.id_of(ev.destination),
+        log.walk_started(destination=None if ev.destination is None else self.full_id(ev.destination),
                          ignore_error=ev.ignore_error, checks=None)
         started = time.monotonic()
         r = await self._evaluate(ev, mode)
         if store:
             self._store_written(ev)
         await ev.flush(self.conversation)
-        log.walk_ended(outcome="continue" if r.stopped_at is None else self.id_of(r.stopped_at),
+        log.walk_ended(outcome="continue" if r.stopped_at is None else self.full_id(r.stopped_at),
                        slots_released=ev.releases, duration=time.monotonic() - started)
         return r
 
@@ -1610,10 +1608,11 @@ class Forest(Unchained_Node):
         `Evaluation`, flushed here, so a slot released for one tree is gone
         before a later tree of the walk could write it."""
         own = Evaluation(ev.destination, ev.ignore_error)
+        reason: Literal["command_failed", "order_constraint", "import_without_theory"]
         if self._order_violation(tree) is not None:
             await self._invalidate_trees(own, [tree])
             stop: Node | None = tree                      # reported whatever ignore_error says
-            tree._stopped("order_constraint")
+            reason = "order_constraint"
         else:
             # both operations: after a failed header the ending is ready with no theory value
             missing = next((i for i in self._resolved_imports(tree)
@@ -1621,10 +1620,14 @@ class Forest(Unchained_Node):
             if missing is not None:
                 await self._invalidate_trees(own, [tree])
                 stop = None if ev.ignore_error else missing
-                if stop is not None:
-                    stop._stopped("import_without_theory")
+                reason = "import_without_theory"
             else:
                 stop = (await tree._evaluate(own, Evaluating())).stopped_at
+                reason = "command_failed"
+        if stop is not None:                              # the one place a stop is recorded (LOGGING.md §4)
+            self.conversation.log.evaluation.stopped(
+                node=self.full_id(stop), reason=reason,
+                tree=self.full_id(tree) if reason == "import_without_theory" else None)
         self._store_written(own)
         await own.flush(self.conversation)
         ev.releases += own.releases

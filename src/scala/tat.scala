@@ -142,6 +142,73 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 
 
 
+  /** the log (docs/LOGGING.md §7) **/
+
+  /* Following a conversation's log directory: the path printed once the
+     Isabelle side names it, every `warning` record printed as it is written
+     -- a line that is not JSON skipped (LOGGING.md §6) -- and what is left
+     read at the end.  A later directory, after TAT.reset, is followed once
+     the previous one is drained.  Shared with TAT_compile (COMPILATION.md §5). */
+
+  class Log_Follower(progress: Progress) {
+    // the directory, and how far into each of its files the follower has read
+    private val state = Synchronized[Option[(Path, Map[String, Long])]](None)
+    private val running = Synchronized(true)
+
+    private def warning(file: String, line: String): Unit =
+      Exn.capture(JSON.parse(line)) match {
+        case Exn.Res(record) if JSON.string(record, "level").contains("warning") =>
+          val message = JSON.value(record, "data").flatMap(JSON.string(_, "message")).getOrElse("")
+          val time = JSON.string(record, "ts").getOrElse("").dropWhile(_ != 'T').drop(1)
+          progress.echo("### " + message + " (" + file + ", " + time + ")")
+        case _ =>
+      }
+
+    // the complete lines each file gained; an incomplete last line waits,
+    // and so does a file that cannot be read now -- the log is nothing the
+    // launcher may fail over
+    private def read(dir: Path, offsets: Map[String, Long]): Map[String, Long] =
+      if (!dir.is_dir) offsets
+      else {
+        File.read_dir(dir).filter(_.endsWith(".jsonl")).foldLeft(offsets) { (offsets, name) =>
+          val path = dir + Path.basic(name)
+          val offset = offsets.getOrElse(name, 0L)
+          Exn.capture(if (path.is_file) Bytes.read_file(path, offset).text else "") match {
+            case Exn.Res(text) =>
+              val cut = text.lastIndexOf('\n')
+              if (cut < 0) offsets
+              else {
+                val complete = text.substring(0, cut + 1)
+                for (line <- Library.split_lines(complete) if line.nonEmpty) warning(name, line)
+                offsets + (name -> (offset + Bytes(complete).size))
+              }
+            case Exn.Exn(_) => offsets
+          }
+        }
+      }
+
+    private def drained(st: Option[(Path, Map[String, Long])]): Option[(Path, Map[String, Long])] =
+      st.map({ case (dir, offsets) => (dir, read(dir, offsets)) })
+
+    def drain(): Unit = state.change(drained)
+
+    def follow(dir: Path): Unit =
+      state.change({ st =>
+        drained(st)
+        progress.echo("Log: " + dir.implode)
+        Some((dir, Map.empty))
+      })
+
+    Isabelle_Thread.fork(name = "TAT.log_follower", daemon = true) {
+      while (running.value) { drain(); Thread.sleep(200) }
+    }
+
+    // the end: what is left is read now, before the ending's messages
+    def stop(): Unit = { running.change(_ => false); drain() }
+  }
+
+
+
   /** isabelle TAT_mcp **/
 
   val default_port = 8191
@@ -223,6 +290,7 @@ Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
         }
 
         val progress = new Console_Progress()
+        val log = new Log_Follower(progress)
 
         val results =
           progress.interrupt_handler {
@@ -265,6 +333,12 @@ Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
                 }
               finish(rc, messages)
               true
+            }),
+            // the Isabelle side passes the directory the Python side named
+            // (LOGGING.md §7), absolute, as the Python side spelled it
+            "TAT.log_directory" -> ((msg: Prover.Protocol_Output) => {
+              log.follow(Path.explode(XML.Decode.string(Symbol.decode_yxml(msg.text))))
+              true
             }))
         })
 
@@ -291,9 +365,10 @@ Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
               (File.platform_path(dir) :: port.toString :: plugins).map(XML.Encode.string): _*)
 
 
-            /* 5. the ending */
+            /* 5. the ending: the log's last records, then the messages */
 
             val (rc, messages) = finished.guarded_access(st => st.map(x => (x, st)))
+            log.stop()
             messages.foreach(progress.echo_error_message(_))
             session.stop()
             rc

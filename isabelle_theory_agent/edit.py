@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from .exceptions import (
     BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
@@ -31,15 +32,16 @@ from .model import (
 from .plugin import check_construct
 
 
-def _committed(forest: Forest, operation: str, location: Location, *,
+def _committed(forest: Forest, operation: Literal["insert", "amend", "delete", "move"],
+               location: Location, *,
                created: Sequence[Node] = (), removed: Sequence[str] = (),
                moved: Sequence[Node] = (), invalidated: Sequence[Node] = ()) -> None:
     """The `edit` record `committed` (LOGGING.md §4), written after the
     edit's one store; `removed` are ids, taken while the nodes still stood."""
     forest.conversation.log.edit.committed(
-        operation=operation, parent=forest.id_of(location.parent), index=location.index,
-        created=[[forest.id_of(n), n.kind] for n in created], removed=list(removed),
-        moved=[forest.id_of(n) for n in moved], invalidated=[forest.id_of(t) for t in invalidated])
+        operation=operation, parent=forest.full_id(location.parent), index=location.index,
+        created=[[forest.full_id(n), n.kind] for n in created], removed=list(removed),
+        moved=[forest.full_id(n) for n in moved], invalidated=[forest.full_id(t) for t in invalidated])
 
 
 def _gate(hook, *args) -> None:
@@ -107,7 +109,7 @@ async def amend(old: Node, raws: list[RawAST],
     parent = parent_of(old)
     forest = parent.forest()
     before = forest._record()
-    removed = [forest.id_of(old)]
+    removed = [forest.full_id(old)]
     call = Edit_Call(forest, kinds, Amendment(old))
     nodes = await _construct_siblings(parent, raws, "constructs", call, call.role)
     replacement = nodes[0]
@@ -199,7 +201,7 @@ async def delete(node: Node) -> NonLeaf_Node:
         _gate(n.on_deleting, "delete")
     _gate(parent.on_removing_child, node, "insert_or_delete")
     index = node.index_of()
-    removed = [forest.id_of(n) for n in node._tree_order()]
+    removed = [forest.full_id(n) for n in node._tree_order()]
     ev = Evaluation(None, False)
     await parent._carry_forward(index, node, ev)   # the one remote step, before any pointer moves
     for s in node._states_inside():   # released with the walk's: one round trip

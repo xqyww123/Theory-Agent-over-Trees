@@ -362,7 +362,7 @@ then one section per predefined node class, each a client of §2.5.
 | --- | --- |
 | `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
-| `Theorem` | `TAT.Theorem.evaluate`: the statement admitted, one direct-ML transition on the input slot's state, no `run_commands`; `TAT.Theorem.check`: the proof check — a goal built in ML and `eval_prf_str`, no Toplevel transition — forked through §2.4's `fork_job` (THEOREM.md §7) |
+| `Theorem` | `TAT.Theorem.evaluate`: the statement opened and admitted, two direct-ML transitions on the input slot's state, the first's result into the node's `goal_state` slot, the second's into the resulting slot, no `run_commands` (THEOREM.md §6); `TAT.Theorem.construct`: the proof construction — AoA's `hammer_or_AoA` on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Theorem.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way (THEOREM.md §7) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
@@ -593,7 +593,15 @@ each a round trip; nothing about the table is mirrored on
 the Python side. Persistence keeps neither the name nor the connection: a
 loaded forest is reassigned its slots.
 
-Every node holds one, `state`, the state before it. The state after it,
+Every node holds one, `state`, the state before it; a class may declare,
+in the class attribute `owned_slots` (a tuple of names, empty by
+default), further slots the node owns — `Theorem`'s `goal_state`
+(THEOREM.md §6) — which the framework mints with
+`state` on construction and on load, sets as the node's attributes of
+those names, releases with the operation's resulting state in every
+setter that takes an operation from written to unwritten, and deletes
+with the node; only the class's evaluation callback writes them. The
+state after it,
 `resulting_state()`, is computed, as in AoA
 (`contrib/Isa-Mini/IsaMini/AoA/model.py`'s `Node.resulting_state`): under a chaining parent it
 asks the parent, which answers with the next sibling's `state`, or with the
@@ -620,8 +628,9 @@ answers — every operation of the node and of its subtree `Ready`, and
 (ARCHITECTURE §3.2, CONSTRUCT_INTERACTION §3.1); a class may override
 `_unfinished()` and never `is_finished()`, and the loader refuses one
 that does (PLUGIN_SYSTEM §5). Every status write goes through one setter per
-operation, which releases the operation's resulting state when the status
-goes from written to unwritten — never on a rewrite; a loaded forest's
+operation, which releases the operation's resulting state, and the slots
+the node's class declared (above), when the status goes from written to
+unwritten — never on a rewrite; a loaded forest's
 instant statuses are all `NOT_EVALUATED`, its stored ones what the last
 run left. Each setter writes the instant status
 and its stored status, and is a plain method (COMPILATION.md §4); it also
@@ -682,6 +691,10 @@ the same `Evaluation` (the invalidation functions, below).
   reads; `file_path()`, `<Session name>/<short name>.thy`, which the
   header's `master_dir`, the compile and the compile hooks share; and
   `import_sessions`, recorded when the header runs (COMPILATION.md §2).
+  Before its header runs it makes its `Session`'s folder when that is
+  absent, with the function the compile uses (COMPILATION.md §4), so
+  that AoA's proof store beside the file has a directory to be written
+  in (THEOREM.md §7).
 - `Forest(Unchained_Node)` — the root above every `Session`. Holds the
   lock, the store (ARCHITECTURE §4.1) and the `Conversation`; resolves ids
   and prints their shortest form; and, in the walk, keeps the import graph
@@ -1189,10 +1202,12 @@ that no `PreToolUse` announced (CONSTRUCT_INTERACTION §8), when the
 subclass refuses a session or an agent with a `TAT_StartupError` — the
 client's version or name, Codex's sandbox, an agent with no transcript
 (below) — when `launch_TAT` finds the connection gone, the connection
-going ending its RPC call, or at the context's exit, for whatever escapes
-the start or a compile once the log exists, a `TAT_StartupError`
-included; whichever door is reached first enters it, and `end` writes the
-`ending` record there (LOGGING.md §4). The external manager's SIGTERM
+going ending its RPC call, at the server's exit, for whatever escapes the
+third layer, so that the server stops only after the ending's calls are
+answered, or at the context's exit, for whatever else escapes the start
+or a compile once the log exists, a `TAT_StartupError` included;
+whichever door is reached first enters it, and `end` writes the `ending`
+record there (LOGGING.md §4). The external manager's SIGTERM
 ends the launcher and the Isabelle process with it (ARCHITECTURE §9):
 under an RPC host started elsewhere it arrives through the connection's
 door; the host the Isabelle process started exits with that process, and

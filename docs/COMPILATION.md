@@ -248,9 +248,11 @@ directory, a file for instance: the folder is a directory or absent.
 The consequence to know: a
 `.thy` anyone else puts under the working directory — the agent's client
 runs there (CLIENT_HOOKS.md) — is gone at the next compile. Files of
-other kinds are never touched by the framework; a plugin's compile hook
-handles its own, AoA's `<Theory>.proof-store` beside the `.thy` being
-the first case (§5).
+other kinds a compile never touches; a plugin's compile hook handles
+its own, AoA's `<Theory>.proof-store` beside the `.thy` being the first
+case (§5): that store appears during the conversation, written by a
+`Theorem`'s construction through AoA (THEOREM.md §7), and a compile
+leaves it where it is.
 
 **The report and the exit code.** The command prints one line per tree,
 in tree order, with the messages of the operation that refused, then the
@@ -698,9 +700,9 @@ keeps beside a theory's file: today, to remove each `<T>.proof-store`
 and `<T>.proof-store.*` the path listing yields whose `<folder>/<T>.thy` is
 no tree's file path — the lock file `with_file_lock` creates and never
 removes, a temporary file a killed process left — without which the
-folder never empties; later, when the AoA round is designed
-(CONSTRUCT_INTERACTION §10), to write the stores from the proofs the
-forest holds, so that a build's `by aoa` replays them.
+folder never empties. The stores themselves are written during the
+conversation, by the constructions' AoA calls (THEOREM.md §7), not by
+the hook; a build's `by aoa` replays them.
 
 **`toplevel.py`**: a second procedure beside `launch_TAT`.
 

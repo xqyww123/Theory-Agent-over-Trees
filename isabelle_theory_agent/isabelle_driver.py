@@ -18,6 +18,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from Isabelle_RPC_Host import Connection, IsabelleError
@@ -80,19 +81,18 @@ async def _call(conn: Connection, name: str, args: Any, log: Log | None) -> Any:
     the trip completes, whether or not the caller still waits.  `reset`
     alone passes no log: it runs before any `Conversation` exists."""
     trip = asyncio.ensure_future(conn.callback(name, args))
-    trip.add_done_callback(partial(_completed, log, name, args, time.monotonic()))
+    trip.add_done_callback(partial(_trip_done, log, name, args, time.monotonic()))
     try:
         return await asyncio.shield(trip)
     except IsabelleError as e:
-        raise TAT_IsabelleError(
-            f"the ML callback {name} failed:\n" + "\n".join(e.errors)) from e
+        raise TAT_IsabelleError(f"the ML callback {name} failed:\n{_text(e)}") from e
 
 
-def _completed(log: Log | None, name: str, args: Any, started: float,
+def _trip_done(log: Log | None, name: str, args: Any, started: float,
                trip: asyncio.Future[Any]) -> None:
     """The trip's outcome, read here so asyncio does not report an
-    abandoned round trip's exception as unhandled, and recorded:
-    `round_trip`, or `connection_lost` when the wire went (LOGGING.md §4)."""
+    abandoned round trip's exception as unhandled, and recorded as
+    `round_trip` with the result or the error (LOGGING.md §4)."""
     if trip.cancelled():
         return
     exn = trip.exception()
@@ -101,15 +101,14 @@ def _completed(log: Log | None, name: str, args: Any, started: float,
     duration = time.monotonic() - started
     if exn is None:
         log.round_trip.round_trip(name=name, arguments=args, result=trip.result(), duration=duration)
-    elif isinstance(exn, ConnectionError):
-        log.round_trip.connection_lost(error=_text(exn))
     else:
         log.round_trip.round_trip(name=name, arguments=args, error=_text(exn), duration=duration)
 
 
 def _text(exn: BaseException) -> str:
-    """An error as the log carries it: an `IsabelleError`'s messages, one
-    per line; anything else with its class."""
+    """An error's text as the log and `TAT_IsabelleError` carry it: an
+    `IsabelleError`'s messages, one per line; anything else with its
+    class."""
     if isinstance(exn, IsabelleError):
         return "\n".join(exn.errors)
     return f"{type(exn).__name__}: {exn}"
@@ -136,6 +135,13 @@ async def theory_delete(conversation: Conversation, names: list[str]) -> None:
     (MODULE_STRUCTURE §2.2), in one round trip.  A name that is not there
     is not an error."""
     await call(conversation, "TAT.theory_delete", names)
+
+
+async def log_directory(conversation: Conversation, directory: Path) -> None:
+    """Name the conversation's log directory to the Isabelle side, which
+    appends its own records there and tells the launcher (LOGGING.md §5,
+    §7); the one framework callback a compile makes too."""
+    await call(conversation, "TAT.log_directory", str(directory.absolute()))
 
 
 async def reset(conn: Connection) -> None:

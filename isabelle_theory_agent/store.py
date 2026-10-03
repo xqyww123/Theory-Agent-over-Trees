@@ -97,8 +97,9 @@ class Forest_Store:
                 f"TAT needs SQLite {'.'.join(map(str, SQLITE_MINIMUM))} or newer;"
                 f" this Python links {sqlite3.sqlite_version}")
         self._log = log
-        self._written: list[tuple[int, str]] = []     # the open transaction's rows
-        self._deleted: list[int] = []                 # and the nodes it deleted
+        # the open transaction's net effect: a node's fields written, or
+        # None once it was deleted — what the `transaction` record says
+        self._changed: dict[int, list[str] | None] = {}
         try:
             # autocommit mode: the only transactions are the explicit ones below
             self._conn = sqlite3.connect(path, isolation_level=None, check_same_thread=True)
@@ -149,7 +150,7 @@ class Forest_Store:
         suite's fake driver asserts it at every round trip."""
         if self._conn.in_transaction:
             raise TAT_InternalError("Forest_Store: a transaction is already open")
-        self._written, self._deleted = [], []
+        self._changed = {}
         started = time.monotonic()
         try:
             with self._transaction():
@@ -158,8 +159,11 @@ class Forest_Store:
             message = f"Forest_Store: a write operation failed after its commit in memory: {e}"
             self._log.store.transaction_failed(message=message)
             raise TAT_DisasterError(message) from e
-        self._log.store.transaction(rows_written=self._written, nodes_deleted=self._deleted,
-                                    duration=time.monotonic() - started)
+        self._log.store.transaction(
+            rows_written=[[node, field] for node, fields in self._changed.items()
+                          if fields is not None for field in fields],
+            nodes_deleted=[node for node, fields in self._changed.items() if fields is None],
+            duration=time.monotonic() - started)
 
     @contextmanager
     def _transaction(self) -> Generator[None]:
@@ -194,7 +198,11 @@ class Forest_Store:
                 (node, field, blob))
         except sqlite3.IntegrityError as e:     # STRICT: a node or field of the wrong type
             raise TAT_InternalError(f"Forest_Store: field `{field}` of node {node}: {e}") from e
-        self._written.append((node, field))
+        fields = self._changed.get(node)
+        if fields is None:                      # the node's first row, or its first after a delete
+            self._changed[node] = fields = []
+        if field not in fields:
+            fields.append(field)
 
     def get(self, node: int, field: str) -> Any:
         """`MissingRow`, a KeyError, when the node has no such field; a stored
@@ -212,7 +220,7 @@ class Forest_Store:
     def delete_node(self, node: int) -> None:
         self._writing()
         self._conn.execute("DELETE FROM fields WHERE node = ?", (node,))
-        self._deleted.append(node)
+        self._changed[node] = None
 
     def nodes(self) -> list[int]:
         return [node for (node,) in self._conn.execute(

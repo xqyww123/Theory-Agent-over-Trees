@@ -1059,10 +1059,14 @@ module of the plan gained its assertion on the records. The shapes:
   included; a call arriving during the ending gets `while_ending` alone,
   no `call`). `messages=[]` and `trailer=None` until the mailbox exists
   (the jobs session fills them). `current_agent` and `current_call` are
-  NOT set at the boundary: the design's `call` is the announcement's
-  `tool_use_id`, known only once `agent_of_call` matches the
-  announcement — the jobs session sets both there (the plan's step 4
-  sentence corrected).
+  NOT set at the boundary, because both are the client subclasses'
+  knowledge (the jobs session's): the call's id comes from the call's own
+  `_meta`, under each client's key, and the agent on Claude Code from the
+  announcement `agent_of_call` matched; the subclass sets `current_call`
+  at the top of the handler and `current_agent` before `tool.call` is
+  written, and resets neither in the body's `finally` (the review's
+  boundary-4; an earlier version of this line said the call id was known
+  only once the announcement matched, which was wrong).
 - The setters take `duration: float | None` as a third positional
   argument; `Node._stored(ev, index, new, duration)` writes `operation`
   with `node=forest.id_of(node)`, `operation` one of `own`, `beginning`,
@@ -1090,3 +1094,156 @@ module of the plan gained its assertion on the records. The shapes:
 - The compilation session [9779f8] began its rewrite of the walk, the
   setters, the commit blocks and the store the same day; told the exact
   places of every record so its rewrite carries them.
+
+Steps 3–4 committed 2026-10-03 as `2e8f6e7` (「提交第 3、4 步」); the
+owner then ordered the adversarial review of steps 1–4 (Workflow,
+challengers → a fresh defender per finding → judge, Opus, xhigh) and
+Batch 2 to start meanwhile, with no fix applied before agreement.
+
+**Batch 2 (steps 5, 6, 8), the Isabelle side and the launcher** —
+written 2026-10-03, uncommitted. Step 7 (`fork_job`) waits for the jobs.
+The shapes:
+
+- `Event_Log.never_raising : (exn -> unit) -> (unit -> unit) -> unit` in
+  `contrib/Performant_Isabelle_ML/library/event_log.ML` (its own
+  repository): the deferred-interrupt, every-failure-captured run that
+  `append_string` did inline, now a function `append_string` calls with
+  `warn_once` and TAT's log with `K ()`. `Event_Log_Test.thy` re-run from
+  source on Pure after the factoring (`isabelle ML_process -l Pure`,
+  `ISABELLE_EVENT_LOG_DIR` set): passes.
+- `TAT_Framework.Log`: a JSON value type and `string_of` (strings
+  escaped per JSON, control characters as `\uXXXX`, reals as six
+  decimals), `timestamp ()` UTC to the microsecond, `datatype state =
+  Held of string list | Writing of Path.T`, `type T = state
+  Synchronized.var`, the process cell `current` (`get_current`, `renew`),
+  `record log {event, level, data}` and `tell log directory` — both
+  through `never_raising`, so neither raises nor reports. `category` is
+  always `isabelle`; no `agent`/`call`.
+- `bug_message` in the signature; `TAT_Common_Nodes.escapes` keeps its
+  own search for a *nested* interrupt (a breakdown inside a `Par_Exn` or
+  an `Exn.EXCEPTIONS`, which `Exn.is_interrupt` alone does not see) —
+  the design's "`is_some (bug_message e) orelse Exn.is_interrupt e`" would
+  have lost it, so the author kept the recursion as `interrupted`.
+- `make_callback : ('a, 'b) callback -> callback'` = the wrapper + `mk_callback`:
+  it captures the log current when the callback begins (so `TAT.reset`'s
+  own `callback` record lands in the conversation it ends), times the
+  function, writes `callback` {name, duration, outcome ∈ returned |
+  raised | interrupted} and `bug` {message, callback} when `bug_message`
+  finds one, and releases the result. `register_callback` stores
+  `make_callback o f`; `framework_callbacks` and the test plugin give
+  records, `mk_callback` appears nowhere else.
+- `Slots.clear`/`Theories.clear` answer how many they cleared; `TAT.reset`
+  writes `reset` {futures_cancelled: 0 until the jobs, slots_cleared,
+  theories_cleared} and then `Log.renew ()`.
+- `Loader.load` writes one `theory_loaded` {name, duration} per theory new
+  in `Thy_Info` after the load, each with the load's whole duration.
+- `TAT.log_directory` (`log_directory`, a value, the one framework
+  callback a compile's command will carry): `Log.tell` then the protocol
+  message `TAT.log_directory` carrying the path as `XML.Encode.string`,
+  the way `TAT.finished` is sent. Python: `isabelle_driver.log_directory(
+  conversation, directory)` sends `str(directory.absolute())`, called in
+  `toplevel.conversation()` right after the `start` record.
+- `tat.scala`: `class Log_Follower(progress)` — a daemon thread draining
+  every 200 ms; `follow(dir)` drains the previous directory, prints `Log:
+  <path>`, starts on the new one; `read` takes each `*.jsonl`'s complete
+  lines from the last offset (an incomplete last line waits), parses each
+  with `JSON.parse`, skips what is not JSON, prints `### <message>
+  (<file>, <time after T>)` for level `warning`; `stop()` drains once
+  more at the ending, before the `TAT.finished` messages. `lib/tat.jar`
+  rebuilt with `isabelle scala_build` (the `no_build` line of
+  `etc/build.props` removed for the build and restored). Lesson: the
+  rebuild overwrote the jar under a running test child, which hung — the
+  jar is rebuilt only with no `isabelle TAT_mcp` of mine running.
+- Tests (test_conversation): the Isabelle side's `callback` records for
+  the probes, `theory_loaded` for `TAT_Lib_Helper`, three `bug` records
+  and `raised` outcomes in the escaping-callback case, `isabelle.jsonl`
+  replaced by a directory with the probes still answering, and the
+  launcher case appending a `warning` record (after a non-JSON line) and
+  polling the child's output for the `Log:` and `###` lines.
+- **An error of the author's, found and fixed the same day:** the
+  replace-all that turned `Remote_Procedure_Calling.mk_callback` into
+  `make_callback` at the seven framework callbacks also hit the one
+  occurrence inside `make_callback`'s own body, so the function called
+  itself; every `isabelle TAT_mcp` then recursed for minutes and died of a
+  segmentation violation (return code 139), with nothing printed. Found by
+  loading cut-down copies of the file through an editor session
+  (isabelle-mcp): the definition compiled, its first application hung.
+  The lesson: a replace-all over a file must be checked against the
+  definition of the name it introduces. The owner approved `isabelle
+  build` for this diagnosis (2026-10-03, 「批准你使用 isabelle build 进行编
+  译」); the `Isabelle_RPC` and `Performant_Isabelle_ML` heaps, outdated
+  by the `event_log.ML` edit, were rebuilt under that approval.
+- A second defect found by the same run: the launcher's follower died —
+  and with it the `TAT.log_directory` handler and the launcher, exit 2 —
+  when a log file could not be read (the test that puts a directory where
+  `isabelle.jsonl` was). `read` now tries each file under `Exn.capture`
+  and keeps its offset on a failure: the log is nothing the launcher may
+  fail over. Jar rebuilt.
+- Verified: the Isabelle-backed suite passes whole (52 cases), the
+  launcher prints `Log: <directory>` for every conversation and the `###`
+  line for an appended `warning` record, and a real `isabelle.jsonl` was
+  read back — `callback` for every run, `bug` for each `Bug`, `reset`
+  followed by `TAT.reset`'s own `callback` record in the old log.
+
+## The code review of steps 1–4 (2026-10-03)
+
+`review/LOGGING_CODE_RULING.md` and `review/LOGGING_CODE_DEBATE.md`:
+7 challengers, 36 findings, a fresh defender each, one judge (Workflow
+`wf_ed0bd73e-b35`, Opus, xhigh). Accepted apart from 28 items the author
+fixes and resubmits, and 6 the owner decided (「1. (a) 2. 赞同你的建议
+3. 赞同 (a) 4–6. 赞同你的建议」), all written:
+
+1. **log-7** — LOGGING §5 and LOGGING_PLAN describe the implemented shape:
+   one attribute per category, `note(message, **fields)` on each.
+2. **start-3** — the server's exit is the one drain: MODULE_STRUCTURE
+   §4.6's doors gain "at the server's exit, for whatever escapes the
+   third layer, so that the server stops only after the ending's calls
+   are answered"; `TAT_Server.__aexit__` enters the ending, stops
+   accepting, waits for the requests in flight and the spawned tasks,
+   then stops; `serve` shrinks (to be coded with the 28).
+3. **elegance-6 + start-6 + elegance-5** — `ended` carries only how long
+   the unwinding took (LOGGING §4); the counts and `_calls_cancelled` go.
+4. **elegance-13 + driver-1** — `connection_lost` folded into
+   `round_trip`: one record per trip, the connection error as its error
+   (LOGGING §4, §5; the plan's step 3).
+5. **funnels-6** — `stopped` gains, for `import_without_theory`, the
+   importing tree that was not run (LOGGING §4): an optional `tree`
+   field, written in `_handle_tree`.
+6. **boundary-1 + elegance-11** — `given_up`'s text "when it produced
+   one" (LOGGING §4): the checkpoint branch always writes `given_up`,
+   `text` absent when the ending answers.
+
+The 28 author items are listed in the ruling. The owner: 「好，你先自行
+修吧，但我没看，不能 endorse，如有必要你需要 run agents 来 verify」, and the
+division approved. Written 2026-10-03 (the suite without Isabelle: 300
+pass, the 18 doc-drift failures unchanged):
+
+- Done: log-1 (`ending`'s `message` is `traceback.format_exception_only`'s
+  one line — for a class outside the builtins it carries the module,
+  `isabelle_theory_agent.exceptions.TAT_InternalError: …`), log-2
+  (`Literal` fields), log-5 (`class_` → `class`, the `_` suffix rule in
+  `_event`), log-6, start-2 (`Ending.unwound()`), start-3 (the drain is
+  `TAT_Server.__aexit__`; `serve` still stops accepting as soon as the
+  loop exits, so a call arriving after `serve` raised is refused at the
+  transport), start-4 (`asyncio.wait({main_loop})` + a test), start-5,
+  start-7 (both tests), driver-2 (`TAT.gone`), driver-4 (`_text` shared),
+  elegance-14's rename (`_trip_done`), funnels-1 (`Forest.full_id`),
+  funnels-3 (`_changed`, net effect; a test), funnels-5 (counted at
+  `flush`), funnels-8 (`_status_to_store`), elegance-3 (`stopped` once in
+  `_handle_tree`, with `tree`), boundary-1/2/3 (`Answer(text, is_error,
+  class_)`, `_run` refuses a non-text), tests-6, the six owner decisions.
+- Done later the same day: log-3 (`baselines.event_tables` reads LOGGING
+  §4; test_log checks the categories, events and levels against it),
+  log-4 (one reader, `stand_ins.records`), tests-7, driver-5
+  (`Probes.conversation`; the stubs' `conn` left where it is a plain
+  name of a stand-in), start-8 (the leaf-exists case, `now` patched),
+  funnels-7 (b), tests-9 (the `committed` assertions for insert, two
+  moves, amend, delete, and `removed` in the children-first delete),
+  boundary-4 (the notes; [682d5e] told). Waiting for [9779f8]'s rewrite:
+  funnels-7 (d), tests-2; handed to it: funnels-2, funnels-4, elegance-8
+  (acknowledged). The suite without Isabelle: 304 pass, the 18 doc-drift
+  failures unchanged; the Isabelle-backed suite: 52 pass.
+- Correction of this record's own lines above: records name nodes by
+  `Forest.full_id`, not `id_of`'s shortest form; `walk_started`'s
+  `destination` is absent today only because edits' invalidations still
+  go through `_run` (funnels-2, [9779f8]'s).

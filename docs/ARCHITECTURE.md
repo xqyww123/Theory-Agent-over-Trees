@@ -114,7 +114,10 @@ context that state holds (THEOREM.md §6).
 No proof structure enters a tree. Every proof is emitted as the `aoa` proof
 method — Sledgehammer first, falling back to the AoA proof agent when it
 times out; while a node has no proof, or its stored check is not
-`PASSED`, it emits `sorry` instead (§2.2). A `Theorem` node carries what is claimed,
+`PASSED`, it emits `sorry` instead (§2.2). A build of the emitted file
+finds the proof in the theory's proof store, `<short name>.proof-store`
+beside the file, where the node's construction recorded it (THEOREM.md
+§5, §7), so `by aoa` there replays and searches nothing. A `Theorem` node carries what is claimed,
 never a proof subtree; the proof its construction job found is that job's
 product — the method text AoA writes to its proof store, such as `(simp
 add: …)` or `aoa_replay "…"` (§3.6, THEOREM.md §1) — which the framework
@@ -196,7 +199,10 @@ submits the commands.
 Every node owns one **state slot**: a name standing for the `Toplevel.state` the
 node starts from. The name belongs to the node for as long as the node exists,
 and re-evaluating the node writes that same name again. The Python side never
-holds a state, only a name.
+holds a state, only a name. A class may own further slots beside the
+node's own — declared on the class, minted, released and reassigned on
+load with it (MODULE_STRUCTURE §4.1); `Theorem`'s `goal_state`, the
+state in which its goal stands open (THEOREM.md §6), is the one so far.
 
 A node's resulting state is the slot of its next sibling, or, for a last child,
 the slot its parent keeps for the position after all its children. The
@@ -904,8 +910,8 @@ synchronous step under no lock, atomic against every call on the one
 event loop. Under `checks: "blocking"` an `evaluate_to` keeps the lock
 after its walk until every evaluation job running on a node it passed
 has ended. The ending cancels every construction job and drops every
-evaluation job. How `Theorem`'s construction job drives AoA is the AoA
-round's (CONSTRUCT_INTERACTION §10).
+evaluation job. `Theorem`'s construction job drives AoA through its ML
+callback on the state its evaluation recorded (THEOREM.md §7).
 
 What the framework contributes to such work is thread safety where it can
 reach shared state: the state slot table and the theory table are locked,

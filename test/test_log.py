@@ -8,14 +8,14 @@ Run: python -m pytest test/test_log.py
 import asyncio
 import contextvars
 import inspect
-import json
 import logging
 import re
 from pathlib import Path
 
 import pytest
 
-from isabelle_theory_agent import log as L
+import stand_ins
+from baselines import DOCS, event_tables
 from isabelle_theory_agent.isabelle_driver import IsaTerm
 from isabelle_theory_agent.log import Log, current_agent, current_call
 
@@ -29,11 +29,7 @@ def log(tmp_path):
 
 
 def records(directory: Path, category: str) -> list[dict]:
-    """The file's records, each line parsed on its own (§6)."""
-    path = directory / f"{category}.jsonl"
-    if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_bytes().split(b"\n") if line]
+    return stand_ins.records(category, directory)       # the suite's one reader of a log file
 
 
 def only(directory: Path, category: str) -> dict:
@@ -62,48 +58,37 @@ def sample_arguments(signature: inspect.Signature) -> dict:
     return arguments
 
 
+# The Python side's categories and events, read from LOGGING §4's tables
+TABLES = {category: table for category, table in event_tables(DOCS / "LOGGING.md", "4.").items()
+          if category != "isabelle"}
+
+
 def test_every_event_method_writes_one_record_into_its_category(log, tmp_path):
-    """The method's name is the event, its category's name the file, its
-    fields the record's `data`; `ts` in the documented form; no agent and
-    no call outside any context."""
-    categories = ["conversation", "tool", "hook", "agent", "edit", "evaluation", "job",
-                  "round_trip", "store"]
+    """The categories and their events are exactly LOGGING §4's tables, each
+    method declared at the table's level; the method's name is the event,
+    its category's name the file, its fields the record's `data`; `ts` in
+    the documented form; no agent and no call outside any context."""
     assert sorted(f.name for f in Path(tmp_path).iterdir()) == []
-    counted = 0
-    for category in categories:
+    assert TABLES["conversation"]["ending"] == "info or error"     # the one method with a body
+    for category, table in TABLES.items():
         attribute = getattr(log, category)
-        for event, signature in event_methods(attribute):
+        declared = event_methods(attribute)
+        assert {event for event, _ in declared} | ({"ending"} if category == "conversation"
+                                                   else set()) == set(table), category
+        for event, signature in declared:
             arguments = sample_arguments(signature)
             getattr(attribute, event)(**arguments)
-            counted += 1
             record = records(tmp_path, category)[-1]
             assert record["category"] == category
             assert record["event"] == event
-            assert record["level"] in ("debug", "info", "warning", "error")
+            assert record["level"] == table[event], event
             assert TS.match(record["ts"])
             assert "agent" not in record and "call" not in record
-            assert record["data"] == arguments, event
+            # a parameter `class_` is the field `class`
+            assert record["data"] == {name.removesuffix("_"): value for name, value in arguments.items()}
             assert list(record) == ["ts", "category", "event", "level", "data"]
-        assert len(records(tmp_path, category)) == len(event_methods(attribute))
-    assert counted == 45                       # the Python side's named events, `ending` apart
-    assert sorted(f.name for f in Path(tmp_path).iterdir()) == sorted(f"{c}.jsonl" for c in categories)
-
-
-def test_the_levels_are_the_tables(log):
-    """The level each event is declared with, against LOGGING §4."""
-    def level(category, event):
-        getattr(getattr(log, category), event)(**sample_arguments(
-            inspect.signature(getattr(getattr(log, category), event))))
-        return records(log.directory, category)[-1]["level"]
-    assert level("conversation", "client_refused") == "error"
-    assert level("tool", "unannounced") == "error"
-    assert level("agent", "check_failed") == "error"
-    assert level("agent", "left_with_jobs") == "error"
-    assert level("store", "transaction_failed") == "error"
-    assert level("agent", "transcript_read") == "debug"
-    assert level("agent", "seen") == "debug"
-    assert level("tool", "call") == "info"
-    assert level("conversation", "start") == "info"
+        assert len(records(tmp_path, category)) == len(declared)
+    assert sorted(f.name for f in Path(tmp_path).iterdir()) == sorted(f"{c}.jsonl" for c in TABLES)
 
 
 def test_a_field_whose_value_is_none_is_absent(log):
@@ -171,11 +156,32 @@ def test_ending_takes_the_exception_and_the_level(log, caplog):
     gone_record, bug_record = records(log.directory, "conversation")
     assert gone_record["level"] == "info"
     assert gone_record["data"]["class"] == "ConnectionResetError"
-    assert gone_record["data"]["message"] == "peer closed"
+    assert gone_record["data"]["message"] == "ConnectionResetError: peer closed"
     assert "Traceback (most recent call last)" in gone_record["data"]["traceback"]
     assert bug_record["level"] == "error"
     assert "raise RuntimeError" in bug_record["data"]["traceback"]
-    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [(logging.ERROR, "a bug")]
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [(logging.ERROR, "RuntimeError: a bug")]
+
+
+def test_ending_survives_an_exception_whose_str_fails_and_names_a_bare_one(log, caplog):
+    """`message` is Python's one-line form: never empty, never raising."""
+    class Unspeakable(Exception):
+        def __str__(self):
+            raise RuntimeError("no words")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        log.conversation.ending(Unspeakable(), level="error")
+        log.conversation.ending(AssertionError(), level="error")
+    unspeakable, bare = (r["data"]["message"] for r in records(log.directory, "conversation"))
+    # the one-line form names a class outside the builtins by its module
+    assert unspeakable == f"{__name__}.{Unspeakable.__qualname__}: <exception str() failed>"
+    assert bare == "AssertionError"
+    assert [r.getMessage() for r in caplog.records] == [unspeakable, bare]
+
+
+def test_the_field_class_is_written_from_the_parameter_class_(log):
+    log.tool.result(tool="edit", is_error=True, text="refused", messages=[], trailer=None,
+                    class_="NodeNotFound", duration=0.1)
+    assert only(log.directory, "tool")["data"]["class"] == "NodeNotFound"
 
 
 def test_a_warning_or_error_record_is_also_sent_to_the_logger(log, caplog):
@@ -239,9 +245,3 @@ def test_a_file_that_cannot_be_opened_is_reported_once_and_later_failures_are_si
                         "Is a directory. Later failures are not reported."),
         (logging.ERROR, "disk full")]
     assert only(log.directory, "tool")["data"] == {"tool": "print", "arguments": {}}
-
-
-def test_now_is_the_documented_form():
-    ts = L.now()
-    assert TS.match(ts)
-    assert re.match(r"^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{6}Z$", ts.replace(":", "-"))
