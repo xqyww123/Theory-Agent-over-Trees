@@ -2,7 +2,7 @@
     Author:     Qiyuan Xu
 
 The launcher (docs/MODULE_STRUCTURE.md §5): the Isabelle tools TAT_new and
-TAT.  Both run in the JVM that `isabelle` starts.
+TAT_mcp.  Both run in the JVM that `isabelle` starts.
 */
 
 package isabelle.tat
@@ -118,7 +118,7 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
                  Example: -P My_Nodes.Locale_Node
 
   Create WORKING_DIRECTORY for TAT. Afterwards, you can start TAT on it
-  with: isabelle TAT WORKING_DIRECTORY
+  with: isabelle TAT_mcp WORKING_DIRECTORY
 """,
           "P:" -> (arg => plugins += arg))
 
@@ -142,14 +142,14 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 
 
 
-  /** isabelle TAT **/
+  /** isabelle TAT_mcp **/
 
   val default_port = 8191
 
   val boot: Path = Path.explode("$TAT_HOME/ML/TAT_Boot.ML")
 
-  val tat_tool: Isabelle_Tool =
-    Isabelle_Tool("TAT", "start a TAT conversation", Scala_Project.here,
+  val tat_mcp_tool: Isabelle_Tool =
+    Isabelle_Tool("TAT_mcp", "start a TAT conversation", Scala_Project.here,
       { args =>
         val dirs = new mutable.ListBuffer[Path]
         var logic = Isabelle_System.default_logic()
@@ -157,7 +157,7 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
         var port = default_port
 
         val getopts = Getopts("""
-Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
+Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
 
   Options are:
     -l BASE      the base heap (default: ISABELLE_LOGIC=""" + quote(logic) + """)
@@ -302,4 +302,4 @@ Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
       })
 }
 
-class TAT_Tools extends Isabelle_Scala_Tools(TAT.tat_new_tool, TAT.tat_tool)
+class TAT_Tools extends Isabelle_Scala_Tools(TAT.tat_new_tool, TAT.tat_mcp_tool)

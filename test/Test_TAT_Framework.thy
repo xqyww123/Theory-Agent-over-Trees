@@ -3,7 +3,7 @@ theory Test_TAT_Framework
 begin
 
 text \<open>The test plugin (ai-artifacts/TEST_HARNESS_PLAN.md §5): the plugin the
-  suite's \<open>isabelle TAT\<close> is started with.  It registers node-class-style
+  suite's \<open>isabelle TAT_mcp\<close> is started with.  It registers node-class-style
   callbacks against the state slot table and the theory pipeline -- the
   \<open>TAT_test.*\<close> probes the Isabelle-backed cases call -- and contributes no
   node class; its Python package is \<open>tat_test_plugin\<close>, named twice below on

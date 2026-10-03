@@ -6,10 +6,9 @@ Running a real header needs Isabelle: test/test_conversation.py.
 Run: python -m pytest test/test_session_theory.py
 """
 
-from pathlib import Path
-
 import pytest
 
+import stand_ins
 import test_model as tm
 from baselines import DOCS, fenced_lines
 from invariants import assert_invariants, assert_store_mirrors
@@ -21,7 +20,9 @@ from isabelle_theory_agent.exceptions import (
     BadSessionNodeParent, BadTheoryNodeParent, DuplicateTheoryShortName,
     InvalidField, InvalidName, ReservedTheoryName, TAT_InternalError)
 from isabelle_theory_agent.model import (
-    CANNOT_EVALUATE, INVALIDATING, NOT_EVALUATED, READY, EvaluationResult, Session, Theory)
+    INVALIDATING, NOT_EVALUATED, EvaluationResult, Session, Theory)
+from isabelle_theory_agent.isabelle_driver import IsaTerm
+from test_model import CANNOT_EVALUATE, READY
 from isabelle_theory_agent.store import Forest_Store
 
 HEAP = {"List": "HOL.List", "Main": "Main"}   # the fake base heap: short name -> long name
@@ -38,25 +39,24 @@ class Fake_Theory(Theory):
     table, as the real one does through `end_theory`."""
     async def _eval_beginning_opr(self):
         tm.TABLE.values[self._state_after_beginning().name] = f"begin {self.name}"
-        return True
+        return READY
     async def _eval_ending_opr(self):
         tm.TABLE.values[self._state_after_ending.name] = f"end {self.name}"
         tm.TABLE.theories.add(self.qualified_name())
-        return True
+        return READY
 
 class Failing_Header_Theory(Fake_Theory):
-    """The header fails: the beginning writes nothing and answers False, as
-    the real one does on a bad import."""
+    """The header fails: the beginning writes nothing and answers a
+    `CannotEvaluate` with the message, as the real one does on a bad
+    import."""
     async def _eval_beginning_opr(self):
-        self.beginning_errors = ["No such file: TAT_Nowhere.thy"]
-        return False
+        return M.CannotEvaluate((IsaTerm.from_isabelle("No such file: TAT_Nowhere.thy"),))
 
 class Failing_End_Theory(Fake_Theory):
-    """`end` fails: the ending writes nothing and answers False; the
-    framework copies the open theory's state through."""
+    """`end` fails: the ending writes nothing and answers a `CannotEvaluate`;
+    the framework copies the open theory's state through."""
     async def _eval_ending_opr(self):
-        self.ending_errors = ["Bad theory ending"]
-        return False
+        return M.CannotEvaluate((IsaTerm.from_isabelle("Bad theory ending"),))
 
 
 KINDS = {"session": Session, "theory": Theory, "fake_theory": Fake_Theory,
@@ -67,7 +67,7 @@ KINDS = {"session": Session, "theory": Theory, "fake_theory": Fake_Theory,
 
 class Forest_Under_Test(M.Forest):
     def __init__(self, conn=CONN, store=None, kinds=KINDS):
-        super().__init__(M.Conversation(conn, Path(".")),
+        super().__init__(stand_ins.conversation(conn),
                          store if store is not None else Forest_Store(":memory:"), kinds)
 
 
@@ -166,6 +166,32 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     assert tm.st(s2.sub_nodes[0]) == (NOT_EVALUATED, NOT_EVALUATED)
 
 
+def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(tmp_path):
+    """COMPILATION.md §4: a rerun stores what it finds; a tree the walk does
+    not enter keeps its stored statuses, messages included."""
+    store = Forest_Store(tmp_path / "TAT.sqlite")
+    f = Forest_Under_Test(store=store)
+    (s,) = insert(f, f, 0, [session(
+        "S", theory("Good", kind="fake_theory"), theory("BadHeader", kind="failing_header_theory"))])
+    good, bad = s.sub_nodes
+    run(good.evaluate_to(False))
+    run(bad.evaluate_to(True))
+    assert tm.st(good) == (READY, READY)
+    assert isinstance(tm.st(bad)[0], M.CannotEvaluate)
+    store.close()
+    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite"))
+    good2, bad2 = f2.sub_nodes[0].sub_nodes
+    assert good2.last_evaluation_statuses() == (READY, READY)
+    beginning = bad2.last_evaluation_statuses()[0]
+    assert isinstance(beginning, M.CannotEvaluate)
+    assert [m.unicode for m in beginning.messages] == ["No such file: TAT_Nowhere.thy"]
+    run(good2.evaluate_to(False))                         # reruns Good alone
+    assert tm.st(good2) == (READY, READY) and good2.last_evaluation_statuses() == (READY, READY)
+    assert tm.st(bad2) == (NOT_EVALUATED, NOT_EVALUATED)   # not entered: instant untouched
+    assert bad2.last_evaluation_statuses()[0] == beginning  # and the stored status kept
+    inv(f2)
+
+
 # --- the unchained container -------------------------------------------------
 
 def test_children_are_not_chained():
@@ -184,7 +210,7 @@ def test_children_are_not_chained():
     assert s._states_inside() == [s.state, x.state, x._state_before_ending, x._state_after_ending,
                                   y.state, a.state, y._state_before_ending, y._state_after_ending]
     # no operation of its own: nothing written, nothing owed, nothing to take or carry
-    assert s._last_status() is NOT_EVALUATED and s._operations_ready()
+    assert s._resulting_status() is NOT_EVALUATED and s._operations_ready()
     assert not s._predecessor_wrote(1) and s._source_before(1) is None
     # no edit around it copies a state: every call so far was a delete of what left
     assert all(c[0] == "delete" for c in tm.TABLE.calls), tm.TABLE.calls
@@ -221,14 +247,15 @@ def test_the_owned_slot_under_each_outcome_of_a_tree():
 
     r = run(bad_end.evaluate_to(False))
     assert r.stopped_at is bad_end                           # an own stop at the ending
-    assert tm.st(bad_end) == (READY, CANNOT_EVALUATE) and bad_end.ending_errors
+    assert tm.st(bad_end)[0] is READY and isinstance(tm.st(bad_end)[1], M.CannotEvaluate)
+    assert tm.st(bad_end)[1].messages
     assert values[bad_end._state_after_ending.name] == "begin BadEnd"   # copied through
     inv(f)
 
     r = run(bad_header.evaluate_to(False))
     assert r == EvaluationResult(None, INVALIDATING)          # not a stop for its successors
-    assert tm.st(bad_header) == (CANNOT_EVALUATE, READY)
-    assert bad_header.beginning_errors and not bad_header.is_finished()
+    assert isinstance(tm.st(bad_header)[0], M.CannotEvaluate) and tm.st(bad_header)[1] is READY
+    assert tm.st(bad_header)[0].messages and not bad_header.is_finished()
     assert bad_header._state_after_ending.name not in values
     inv(f)
 

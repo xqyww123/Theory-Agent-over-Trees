@@ -13,13 +13,24 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | `delete` | Remove a node or a subtree |
 | `move` | Reorder a node within its tree, or move it to another tree or `Session` |
 | `recall` | Read the forest: a node by id, or the whole of it |
-| `construct` | Start a node's own operation, where its class has one |
-| `evaluate_to` | Evaluate everything not yet evaluated, up to a node |
-| `status` | Collect pending messages |
+| `evaluate_to` | Evaluate everything not yet evaluated, up to a node; run the evaluation jobs, or not |
+| `construct` | `Start the construction jobs of nodes, such as proof constructions.` — the titles spliced in at start |
+| `cancel_construct` | `Cancel the running construction jobs of nodes.` |
+| `check_construct` | Wait for the agent's jobs or its messages |
+| `answer` | `Answer the question a construction job asked you` |
 
-`construct` is generic: it dispatches to the node class, and a class without one
-reports that it is not supported. On a `Theorem` it starts the proof search.
-Whether it takes one node or several is undecided (OPEN_QUESTIONS §2).
+The four construct tools (CONSTRUCT_INTERACTION §5) exist only when a
+loaded node class names a construction job class. `construct` and
+`cancel_construct` take a list of node ids, a non-leaf node standing for
+every node under it, and no class arguments; they act on the nodes that
+have a construction job, skip those they cannot act on, and are refused
+only when the call names no node with one (`` `theory_X.section_Basics`
+has nothing to construct. ``). On a `Theorem` `construct` starts the
+proof construction, which asks its questions through `answer` and
+reports through the messages of §5. Both tools, and `edit`, also set
+the nodes' automatic construction (`auto_construct`): while it is on,
+an evaluation that reaches the node starts its construction job when
+the node needs it.
 
 `move` exists because order carries meaning at theory level: a lemma must follow
 everything it uses. Reordering and re-homing declarations is what a tree does
@@ -33,11 +44,12 @@ do.
 
 ### 1.1 `recall`
 
-Reading the forest: a node by id, or, with no id, the whole forest. It
-renders the node in depth (PRINT.md §5) and nothing else; the quickview,
-which ends the results of the tools that change the forest or evaluate
-it, renders the forest around the nodes the call was about. Its document,
-the call included, is RECALL.md.
+Reading the forest: a node by id, rendered in depth, or, with no id, the
+briefing of the whole forest, every node on one line (PRINT.md §5), and
+nothing else; the quickview,
+which closes the body of the results of the tools that change the forest, evaluate it,
+or start or cancel a construction job, renders the forest around the
+nodes the call was about. Its document, the call included, is RECALL.md.
 
 A `recall` of a node that has not been evaluated reports it as such. Reading
 never evaluates: TAT submits the commands, so nothing runs unless TAT asks for
@@ -104,7 +116,10 @@ id the agent **supplies**, and its **drop priority** — which output-omissible
 component goes first when several could go.
 
 `Session`, `Theory` and `Section` are omissible in both directions; their drop
-priorities order them `Section` first, then `Session`, then `Theory` last. A
+priorities order them `Section` first, then `Session`, then `Theory` last. The
+framework's defaults make a class compulsory in both directions with drop
+priority 0; an omissible class declares otherwise, and a leaf, whose
+component ends every id, declares nothing. A
 node class that is omissible on output but compulsory on input would let TAT
 print an id it then refuses to accept; TAT rejects that combination when the
 class is loaded.
@@ -177,7 +192,8 @@ later from what the nodes emit (ARCHITECTURE §4).
 Its argument shape is TOOL_SCHEMAS.md §1: one of four actions, and a list
 of constructs. A construct (ARCHITECTURE §1) is a JSON object whose `kind`
 field selects the node class — a class answers to the kinds its schema
-names, so `Theorem` answers to `lemma`, `theorem` and `corollary` — and
+names, so `Theorem` answers to `lemma`, `theorem`, `corollary` and
+`proposition` — and
 whose other fields are that class's own: the framework enforces their
 mechanical shape from the class's declared schema, and the class's `gen` is
 the authority on their meaning (MODULE_STRUCTURE §4.1). A nesting class
@@ -192,12 +208,15 @@ node's children are inherited, never resupplied: a replacement carrying
 `children` is rejected, as is a leaf replacement when the node has
 children (EXCEPTIONS.md). The node's identity (§2) passes to the
 replacement — a rename is an amend, and results in flight still find the
-node — and a running `construct` on it is cancelled. Which of the node's
-recorded fields survive is its class's judgement, made in `gen` through
-the node it is handed (MODULE_STRUCTURE §4.1): `Theorem` keeps its proof
-when the statement is unchanged, so a rename costs no search.
-Constructs after the first are added after the replacement, so one call
-turns a lemma into a definition and two lemmas.
+node — and a construction job running on it is cancelled, its owner
+told the node was amended (CONSTRUCT_INTERACTION §3.2). Which of the
+node's recorded fields survive is its class's judgement, made in `gen`
+through `config.replaces()` (MODULE_STRUCTURE §4.1): `Theorem` asks for
+the old job's outcome to be carried into the new node's job, as the
+store's image, when `for_any`, `premises` and `conclusion` are unchanged
+(node_classes/THEOREM.md §4), so a rename or a reworded `english` costs
+no search. Constructs after the first are added after the replacement,
+so one call turns a lemma into a definition and two lemmas.
 
 An `edit` is atomic: nothing touches the forest until every construct
 has been built and checked (MODULE_STRUCTURE §4.2), so it applies whole
@@ -206,19 +225,26 @@ and field at fault (EXCEPTIONS.md).
 
 ### 3.2 What follows
 
-Editing a node invalidates that node, everything after it in its tree, and
-every tree that imports that tree (ARCHITECTURE §3.4) — unconditionally.
+Editing a node invalidates that node, everything after it in its tree —
+for a move, also what followed it where it left — and every tree that
+imports either tree (ARCHITECTURE §3.4) — unconditionally.
 Whether the call also evaluates is the agent's choice: `edit` and `move`
-each take a mandatory boolean `evaluate` (TOOL_SCHEMAS.md).
-With it true, the call runs `evaluate_to` on the change's natural
+each take a mandatory boolean `evaluate` (TOOL_SCHEMAS.md); `edit`'s
+optional `auto_construct` turns the new nodes' automatic construction
+on, with or without `evaluate` (CONSTRUCT_INTERACTION §3.3).
+With `evaluate` true, the call runs `evaluate_to` on the change's natural
 destination — the last node the call submitted, in tree order; for a
-`move`, the moved node — with `ignore_error` unset, so the result comes
-back with the call; a nesting node is reached at its ending command
-(ARCHITECTURE §3.5), so a submitted subtree is evaluated whole. With it
-false, nothing is evaluated — only the invalidation walk runs — and the
+`move`, the moved node — with `ignore_error` unset and `checks`
+`"quick"`, so the result comes back with the call and the evaluation jobs
+it started run on in the background, counted in the result's last line
+(CONSTRUCT_INTERACTION §5); a nesting node is reached at its ending
+command (ARCHITECTURE §3.5), so a submitted subtree is evaluated whole.
+With `evaluate`
+false, nothing is evaluated — only the edit's own invalidation runs,
+inside its commit (MODULE_STRUCTURE §4.2) — and the
 quickview shows the new nodes `not evaluated`, for a later
 `evaluate_to`. `delete` takes no such flag: there is nothing new to see,
-and the invalidation walk runs (ARCHITECTURE §3.5). Replacing a nesting node invalidates from its first
+and only the invalidation runs (ARCHITECTURE §3.5). Replacing a nesting node invalidates from its first
 child, since the children come before its own commands in the walk
 (ARCHITECTURE §3.5). Whatever is invalidated and not evaluated is
 reported as such until the agent asks for it. What a successful call
@@ -226,15 +252,32 @@ returns — the `Done` line and the quickview — is TOOL_SCHEMAS.md §4.
 
 ## 4. Evaluation
 
-`evaluate_to(destination, ignore_error)` — the tool; the recursion behind
-it carries one more, internal flag (MODULE_STRUCTURE §4.1) — evaluates
-every node that is not evaluated, in tree order, up to and including the destination — a nesting
-node's whole subtree, so the `Theory` node's id means the whole tree, `end`
-included. It returns when every tree it ran has finished or stopped, naming
-the first stopped node in tree order, which for a blocked tree may lie in
-a tree it imports; `ignore_error` carries on past a stop inside a tree. Where evaluation stops, which stops the flag
-can pass, and why the same node stops every later call until it is edited,
-is ARCHITECTURE §3.3.
+`evaluate_to(node_id, ignore_error, checks)` — the tool, TOOL_SCHEMAS.md
+§5; the recursion behind it is MODULE_STRUCTURE §4.1's — evaluates every
+node that is not evaluated, in
+tree order, up to and including the destination — a nesting node's whole
+subtree, so the `Theory` node's id means the whole tree, `end` included.
+It returns when every tree it ran has finished or stopped, naming the
+first stopped node in tree order, which for a blocked tree may lie in a
+tree it imports, and for a destination under a nesting node whose
+beginning failed is that node. `ignore_error` carries on past a stop
+inside a tree; it enters neither a nesting node whose beginning failed
+nor a tree whose import has no theory value, and with it set neither of
+those two is reported — only the order constraint's stop is
+(ARCHITECTURE §3.3).
+Its result opens with `Evaluation reached theory_X.` or `Evaluation
+stopped at definition_f.` (TOOL_SCHEMAS.md §4, RENDER_BASELINES §6), the
+order constraint's sentence under a stop of that kind, then the
+quickview. Where evaluation stops, which stops the flag can pass, and
+which later calls the same node stops, is ARCHITECTURE §3.3.
+`checks` says what becomes of the evaluation jobs the walk would start on
+the nodes it passes — a `Theorem`'s proof check, when it holds a proof
+and no stored check (CONSTRUCT_INTERACTION §3.3): `"no"`
+starts none; `"quick"`, the default, starts them and leaves them running
+in the background, the result's last line counting them; `"blocking"`
+starts them and returns only when every evaluation job running on a node
+the walk passed has ended, their failures riding on the same result as
+messages (§5).
 
 Each node renders its own part of the result: what its class chose to report,
 and whether it is `finished` (ARCHITECTURE §3.2).
@@ -245,24 +288,36 @@ Evaluation is synchronous, so a result arrives as the return of the call that
 caused it. The result of a call that holds the forest's lock — `edit`,
 `move`, `delete`, `evaluate_to` — describes the forest as of the moment the
 call released it; another agent's call may have changed it since
-(ARCHITECTURE §9). A read — `recall`, `status`, the future `query` — is
-advertised with MCP's `readOnlyHint`, takes no lock and reads the forest
-in memory, never the database, as it stands
-at that instant: whole (MODULE_STRUCTURE §4.2), and with evaluation
-possibly under way, since an evaluating call changes statuses one node at
-a time. Collecting the pending messages is `status`'s one write, and the
-seen set (PRINT.md §4) is written by every rendering and cleared by
-`POST /on-compaction`, neither taking a lock of its own, rendering being synchronous;
-how the queue is kept whole when several calls are working at once is
-settled with `construct`.
+(ARCHITECTURE §9). A read — `recall`, the future `query` — is advertised
+with MCP's `readOnlyHint`, takes no lock and reads the forest in memory,
+never the database, as it stands at that instant: whole (MODULE_STRUCTURE
+§4.2), and with evaluation possibly under way, since an evaluating call
+changes statuses one node at a time, and a job's settlement lands between
+two of its awaits (CONSTRUCT_INTERACTION §9). The four construct tools
+take no lock either, each synchronous from its checks to its change;
+`check_construct` changes no node and no job and is advertised
+read-only like `recall` — delivering the caller's messages, which every
+tool result does, is no change. The seen
+set (PRINT.md §4) is each agent's, written by every rendering and cleared
+by that agent's compaction, taking no lock of its own, rendering being
+synchronous.
 
-`construct` is the exception: it starts a proof search that outlives the call.
+Two kinds of work outlive a call (CONSTRUCT_INTERACTION §3): a
+construction job — a `Theorem`'s proof construction, started with
+`construct` or automatically by an evaluation, owned by the agent whose
+call started it, which may ask that agent a question — and an evaluation job — a `Theorem`'s proof check, started by
+an evaluation under `checks`, reporting to the agent whose call ran it.
 
 MCP has no channel that reliably delivers a server-initiated message to the
-model, so TAT attaches such messages to tool results: when a search finishes, the
-node's new state rides on the next tool result, whoever's call that is — the
-node's state is the record, the message a notification. `status` returns the
-pending messages on demand, for an agent that wants them before its next edit.
+model, so TAT attaches such messages to tool results: each agent has a
+mailbox, and every tool result of that agent's — whatever the tool —
+carries, after its body and before its trailer, the messages waiting
+there, filtered at delivery so that a cancelled
+or dropped job leaves nothing of its own behind (CONSTRUCT_INTERACTION
+§3.4); the node's state is the record, the message a notification.
+`check_construct` waits for a message or a job's end, so an agent that
+wants them before its next edit calls it; a blocked stop's reason
+(CONSTRUCT_INTERACTION §7) carries no message, only what to call.
 
 ## 6. Undecided
 

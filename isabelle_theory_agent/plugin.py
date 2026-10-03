@@ -35,7 +35,8 @@ from . import model
 from .exceptions import (
     InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
     UnexpectedField)
-from .model import JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, is_valid_name
+from .model import (JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, StdBlock, Unchained_Node,
+                    is_valid_name)
 from .store import FRAMEWORK_FIELDS
 
 
@@ -189,7 +190,9 @@ def _check_class(cls: type[Node]) -> list[str]:
     if _defined_by(cls, "is_finished") is not Node:
         raise _refuse(cls, "overrides `is_finished`; `_owes_nothing` is the override point")
     if _defined_by(cls, "_operations_ready") is not Node:
-        raise _refuse(cls, "overrides `_operations_ready`; `_own_statuses` is the override point")
+        raise _refuse(cls, "overrides `_operations_ready`, which is the framework's")
+    if _defined_by(cls, "_own_statuses") not in (Leaf, StdBlock, Unchained_Node):
+        raise _refuse(cls, "overrides `_own_statuses`; a node's operations are its base class's")
     if _defined_by(cls, "print") is not Node:
         raise _refuse(cls, "overrides `print`; `print_fields` and `mark` are the override points")
     if _defined_by(cls, "_children_to_print") not in (Node, NonLeaf_Node):

@@ -31,13 +31,13 @@ the fake state slot table of `test_model.py` and the forest's real store
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
-from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY, StdBlock
-from test_model import NOT_RUN, Block, CONN, T, shape
+from isabelle_theory_agent.model import NOT_EVALUATED, StdBlock
+from test_model import CANNOT_EVALUATE, NOT_RUN, READY, Block, CONN, T, shape
 
 
 def _current(status, beginning=False):
     if beginning:
-        return status is READY
+        return isinstance(status, M.Ready)
     return M._wrote(status)
 
 
@@ -60,7 +60,7 @@ def assert_invariants(forest, table):
                 assert child.state.name not in values, f"{child}: input written by nobody"
                 if isinstance(child, StdBlock):
                     wrote = (_current(child.evaluation_status_ending)
-                             and child.evaluation_status_beginning is not CANNOT_EVALUATE)
+                             and not isinstance(child.evaluation_status_beginning, M.CannotEvaluate))
                     held = child.resulting_state().name in values
                     assert held == wrote, f"{child}: result held={held}, ending wrote={wrote}"
             continue
@@ -69,12 +69,12 @@ def assert_invariants(forest, table):
                 written = isinstance(parent, StdBlock) and _current(
                     parent.evaluation_status_beginning, beginning=True)
             else:
-                written = _current(parent.sub_nodes[i - 1]._last_status())
+                written = _current(parent.sub_nodes[i - 1]._resulting_status())
             assert (child.state.name in values) == written, \
                 f"{child}: input held={child.state.name in values}, writer current={written}"
         slot = parent._resulting_state_of_all_children()
         if parent.sub_nodes:
-            written = _current(parent.sub_nodes[-1]._last_status())
+            written = _current(parent.sub_nodes[-1]._resulting_status())
         else:
             written = isinstance(parent, StdBlock) and _current(
                 parent.evaluation_status_beginning, beginning=True)
@@ -118,6 +118,12 @@ def assert_invariants(forest, table):
                 f"{tree}: an import has no theory value, yet it holds a status"
     assert table.theories <= {t.qualified_name() for t in trees}, \
         f"the theory table names no current tree: {table.theories}"
+    # At rest the stored status equals the instant one wherever the instant
+    # one is not `not_evaluated` (COMPILATION.md §4).
+    for node in forest._all_nodes():
+        for instant, stored in zip(node._own_statuses(), node.last_evaluation_statuses()):
+            if instant is not NOT_EVALUATED:
+                assert instant == stored, f"{node}: instant {instant!r}, stored {stored!r}"
 
 
 def assert_store_mirrors(forest, kinds, shape=shape):

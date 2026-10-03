@@ -11,13 +11,51 @@ no callback registered under the name — is raised here as
 callback names are the ML side's and are decided nowhere else.
 """
 
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from Isabelle_RPC_Host import Connection, IsabelleError
+from Isabelle_RPC_Host.unicode import ascii_of_unicode, pretty_unicode
 
 from .exceptions import TAT_IsabelleError
+
+
+class IsaTerm:
+    """One piece of Isabelle text in both spellings (THEOREM.md §2):
+    `unicode` as the agent writes and reads it, `ascii` in Isabelle's
+    `\\<name>` form, the only form Isabelle/ML reads.  Built at the two
+    boundaries, `from_agent` and `from_isabelle`; equal when their `ascii`
+    is; `str()` refused — the reader says which spelling it wants."""
+    __slots__ = ("unicode", "ascii")
+
+    def __init__(self, unicode: str, ascii: str):
+        self.unicode = unicode
+        self.ascii = ascii
+
+    @classmethod
+    def from_isabelle(cls, ascii: str) -> IsaTerm:
+        return cls(pretty_unicode(ascii), ascii)
+
+    @classmethod
+    def from_agent(cls, unicode: str) -> IsaTerm:
+        return cls(unicode, ascii_of_unicode(unicode))
+
+    def __str__(self) -> str:
+        raise TypeError("str() on an IsaTerm: read .unicode or .ascii")
+
+    def __repr__(self) -> str:
+        return f"IsaTerm({self.unicode!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, IsaTerm):
+            return self.ascii == other.ascii
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self.ascii)
 
 
 async def call(conn: Connection, name: str, args: Any) -> Any:

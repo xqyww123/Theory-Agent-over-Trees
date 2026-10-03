@@ -237,9 +237,10 @@ class Forest_Store:
         self.close()
 
 
-# The framework's two fields of a node, never a class's: the two rows it
-# writes here, and the two names a construct reserves (the plan's §2).
-FRAMEWORK_FIELDS = ("kind", "children")
+# The framework's fields of a node, never a class's: the rows it writes
+# here, and the names a construct reserves (the plan's §2; the stored
+# statuses, COMPILATION.md §4).
+FRAMEWORK_FIELDS = ("kind", "children", "last_evaluation_statuses")
 
 
 class Node_Rows:

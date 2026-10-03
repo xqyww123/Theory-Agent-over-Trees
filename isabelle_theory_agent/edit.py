@@ -25,9 +25,9 @@ from .exceptions import (
     MalformedRawAST, MoveIntoOwnSubtree, TAT_Error, TAT_InternalError,
     UnexpectedChildren, UnknownKind)
 from .model import (
-    READY, Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
-    NodeConfig, NonLeaf_Node, RawAST, Role, Seeking, StdBlock, _completed, _leaving, _wrote,
-    is_valid_name)
+    Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
+    NodeConfig, NonLeaf_Node, RawAST, Ready, Role, Seeking, StdBlock, _completed, _leaving,
+    _wrote, is_valid_name)
 from .plugin import check_construct
 
 
@@ -71,17 +71,18 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     for node in nodes:
         node.parent = parent
     parent.sub_nodes[index:index] = nodes
-    with forest.store.transaction():
-        for node in nodes:
-            forest._store_subtree(node)
-        forest._store_children(parent)
     for root in nodes:                    # tree order over what entered
         for n in root._tree_order():
             assert n.parent is not None
             _completed(n.parent.on_added_child, n, "insert_or_delete")
             _completed(n.on_inserted)
     await forest._invalidate_changed_trees(ev, before)
-    await forest._run(ev, Seeking(Location(parent, index)))
+    await forest._run(ev, Seeking(Location(parent, index)), store=False)
+    with forest.store.transaction():      # the one store of the edit (MODULE_STRUCTURE §4.2)
+        for node in nodes:
+            forest._store_subtree(node)
+        forest._store_children(parent)
+        forest._store_written_rows(ev)
     return nodes
 
 
@@ -115,10 +116,10 @@ async def amend(old: Node, raws: list[RawAST],
     for s in old._states_inside():
         if s.name not in travelling:
             ev.release(s)
-    if _wrote(old._last_status()):
+    if _wrote(old._resulting_status()):
         ev.release(old.resulting_state())
     if (isinstance(old, StdBlock)
-            and old.evaluation_status_beginning is READY):
+            and isinstance(old.evaluation_status_beginning, Ready)):
         ev.release(old._state_after_beginning())
     index = old.index_of()
     replacement.state = old.state          # its identity is already old's (_construct_element)
@@ -134,14 +135,6 @@ async def amend(old: Node, raws: list[RawAST],
     for node in nodes[1:]:
         node.parent = parent
     parent.sub_nodes[index + 1:index + 1] = nodes[1:]
-    # The replacement's rows replace `old`'s: one identity.  The inherited
-    # children's rows do not change — no row names a parent.
-    with forest.store.transaction():
-        forest._store_node(replacement)
-        for node in nodes[1:]:
-            forest._store_subtree(node)
-        if nodes[1:]:
-            forest._store_children(parent)
     # Completed events (MODULE_STRUCTURE §4.1's order).
     _completed(old.on_deleted, "amend")
     for child in inherited:
@@ -163,7 +156,16 @@ async def amend(old: Node, raws: list[RawAST],
         position = Location(replacement, 0)
     else:
         position = Location(parent, index)
-    await forest._run(ev, Seeking(position))
+    await forest._run(ev, Seeking(position), store=False)
+    # The replacement's rows replace `old`'s: one identity.  The inherited
+    # children's rows do not change — no row names a parent.
+    with forest.store.transaction():      # the one store of the edit (MODULE_STRUCTURE §4.2)
+        forest._store_node(replacement)
+        for node in nodes[1:]:
+            forest._store_subtree(node)
+        if nodes[1:]:
+            forest._store_children(parent)
+        forest._store_written_rows(ev)
     return nodes
 
 
@@ -186,14 +188,15 @@ async def delete(node: Node) -> NonLeaf_Node:
         ev.release(s)
     del parent.sub_nodes[index]
     node.parent = None
-    with forest.store.transaction():
-        for n in node._tree_order():
-            forest.store.delete_node(n.identity)
-        forest._store_children(parent)
     for n in node._children_first():
         _completed(n.on_deleted, "delete")
     await forest._invalidate_changed_trees(ev, before)
-    await forest._run(ev, Seeking(Location(parent, index)))
+    await forest._run(ev, Seeking(Location(parent, index)), store=False)
+    with forest.store.transaction():      # the one store of the edit (MODULE_STRUCTURE §4.2)
+        for n in node._tree_order():
+            forest.store.delete_node(n.identity)
+        forest._store_children(parent)
+        forest._store_written_rows(ev)
     return parent
 
 
@@ -248,10 +251,6 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     del parent.sub_nodes[old_index]
     node.parent = new_parent
     new_parent.sub_nodes.insert(new_index, node)
-    with forest.store.transaction():      # the subtree's own rows do not change
-        forest._store_children(parent)
-        if new_parent is not parent:
-            forest._store_children(new_parent)
     _completed(new_parent.on_added_child, node, "move")
     _completed(node.on_moved, old_location)
     await forest._invalidate_changed_trees(ev, before)
@@ -259,8 +258,13 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     # moved node's — which takes its whole subtree.
     source_position = (Location(parent, successor.index_of()) if successor
                        else Location(parent, len(parent.sub_nodes)))
-    await forest._run(ev, Seeking(source_position))
-    await forest._invalidate_from(new_location)
+    await forest._run(ev, Seeking(source_position), store=False)
+    await forest._invalidate_from(new_location, ev)
+    with forest.store.transaction():      # the one store of the edit (MODULE_STRUCTURE §4.2)
+        forest._store_children(parent)    # the subtree's own rows do not change
+        if new_parent is not parent:
+            forest._store_children(new_parent)
+        forest._store_written_rows(ev)
 
 
 def parent_of(node: Node) -> NonLeaf_Node:

@@ -219,6 +219,7 @@ def test_is_finished_is_the_frameworks():
 def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchronous():
     refused(leaf("Ready", ["ready"], _operations_ready=lambda self: True),
             "overrides `_operations_ready`")
+    refused(leaf("Own", ["own"], _own_statuses=lambda self: []), "overrides `_own_statuses`")
     refused(leaf("Liner", ["liner"], print=lambda self, i, o, m, d: None), "overrides `print`")
 
     async def fields(self, indent, out, mode, depth): ...

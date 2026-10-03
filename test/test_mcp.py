@@ -25,7 +25,8 @@ from isabelle_theory_agent.exceptions import (
     AmbiguousId, HoldsNoChildren, InvalidField, MissingField, MoveBesideItself,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError, TAT_Error, TAT_InternalError,
     UnexpectedField)
-from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY
+from isabelle_theory_agent.model import NOT_EVALUATED
+from test_model import CANNOT_EVALUATE, READY
 
 
 class Block(tm.Block):                  # omissible like a `Theory`, so the tests' ids stay short

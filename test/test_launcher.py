@@ -15,6 +15,7 @@ import threading
 
 import pytest
 
+import stand_ins
 from baselines import DOCS, fenced_blocks
 from isabelle_theory_agent.mcp_server import TAT_Server
 from harness import free_port
@@ -32,8 +33,8 @@ def tat_new(*args):
     return subprocess.run(["isabelle", "TAT_new", *args], capture_output=True, text=True)
 
 
-def tat(*args):
-    return subprocess.run(["isabelle", "TAT", *args], capture_output=True, text=True)
+def tat_mcp(*args):
+    return subprocess.run(["isabelle", "TAT_mcp", *args], capture_output=True, text=True)
 
 
 def hook_blocks() -> list[list[str]]:
@@ -95,7 +96,7 @@ def test_a_session_under_the_working_directory_is_refused(tmp_path):
     wd = tmp_path / "wd"
     assert tat_new(str(wd)).returncode == 0
     (wd / "ROOT").write_text('session Foo in "Foo" = HOL +\n')
-    r = tat("-d", str(wd), str(wd))
+    r = tat_mcp("-d", str(wd), str(wd))
     assert r.returncode == 2 and r.stdout == "", r
     assert r.stderr.strip() == (
         f"*** Isabelle session Foo is declared under the working directory {wd};"
@@ -126,7 +127,7 @@ def test_the_script_reaches_a_serving_conversation(tmp_path):
     up, stop = threading.Event(), threading.Event()
 
     async def serve():
-        async with TAT_Server(port, [], lambda: briefing):
+        async with TAT_Server(stand_ins.ending(), port, [], lambda: briefing):
             up.set()
             while not stop.is_set():
                 await asyncio.sleep(0.02)

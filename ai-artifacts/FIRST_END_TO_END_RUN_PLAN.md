@@ -13,7 +13,7 @@ One real tree, evaluated by Isabelle, through the MCP tools. That needs the
 imported trees first (ARCHITECTURE §3.5), a `Theorem` that emits only
 `sorry`, the `edit`, `move` and `delete` tools, and the persistence
 everything sits on. `construct`, AoA, the other node classes, and
-compilation to `.thy` files (§1) are outside this plan.
+compilation to `.thy` files (docs/COMPILATION.md) are outside this plan.
 
 ## 1. The working directory *(approved 2026-09-04)*
 
@@ -23,10 +23,10 @@ and its layout is fixed:
 ```
 <working directory>/
   TAT.sqlite               made by `isabelle TAT_new`: the plugins it records (MODULE_STRUCTURE §5) and the forest (§2), read at start
-  tat.lock                 held by the conversation on this directory (MODULE_STRUCTURE §4.6)
-  ROOT                     every Session's entry (ARCHITECTURE §4)
+  tat.lock                 held by the conversation or the compile on this directory (MODULE_STRUCTURE §4.6)
+  ROOT                     every Session's entry, written by `isabelle TAT_compile` (COMPILATION.md §1, §2)
   <session name>/          one folder per Session, named after it
-    <theory name>.thy      one file per tree, named after the theory's short name
+    <theory name>.thy      one file per tree written, named after the theory's short name (COMPILATION.md §2)
 ```
 
 - A `Session`'s directory is its name, not an attribute.
@@ -36,16 +36,17 @@ and its layout is fixed:
   `<working directory>/<session name>` as the `master_dir`; the Python side
   keeps it in the `Conversation` (MODULE_STRUCTURE §4.1) and writes the files
   and the forest there.
-- TAT owns the files: deleting a tree deletes its `.thy`, deleting a
-  `Session` deletes its folder.
+- TAT owns the files: every `.thy` under the working directory and the
+  ROOT are removed and written again at each compile, so deleting a tree
+  or a `Session` takes effect on the directory at the next compile
+  (COMPILATION.md §2).
 
-*(open, deferred)*: when the `.thy` files and the ROOT are written — the
-owner's inclination is when the agent declares its task done. Keeping the
-directory equal to the forest is no longer a correctness question
-*(2026-09-23, FOREST_WALK_PLAN.md §1 item 1)*: nothing is ever loaded from
-under the working directory, so a `.thy` left behind is never a second
-theory. The first run writes no `.thy` at all, so nothing turns on this
-yet.
+The `.thy` files and the ROOT are written by one command, `isabelle
+TAT_compile`, a step of the host's pipeline after the conversation; a
+plugin's compile hook handles its own files beside a tree's
+(COMPILATION.md §1, §5). Nothing is ever loaded from under the working
+directory *(2026-09-23, FOREST_WALK_PLAN.md §1 item 1)*, so a `.thy` left
+behind is never a second theory.
 
 ## 2. Persistence *(approved 2026-09-04)*
 
@@ -60,13 +61,20 @@ The forest is stored in one SQLite database, not pickled.
   version is not this TAT's is refused at start (`IncompatibleStore`, a
   `TAT_StartupError`, EXCEPTIONS.md §1).
 - Stored per node: `kind`; on a nesting node, `children` (the ordered
-  list of the children's identities); and whatever the node class writes
-  (below). The two framework rows are the two names a construct reserves,
-  so no class field can collide with them. No `parent` row: parenthood is
-  read off `children`. The forest root is identity 0 — `next_identity`
-  starts at 1 — and has one row, `children`. Not stored: evaluation
-  statuses and state slot names — a loaded forest is `not_evaluated`
-  throughout (ARCHITECTURE §4.1).
+  list of the children's identities); the framework's rows
+  `last_evaluation_statuses` — the stored statuses with their messages
+  (COMPILATION.md §4) — `job`, `check` and the construction job's
+  automatic-construction field (ARCHITECTURE §4.1); and whatever the node
+  class writes (below). The framework's rows are names a construct
+  reserves, so no class field can collide with them. No `parent` row:
+  parenthood is read off `children`. The forest root is identity 0 —
+  `next_identity` starts at 1 — and has one row, `children`. Not stored:
+  the instant evaluation statuses and state slot names — a loaded forest
+  is `not_evaluated` throughout in its instant statuses, its stored
+  statuses restored from `last_evaluation_statuses` (ARCHITECTURE §4.1).
+  A `last_evaluation_statuses` row that is missing, or of another
+  length than the node's number of operations, reads as `not_evaluated`
+  throughout (COMPILATION.md §4).
 - **Each node class writes and reads its own fields**:
 
   ```python
@@ -86,17 +94,23 @@ The forest is stored in one SQLite database, not pickled.
   and `children`, `get` serves them, `fields()` omits them. A class never
   holds the store or another node's rows. Every stored value must be
   MessagePack-representable. A recorded field must not hold a value
-  meaning "work is running": `Theorem` stores a running search as
-  `not_started`.
+  meaning "work is running": the framework stores a running
+  construction job as `NOT_STARTED` in `job` (ARCHITECTURE §4.1).
 - `kind` is the framework's: `edit._construct_element` sets `node.kind` from
   the construct, `_load_subtree` sets it from the row, and no class keeps
   a copy — `Theorem` declares `kind` in its two schemas for the agent and
   the static checker and reads `node.kind` like everyone else.
 - The framework does the rest. `_store_node(node)`: `delete_node`, then
-  `kind`, then `children` for a nesting node, then `node.to_store(rows)`;
-  `_store_subtree(node)`: `_store_node`, then each child. An evaluation
-  hook's write and an amend's replaced node use `_store_node`; a new
-  subtree uses `_store_subtree`. `_load_subtree(identity)`: read
+  `kind`, then `children` for a nesting node, then the framework's rows
+  `last_evaluation_statuses`, `job`, `check` and the
+  automatic-construction field, then `node.to_store(rows)`;
+  `_store_subtree(node)`: `_store_node`, then each child. An amend's
+  replacement uses `_store_node` — the replaced node is not stored, its
+  identity being the replacement's — as does the walk's store of every
+  node whose status it wrote (COMPILATION.md §4); a new subtree uses
+  `_store_subtree`. `_store_node` refuses, with `TAT_InternalError`, a
+  node whose parent chain does not reach the forest.
+  `_load_subtree(identity)`: read
   `kind`, pick the class from the kind table, `cls.from_store(config,
   rows)`, set the identity, then the children in order. The root is not a
   `_load_subtree` case: the framework makes the `Forest`, reads row
@@ -104,22 +118,27 @@ The forest is stored in one SQLite database, not pickled.
   and loads each child; `_store_subtree` never runs on the root, and only
   its `children` row is ever written. Identities are handed out by the
   framework in `edit._construct_element`, from `next_identity()`.
-- Every **write operation** is one transaction: `edit`, `move`, `delete`,
-  and an evaluation hook writing a recorded field that is stored — one
-  held only for the life of the conversation, such as `Theory`'s error
-  messages (SESSION_AND_THEORY.md §2), needs none. Read operations
-  (`recall`, `status`) do not touch the database. The transaction opens
-  once the operation has succeeded in memory and closes before the next
-  `await`; nothing is awaited inside a transaction. A transaction that
+- Every **write operation** is one transaction: `edit`, `move`, `delete`;
+  the evaluating walk's store at each tree's end and when it ends; and
+  each job step's store of its node (COMPILATION.md §4). Read operations
+  (`recall`, `check_construct`) do not touch the database. The transaction is the
+  last step of the operation's one synchronous block — after the pointer
+  surgery, the in-memory invalidation and the completed events
+  (MODULE_STRUCTURE §4.2, decided 2026-09-30) — and closes before the
+  next `await`; nothing is awaited inside a transaction. A transaction that
   fails raises `TAT_DisasterError` (EXCEPTIONS.md §1): the operation is
   already committed in memory, so memory and the database have parted,
   and the conversation ends. Identities are handed
   out before the transaction exists, so `next_identity()` needs none:
   outside one it is its own write. An operation stores only what it
-  changed: `_store_subtree` for every new subtree, `_store_node` for a
-  replaced node, the parent's `children` row when that list changed,
-  `delete_node` for every node that left, and `_store_node` for the one
-  node whose recorded field an evaluation hook wrote.
+  changed: `_store_subtree` for every new subtree, `_store_node` for an
+  amend's replacement, the parent's `children` row when that list
+  changed, `delete_node` for every node of a deleted subtree, and
+  `_store_node` for every node whose status the commit wrote and every
+  node still in the forest that a completed hook fired on; the walk
+  stores every node whose status it wrote, whole rows, so a recorded
+  field an evaluation hook wrote rides with the status (COMPILATION.md
+  §4).
 - The access layer is TAT's own, `Forest_Store` (one module, standard
   library `sqlite3`, WAL mode): `transaction()` is the only way to open a
   transaction, and `put`/`delete_node` outside one is an error; `get`,
@@ -133,10 +152,9 @@ The forest is stored in one SQLite database, not pickled.
 
 ## 3. `Theory`'s attribute table *(approved 2026-09-04; revised 2026-09-08 and 2026-09-23)*
 
-The table of record is SESSION_AND_THEORY.md §2, which since 2026-09-08
-also carries the two recorded, never stored fields `beginning_errors` and
-`ending_errors`, and notes that the framework's name grammar refuses a
-trailing underscore. In brief:
+The table of record is SESSION_AND_THEORY.md §2, which also carries the
+recorded, stored field `import_sessions` (COMPILATION.md §2), and notes
+that the framework's name grammar refuses a trailing underscore. In brief:
 
 | Attribute | Type | |
 | --- | --- | --- |
@@ -163,10 +181,14 @@ a theory is created with its first declarations in one call.
   reported by `begin_theory` at evaluation. No forest-only check is added
   *(settled 2026-09-22, FOREST_WALK_PLAN.md §1 item 4)*.
 - Not in the first version: the header's `keywords` and `abbrevs` clauses.
+- A short name Isabelle reserves — `Path.is_reserved`, `Sessions.illegal_theory`
+  — is refused at creation, `check_new_theory_short_name` asking the
+  Scala function `TAT.reserved_name` (COMPILATION.md §2).
 
 `Theory.gen`'s checks are SESSION_AND_THEORY.md §2's. The short name's
 uniqueness **within the forest and the
-batch** is the framework's: `Theory` declares that its name lives in the
+batch** is the framework's, comparing names without regard to case
+(COMPILATION.md §2): `Theory` declares that its name lives in the
 forest-wide namespace of theory short names, and the framework — after
 the `taken` check of `edit._construct_siblings` — walks the pre-edit forest,
 less the node the amend replaces, which is leaving, for a node bearing the
@@ -200,9 +222,14 @@ empty-forest hint — is PRINT.md.
 `parent_session` is checked when the `Session` is created or amended
 *(decided 2026-09-30)*: it must name a `Session` the call keeps in the
 forest or adds before it, or a session the Isabelle session layout
-knows, the latter asked through the callback `TAT.is_known_session`
-(SESSION_AND_THEORY.md §1, §3; MODULE_STRUCTURE §2.3, §4.1). Nothing
-checks it again afterwards.
+knows. The questions to Isabelle — that one, the name not being one the
+layout knows, the name not reserved (`Path.is_reserved`,
+`Sessions.illegal_session`, through the Scala function `TAT.reserved_name`),
+every option accepted by `Options.update` — go through one callback,
+`TAT.check_session` (SESSION_AND_THEORY.md §1, §3; MODULE_STRUCTURE §2.3,
+§4.1; COMPILATION.md §2); `ROOT` is refused as a name in any spelling.
+Nothing checks them again afterwards; `isabelle TAT_compile` has Isabelle
+read the ROOT it wrote (COMPILATION.md §2).
 
 ## 5. How an import names a forest tree *(settled 2026-09-22, FOREST_WALK_PLAN.md §1 item 4)*
 
@@ -249,7 +276,7 @@ placed after it is an evaluation stop of that tree, not a `TAT_Error`: the
 violating state is reachable with every edit accepted (the import is
 external until the imported tree is appended after it). The check runs
 before every run of the tree and is never stored, so a repairing `move`
-clears it by itself; the tree is walked in the `Invalidating` mode — it is
+clears it by itself; the tree is invalidated whole — it is
 `not_evaluated`, nothing about it was attempted, and no new status value
 is needed — and the evaluation result carries, beside "stopped at
 `theory_B`", the sentence
@@ -272,16 +299,20 @@ never the position.
 
 **Running.** `evaluate_to(destination)` names a node; its tree is `T`.
 The forest runs `T`'s transitive imports, in tree order, each to its own
-`end` — a walk whose destination is that tree's `Theory` node — then runs
-`T` to the destination. Trees `T` does not import are not touched. A
+`end`, its `Theory` node included, then runs `T` to the destination.
+Trees `T` does not import are not touched. A
 `Session` as destination stands for all trees under it; the root, for all
-trees. Each tree's walk is one `Evaluation`, flushed when it ends: one
-round trip per tree. The call's `ignore_error` applies to every tree it
+trees. The walk is one `Evaluation`, which at each tree's end stores
+every node whose status the walk wrote, whole rows, in one transaction,
+and flushes — one round trip per tree deleting the slots it released,
+and the cancellation of the evaluation jobs it dropped (COMPILATION.md
+§4). The call's `ignore_error` applies to every tree it
 runs. When several trees stop, the call reports the first in tree order
 (MCP_SPECIFICATION §4); each stopped tree's own report is in its nodes.
 `Forest._evaluate` carries the reported stop for both forest-level stops
-— the order constraint's and the import dependency's — since the recursion
-returns no `stopped_at` from a blocked or invalidating walk.
+— the order constraint's and the import dependency's — since
+`_invalidate`, which such a tree gets instead of `_evaluate`, returns no
+`stopped_at`; a stop inside a tree travels up in `_evaluate`'s result.
 
 The forest reads a tree's `imports` and a `Session`'s `name` directly:
 `Session` and `Theory` are the two classes that carry the forest's
@@ -295,32 +326,34 @@ order. Their ML evaluators stay in `TAT_Common_Nodes.ML`.
 at the `Theory` nodes of its direct imports. If any does not have both its
 operations `ready` — the ending alone does not do: after a failed header
 the ending is `ready` and no theory value exists (the `Theory` root's slot
-chain, below) — the tree is not run but walked whole in the `Invalidating`
-mode, like a tree violating the order constraint, so every node in it is
+chain, below) — the tree is not run but invalidated whole, like a tree
+violating the order constraint, so every node in it is
 `not_evaluated`, and the result reports the import's `Theory` node
 *(2026-09-23, FOREST_WALK_PLAN.md §1 item 16: a blocked node is
 `not_evaluated`, no status names its obstacle; §3.3, the walk)*. Trees that
 do not import the stopped tree run normally. No new mode is needed.
 
 **Invalidation at the `Session` layer.** The routing lives in
-`Forest._evaluate` alone. A `Seeking` position is resolved upward to the
-tree containing it, and that tree alone is walked; a position whose
-parent is a `Session` or the root walks nothing — sibling trees are
+`Forest._invalidate_from` alone. A position is resolved upward to the
+tree containing it, and that tree alone is marked; a position whose
+parent is a `Session` or the root marks nothing — sibling trees are
 independent unless the graph says otherwise. `Session._evaluate` raises
 `TAT_InternalError`: evaluation is transparent to the `Session` layer, and
 a walk that reaches one is a framework bug. Three rules complete it:
 
-- Whenever a tree's `Theory` ending goes from `ready` to anything else,
-  its direct importers become `not_evaluated` (each walked in the
-  `Invalidating` mode), and their endings carry the rule on to the
-  transitive importers. This is a property of the status, enforced in the
-  ending's status setter after the assignment — not on the release guard,
-  which stays silent when `ready` becomes an own stop, exactly the case a
-  tree without a theory value is — so it covers `evaluate_to` on an inner
-  node as well as every edit. The setter needs the forest and the graph,
-  so the ending's setter becomes `async`; every caller already is. The
-  recursion ends because the setter assigns before it fires, so within one
-  cascade no ending leaves `ready` twice.
+- Whenever a tree's stored `Theory` ending, a `Ready`, is replaced by a
+  value that is not a `Ready` (COMPILATION.md §4), its direct importers
+  become `not_evaluated` (each invalidated whole, `_invalidate`), and
+  their endings carry the rule on to the transitive importers. This is a
+  property of the status, enforced in the ending's status setter after
+  the assignment — not on the release guard, which stays silent when a
+  `Ready` becomes a `CannotEvaluate`, exactly the case a tree without a theory
+  value is — so it covers `evaluate_to` on an inner node as well as every
+  edit. The setter needs the forest and the graph, which it reaches
+  through the synchronous invalidation recursion (MODULE_STRUCTURE
+  §4.1), so it is a plain method. The recursion ends because the setter
+  assigns before it fires, so within one cascade no ending leaves `Ready`
+  twice.
 - Every edit takes, per tree identity, the record (qualified name,
   resolved imports — the `Theory` nodes themselves) before and after
   itself; a tree whose record changed — its `Session` renamed, itself
@@ -361,10 +394,11 @@ child's input. One class between `NonLeaf_Node` and both of them,
 `_resulting_state_of_child` is refused — a child that has a result owns the
 slot for it (above); `_predecessor_wrote` is False, `_source_before` is None
 and `_carry_forward` does nothing;
-`_last_status` is `NOT_EVALUATED` — the container runs no operation, so it
+`_resulting_status()` is `NOT_EVALUATED` — the container runs no operation, so it
 has written nothing, and the inherited edit paths that ask (an amend, a
 delete or a move of a `Session`) correctly release nothing;
-`_mark_not_evaluated` marks nothing; `_resulting_state_of_all_children` is
+`_invalidate` invalidates each child whole;
+`_resulting_state_of_all_children` is
 refused — the container keeps no slot after its children. `Session` adds
 its fields and the `TAT_InternalError` above; `Forest` adds the graph, the
 scheduling above, and id resolution. `Session` has a state slot like every
@@ -464,6 +498,6 @@ script `test/run_ml_framework_test.py`, which step 5 retired).
 
 Out of this plan, in the order they are likely needed afterwards:
 `recall` *(done 2026-09-28: docs/RECALL.md, ai-artifacts/RECALL_PLAN.md)*;
-`evaluate_to` as a tool (TOOL_SCHEMAS.md §5); compilation (§1);
+`evaluate_to` as a tool (TOOL_SCHEMAS.md §5); compilation (docs/COMPILATION.md);
 `construct` (docs/CONSTRUCT_INTERACTION.md, into which `status` has
 folded as `check_construct`).

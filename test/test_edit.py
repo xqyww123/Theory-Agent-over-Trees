@@ -19,8 +19,8 @@ from isabelle_theory_agent.exceptions import (
     InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, TAT_InternalError, UnexpectedChildren,
     UnexpectedField, UnknownKind)
-from isabelle_theory_agent.model import (
-    CANNOT_EVALUATE, NOT_EVALUATED, READY, Location)
+from isabelle_theory_agent.model import NOT_EVALUATED, Location
+from test_model import CANNOT_EVALUATE, READY
 
 
 @pytest.fixture(autouse=True)
@@ -477,10 +477,11 @@ def test_amend_across_kinds_leaves_no_field_of_the_old_class():
     f, thy, sec, a, b, c = rbuild()
     (blk,) = run(locked(f, edit.insert(thy,2, [{"kind": "block", "name": "B"}], KINDS)))
     assert set(f.store.fields(blk.identity)) == {
-        "kind", "children", "name", "fail_beginning", "fail_ending"}
+        "kind", "children", "last_evaluation_statuses", "name", "fail_beginning", "fail_ending"}
     (leaf,) = run(locked(f, edit.amend(blk, [{"kind": "t", "name": "L"}], KINDS)))
     assert leaf.identity == blk.identity
-    assert set(f.store.fields(leaf.identity)) == {"kind", "name", "fail"}
+    assert set(f.store.fields(leaf.identity)) == {
+        "kind", "last_evaluation_statuses", "name", "fail"}
     inv(f)
 
 def test_amend_replacement_refuses_children_and_leaves():
@@ -541,9 +542,10 @@ def test_completed_hook_raise_is_the_class_bug():
     with pytest.raises(TAT_InternalError):
         run(locked(f, edit.insert(thy,
             2, [{"kind": "t", "name": "u"}], {"t": Buggy})))
-    # the commit and its store transaction had happened; the two still agree
+    # the commit had happened in memory; the bug ends the conversation
+    # before the edit's one store transaction (MODULE_STRUCTURE §4.2)
     assert [n.name for n in thy.sub_nodes] == ["Section", "c", "u"]
-    inv(f)
+    assert set(f.store.nodes()) - {f.identity} == {n.identity for n in (thy, sec, a, b, c)}
 
 
 # --- a name in a forest-wide namespace ---------------------------------------

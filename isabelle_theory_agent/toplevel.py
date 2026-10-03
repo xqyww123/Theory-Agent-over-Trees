@@ -4,7 +4,9 @@
 builds the conversation and serves until its ending; it does not return
 (ARCHITECTURE §9): everything the conversation does, it does through this
 call's callbacks, and the call ends only by raising what ended the
-conversation.
+conversation.  The start is three layers of context managers:
+`conversation()` is the first two, which a compile shares; `served()` adds
+the third, the server.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import fcntl
 import os
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
+from importlib.metadata import version
 from pathlib import Path
 from typing import NoReturn
 
@@ -20,16 +23,20 @@ from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 
 from . import mcp, plugin
 from .exceptions import TAT_StartupError
-from .mcp_server import TAT_Server
+from .log import Log, now
+from .mcp_server import Ending, TAT_Server
 from .model import Conversation, Forest
-from .store import Forest_Store
+from .store import SCHEMA_VERSION, Forest_Store
 
 DATABASE = "TAT.sqlite"                 # the launcher's, shared with the plugins table (§5)
 LOCK = "tat.lock"
+LOG = Path(".tat") / "log"              # the logs' directory, under the working directory (LOGGING.md §2)
+
+Announce = Callable[[int], None]        # the lock's port line, written once the server listens
 
 
 @contextmanager
-def _held(working_directory: Path) -> Generator[Callable[[int], None]]:
+def _held(working_directory: Path) -> Generator[Announce]:
     """The working directory's lock: an exclusive `flock` on a descriptor
     kept open for the life of the conversation, so the kernel releases it
     when the process dies and the `finally` when the conversation ends any
@@ -71,20 +78,59 @@ def _held(working_directory: Path) -> Generator[Callable[[int], None]]:
         os.close(fd)
 
 
+def _log_directory(working_directory: Path) -> Path:
+    """A fresh directory under `.tat/log/`, named by this moment and made
+    exclusively, under the lock (LOGGING.md §2)."""
+    try:
+        (working_directory / LOG).mkdir(parents=True, exist_ok=True)
+        directory = working_directory / LOG / now().replace(":", "-")
+        directory.mkdir()
+    except OSError as e:
+        raise TAT_StartupError(
+            f"TAT cannot write its log under {working_directory}: {e.strerror}") from e
+    return directory
+
+
 @asynccontextmanager
-async def conversation(python_packages: list[str], working_directory: str, port: int,
-                       connection: Connection
-                       ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, TAT_Server]]:
-    """One conversation, built in order — the lock, the store, the
-    plugins, the `Conversation`, the `Forest`, the server — and torn down
-    in reverse when the block ends; whoever holds it serves it."""
+async def conversation(python_packages: list[str], working_directory: str, connection: Connection,
+                       port: int | None = None
+                       ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, Announce]]:
+    """The first two layers of the start (MODULE_STRUCTURE §4.6), which a
+    conversation and a compile share, torn down in reverse when the block
+    ends: the lock; the log directory and the `Log`; the ending object,
+    which whatever escapes from here on enters; the `Conversation`; then
+    the store, the plugins and the `Forest`.  `port` is a conversation's,
+    recorded in `start`; a compile has none.  Yields the `Forest`, the
+    loaded plugins and the lock's `announce` for the third layer."""
     directory = Path(working_directory)
-    with _held(directory) as announce, Forest_Store(directory / DATABASE) as store:
-        loaded = plugin.load(python_packages)
-        forest = Forest(Conversation(connection, directory), store, loaded.kinds)
-        async with TAT_Server(port, mcp.tools(forest, loaded),
+    with _held(directory) as announce:
+        log = Log(_log_directory(directory), connection.server.logger)
+        async with Ending(log) as ending:
+            conv = Conversation(connection, directory, log, ending)
+            log.conversation.start(
+                version=version("isabelle_theory_agent"), pid=os.getpid(),
+                working_directory=str(directory), python_packages=python_packages, port=port)
+            with Forest_Store(directory / DATABASE) as store:
+                log.conversation.store_opened(schema_version=SCHEMA_VERSION, nodes=len(store.nodes()))
+                loaded = plugin.load(python_packages)
+                log.conversation.plugins_loaded(
+                    kinds={kind: cls.__module__ for kind, cls in loaded.kinds.items()})
+                forest = Forest(conv, store, loaded.kinds)
+                ending.forest = forest
+                yield forest, loaded, announce
+
+
+@asynccontextmanager
+async def served(python_packages: list[str], working_directory: str, port: int,
+                 connection: Connection) -> AsyncGenerator[tuple[Forest, plugin.Loaded, TAT_Server]]:
+    """All three layers: a conversation whose server listens, the port
+    announced in the lock; whoever holds the block serves it."""
+    async with conversation(python_packages, working_directory, connection, port
+                            ) as (forest, loaded, announce):
+        async with TAT_Server(forest.conversation.ending, port, mcp.tools(forest, loaded),
                               mcp.on_compaction(forest)) as server:
             announce(port)                  # listening: the hooks may call
+            forest.conversation.log.conversation.serving(url=server.url)
             yield forest, loaded, server
 
 
@@ -94,7 +140,7 @@ async def launch_TAT(arg: tuple[list[str], str, int], connection: Connection) ->
     theories registered, the working directory, the port (MODULE_STRUCTURE
     §2.6).  The conversation, served until its ending."""
     python_packages, working_directory, port = arg
-    async with conversation(python_packages, working_directory, port, connection) as (_, _, server):
+    async with served(python_packages, working_directory, port, connection) as (_, _, server):
         # a line nothing depends on, and the launcher does not echo (§5)
         await connection.writeln(f"TAT is serving on {server.url}")
         await server.serve()

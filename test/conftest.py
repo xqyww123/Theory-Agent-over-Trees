@@ -9,6 +9,14 @@ from contextlib import AsyncExitStack
 import pytest
 
 import harness as H
+import stand_ins
+
+
+@pytest.fixture(autouse=True)
+def stand_ins_directory(tmp_path, monkeypatch):
+    """Every `Log` a case builds without Isabelle (`stand_ins`) writes under
+    the case's temporary directory."""
+    monkeypatch.setattr(stand_ins, "directory", tmp_path / "log")
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +38,7 @@ def anyio_backend():
 
 @pytest.fixture(scope="session")
 async def harness(anyio_backend, tmp_path_factory):
-    """One `isabelle TAT` for the run, started when first asked for: three
+    """One `isabelle TAT_mcp` for the run, started when first asked for: three
     stages, each releasing itself in reverse when the run ends."""
     async with AsyncExitStack() as stack:
         h = H.Harness(logging.getLogger("tat.test.harness"), tmp_path_factory.mktemp("harness"))

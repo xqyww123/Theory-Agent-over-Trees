@@ -6,17 +6,22 @@ round trip through the store.  Run: python -m pytest test/test_model.py
 import asyncio
 import typing
 from contextlib import contextmanager
-from pathlib import Path
 from typing import NotRequired, TypedDict
 
 import pytest
 
+import stand_ins
 from isabelle_theory_agent import edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import (
     TAT_DisasterError, TAT_InternalError, TAT_StartupError)
-from isabelle_theory_agent.model import (
-    CANNOT_EVALUATE, NOT_EVALUATED, READY, INVALIDATING, Isar_State_Slot)
+from isabelle_theory_agent.model import NOT_EVALUATED, INVALIDATING, Isar_State_Slot
 from isabelle_theory_agent.store import Forest_Store
+
+# The two status values the fakes' runs leave, one object each, so a test
+# may compare by identity; a `Theory`'s carry messages and are compared
+# with `==`.
+READY = M.READY_CLEAN
+CANNOT_EVALUATE = M.CannotEvaluate()
 
 
 # --- a fake state slot table ------------------------------------------------
@@ -118,10 +123,10 @@ class T(M.Leaf):                    # a leaf whose operation succeeds unless tol
         got = TABLE.values.get(self.state.name)
         if self.fail:
             self.consumed, self.copied = NOT_RUN, got
-            return False
+            return CANNOT_EVALUATE
         self.consumed = got
         TABLE.values[self.resulting_state().name] = f"after {self.name}" + run_tag(self.runs)
-        return True
+        return READY
     def on_invalidated(self, operation): self.consumed = NOT_RUN
     def __repr__(self): return self.name
 
@@ -153,19 +158,19 @@ class Block(M.StdBlock):
         self.begin_runs += 1
         self.consumed_begin = (NOT_RUN if self.fail_beginning
                                else TABLE.values.get(self.state.name))
-        if self.fail_beginning: return False
+        if self.fail_beginning: return CANNOT_EVALUATE
         TABLE.values[self._state_after_beginning().name] = \
             f"begin {self.name}" + run_tag(self.begin_runs)
-        return True
+        return READY
     async def _eval_ending_opr(self):
         self.end_runs += 1
         got = TABLE.values.get(self._state_before_ending.name)
         if self.fail_ending:
             self.consumed_end, self.copied_end = NOT_RUN, got
-            return False
+            return CANNOT_EVALUATE
         self.consumed_end = got
         TABLE.values[self.resulting_state().name] = f"end {self.name}" + run_tag(self.end_runs)
-        return True
+        return READY
     def on_invalidated(self, operation):
         if operation == "beginning": self.consumed_begin = NOT_RUN
         else: self.consumed_end = NOT_RUN
@@ -181,7 +186,7 @@ class OneTreeForest(M.Forest):
     `_end` — so the fake `Block` at the top, whose beginning reads its
     input as a `Theory`'s never does, is an ordinary chained block."""
     def __init__(self, conn, store=None, kinds=KINDS):
-        super().__init__(M.Conversation(conn, Path(".")),      # nothing here touches the directory
+        super().__init__(stand_ins.conversation(conn),          # nothing here touches the directory
                          store if store is not None else Forest_Store(":memory:"), kinds)
         self._end = Isar_State_Slot.assign(conn)
     _resulting_state_of_child = M.NonLeaf_Node._resulting_state_of_child
@@ -384,7 +389,8 @@ def shape(forest):
     """What a round trip must preserve, node by node in tree order."""
     return [(n.identity, n.kind, n.name, n.fail if isinstance(n, T)
              else (n.fail_beginning, n.fail_ending),
-             len(n.sub_nodes) if isinstance(n, M.NonLeaf_Node) else None)
+             len(n.sub_nodes) if isinstance(n, M.NonLeaf_Node) else None,
+             n.last_evaluation_statuses())
             for n in forest._all_nodes()]
 
 
@@ -423,6 +429,76 @@ def test_reopen_restores_the_forest_not_evaluated(tmp_path):
     # a fresh identity after the reopen collides with no loaded one
     (new,) = run(locked(f2, edit.insert(thy2,0, [{"kind": "t", "name": "N"}], KINDS)))
     assert new.identity not in {i for i, *_ in shape(f)}
+
+
+def test_reopen_restores_the_stored_statuses_and_a_walk_reruns_what_it_reaches(tmp_path):
+    """COMPILATION.md §4: the stored statuses come back as the last run left
+    them while every instant status is `not_evaluated`; a walk reruns and
+    stores what it reaches, and past its destination marks the rest of the
+    tree `not_evaluated` in both fields."""
+    from invariants import assert_invariants, assert_store_mirrors
+    path = tmp_path / "TAT.sqlite"
+    store = Forest_Store(path)
+    f = OneTreeForest(CONN, store)
+    (thy,) = run(locked(f, edit.insert(f,0, [
+        {"kind": "block", "name": "Theory", "children": [
+            {"kind": "t", "name": "T1"},
+            {"kind": "block", "name": "Section", "children": [
+                {"kind": "t", "name": "T2", "fail": True},
+                {"kind": "t", "name": "T3"}]},
+            {"kind": "t", "name": "T4"}]}], KINDS)))
+    t1, sec, t4 = thy.sub_nodes
+    t2, t3 = sec.sub_nodes
+    run(thy.evaluate_to(True))                        # the whole tree, past the own stop
+    stored = {n.name: n.last_evaluation_statuses() for n in f._all_nodes()}
+    assert stored["T2"] == (CANNOT_EVALUATE,) and stored["T4"] == (READY,)
+    assert stored["Theory"] == (READY, READY) and stored["Section"] == (READY, READY)
+    store.close()
+
+    f2 = OneTreeForest(CONN, Forest_Store(path))
+    by_name = {n.name: n for n in f2._all_nodes()}
+    for name, statuses in stored.items():
+        assert by_name[name].last_evaluation_statuses() == statuses
+        assert all(s is NOT_EVALUATED for s in by_name[name]._own_statuses())
+    r = run(by_name["T1"].evaluate_to(True))
+    assert r == M.EvaluationResult(None, INVALIDATING)
+    assert st(by_name["T1"]) is READY and by_name["T1"].last_evaluation_statuses() == (READY,)
+    for name in ("T2", "T3", "T4"):
+        assert st(by_name[name]) is NOT_EVALUATED
+        assert by_name[name].last_evaluation_statuses() == (NOT_EVALUATED,)
+    assert by_name["Section"].last_evaluation_statuses() == (NOT_EVALUATED, NOT_EVALUATED)
+    assert by_name["Theory"].last_evaluation_statuses() == (READY, NOT_EVALUATED)
+    assert_invariants(f2, TABLE)
+    assert_store_mirrors(f2, KINDS)
+
+
+def test_a_statuses_row_missing_or_short_reads_not_evaluated_and_a_malformed_one_is_refused(tmp_path):
+    """COMPILATION.md §4's missing-row rule."""
+    path = tmp_path / "TAT.sqlite"
+    store = Forest_Store(path)
+    f = OneTreeForest(CONN, store)
+    (thy,) = run(locked(f, edit.insert(f,0, [
+        {"kind": "block", "name": "Theory", "children": [{"kind": "t", "name": "T1"}]}], KINDS)))
+    t1 = thy.sub_nodes[0]
+    run(thy.evaluate_to(True))
+    assert thy.last_evaluation_statuses() == (READY, READY)
+    with store.transaction():
+        store.put(thy.identity, "last_evaluation_statuses", [["ready", []]])   # short: two operations
+        store.delete_node(t1.identity)                                            # missing
+        store.put(t1.identity, "kind", "t")
+        store.put(t1.identity, "name", "T1")
+        store.put(t1.identity, "fail", False)
+    store.close()
+    f2 = OneTreeForest(CONN, Forest_Store(path))
+    thy2 = f2.sub_nodes[0]
+    assert thy2.last_evaluation_statuses() == (NOT_EVALUATED, NOT_EVALUATED)
+    assert thy2.sub_nodes[0].last_evaluation_statuses() == (NOT_EVALUATED,)
+    f2.store.close()
+    with Forest_Store(path) as s:
+        with s.transaction():
+            s.put(thy.identity, "last_evaluation_statuses", [["ready", []], ["elsewhere", []]])
+    with pytest.raises(TAT_StartupError, match="last_evaluation_statuses"):
+        OneTreeForest(CONN, Forest_Store(path))
 
 
 def test_a_fresh_database_is_an_empty_forest():
@@ -484,7 +560,7 @@ class Bare(M.Leaf):                 # a class that wrote neither persistence met
     @classmethod
     async def gen(cls, config, raw):
         n = cls(config.parent, config.state); n.name = raw["name"]; return n
-    async def _eval_opr(self): return True
+    async def _eval_opr(self): return READY
 
 class WriteOnly(Bare):              # ... and one that wrote only to_store
     def to_store(self, rows): rows.put("name", self.name)

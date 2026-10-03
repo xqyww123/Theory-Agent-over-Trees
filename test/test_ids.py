@@ -5,10 +5,10 @@ Run: python -m pytest test/test_ids.py
 """
 
 import typing
-from pathlib import Path
 
 import pytest
 
+import stand_ins
 from isabelle_theory_agent import model as M
 from isabelle_theory_agent.exceptions import AmbiguousId, NodeNotFound
 from isabelle_theory_agent.model import Isar_State_Slot, is_valid_name
@@ -70,7 +70,7 @@ def mk_block(cls, parent, name):
 
 
 def new_forest(store=None):
-    return M.Forest(M.Conversation(CONN, Path(".")),       # nothing here touches the directory
+    return M.Forest(stand_ins.conversation(CONN),           # nothing here touches the directory
                     store if store is not None else Forest_Store(":memory:"), KINDS)
 
 

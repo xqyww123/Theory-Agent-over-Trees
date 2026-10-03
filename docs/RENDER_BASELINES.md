@@ -11,8 +11,8 @@ identifier is backticked; opening lines echo the call and are not.
 
 ## 1. Opening lines
 
-Rendered for every forest-changing operation that failed (TOOL_SCHEMAS.md
-§4), above the cause:
+Rendered for every forest-changing operation that failed
+(TOOL_SCHEMAS.md §4), above the cause:
 
 ```
 Cannot append theory_X.section_Basics
@@ -50,7 +50,7 @@ The field `kind` is missing.
 `UnknownKind`:
 
 ```
-Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `definition`, `section`, `text`, `theory`, `session`.
+Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `proposition`, `definition`, `section`, `text`, `theory`, `session`.
 ```
 
 `MissingField`, and its form for a tool call's own arguments
@@ -77,7 +77,7 @@ followed by the schema's `enum`, backticked, and `must not be empty` for
 its `minItems`:
 
 ```
-The field `statement` must be a string.
+The field `statement` must be an object.
 The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
 The argument `constructs` must not be empty.
 ```
@@ -87,21 +87,23 @@ and `it takes` lists that holder's fields in declaration order; for a
 tool call's own arguments the holder is the tool:
 
 ```
-A `lemma` has no field `statment`; it takes `statement`, `name`, `facts`.
-`facts[1]` has no field `nmae`; it takes `name`.
-The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constructs`, `evaluate`.
+A `lemma` has no field `statment`; it takes `name`, `statement`.
+`statement.premises[1]` has no field `nmae`; it takes `name`, `term`.
+The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constructs`, `evaluate`, `auto_construct`.
 `location` has no argument `where`; it takes `position`, `node_id`.
 ```
 
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
 framework's check), against the theory name's grammar (`Theory.gen`'s
-check) and against the session name's (`Session.gen`'s check); `grammar`
-selects the rendering:
+check), against the session name's (`Session.gen`'s check) and against
+the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4);
+`grammar` selects the rendering:
 
 ```
 `Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.
 `Foo-Bar` is not a valid theory name: a theory name starts with a letter and continues with letters, digits and underscores, with no hyphen and no dot.
 `S'` is not a valid session name: a session name starts with a letter and continues with letters, digits, underscores and interior hyphens, and does not end with a hyphen or an underscore.
+`rev-length` is not a valid fact name: a fact name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 ```
 
 `DuplicateName` — two siblings would share an id component
@@ -130,10 +132,19 @@ The theory name `List` conflicts with the short name of `HOL.List`. No two theor
 The theory name `Foo` is also used by `constructs[1].children[0]` of this call.
 ```
 
-`ReservedTheoryName`, a name the Isabelle session layout declares global:
+`ReservedTheoryName`, a name the Isabelle session layout declares global,
+or one Isabelle reserves as a file or theory name:
 
 ```
 `FOL` is a reserved theory name; choose another name.
+```
+
+`ReservedSessionName`, a name Isabelle reserves as a file or session
+name, or `ROOT`:
+
+```
+`Aux` is a reserved session name; choose another name.
+`ROOT` is a reserved session name; choose another name.
 ```
 
 `HoldsNoChildren`:
@@ -198,10 +209,25 @@ A `theory` cannot be placed under `section_Basics`; a theory lives directly unde
 The `Sessions` cannot be edited.
 ```
 
-`ConstructNotSupported`:
+`ConstructNotSupported`, when the call named one node and when it named
+several:
 
 ```
-`theory_X.text_intro` does not support construct.
+`theory_X.section_Basics` has nothing to construct.
+None of these nodes has anything to construct.
+```
+
+The other framework `ConstructionError`s, which `answer` raises:
+`NoQuestionPending`, the framework's sentence for a node on which no
+question of the caller's waits, whatever its construction job's state;
+`ConstructOwnedByAnother`, the job class's `owned_by_another_refusal`,
+composed from the job's title by default (CONSTRUCT_INTERACTION §3.2),
+here for `proof construction`; `BadAnswer` renders the question's own
+sentence:
+
+```
+`theory_X.definition_f` has no question waiting for an answer.
+The proof construction on `theory_X.lemma_P` belongs to another agent.
 ```
 
 The `raw_ast_path` prefix — on any cause raised while building a batch
@@ -245,7 +271,17 @@ server gives, and never an exception's own text:
 TAT has stopped: an internal error; this call did not complete.
 TAT has stopped: the sessions could not be saved; this call did not complete.
 TAT has stopped: Isabelle is gone; this call did not complete.
+TAT has stopped: Claude Code saves no transcript; this call did not complete.
+TAT has stopped: Codex's sandbox is not the one TAT configured; this call did not complete.
+TAT has stopped: a client TAT does not serve connected; this call did not complete.
 ```
+
+The line is chosen by what ended the conversation (MODULE_STRUCTURE
+§4.6): the second for a `TAT_DisasterError`, the third for the
+connection gone, the last three for a `ClientRefused` (EXCEPTIONS.md
+§3), each of which carries its line — the sixth is the client's version
+or name failing the check in a later MCP session — and the first for
+everything else.
 
 A tool call whose body completed — before the ending reached it, or after
 ignoring its cancellation — is answered what it did (MODULE_STRUCTURE
@@ -257,20 +293,59 @@ The lines the framework writes in every rendering (PRINT.md); the empty
 forest's hint is PRINT.md §6's, and a class's own marks are its own
 document's.
 
-A node's line, one per default mark and one without:
+A node's line, one per default mark; `Theorem`'s two-slot marks are
+node_classes/THEOREM.md §7's:
 
 ```
-- lemma_P (success)
-- lemma_P (not evaluated)
+- section_Basics (complete)
+- section_Basics (incomplete)
+- definition_g (not evaluated)
 - definition_f (failed)
-- lemma_P
 ```
 
-An error block, as `print_error` writes it:
+The framework's tags, after the class's mark (PRINT.md §1,
+CONSTRUCT_INTERACTION §6): `automatic construction` on a node whose
+construction job has that setting on, for every agent; `needs your
+answer …` on a node whose construction job waits for the answer of the
+agent the rendering is for; both, in that order:
+
+```
+- lemma_Q (valid statement, proven, automatic construction)
+- lemma_rev_length (valid statement, proving, needs your answer, call `check_construct` to see it)
+- lemma_rev_length (valid statement, proving, automatic construction, needs your answer, call `check_construct` to see it)
+```
+
+A message block, as `print_error` writes it — `Error:` under a
+`CannotEvaluate`, `Notice:` under a `Ready` that reported something
+(PRINT.md §3):
 
 ```
 Error:
   Type unification failed: ...
+```
+
+```
+Notice:
+  Ignoring duplicate rewrite rule: ...
+```
+
+A job's failure block — the header is the job class's, the shape the
+framework's (PRINT.md §2):
+
+```
+  No proof was found:
+    Sledgehammer timed out on every prover.
+```
+
+The summary under an `incomplete` nesting node at `Recall`'s last depth
+(PRINT.md §2), one line per group with members, ids up to five, the
+count alone past five:
+
+```
+  3 proof constructions incomplete: lemma_A, lemma_C, context_C.lemma_B
+  12 proof checks incomplete
+  1 node failed: definition_f
+  2 nodes not evaluated: lemma_E, lemma_F
 ```
 
 ## 6. Success lines
@@ -284,4 +359,45 @@ Done: append theory_X.
 Done: insert_after theory_X.lemma_P; evaluation stopped at definition_f.
 Done: move theory_Sorting after theory_X.section_Basics.
 Done: delete theory_X.section_Basics.
+```
+
+A successful `evaluate_to` opens with one of two lines, above its
+quickview: the destination, when no stop is reported, or the stop, the
+node in its shortest form:
+
+```
+Evaluation reached theory_X.
+Evaluation stopped at definition_f.
+```
+
+When the stop is the order constraint's, its sentence (§3) follows on
+the line after the stop line — after an edit's `Done` line just the same.
+
+A successful `construct` or `cancel_construct` opens instead with the job
+class's `starting_notice` or `cancelling_notice`, composed from its title
+by default (CONSTRUCT_INTERACTION §3.2), above the quickview. Each names
+every node the call started or cancelled: one node; two or three, `on`
+repeated and `and` before the last; more, a header and one full id per
+line; none, a fixed sentence. A call whose evaluation started
+constructions automatically names them before its trailer in the same
+forms, opened with `Automatically started` (CONSTRUCT_INTERACTION §5):
+
+```
+Automatically started the proof construction on `theory_X.lemma_A`; call `check_construct` before you exit.
+Started the proof construction on `theory_X.lemma_P`; call `check_construct` before you exit.
+Started the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`; call `check_construct` before you exit.
+Started the following proof constructions; call `check_construct` before you exit:
+  - theory_X.lemma_P
+  - theory_X.lemma_Q
+  - theory_X.lemma_R
+  - theory_Y.lemma_S
+No construction job was started.
+Cancelled the proof construction on `theory_X.lemma_P`.
+Cancelled the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`.
+Cancelled the following proof constructions:
+  - theory_X.lemma_P
+  - theory_X.lemma_Q
+  - theory_X.lemma_R
+  - theory_Y.lemma_S
+No construction job was running.
 ```

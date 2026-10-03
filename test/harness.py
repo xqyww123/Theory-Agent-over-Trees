@@ -1,5 +1,5 @@
 """The harness of the Isabelle-backed cases (ai-artifacts/TEST_HARNESS_PLAN.md
-§3, §4): one RPC host in the test process, one `isabelle TAT` per run, a
+§3, §4): one RPC host in the test process, one `isabelle TAT_mcp` per run, a
 fresh conversation per case through `TAT.reset`.  `conftest.py` builds one
 `Harness` inside the session-scoped fixture and hands each case a `Handle`.
 """
@@ -24,7 +24,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from isabelle_theory_agent import isabelle_driver, toplevel
-from isabelle_theory_agent.mcp_server import HOST, TAT_Server
+from isabelle_theory_agent.mcp_server import HOST, Ending
 
 PLUGIN = "Theory_Agent_over_Trees.Test_TAT_Framework"
 PACKAGES = ["tat_test_plugin"]          # what the plugin's registrations name, deduplicated
@@ -76,7 +76,7 @@ class Run_Ended(Exception):
         self.text, self.output = text, output
 
     def __str__(self) -> str:
-        return f"{self.text}\n--- isabelle TAT's output ---\n{self.output()}"
+        return f"{self.text}\n--- isabelle TAT_mcp's output ---\n{self.output()}"
 
 
 class Request:
@@ -144,14 +144,14 @@ class Harness:
     def __init__(self, logger: logging.Logger, directory: Path):
         loop = asyncio.get_running_loop()
         self.logger = logger
-        self.launcher_directory = directory / "launcher"    # what `isabelle TAT` is started on
-        self.log_path = directory / "isabelle_TAT.log"
+        self.launcher_directory = directory / "launcher"    # what `isabelle TAT_mcp` is started on
+        self.log_path = directory / "isabelle_TAT_mcp.log"
         self.port = free_port()                             # the conversations' MCP port
         self.host_address = f"{HOST}:{free_port()}"         # the RPC host's
         self.requests: asyncio.Queue[Request | None] = asyncio.Queue()
         self.launched: asyncio.Future[None] = loop.create_future()
         self.run_end: asyncio.Future[BaseException] = loop.create_future()   # the record
-        self.serving: tuple[Request, TAT_Server] | None = None
+        self.serving: tuple[Request, Ending] | None = None
         self.last_taken: Request | None = None              # the request the loop took last
         self.server = Server(self.host_address, logger)
         self.server_task: asyncio.Task[None] | None = None
@@ -196,7 +196,7 @@ class Harness:
         try:
             if task.cancelled():
                 return
-            self.end_run(RuntimeError(f"isabelle TAT exited with code {task.result()}"))
+            self.end_run(RuntimeError(f"isabelle TAT_mcp exited with code {task.result()}"))
         except Exception:                       # a done-callback must not raise
             self.logger.exception("the child's exit could not be recorded")
 
@@ -236,8 +236,8 @@ class Harness:
         request; waiting on its `ended` is the caller's business."""
         if self.serving is None:
             return None
-        request, server = self.serving
-        server.end(ended_by)
+        request, ending = self.serving
+        ending.end(ended_by)
         return request
 
     async def await_ending(self) -> None:
@@ -276,9 +276,9 @@ class Harness:
                 self.last_taken = request
                 try:
                     await isabelle_driver.reset(connection)
-                    async with toplevel.conversation(packages, str(request.working_directory), port,
-                                                     connection) as (forest, loaded, server):
-                        self.serving = (request, server)
+                    async with toplevel.served(packages, str(request.working_directory), port,
+                                               connection) as (forest, loaded, server):
+                        self.serving = (request, forest.conversation.ending)
                         request.handed_over.set_result(Handle(
                             self, request, forest=forest, kinds=loaded.kinds, connection=connection,
                             url=server.url, working_directory=request.working_directory))
@@ -303,14 +303,14 @@ class Harness:
         isabelle_remote_procedure("launch_TAT")(self.launch_TAT)
 
     async def start_child(self) -> None:
-        """Stage 2: `isabelle TAT` on a directory that carries the plugin
+        """Stage 2: `isabelle TAT_mcp` on a directory that carries the plugin
         list, its output to one log, its exit as a task."""
         await asyncio.to_thread(subprocess.run,
                                 ["isabelle", "TAT_new", "-P", PLUGIN, str(self.launcher_directory)],
                                 check=True)
         with self.log_path.open("wb") as log:
             self.child = subprocess.Popen(
-                ["isabelle", "TAT", "-p", str(self.port), str(self.launcher_directory)],
+                ["isabelle", "TAT_mcp", "-p", str(self.port), str(self.launcher_directory)],
                 stdout=log, stderr=subprocess.STDOUT,
                 env={**os.environ, "RPC_Host": self.host_address},
                 start_new_session=True,
@@ -324,7 +324,7 @@ class Harness:
         themselves; an expiry is reported as the record too, with the
         child's output."""
         try:
-            with self.deadline(STARTUP, "isabelle TAT's start"):
+            with self.deadline(STARTUP, "isabelle TAT_mcp's start"):
                 await self.wait(self.launched)
         except TimeoutError:
             self.raise_if_ended()
@@ -365,7 +365,7 @@ class Harness:
         """Stage 3's: the run's end through the product's ending chain."""
         self.raise_if_ended()
         self.requests.put_nowait(None)
-        rc = await self.await_child("isabelle TAT's exit after the suite")
+        rc = await self.await_child("isabelle TAT_mcp's exit after the suite")
         self.raise_if_ended()
         over = self.run_end.result()
         echoed = "*** " + traceback.format_exception_only(over)[-1].rstrip("\n")
@@ -383,7 +383,7 @@ class Harness:
         if not self.child_exit.done():
             self.signal_child(signal.SIGINT)
             try:
-                await self.await_child("isabelle TAT's exit after SIGINT")
+                await self.await_child("isabelle TAT_mcp's exit after SIGINT")
             except TimeoutError as expired:
                 self.signal_child(signal.SIGTERM)
                 with anyio.move_on_after(TERMINATION):
@@ -392,4 +392,4 @@ class Harness:
                     self.signal_child(signal.SIGKILL)
                 await asyncio.wait({self.child_exit})      # unbounded: the waiting thread must end
                 raise expired
-        assert not self.group_alive(), "a process is left in isabelle TAT's group"
+        assert not self.group_alive(), "a process is left in isabelle TAT_mcp's group"

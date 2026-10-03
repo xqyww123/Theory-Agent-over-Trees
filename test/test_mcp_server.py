@@ -13,6 +13,7 @@ import uvicorn
 from mcp import types
 from mcp.shared.exceptions import McpError
 
+import stand_ins
 from baselines import DOCS, fenced_lines
 from harness import client, free_port, text_of
 from isabelle_theory_agent.exceptions import (
@@ -24,9 +25,10 @@ from isabelle_theory_agent.mcp_server import (
 def no_briefing() -> str:
     return ""
 
-# The three server lines, in document order; a fourth, a missing one or a
+# The six server lines, in document order; a seventh, a missing one or a
 # reordering fails here, an edited one fails the assertions below.
-INTERNAL, UNSAVED, GONE = fenced_lines(DOCS / "RENDER_BASELINES.md", "4.")
+INTERNAL, UNSAVED, GONE, NO_TRANSCRIPT, NOT_SANDBOXED, NOT_CONNECTED = fenced_lines(
+    DOCS / "RENDER_BASELINES.md", "4.")
 
 SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 STRICT_SCHEMA = {"type": "object", "properties": {"field": {"type": "string"}},
@@ -107,9 +109,10 @@ class Bodies:
 
 @asynccontextmanager
 async def serving(port: int, tools: list[Tool], on_compaction=no_briefing):
-    """A server listening and serving in a task; yields the server and the
-    serving task, which raises what ended the conversation (`ended`)."""
-    async with TAT_Server(port, tools, on_compaction) as server:
+    """A server listening and serving in a task, on an ending object of its
+    own; yields the server and the serving task, which raises what ended
+    the conversation (`ended`)."""
+    async with stand_ins.ending() as ending, TAT_Server(ending, port, tools, on_compaction) as server:
         serve = asyncio.create_task(server.serve())
         try:
             yield server, serve
@@ -342,7 +345,8 @@ def test_the_endpoint_answers_as_soon_as_it_listens():
     request between the two is answered normally."""
     async def scenario():
         port = free_port()
-        async with TAT_Server(port, [], no_briefing) as server, client(server.url) as session:
+        async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing) as server, \
+                client(server.url) as session:
             assert (await session.list_tools()).tools == []
     run(scenario)
 
@@ -413,7 +417,7 @@ def test_on_compaction_answers_an_empty_503_while_the_conversation_is_ending():
         port = free_port()
         async with serving(port, [], on_compaction) as (server, serve), httpx.AsyncClient() as http:
             accepting = hold_accepting(server)
-            server.end(RuntimeError("ended"))
+            server.ending.end(RuntimeError("ended"))
             r = await http.post(f"http://{HOST}:{port}{ON_COMPACTION}", params={"client": "codex"})
             assert r.status_code == 503 and r.content == b"" and calls == []
             accepting.set()
@@ -444,7 +448,7 @@ def test_a_port_that_cannot_be_bound_is_a_startup_error():
         port = free_port()
         async with serving(port, []):
             with pytest.raises(TAT_StartupError, match=f"TAT cannot serve on {HOST}:{port}: "):
-                async with TAT_Server(port, [], no_briefing):
+                async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing):
                     pass
     run(scenario)
 
@@ -472,7 +476,7 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             raise
 
     async def enter(port):                            # a task of its own takes the cancellation
-        async with TAT_Server(port, [], no_briefing):
+        async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing):
             pass
 
     async def scenario():
@@ -482,7 +486,8 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             with pytest.raises(raised):
                 await asyncio.create_task(enter(port))
             monkeypatch.setattr(uvicorn.Server, "startup", real_startup)
-            async with TAT_Server(port, [], no_briefing) as again, client(again.url) as session:
+            async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing) as again, \
+                    client(again.url) as session:
                 assert (await session.list_tools()).tools == []
         assert reached_the_window
     run(scenario)

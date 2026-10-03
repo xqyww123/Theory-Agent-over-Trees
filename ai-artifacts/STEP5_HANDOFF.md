@@ -691,4 +691,48 @@ broken down).
   (`TAT.is_known_session`); with it the node class contract's
   `NodeConfig` gained `batch_before` and `role` and lost `replacing`
   (MODULE_STRUCTURE §4.1). The suite then 315 cases, 21 Isabelle-backed.
-  `evaluate_to` is the other session's; next here: compilation (§1).
+  Committed `96d2a6a`, pushed to `origin`. `evaluate_to` is the other
+  session's (told by cross-session message, 2026-09-30: PRINT §4's seen-set
+  timing for THEOREM.md §8, the `NodeConfig` change, `mcp._tool`, and
+  the loose ends TOOL_SCHEMAS' `status`, FOREST_WALK_PLAN §12's first
+  item, RECALL.md's citations of its untracked documents).
+- 2026-09-30/10-02, compilation: the design is docs/COMPILATION.md,
+  in its eighth revision after four adversarial reviews, three readers
+  and the owner's simplification of 2026-10-02 (no detection of a
+  changed environment after a restart: no record of change, no setter
+  halves); the owner's decisions, the reviews and the next steps are
+  ai-artifacts/COMPILATION_REVIEW.md (§1–§10). Approved whole on
+  2026-10-02, §6's amendments applied to the other documents the same
+  day. Decided, among much else:
+  one entry, `isabelle TAT_compile`, which evaluates nothing; a stored
+  second status field per operation, one form per status with the run's
+  messages on it, the stored check and its accessor; one setter per
+  operation writing both fields and no rerun rule (the owner's
+  simplification of 2026-10-02: a changed environment after a restart
+  is not detected); `can_emit`, `emit`,
+  `emit_beginning`, `emit_ending`; the rule for which trees are written;
+  compile hooks under a decorator; the directory cleared by extension;
+  exit codes 0/1/2; reserved names through a Scala function. The code:
+  step 1, model.py's statuses and setters, written on 2026-10-02 and
+  frozen, uncommitted, until the owner's go-ahead: review 5's document
+  fixes are applied and passed a reader (reader6.json, FIT); the code
+  fixes are review 5's author items (COMPILATION_REVIEW §10) in the
+  shape of the rulings (§10, §11, §13) and the sixth review's code
+  items (COMPILATION §6 item 9), the step committed only together
+  with `import_sessions`, reviewed before commit; next `can_emit`/`emit` and `compile.py`,
+  then `toplevel.py`, the ML command, the Scala tool and function, the
+  creation checks (COMPILATION_REVIEW §12). A sixth adversarial review
+  on 2026-10-02 (COMPILATION_REVIEW §13; `ruling6.json`):
+  READY_WITH_FIXES, one reader afterwards; five owner items not yet
+  ruled (the `Blocked` mode; one `Evaluation` per walk; the internal
+  `evaluate` flag; `_on_context_change` through `_completed`; the edit's
+  store set), seven author items (a `move` invalidates from two
+  positions, among them), three small edits. The owner ruled on
+  2026-10-03, every item its option one, and ruled reader 8's finding
+  the same day (a destination under a nesting node whose beginning
+  failed is reported as stopped at that node when `ignore_error` is
+  unset); the documents are amended accordingly and passed four
+  readers (reader7–reader10.json, the last FIT; COMPILATION_REVIEW
+  §13). The code stays frozen until the owner lifts it; then the code
+  items of COMPILATION §6 item 9 join review 5's, and a code review
+  precedes the commit.

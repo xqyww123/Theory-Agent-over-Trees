@@ -416,7 +416,12 @@ fun run_span tr st =
 
 in
 
-(*§2.4: split with Outer_Syntax.parse_spans, run each span through
+(*DO NOT USE.  run_span registers each span in the process-global Execution
+  table, which a library load's Execution.reset wipes; build the transition
+  in ML and apply it through Toplevel.command_errors instead, as
+  begin_theory does.  Kept only until `end` is moved to that shape.
+
+  §2.4: split with Outer_Syntax.parse_spans, run each span through
   Toplevel.command_errors true, threading the state.  The first argument
   `true` is Isabelle's interactive flag and load-bearing: `sorry` is refused
   without it (EVALUATOR_DESIGN §1).  Tokenisation is one pass over the whole

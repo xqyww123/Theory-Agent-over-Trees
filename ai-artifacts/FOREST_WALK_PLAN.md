@@ -178,6 +178,28 @@ unblocks and amends in one place (§1 item 11).
     fails with `Duplicate theory name` far from the cause — and refuses
     them with item 3's sentence, since no theory bears such a name. A
     bare `Main` is untouched.
+19. *(2026-10-03, after the compilation design's sixth review,
+    ai-artifacts/COMPILATION_REVIEW.md §13)* With `ignore_error` unset
+    the walk of a tree ends at its first stop as it ends at its
+    destination, the forest going on to its next tree: the stop
+    answers `mode` `None`, every enclosing node runs nothing more and
+    answers `None`, and `_handle_tree`'s one `_invalidate_from` call
+    takes the position after the stop; everything after a stop to the
+    tree's end is `not_evaluated`, obstacles included. The `Blocked`
+    mode goes, and with it item 16's "the blocked walk stays a mode of
+    its own inside a tree, keeping own stops as they are", the
+    stopped-child test, `_carry_forward`'s release branch and `move`'s
+    second release. The internal `evaluate` flag and `_invalidate_whole`
+    of §6 go too: `Node.evaluate_to` always evaluates, and the tests that
+    used the flag call the two plain functions of MODULE_STRUCTURE §4.1
+    — `Forest._invalidate_from(position, ev)` and a node's
+    `_invalidate(ev)` — through a test helper. Item 15's per-tree
+    `Evaluation` goes too: the walk runs under one `Evaluation`, which
+    `_handle_tree` stores and flushes at each tree's end, `passed`
+    accumulating (COMPILATION.md §4). A destination under a nesting node
+    whose beginning failed is reported as stopped at that node when
+    `ignore_error` is unset, everything after the destination
+    invalidated (reader 8, ruled 2026-10-03).
 
 ## 2. Already in the code (step 3, 2026-09-08)
 

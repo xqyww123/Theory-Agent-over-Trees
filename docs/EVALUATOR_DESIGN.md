@@ -15,28 +15,26 @@ signatures of unpatched files.
 
 Every `Toplevel.state` lives in a state slot (§1.1), and a node's evaluator is
 handed the slot it starts from and the slot it writes (ARCHITECTURE §3.1). No
-file is read: each evaluator receives the text of its own node's commands.
+file is read, and every operation builds its transition in ML and applies
+it through `Toplevel.command_errors true`, threading the state from the
+input slot to the resulting slot.
 
 For the `Theory` root node's header:
 
-- read it with `Thy_Header.read`
+- read its text with `Thy_Header.read` — the one text parsed at run time
 - resolve each import to a `theory` value (§2)
-- merge the parents' keyword tables (`Thy_Header.get_keywords`,
-  `Keyword.merge_keywords`) before tokenising, or a parent-defined command
-  tokenises as garbage
-- do not pre-create the theory: start from `Toplevel.make_state NONE` and
-  parse the `theory … begin` span with `Outer_Syntax.parse_span`, whose
-  second argument supplies the `unit -> theory` the span's transition
-  calls — ours performs `Resources.begin_theory master_dir header parents`
+- do not pre-create the theory: build the transition the `theory` span
+  would parse to, `Toplevel.make Thy_Header.theoryN pos |>
+  Toplevel.init_theory`, its `unit -> theory` performing
+  `Resources.begin_theory master_dir header parents`, and run it from
+  `Toplevel.make_state NONE`
 
-For any node's commands:
-
-- split the text with `Outer_Syntax.parse_spans`
-- run each span through `Toplevel.command_errors true`, threading the state
-  from the input slot to the resulting slot
-
-For the root node's `end`, `Toplevel.end_theory` yields the `theory`
-value, which goes into the theory table (§3).
+For the root node's `end`: an ML-built `Toplevel.exit` transition, then
+`Toplevel.end_theory`, which yields the `theory` value that goes into the
+theory table (§3). A `Theorem` builds one transition from its statement's
+structure (THEOREM.md §6). The span path — split a node's text with
+`Outer_Syntax.parse_spans` and run each span — is the retiring
+`run_commands`, not to be used (MODULE_STRUCTURE §2.4, §6 below).
 
 `Toplevel.command_errors` returns `(errors, state option)`; check both, since a
 failing command can return no state. The errors are `Runtime.error` values,
@@ -168,7 +166,7 @@ too many.
 
 ## 5. Open
 
-Where the `AoA` proof method lives — OPEN_QUESTIONS §4. §2 holds only if its
+Where the `aoa` proof method lives — OPEN_QUESTIONS §3. §2 holds only if its
 theory is in the base heap.
 
 ## 6. Loading a library theory that is not in the base heap
@@ -191,22 +189,32 @@ the wrapper exists, is the one call outside it (MODULE_STRUCTURE §5).
   It also recovers errors that the callee dropped: on a batch where two theories
   fail, the raw call reports one and strands the other.
   Exn.capture_body rather than Exn.result: result re-raises an interrupt on
-  the spot, so a cancelled load would skip the reset and leave exactly the
-  residue this wrapper drains.  The drain therefore always runs; a
-  cancellation is then re-raised explicitly -- Par_Exn treats an interrupt
-  as a neutral element and release_all would swallow it whenever the residue
+  the spot, so a cancelled load would skip the reset below and leave exactly
+  the residue this wrapper exists to drain.  The drain, run uninterruptibly
+  once the call has returned, therefore always completes; a cancellation is
+  then re-raised explicitly -- Par_Exn treats an interrupt as a neutral
+  element (par_exn.ML) and release_all would swallow it whenever the residue
   holds real errors -- and residue errors are released only when the call
   was not cancelled.*)
-fun load options import =
-  let
-    val result = Exn.capture_body (fn () => Thy_Info.use_theories options "" [import]);
-    val residue = map Exn.Exn (maps Task_Queue.group_status (Execution.reset ()));
-    val _ =
-      (case Exn.get_exn result of
-        SOME exn => if Exn.is_interrupt_proper exn then Exn.reraise exn else ()
-      | NONE => ());
-  in hd (Par_Exn.release_all (result :: residue)) end;
+fun load import =
+  Synchronized.change lock (fn () =>
+    let
+      val _ = check_parallel_proofs ()
+      val result =
+        Exn.capture_body (fn () => Thy_Info.use_theories (Options.default ()) "" [import])
+      val residue =
+        Thread_Attributes.uninterruptible (fn _ => fn () =>
+          map Exn.Exn (maps Task_Queue.group_status (Execution.reset ()))) ()
+      val _ =
+        (case Exn.get_exn result of
+          SOME exn => if Exn.is_interrupt_proper exn then Exn.reraise exn else ()
+        | NONE => ())
+      val _ = Par_Exn.release_all (result :: residue)
+    in () end)
 ```
+
+`lock` is the one loader lock (below), and `check_parallel_proofs` asserts
+the first condition below (`ML/TAT_Framework.ML`).
 
 Four conditions, all required together:
 
@@ -226,7 +234,9 @@ Four conditions, all required together:
   loader loads, whose bodies run on Future workers; the conversation's own
   thread is no worker (MODULE_STRUCTURE §2.6), so `Future.proofs_enabled`
   is false there and no goal of a node's commands forks whatever the option
-  says.
+  says. A job's work does run on a worker (CONSTRUCT_INTERACTION §3.3),
+  and forks none either: it applies no Toplevel transition and calls no
+  `Goal.prove_future` or `Goal.prove_sorry`.
 - **One theory per call.** In a mixed batch the successful siblings of a failing
   theory are not committed, because the escape also skips the commit.
 - **One lock around every call.** `Thy_Info` has no internal mutual exclusion;
@@ -236,15 +246,20 @@ Four conditions, all required together:
   The call ends in `Execution.reset ()`, a wholesale wipe of the
   process-global execution table each running span is registered in
   (MODULE_STRUCTURE §2.4): a concurrent span would lose its entry, stranding
-  its forks and making a later `Execution.fork` under its id fail. The
-  framework's own evaluation cannot collide: the conversation runs on a
-  thread inside no theory, started only after the boot has finished loading
-  TAT's theory and `TAT.start` has loaded the plugins' (MODULE_STRUCTURE
-  §2.6, §5), so those loads never overlap it; its dispatch is
-  one synchronous loop; `run_commands` joins and purges each span before
-  returning; and `begin_theory` resolves every import before it registers or
-  runs anything. A node class's asynchronous work must not call
-  `run_commands` while a load may run.
+  its forks and making a later `Execution.fork` under its id fail. Nothing
+  of TAT's collides with it: the conversation runs on a thread inside no
+  theory, started only after the boot has finished loading TAT's theory
+  and `TAT.start` has loaded the plugins' (MODULE_STRUCTURE §2.6, §5), so
+  those loads never overlap it; its dispatch is one synchronous loop;
+  `begin_theory` resolves every import before it runs anything; and TAT
+  registers nothing in the table itself — `run_commands`, which did, is
+  not to be used (MODULE_STRUCTURE §2.4). The jobs, which do run beside a
+  load (CONSTRUCT_INTERACTION §3.3), never reach the table either: a job's
+  work applies no Toplevel transition and calls nothing that forks a
+  proof — `Goal.prove_future`, `Goal.prove_sorry` — and the tactics a
+  replay runs prove through `Goal.prove`, which never forks;
+  `Proof_Check`'s work is a goal built in ML and `eval_prf_str`
+  (THEOREM.md §7). So no lock orders the jobs against a load.
 
 `load` is handed the one name the Isabelle session layout gives the
 file: `<session>.<short name>`, or the short name alone when the layout
@@ -287,7 +302,11 @@ is already taken is rejected when it is created, not when something imports
 it. So is a name the Isabelle session layout declares global (`Main`,
 `FOL`, …): `Resources.theory_name` leaves such a name unqualified, and a
 tree so named would be keyed without its `Session` (`ReservedTheoryName`,
-answered by `Resources.global_theory`). The same names are refused as
+answered by `Resources.global_theory`); and so is a name Isabelle
+reserves as a file or theory name — `Path.is_reserved`,
+`Sessions.illegal_theory`, asked through the Scala function
+`TAT.reserved_name` (COMPILATION.md §2) — which the same
+`ReservedTheoryName` refuses. The same names are refused as
 the short name of a qualified import: Isabelle answers `imports HOL.Main`
 by loading `Main.thy` a second time as a theory named `HOL.Main`, and a
 later theory importing both fails with `Duplicate theory name`; `fetch`

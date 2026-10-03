@@ -1,7 +1,7 @@
 """The Streamable HTTP MCP server (MODULE_STRUCTURE §4.6): the endpoint
 `http://127.0.0.1:<port>/mcp`, the path `/on-compaction` the agent
 clients' hooks call (CLIENT_HOOKS.md); the tool boundary of EXCEPTIONS.md
-§1; the conversation's ending.
+§1; the conversation's ending, `Ending`.
 
 TAT's own transport code, on the Python `mcp` SDK's low-level server and
 session manager and on uvicorn.  Two lessons from AoA's server
@@ -15,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import time
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any, NoReturn, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
@@ -31,7 +32,8 @@ from mcp.server.transport_security import TransportSecurityMiddleware, Transport
 from starlette.requests import Request
 
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
-from .model import JSON_Schema
+from .log import Log
+from .model import Forest, JSON_Schema
 
 HOST = "127.0.0.1"
 PATH = "/mcp"
@@ -89,39 +91,122 @@ class Tool:
     read_only: bool
 
 
+def connection_went(ended_by: BaseException) -> bool:
+    """Whether what ended the conversation is the connection going: the
+    connection error a dead wire answers a round trip with, or the RPC
+    host's cancellation of `launch_TAT`."""
+    return isinstance(ended_by, (ConnectionError, asyncio.CancelledError))
+
+
 def stopped(ended_by: BaseException) -> str:
     """The one answer while the conversation is ending (RENDER_BASELINES
-    §4), by what ended it: a `TAT_DisasterError`; the connection error a
-    dead wire answers a round trip with, or the RPC host's cancellation of
-    `launch_TAT` when the connection is gone; else a bug."""
+    §4), by what ended it: a `TAT_DisasterError`; the connection gone; else
+    a bug."""
     if isinstance(ended_by, TAT_DisasterError):
         reason = "the sessions could not be saved"
-    elif isinstance(ended_by, (ConnectionError, asyncio.CancelledError)):
+    elif connection_went(ended_by):
         reason = "Isabelle is gone"
     else:
         reason = "an internal error"
     return f"TAT has stopped: {reason}; this call did not complete."
 
 
+T = TypeVar("T")
+
+
+class Ending:
+    """The conversation's ending (MODULE_STRUCTURE §4.6), the one state a
+    conversation has besides running.  `toplevel.conversation()` enters it
+    as a context right after the `Log` and hands it to the `Conversation`
+    and to the server.  It holds the `Log`, the `Forest` once that is
+    built, and the tasks it cancels and waits for: the tool bodies the
+    server runs through `spawn`, later a construction job's run.  Whichever
+    door is reached first calls `end`, which enters the ending once; the
+    context's exit enters it for an exception escaping the start, waits for
+    the tasks to unwind, and writes `ended`."""
+
+    def __init__(self, log: Log):
+        self.log = log
+        self.forest: Forest | None = None
+        self._ended_by: BaseException | None = None
+        self._entered = asyncio.Event()
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self._since = 0.0                   # when `end` ran
+        self._calls_cancelled = 0
+
+    @property
+    def entered(self) -> bool:
+        return self._ended_by is not None
+
+    @property
+    def ended_by(self) -> BaseException:
+        """What ended the conversation; asked once the ending is entered."""
+        if self._ended_by is None:
+            raise TAT_InternalError("the conversation is not ending")
+        return self._ended_by
+
+    async def wait(self) -> None:
+        await self._entered.wait()
+
+    def spawn(self, coroutine: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
+        """A task of the conversation's: cancelled by `end`, waited for at
+        the exit."""
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    def end(self, ended_by: BaseException) -> None:
+        """Enter the ending, unless it is entered, in one synchronous
+        stretch: write the `ending` record (LOGGING.md §4) and cancel every
+        spawned task — each tool handler answers its own call."""
+        if self._ended_by is not None:
+            return
+        self._ended_by = ended_by
+        self._since = time.monotonic()
+        self.log.conversation.ending(
+            ended_by, level="info" if connection_went(ended_by) else "error")
+        running = [task for task in self._tasks if not task.done()]
+        self._calls_cancelled = len(running)
+        for task in running:
+            task.cancel()
+        self._entered.set()
+
+    async def __aenter__(self) -> Ending:
+        return self
+
+    async def __aexit__(self, _: object, exc: BaseException | None, __: object) -> None:
+        if exc is not None:
+            self.end(exc)
+        if self._ended_by is None:          # a compile that returned
+            return
+        if self._tasks:
+            await asyncio.wait(set(self._tasks))
+        # the jobs' counts are written once the jobs exist (CONSTRUCT_INTERACTION §3)
+        self.log.conversation.ended(
+            construction_jobs_cancelled=0, evaluation_jobs_dropped=0,
+            calls_cancelled=self._calls_cancelled, duration=time.monotonic() - self._since)
+
+
 class TAT_Server:
     """The server of one conversation, constructed on the running loop:
     `async with` binds the port (`TAT_StartupError` when it cannot be),
     starts the session manager and listens, and on leaving stops; `serve`
-    runs the conversation until its ending and raises what ended it."""
+    runs the conversation until its ending and raises what ended it.  The
+    ending is `ending`'s, given; the server keeps no ending state of its
+    own."""
 
-    def __init__(self, port: int, tools: list[Tool], on_compaction: Callable[[], str]):
+    def __init__(self, ending: Ending, port: int, tools: list[Tool],
+                 on_compaction: Callable[[], str]):
         """`on_compaction` is what `/on-compaction` does — the seen set
         cleared, the briefing returned (`mcp.py`); anything it raises ends
         the conversation, as a tool body's would."""
+        self.ending = ending
         self._port = port
         self._tools = {tool.name: tool for tool in tools}
         self._on_compaction = on_compaction
         self.url = f"http://{HOST}:{port}{PATH}"
 
-        # The conversation's ending: what ended it, once entered; the
-        # bodies it cancels; the requests it waits for.
-        self._ending: asyncio.Future[BaseException] = asyncio.get_running_loop().create_future()
-        self._bodies: set[asyncio.Task[str]] = set()
         self._requests = 0                  # in flight, the standalone GET stream excepted
         self._idle = asyncio.Event()        # no request in flight
         self._idle.set()
@@ -178,25 +263,24 @@ class TAT_Server:
         conversation.  Cancelled — the RPC host ending `launch_TAT`'s call
         because the connection is gone — it enters the ending itself and
         raises that cancellation the same way."""
+        main_loop = asyncio.ensure_future(self._uvicorn.main_loop())
+        main_loop.add_done_callback(self._main_loop_done)
         try:
-            await self._uvicorn.main_loop()          # returns once `end` has run
+            await self.ending.wait()
         except asyncio.CancelledError as gone:
-            self.end(gone)
+            self.ending.end(gone)
+        self._uvicorn.should_exit = True
+        await main_loop                              # returns once told to exit
         self._stop_accepting()
         while self._requests:
             await self._idle.wait()
-        raise self._ending.result()
+        raise self.ending.ended_by
 
-    def end(self, ended_by: BaseException) -> None:
-        """Enter the conversation's ending, unless it is entered: cancel
-        every working call's body — each handler answers its own call —
-        and have `serve` stop once they have."""
-        if self._ending.done():
-            return
-        self._ending.set_result(ended_by)
-        for body in self._bodies:
-            body.cancel()
-        self._uvicorn.should_exit = True
+    def _main_loop_done(self, main_loop: asyncio.Task[None]) -> None:
+        """uvicorn's loop failing on its own is a bug, which ends the
+        conversation like any other."""
+        if not main_loop.cancelled() and (bug := main_loop.exception()) is not None:
+            self.ending.end(bug)
 
     def _stop_listening(self) -> None:
         for server in self._uvicorn.servers:
@@ -257,13 +341,13 @@ class TAT_Server:
         if client is not None and client not in CLIENTS:
             await _answer(send, 400, unknown_client(client).encode(), "text/plain; charset=utf-8")
             return
-        if self._ending.done():             # nothing left to brief
+        if self.ending.entered:             # nothing left to brief
             await _answer(send, 503, b"", "text/plain")
             return
         try:
             briefing = self._on_compaction()
         except Exception as bug:
-            self.end(bug)
+            self.ending.end(bug)
             await _answer(send, 500, b"", "text/plain")
             return
         await _answer(send, 200, *envelope(client, briefing))
@@ -277,8 +361,8 @@ class TAT_Server:
                 for tool in self._tools.values()]
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-        if self._ending.done():
-            return _result(stopped(self._ending.result()), is_error=True)
+        if self.ending.entered:
+            return _result(stopped(self.ending.ended_by), is_error=True)
         tool = self._tools.get(name)
         if tool is None:
             return _result(f"unknown tool `{name}`", is_error=True)
@@ -286,9 +370,7 @@ class TAT_Server:
         # scope, and the wait is shielded: neither a client's cancellation
         # nor the SDK's unwind reaches it mid-edit.  `asyncio.wait` never
         # cancels what it waits on.
-        body = asyncio.create_task(_run(tool, arguments))
-        self._bodies.add(body)
-        body.add_done_callback(self._bodies.discard)
+        body = self.ending.spawn(_run(tool, arguments))
         with anyio.CancelScope(shield=True):
             await asyncio.wait({body})
         answer = self._answer(name, body)
@@ -303,17 +385,17 @@ class TAT_Server:
         answers.  The boundary itself failing is a bug like any other."""
         try:
             if body.cancelled():            # the ending's, or a cancellation the body let escape
-                self.end(TAT_InternalError(f"the body of `{name}` was cancelled"))
+                self.ending.end(TAT_InternalError(f"the body of `{name}` was cancelled"))
             else:
                 exn = body.exception()
                 if exn is None:
                     return _result(body.result(), is_error=False)
                 if isinstance(exn, TAT_Error):
                     return _result(str(exn), is_error=True)
-                self.end(exn)
+                self.ending.end(exn)
         except Exception as bug:
-            self.end(bug)
-        return _result(stopped(self._ending.result()), is_error=True)
+            self.ending.end(bug)
+        return _result(stopped(self.ending.ended_by), is_error=True)
 
 
 async def _run(tool: Tool, arguments: dict[str, Any]) -> str:

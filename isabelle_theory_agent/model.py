@@ -17,17 +17,22 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import (Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TextIO, TypeAlias,
-                    TypedDict)
+from typing import (TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TextIO,
+                    TypeAlias, TypedDict, final)
 
 from Isabelle_RPC_Host import Connection
 
 from . import isabelle_driver
+from .isabelle_driver import IsaTerm
 from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedTheoryName,
     TAT_Error, TAT_InternalError, TAT_StartupError)
+from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
+
+if TYPE_CHECKING:
+    from .mcp_server import Ending
 
 
 # A JSON schema, as `json` reads it.  (`TypeAlias` rather than the `type`
@@ -108,19 +113,24 @@ class _Singleton:
 class NotEvaluated(_Singleton):
     """No current result; nothing in the resulting state to rely on."""
 
-class Ready(_Singleton):
+@dataclass(frozen=True)
+class Ready:
     """The operation ran and its resulting state is current.  Evaluation
-    passes through."""
+    passes through.  `messages`: what the run reported — warnings, or the
+    failure the class carried on past — empty for a clean run
+    (ARCHITECTURE §3.2)."""
+    messages: tuple[IsaTerm, ...] = ()
 
-class CannotEvaluate(_Singleton):
+@dataclass(frozen=True)
+class CannotEvaluate:
     """The operation ran and its class judged the failure fatal: the node is
     an obstacle (ARCHITECTURE §3.3), not rerun until edited, its input
     standing as its result.  What it blocks is `NotEvaluated`, and runs as
-    soon as a walk reaches it unblocked."""
+    soon as a walk reaches it unblocked.  `messages`: the reason."""
+    messages: tuple[IsaTerm, ...] = ()
 
 NOT_EVALUATED = NotEvaluated()
-READY = Ready()
-CANNOT_EVALUATE = CannotEvaluate()
+READY_CLEAN = Ready()              # the clean run's value: a `Ready`, compared with `==`
 
 EvaluationStatus = NotEvaluated | Ready | CannotEvaluate
 
@@ -129,7 +139,29 @@ def _wrote(status: EvaluationStatus) -> bool:
     """Whether an operation in this status has written its resulting state:
     `ready`, or an own stop, which copied its input through
     (ARCHITECTURE §3.1)."""
-    return status is READY or status is CANNOT_EVALUATE
+    return status is not NOT_EVALUATED
+
+
+# The stored form of a status (COMPILATION.md §4): the kind, and the
+# messages in their `unicode` spelling.
+_STATUS_KINDS: dict[type, str] = {NotEvaluated: "not_evaluated", Ready: "ready",
+                                  CannotEvaluate: "cannot_evaluate"}
+_STATUS_OF_KIND: dict[str, Callable[[tuple[IsaTerm, ...]], EvaluationStatus]] = {
+    "not_evaluated": lambda _: NOT_EVALUATED, "ready": Ready, "cannot_evaluate": CannotEvaluate}
+
+
+def _status_to_store(status: EvaluationStatus) -> list[Any]:
+    messages = () if isinstance(status, NotEvaluated) else status.messages
+    return [_STATUS_KINDS[type(status)], [m.unicode for m in messages]]
+
+
+def _status_from_store(value: Any) -> EvaluationStatus | None:
+    """The status a stored value means, or None for a value no status
+    writes."""
+    if (isinstance(value, list) and len(value) == 2 and value[0] in _STATUS_OF_KIND
+            and isinstance(value[1], list) and all(isinstance(m, str) for m in value[1])):
+        return _STATUS_OF_KIND[value[0]](tuple(IsaTerm.from_agent(m) for m in value[1]))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +180,7 @@ class Evaluation:
         self.destination = destination
         self.ignore_error = ignore_error
         self._released: set[str] = set()
+        self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
 
     def release(self, slot: Isar_State_Slot) -> None:
         self._released.add(slot.name)
@@ -229,10 +262,10 @@ PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 INDENT = "  "                            # one level
 
 
-def print_error(indent: int, out: TextIO, message: str) -> None:
-    """The error block (PRINT.md §3): `Error:` at `indent`, every line of
+def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
+    """The message block (PRINT.md §3): `header` at `indent`, every line of
     the message one level deeper."""
-    out.write(INDENT * indent + "Error:\n")
+    out.write(INDENT * indent + header + "\n")
     for line in message.rstrip("\n").split("\n"):
         out.write(INDENT * (indent + 1) + line + "\n")
 
@@ -330,9 +363,27 @@ class Node(ABC):
         them."""
         raise TAT_InternalError(f"{cls.__name__} has no from_store")
 
+    # The stored statuses (COMPILATION.md §4): one entry per own operation
+    # in `_own_statuses()`'s order, the value each `evaluation_status` was
+    # last given; one framework row, restored at load (`Forest._load_subtree`).
+    _last_evaluation_statuses: list[EvaluationStatus]
+
     def __init__(self, parent: NonLeaf_Node | None, state: Isar_State_Slot):
         self.parent = parent
         self.state = state
+        self._last_evaluation_statuses = [NOT_EVALUATED for _ in self._operation_names()]
+
+    @final
+    def last_evaluation_statuses(self) -> tuple[EvaluationStatus, ...]:
+        """The stored statuses, what `can_emit` and a compile read."""
+        return tuple(self._last_evaluation_statuses)
+
+    def _stored(self, ev: Evaluation, index: int, new: EvaluationStatus) -> None:
+        """The setter's stored half of a write (COMPILATION.md §4): the entry,
+        the seen set's keys of the operation's messages, the walk's store."""
+        self._last_evaluation_statuses[index] = new
+        self.forest().conversation.seen.discard((self.identity, self._operation_names()[index]))
+        ev.stored.add(self)
 
     def id_component(self) -> Id_Component:
         """The node's one component of an id, `<kind>_<name>`
@@ -400,16 +451,24 @@ class Node(ABC):
         """The statuses of the node's own operations, in the order it runs
         them: a leaf's one, a nesting node's beginning and ending, none for
         a container that runs nothing.  What `_operations_ready` and the
-        default `mark` read; a class with statuses of its own answers them
-        here and overrides neither (PLUGIN_SYSTEM §5)."""
+        default `mark` read; the three base classes answer, no class of
+        its own (PLUGIN_SYSTEM §5)."""
 
+    @abstractmethod
+    def _operation_names(self) -> list[Any]:
+        """The name of each own operation, in `_own_statuses()`'s order —
+        what `on_invalidated` is told and the seen set's keys carry
+        (PRINT.md §4)."""
+
+    @final
     def _operations_ready(self) -> bool:
         """Whether every operation of this node — not its subtree — is
         `Ready`."""
-        return all(s is READY for s in self._own_statuses())
+        return all(isinstance(s, Ready) for s in self._own_statuses())
 
-    # --- Rendering (PRINT.md).  The framework writes the line and descends;
-    # a class writes its fields and errors, and may say more in `mark`.
+    # --- Rendering (PRINT.md).  The framework writes the line, the
+    # operations' messages and descends; a class writes its fields, and
+    # may say more in `mark`.
 
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The line at `indent`, then `print_fields` and the children one
@@ -423,12 +482,32 @@ class Node(ABC):
         out.write(INDENT * indent + ("" if alone else "- ") + line + "\n")
         below = indent if alone else indent + 1
         self.print_fields(below, out, mode, depth)
+        self._print_messages(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
 
     def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
-        """The class's: its fields and its errors, one per line at `indent`,
-        chosen by mode and depth (PRINT.md §3).  Nothing by default."""
+        """The class's: its fields, one per line at `indent`, chosen by mode
+        and depth (PRINT.md §3).  Nothing by default."""
+
+    def _print_messages(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+        """The framework's (PRINT.md §3): each own operation's messages, the
+        block headed `Error:` under a `CannotEvaluate` and `Notice:` under
+        a `Ready` — whole under `recall` below depth 2, once per run
+        elsewhere (the seen set, §4), never in the briefing."""
+        if mode is BRIEFING:
+            return
+        seen = self.forest().conversation.seen
+        whole = mode is RECALL and depth < 2
+        for operation, status in zip(self._operation_names(), self._own_statuses()):
+            if isinstance(status, NotEvaluated) or not status.messages:
+                continue
+            key = (self.identity, operation)
+            if whole or key not in seen:
+                header = "Error:" if isinstance(status, CannotEvaluate) else "Notice:"
+                for message in status.messages:
+                    print_error(indent, out, message.unicode, header)
+                seen.add(key)
 
     def detailed(self, mode: PrintMode, depth: int) -> bool:
         """A helper for a class's `print_fields`: this node is a focus, or
@@ -442,7 +521,7 @@ class Node(ABC):
         if self.is_finished():
             return "success"
         statuses = self._own_statuses()
-        if any(s is CANNOT_EVALUATE for s in statuses):
+        if any(isinstance(s, CannotEvaluate) for s in statuses):
             return "failed"
         if any(s is NOT_EVALUATED for s in statuses):
             return "not evaluated"
@@ -492,10 +571,10 @@ class Node(ABC):
         """Completed: it moved; `old_location` is where it came from."""
 
     @abstractmethod
-    def _last_status(self) -> EvaluationStatus:
-        """The status of the node's last operation — the one that writes its
-        resulting state.  Framework-only: what a node class asks of another
-        node is `is_finished()`."""
+    def _resulting_status(self) -> EvaluationStatus:
+        """The status of the operation that writes `resulting_state()`.
+        Framework-only: what a node class asks of another node is
+        `is_finished()`."""
 
     def _states_inside(self, out: list[Isar_State_Slot] | None = None
                        ) -> list[Isar_State_Slot]:
@@ -558,33 +637,44 @@ class Leaf(Node):
         super().__init__(parent, state)
         self._status = NOT_EVALUATED
 
-    def _last_status(self):
+    @final
+    def _resulting_status(self):
         return self._status
 
+    @final
     def _own_statuses(self):
         return [self._status]
 
+    @final
+    def _operation_names(self):
+        return [None]
+
     def _set_status(self, ev: Evaluation, new: EvaluationStatus) -> None:
+        """The operation's one setter: the instant status and its stored
+        entry (COMPILATION.md §4)."""
         old = self._status
         if _wrote(old) and not _wrote(new):       # written -> unwritten; a rewrite releases nothing
             ev.release(self.resulting_state())
         self._status = new
-        if old is READY and new is not READY:
+        if isinstance(old, Ready) and not isinstance(new, Ready):
             _completed(self.on_invalidated, None)
+        self._stored(ev, 0, new)
 
     async def _mark_not_evaluated(self, ev):
-        if self._status is not NOT_EVALUATED:
+        if self._status is not NOT_EVALUATED or self._last_evaluation_statuses[0] is not NOT_EVALUATED:
             self._set_status(ev, NOT_EVALUATED)
 
     @abstractmethod
-    async def _eval_opr(self) -> bool:
-        """Run the node from `state` into `resulting_state()`.  Return whether
-        evaluation passes through it; on False the framework copies `state`
-        into `resulting_state()`, which `ignore_error` will run from."""
+    async def _eval_opr(self) -> Ready | CannotEvaluate:
+        """Run the node from `state` into `resulting_state()`.  Return the
+        status the run leaves, carrying what it reported; on a
+        `CannotEvaluate` the framework copies `state` into
+        `resulting_state()`, which `ignore_error` will run from."""
 
     async def _evaluate(self, ev, mode):
         if mode is BLOCKED:
-            if self._status is not CANNOT_EVALUATE:      # an own stop keeps reporting itself
+            # an own stop keeps reporting itself, judged on the stored status
+            if not isinstance(self._last_evaluation_statuses[0], CannotEvaluate):
                 self._set_status(ev, NOT_EVALUATED)
             return EvaluationResult(None, self._mode_after(ev, BLOCKED, None, False))
         if isinstance(mode, Evaluating):
@@ -593,12 +683,11 @@ class Leaf(Node):
             # input under it was rewritten this walk.
             if mode.rewritten or not _wrote(self._status):
                 ran = True
-                if await self._eval_opr():
-                    self._set_status(ev, READY)
-                else:
+                status = await self._eval_opr()
+                if isinstance(status, CannotEvaluate):
                     await self.state.copy_to(self.resulting_state())
-                    self._set_status(ev, CANNOT_EVALUATE)
-            if self._status is not READY and not ev.ignore_error:
+                self._set_status(ev, status)
+            if not isinstance(self._status, Ready) and not ev.ignore_error:
                 stop = self
             return EvaluationResult(stop, self._mode_after(ev, mode, stop, ran))
         if isinstance(mode, Seeking):
@@ -697,8 +786,8 @@ class NonLeaf_Node(Node):
         (ARCHITECTURE §3.1).  A failed beginning wrote the block's resulting
         state instead, so at position 0 only `ready` counts."""
         if index > 0:
-            return _wrote(self.sub_nodes[index - 1]._last_status())
-        return self._beginning_status() is READY
+            return _wrote(self.sub_nodes[index - 1]._resulting_status())
+        return isinstance(self._beginning_status(), Ready)
 
     # The one copy of ARCHITECTURE §3.4, seen from the parent: a node
     # arriving at a position takes the predecessor's result that already
@@ -719,7 +808,7 @@ class NonLeaf_Node(Node):
         would otherwise outlive its writer.  Nothing when neither wrote."""
         if self._predecessor_wrote(index):
             await node.state.copy_to(self._state_at(index + 1))
-        elif _wrote(node._last_status()):
+        elif _wrote(node._resulting_status()):
             ev.release(self._state_at(index + 1))
 
     async def _evaluate_children(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
@@ -758,14 +847,20 @@ class StdBlock(NonLeaf_Node):
     def _resulting_state_of_all_children(self) -> Isar_State_Slot:
         return self._state_before_ending
 
-    def _last_status(self):
+    @final
+    def _resulting_status(self):
         return self.evaluation_status_ending
 
     def _beginning_status(self):
         return self.evaluation_status_beginning
 
+    @final
     def _own_statuses(self):
         return [self.evaluation_status_beginning, self.evaluation_status_ending]
+
+    @final
+    def _operation_names(self):
+        return ["beginning", "ending"]
 
     def _state_after_beginning(self) -> Isar_State_Slot:
         if self.sub_nodes:
@@ -778,61 +873,66 @@ class StdBlock(NonLeaf_Node):
         return out
 
     def _set_beginning(self, ev: Evaluation, new: EvaluationStatus) -> None:
+        """The beginning's one setter: the instant status and its stored
+        entry (COMPILATION.md §4)."""
         old = self.evaluation_status_beginning
-        if old is READY and new is not READY:             # written -> unwritten; a rewrite releases nothing
+        if isinstance(old, Ready) and not isinstance(new, Ready):   # written -> unwritten; a rewrite releases nothing
             ev.release(self._state_after_beginning())
         self.evaluation_status_beginning = new
-        if old is READY and new is not READY:
+        if isinstance(old, Ready) and not isinstance(new, Ready):
             _completed(self.on_invalidated, "beginning")
+        self._stored(ev, 0, new)
 
     async def _set_ending(self, ev: Evaluation, new: EvaluationStatus) -> None:
-        """Async, alone among the three setters: `Theory`'s carries a rule
-        that walks other trees (ARCHITECTURE §3.4)."""
+        """The ending's one setter, both fields.  Async, alone among the
+        three setters, while `Theory`'s rule walks other trees through
+        the async recursion (ARCHITECTURE §3.4)."""
         old = self.evaluation_status_ending
         if _wrote(old) and not _wrote(new):               # written -> unwritten; a rewrite releases nothing
             ev.release(self.resulting_state())
         self.evaluation_status_ending = new
-        if old is READY and new is not READY:
+        if isinstance(old, Ready) and not isinstance(new, Ready):
             _completed(self.on_invalidated, "ending")
+        self._stored(ev, 1, new)
 
     async def _mark_not_evaluated(self, ev):
-        if self.evaluation_status_ending is not NOT_EVALUATED:
+        if (self.evaluation_status_ending is not NOT_EVALUATED
+                or self._last_evaluation_statuses[1] is not NOT_EVALUATED):
             await self._set_ending(ev, NOT_EVALUATED)
 
     @abstractmethod
-    async def _eval_beginning_opr(self) -> bool:
+    async def _eval_beginning_opr(self) -> Ready | CannotEvaluate:
         """Run the opening from `state` into `_state_after_beginning()`.
-        Return whether it succeeded.  On False the children cannot run, the
-        framework copies `state` into `resulting_state()` so the block's
-        input stands as its result, and evaluation resumes after it
-        (ARCHITECTURE §3.3)."""
+        Return the status the run leaves, carrying what it reported.  On a
+        `CannotEvaluate` the children cannot run, the framework copies
+        `state` into `resulting_state()` so the block's input stands as its
+        result, and evaluation resumes after it (ARCHITECTURE §3.3)."""
 
-    async def _eval_ending_opr(self) -> bool:
+    async def _eval_ending_opr(self) -> Ready | CannotEvaluate:
         """Run the closing from `_state_before_ending` into `resulting_state()`.
-        Return whether evaluation passes through; on False the framework
-        copies `_state_before_ending` into `resulting_state()`.  Default: no
-        closing command, the copy is the whole operation."""
+        Return the status the run leaves; on a `CannotEvaluate` the
+        framework copies `_state_before_ending` into `resulting_state()`.
+        Default: no closing command, the copy is the whole operation."""
         await self._state_before_ending.copy_to(self.resulting_state())
-        return True
+        return READY_CLEAN
 
     async def _evaluate(self, ev, mode):
         if isinstance(mode, Evaluating):
             beginning = self.evaluation_status_beginning
             began = mode.rewritten or not _wrote(beginning)   # not evaluated reruns; an own stop does not
             if began:
-                ok = await self._eval_beginning_opr()
-                self._set_beginning(ev, READY if ok else CANNOT_EVALUATE)
-            if self.evaluation_status_beginning is CANNOT_EVALUATE:   # the children have no context
+                self._set_beginning(ev, await self._eval_beginning_opr())
+            if isinstance(self.evaluation_status_beginning, CannotEvaluate):   # the children have no context
                 r = await self._evaluate_children(ev, BLOCKED)
                 if r.mode is INVALIDATING:
                     await self._mark_not_evaluated(ev)
                     return EvaluationResult(None, INVALIDATING)
                 # The input stands as the result — copied again when the
                 # input was rewritten; a standing copy is left alone.
-                copied = mode.rewritten or self.evaluation_status_ending is not READY
+                copied = mode.rewritten or not isinstance(self.evaluation_status_ending, Ready)
                 if copied:
                     await self.state.copy_to(self.resulting_state())
-                    await self._set_ending(ev, READY)
+                    await self._set_ending(ev, READY_CLEAN)
                 return EvaluationResult(None, self._mode_after(ev, mode, None, copied))
 
             r = await self._evaluate_children(ev, Evaluating(rewritten=began))
@@ -840,19 +940,18 @@ class StdBlock(NonLeaf_Node):
                 await self._mark_not_evaluated(ev)
                 return EvaluationResult(r.stopped_at, INVALIDATING)
             if r.stopped_at is not None:                  # no state to run the ending from
-                if self.evaluation_status_ending is not CANNOT_EVALUATE:
+                if not isinstance(self._last_evaluation_statuses[1], CannotEvaluate):
                     await self._set_ending(ev, NOT_EVALUATED)
                 return EvaluationResult(r.stopped_at, self._mode_after(ev, mode, r.stopped_at, False))
             assert isinstance(r.mode, Evaluating)
             ended = r.mode.rewritten or not _wrote(self.evaluation_status_ending)
             if ended:
-                if await self._eval_ending_opr():
-                    await self._set_ending(ev, READY)
-                else:
+                status = await self._eval_ending_opr()
+                if isinstance(status, CannotEvaluate):
                     await self._state_before_ending.copy_to(self.resulting_state())
-                    await self._set_ending(ev, CANNOT_EVALUATE)
+                await self._set_ending(ev, status)
             stop = None                                   # an ending that failed stays a stop until edited
-            if self.evaluation_status_ending is not READY and not ev.ignore_error:
+            if not isinstance(self.evaluation_status_ending, Ready) and not ev.ignore_error:
                 stop = self
             return EvaluationResult(stop, self._mode_after(ev, mode, stop, ended))
 
@@ -861,15 +960,17 @@ class StdBlock(NonLeaf_Node):
         # reporting itself as the obstacle, and is not rerun
         # (ARCHITECTURE §3.3); an invalidating walk resets it.
         if mode is BLOCKED:
-            if self.evaluation_status_beginning is not CANNOT_EVALUATE:
+            if not isinstance(self._last_evaluation_statuses[0], CannotEvaluate):
                 self._set_beginning(ev, NOT_EVALUATED)
         elif mode is INVALIDATING:
-            self._set_beginning(ev, NOT_EVALUATED)
+            if (self.evaluation_status_beginning is not NOT_EVALUATED
+                    or self._last_evaluation_statuses[0] is not NOT_EVALUATED):
+                self._set_beginning(ev, NOT_EVALUATED)
         r = await self._evaluate_children(ev, mode)
         if r.mode is INVALIDATING:
             await self._mark_not_evaluated(ev)
         elif mode is BLOCKED:
-            if self.evaluation_status_ending is not CANNOT_EVALUATE:
+            if not isinstance(self._last_evaluation_statuses[1], CannotEvaluate):
                 await self._set_ending(ev, NOT_EVALUATED)
         reached = r.mode is INVALIDATING or self is ev.destination
         if reached:
@@ -892,11 +993,17 @@ class Unchained_Node(NonLeaf_Node):
         raise TAT_InternalError(
             f"{type(self).__name__} keeps no slot after its children")
 
-    def _last_status(self):
+    @final
+    def _resulting_status(self):
         return NOT_EVALUATED                     # no operation: nothing written
 
+    @final
     def _own_statuses(self):
         return []                                # no operation: nothing owed
+
+    @final
+    def _operation_names(self):
+        return []
 
     def _predecessor_wrote(self, index) -> bool:
         return False                             # no child writes another's input
@@ -993,14 +1100,18 @@ def _completed(hook, *args) -> None:
 
 @dataclass(frozen=True)
 class Conversation:
-    """What one conversation is given and the forest does not store
-    (ARCHITECTURE §1, §9): the connection to the Isabelle side, the
-    working directory (ARCHITECTURE §4), and the seen set (PRINT.md §4) —
-    what a class has shown the agent once, under keys of the class's
-    choosing; cleared whole when the agent's context is replaced.  A node
-    reaches it through `forest().conversation`."""
+    """What one conversation, or one compile, is given and the forest does
+    not store (ARCHITECTURE §1, §9; MODULE_STRUCTURE §4.1): the connection
+    to the Isabelle side, the working directory (ARCHITECTURE §4), the log
+    (LOGGING.md) and the ending object (MODULE_STRUCTURE §4.6); and, until
+    the agents hold their own, the seen set (PRINT.md §4) — what a class has
+    shown the agent once, under keys of the class's choosing; cleared whole
+    when the agent's context is replaced.  A node reaches it through
+    `forest().conversation`."""
     connection: Connection
     working_directory: Path
+    log: Log
+    ending: Ending
     seen: set[Any] = field(default_factory=set)
 
 
@@ -1061,13 +1172,44 @@ class Forest(Unchained_Node):
 
     def _store_node(self, node: Node) -> None:
         """Rewrite one node's rows: `kind`, a nesting node's `children`,
-        then what the class writes.  Also how an evaluation hook stores a
-        recorded field it wrote."""
+        the stored statuses, then what the class writes."""
         self.store.delete_node(node.identity)
         self.store.put(node.identity, "kind", node.kind)
         if isinstance(node, NonLeaf_Node):
             self._store_children(node)
+        self.store.put(node.identity, "last_evaluation_statuses",
+                       [_status_to_store(s) for s in node._last_evaluation_statuses])
         node.to_store(self.store.rows(node.identity))
+
+    def _store_written(self, ev: Evaluation) -> None:
+        """The walk's store (COMPILATION.md §4): every node whose status it
+        wrote, whole, in one transaction with nothing awaited inside."""
+        if ev.stored:
+            with self.store.transaction():
+                self._store_written_rows(ev)
+
+    def _store_written_rows(self, ev: Evaluation) -> None:
+        """The rows of `_store_written`, inside the caller's transaction —
+        an edit's, which writes them with its own (MODULE_STRUCTURE §4.2)."""
+        for node in ev.stored:
+            self._store_node(node)
+        ev.stored.clear()
+
+    def _restore_statuses(self, node: Node, identity: int) -> None:
+        """The `last_evaluation_statuses` row (COMPILATION.md §4): a missing
+        row, or one not of the node's number of operations, reads as the
+        constructor's list; a row that is not a list of statuses is
+        refused."""
+        row = self.store.fields(identity).get("last_evaluation_statuses")
+        if row is None:
+            return
+        statuses = [_status_from_store(v) for v in row] if isinstance(row, list) else [None]
+        if any(s is None for s in statuses):
+            raise TAT_StartupError(
+                f"the forest database's `last_evaluation_statuses` row of node {identity}"
+                " is not a list of statuses")
+        if len(statuses) == len(node._last_evaluation_statuses):
+            node._last_evaluation_statuses = [s for s in statuses if s is not None]
 
     def _store_subtree(self, node: Node) -> None:
         for n in node._tree_order():
@@ -1113,6 +1255,7 @@ class Forest(Unchained_Node):
         node.parent = parent                   # the framework owns placement
         node.kind = kind
         node.identity = identity
+        self._restore_statuses(node, identity)
         if isinstance(node, NonLeaf_Node):
             for child_identity in self._child_identities(identity, seen):
                 node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))
@@ -1285,22 +1428,31 @@ class Forest(Unchained_Node):
     # `Theory.gen` judges nothing about what an item names, and every
     # reading of it is finite under cycles.
 
-    async def _run(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
-        """One walk under the lock, already held, then one round trip
-        releasing every state it invalidated — nothing, after an evaluating
-        walk, whose trees each flushed their own (`_handle_tree`)."""
+    async def _run(self, ev: Evaluation, mode: EvaluationMode, store: bool = True
+                   ) -> EvaluationResult:
+        """One walk under the lock, already held: the store of every node
+        whose status it wrote — unless the caller stores them in a
+        transaction of its own, as an edit does — then one round trip
+        releasing every state it invalidated; nothing of either, after an
+        evaluating walk, whose trees each did their own (`_handle_tree`)."""
         assert self.lock.locked(), "a walk runs under the forest lock"
         r = await self._evaluate(ev, mode)
+        if store:
+            self._store_written(ev)
         await ev.flush(self.state.connection)
         return r
 
-    async def _invalidate_from(self, position: Location) -> EvaluationResult:
+    async def _invalidate_from(self, position: Location, ev: Evaluation | None = None
+                               ) -> EvaluationResult:
         """An edit's unconditional invalidation (MCP_SPECIFICATION §3.2):
         everything from `position` on in its tree, the node standing there
         whole; nothing under a `Session` or the root, where sibling trees
         are independent — what an edit there disturbed is
-        `_invalidate_changed_trees`'."""
-        return await self._run(Evaluation(None, False), Seeking(position))
+        `_invalidate_changed_trees`'.  Under the caller's `ev`, the caller
+        stores what the walk wrote."""
+        if ev is None:
+            return await self._run(Evaluation(None, False), Seeking(position))
+        return await self._run(ev, Seeking(position), store=False)
 
     async def _invalidate_whole(self, node: Node) -> EvaluationResult:
         """`evaluate_to(evaluate=False)` on a node nothing chains, the child
@@ -1309,6 +1461,7 @@ class Forest(Unchained_Node):
         ev = Evaluation(None, False)
         await self._invalidate_trees(
             ev, list(node.sub_nodes) if isinstance(node, Session) else [node])
+        self._store_written(ev)
         await ev.flush(self.state.connection)
         return EvaluationResult(None, INVALIDATING)
 
@@ -1430,6 +1583,7 @@ class Forest(Unchained_Node):
                 stop = None if ev.ignore_error else missing
             else:
                 stop = (await tree._evaluate(own, Evaluating())).stopped_at
+        self._store_written(own)
         await own.flush(self.state.connection)
         return stop
 
@@ -1701,11 +1855,6 @@ class Theory(StdBlock):
     imports: list[str]
     _state_after_ending: Isar_State_Slot    # the resulting slot: owned, since no successor's
                                             # input is (`Unchained_Node`); nothing reads it
-    # Recorded, and held only for the life of the conversation, never stored
-    # (SESSION_AND_THEORY §2): what the last run of each operation reported,
-    # empty when it passed.
-    beginning_errors: list[str]
-    ending_errors: list[str]
 
     def __init__(self, parent, state, name: str, imports: list[str],
                  state_before_ending: Isar_State_Slot, state_after_ending: Isar_State_Slot):
@@ -1713,8 +1862,6 @@ class Theory(StdBlock):
         self.name = name
         self.imports = imports
         self._state_after_ending = state_after_ending
-        self.beginning_errors = []
-        self.ending_errors = []
 
     @classmethod
     async def gen(cls, config, raw: Theory_RawAST):
@@ -1785,50 +1932,33 @@ class Theory(StdBlock):
         return f"theory {self.name}\n  imports {imports}\nbegin"
 
     async def _set_ending(self, ev, new):
-        """ARCHITECTURE §3.4's rule, a property of the status: whenever the
-        ending was `ready` and no longer is, the tree's direct importers are
-        walked whole in `Invalidating` mode under the same `Evaluation`,
-        each ending so moved firing the same rule for its own importers.
-        The assignment comes first, so within one cascade no ending leaves
-        `ready` twice, cycles included: a tree importing itself re-enters
-        its own walk, and the inner call finds the ending already
-        `not_evaluated`."""
-        old = self.evaluation_status_ending
+        """ARCHITECTURE §3.4's rule, a property of the stored status: whenever
+        a stored `Ready` ending is replaced by a value that is not a `Ready`,
+        the tree's direct importers are walked whole in `Invalidating` mode
+        under the same `Evaluation`, each ending so moved firing the same
+        rule for its own importers.  The assignment comes first, so within
+        one cascade no ending leaves `Ready` twice, cycles included: a tree
+        importing itself re-enters its own walk, and the inner call finds
+        the ending already `not_evaluated`."""
+        old = self._last_evaluation_statuses[1]
         await super()._set_ending(ev, new)
-        if old is READY and new is not READY:
+        if isinstance(old, Ready) and not isinstance(new, Ready):
             forest = self.forest()
             await forest._invalidate_trees(ev, forest._importers(self))
 
     def print_fields(self, indent, out, mode, depth):
         """SESSION_AND_THEORY §4: `imports` in the briefing, when detailed
-        and at `recall`'s depth 2; the two operations' messages — only for
-        an operation that is an own stop, the one status a failed run
-        leaves standing — whole under `recall` below depth 2, once per run
-        elsewhere (the seen set, PRINT.md §4), never in the briefing."""
+        and at `recall`'s depth 2.  The operations' messages are the
+        framework's (PRINT.md §3)."""
         if mode is BRIEFING or self.detailed(mode, depth) or (mode is RECALL and depth == 2):
             out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
-        if mode is BRIEFING:
-            return
-        seen = self.forest().conversation.seen
-        whole = mode is RECALL and depth < 2
-        for operation, status, messages in (
-                ("beginning", self.evaluation_status_beginning, self.beginning_errors),
-                ("ending", self.evaluation_status_ending, self.ending_errors)):
-            if status is not CANNOT_EVALUATE:
-                continue
-            key = (self.identity, operation)
-            if whole or key not in seen:
-                for message in messages:
-                    print_error(indent, out, message)
-                seen.add(key)
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
     # operation's errors, empty when it passed (ARCHITECTURE §6.2), and
-    # whatever it lets escape is a bug (`isabelle_driver.call`).  The run's
-    # messages replace the previous run's after the call, and the run's
-    # key leaves the seen set with them, so its messages show again
-    # (PRINT.md §4); a rendering inside the call — a `recall` takes no
-    # lock — reads the previous run's.
+    # whatever it lets escape is a bug (`isabelle_driver.call`).  The
+    # status the run leaves carries them (COMPILATION.md §4); a rendering
+    # inside the call — a `recall` takes no lock — reads the previous
+    # run's.
 
     async def _eval_beginning_opr(self):
         session = self.session()
@@ -1839,18 +1969,22 @@ class Theory(StdBlock):
              (session.name,
               str(conversation.working_directory / session.name),   # the plan's §1
               self.header())))
-        conversation.seen.discard((self.identity, "beginning"))
-        self.beginning_errors = errors
-        return not errors
+        return _status_of_errors(errors)
 
     async def _eval_ending_opr(self):
         conversation = self.forest().conversation
         errors = await isabelle_driver.call(
             conversation.connection, "TAT.Theory.end",
             (self._state_before_ending.to_msgpack(), self._state_after_ending.to_msgpack()))
-        conversation.seen.discard((self.identity, "ending"))
-        self.ending_errors = errors
-        return not errors
+        return _status_of_errors(errors)
+
+
+def _status_of_errors(errors: list[str]) -> Ready | CannotEvaluate:
+    """The status a callback's answer leaves: the errors it reported, in
+    Isabelle's spelling, or a clean `Ready`."""
+    if errors:
+        return CannotEvaluate(tuple(IsaTerm.from_isabelle(e) for e in errors))
+    return READY_CLEAN
 
 
 FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]

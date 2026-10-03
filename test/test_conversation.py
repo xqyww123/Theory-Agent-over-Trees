@@ -1,5 +1,5 @@
 """The Isabelle-backed cases (ai-artifacts/TEST_HARNESS_PLAN.md §6), each on
-a fresh conversation of the run's one `isabelle TAT`: the framework's
+a fresh conversation of the run's one `isabelle TAT_mcp`: the framework's
 primitives through the test plugin's `TAT_test.*` probes, the Theory node
 class end to end, the tools through the MCP client, and what a fresh
 conversation forgets.  Run: python -m pytest test/test_conversation.py
@@ -16,7 +16,8 @@ from isabelle_theory_agent import edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import (
     DuplicateTheoryShortName, InvalidField, ReservedTheoryName, TAT_IsabelleError)
 from isabelle_theory_agent.isabelle_driver import call
-from isabelle_theory_agent.model import CANNOT_EVALUATE, NOT_EVALUATED, READY, Isar_State_Slot
+from isabelle_theory_agent.model import NOT_EVALUATED, Isar_State_Slot
+from test_model import CANNOT_EVALUATE, READY
 
 # RENDER_BASELINES §3's two fenced lines, in order; the second is the
 # loader's refusal, asserted verbatim for `TAT_Nowhere.Nope` and derived for
@@ -242,8 +243,8 @@ async def test_commands_run_in_order_with_output_routed_to_their_own_records(pro
 
 
 async def test_sorry_passes_with_quick_and_dirty_on_and_off(probes):
-    """Each run declares the option's value itself (`isabelle TAT` leaves it
-    off).  With it on, `sorry` passes as anywhere; with it off, `sorry` still
+    """Each run declares the option's value itself (`isabelle TAT_mcp` leaves
+    it off).  With it on, `sorry` passes as anywhere; with it off, `sorry` still
     passes: the interactive flag of Toplevel.command_errors is what admits
     it, and that is what the second run pins."""
     t = await probes.begun("theory TAT_Test_A imports Main begin")
@@ -481,7 +482,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     r = await ta.evaluate_to(False)
     assert r == M.EvaluationResult(None, M.INVALIDATING), r
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)
-    assert ta.beginning_errors == [] and ta.ending_errors == []
+    assert ta.evaluation_status_beginning == READY and ta.evaluation_status_ending == READY
     assert ta.is_finished() and sess.is_finished() and forest.is_finished()
     assert not await ta.state.is_initialized()
     assert await probes.is_toplevel(ta._state_before_ending) is False    # the theory, open
@@ -494,7 +495,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     (tb,) = await insert(sess, 1, [theory("TAT_E2E_B", "TAT_E2E_A")])
     r = await tb.evaluate_to(False)
     assert r == M.EvaluationResult(None, M.INVALIDATING), r
-    assert tb.is_finished() and tb.beginning_errors == []
+    assert tb.is_finished() and tb.evaluation_status_beginning == READY
 
     # a header that fails -- an import found nowhere, refused under the
     # name Isabelle resolved it to (RENDER_BASELINES §3, the whole
@@ -505,9 +506,10 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     (tc,) = await insert(sess, 2, [theory("TAT_E2E_C", "TAT_E2E_Nowhere")])
     r = await tc.evaluate_to(False)
     assert r == M.EvaluationResult(None, M.INVALIDATING), r   # its successors are not blocked
-    assert tc.evaluation_status_beginning is CANNOT_EVALUATE
-    assert any(not_found("TAT_E2E.TAT_E2E_Nowhere") in m for m in tc.beginning_errors), \
-        tc.beginning_errors
+    beginning = tc.evaluation_status_beginning
+    assert isinstance(beginning, M.CannotEvaluate)
+    assert any(not_found("TAT_E2E.TAT_E2E_Nowhere") in m.unicode for m in beginning.messages), \
+        beginning.messages
     assert tc.evaluation_status_ending is READY and not tc.is_finished()
     for sl in (tc.state, tc._state_before_ending, tc._state_after_ending):
         assert not await sl.is_initialized()
@@ -530,9 +532,10 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     assert theory_deletes == [["TAT_E2E.TAT_E2E_A"]], theory_deletes
     r = await tb.evaluate_to(False)
     assert r == M.EvaluationResult(None, M.INVALIDATING), r
-    assert tb.evaluation_status_beginning is CANNOT_EVALUATE
-    assert any(not_found("TAT_E2E.TAT_E2E_A") in m for m in tb.beginning_errors), \
-        tb.beginning_errors
+    beginning = tb.evaluation_status_beginning
+    assert isinstance(beginning, M.CannotEvaluate)
+    assert any(not_found("TAT_E2E.TAT_E2E_A") in m.unicode for m in beginning.messages), \
+        beginning.messages
 
     # deleting the session whole: one theory_delete round trip carrying
     # every name that vanished -- TAT_E2E_B's, which the table held, and

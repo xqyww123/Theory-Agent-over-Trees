@@ -8,17 +8,26 @@ Run: python -m pytest test/test_print.py
 
 import io
 import typing
-from pathlib import Path
 
 import pytest
 
+import stand_ins
 from baselines import DOCS, fenced_blocks
 from isabelle_theory_agent import isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import (
-    BRIEFING, CANNOT_EVALUATE, NOT_EVALUATED, OUT_FOCUS, RECALL, Isar_State_Slot,
+    BRIEFING, NOT_EVALUATED, OUT_FOCUS, RECALL, Isar_State_Slot,
     Relative_Focus, print_error)
+from isabelle_theory_agent.isabelle_driver import IsaTerm
 from isabelle_theory_agent.store import Forest_Store
+
+READY = M.READY_CLEAN
+CANNOT_EVALUATE = M.CannotEvaluate()
+
+
+def failing(*messages: str) -> M.CannotEvaluate:
+    """A `CannotEvaluate` carrying `messages`, as a run's leaves."""
+    return M.CannotEvaluate(tuple(IsaTerm.from_agent(m) for m in messages))
 
 CONN = typing.cast(typing.Any, object())
 PRINT = DOCS / "PRINT.md"
@@ -47,11 +56,7 @@ class Lemma(Stub, M.Leaf):
 
 
 class Definition(Stub, M.Leaf):
-    errors: list[str] = []
-    def print_fields(self, indent, out, mode, depth):
-        if mode is not BRIEFING and self._status is CANNOT_EVALUATE:
-            for message in self.errors:
-                print_error(indent, out, message)
+    pass                                 # its messages are the framework's (PRINT.md §3)
 
 
 class Section(Stub, M.StdBlock):
@@ -73,7 +78,7 @@ def enter(parent, n, kind):
 
 
 def new_forest():
-    return M.Forest(M.Conversation(CONN, Path(".")), Forest_Store(":memory:"), KINDS)
+    return M.Forest(stand_ins.conversation(CONN), Forest_Store(":memory:"), KINDS)
 
 
 def session(forest, name, parent_session="HOL", options=(), description=""):
@@ -89,14 +94,13 @@ def theory(sess, name, imports=("Main",), beginning: M.EvaluationStatus = NOT_EV
 
 
 def leaf(cls, parent, kind, name, status: M.EvaluationStatus = NOT_EVALUATED, errors=()):
-    n = cls(parent, slot()); n.name = name; n._status = status
-    if errors:
-        n.errors = list(errors)
+    n = cls(parent, slot()); n.name = name
+    n._status = failing(*errors) if errors else status
     return enter(parent, n, kind)
 
 
-def section(parent, name, beginning: M.EvaluationStatus = M.READY,
-            ending: M.EvaluationStatus = M.READY):
+def section(parent, name, beginning: M.EvaluationStatus = READY,
+            ending: M.EvaluationStatus = READY):
     s = Section(parent, slot(), [], slot()); s.name = name
     s.evaluation_status_beginning, s.evaluation_status_ending = beginning, ending
     return enter(parent, s, "section")
@@ -116,9 +120,9 @@ def example_forest():
     """PRINT.md §7's forest: one session, three theories."""
     f = new_forest()
     a = session(f, "A")
-    theory(a, "Base", beginning=M.READY, ending=M.READY)
-    x = theory(a, "X", beginning=M.READY)
-    leaf(Lemma, x, "lemma", "A", status=M.READY)
+    theory(a, "Base", beginning=READY, ending=READY)
+    x = theory(a, "X", beginning=READY)
+    leaf(Lemma, x, "lemma", "A", status=READY)
     leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=[
         'Type unification failed: Clash of types "nat" and "bool"\n'
         'Type error in application: incompatible operand type'])
@@ -138,8 +142,8 @@ def test_the_recall_of_recall_md_section_2():
     """RECALL.md §2's forest: two sessions, the first finished."""
     f = new_forest()
     a = session(f, "A")
-    base = theory(a, "Base", beginning=M.READY, ending=M.READY)
-    proven = leaf(Lemma, base, "lemma", "A", status=M.READY)
+    base = theory(a, "Base", beginning=READY, ending=READY)
+    proven = leaf(Lemma, base, "lemma", "A", status=READY)
     proven._owes_nothing = lambda: True                    # type: ignore[method-assign]
     b = session(f, "B", description="Sorting, verified.")
     x = theory(b, "X", imports=("Main", "A.Base"))
@@ -159,7 +163,7 @@ def test_the_root_forms_of_print_md_section_6():
 
     f = new_forest()
     a = session(f, "A")
-    theory(a, "Base", beginning=M.READY, ending=M.READY)
+    theory(a, "Base", beginning=READY, ending=READY)
     x = theory(a, "X")
     assert render(f, f, focus(x)) == lone_session
 
@@ -170,14 +174,15 @@ def test_the_root_forms_of_print_md_section_6():
 
 
 def test_the_lines_of_render_baselines_section_5():
-    node_lines, error_block = fenced_blocks(DOCS / "RENDER_BASELINES.md", "5.")
+    node_lines, waiting_line, error_block, notice_block = fenced_blocks(
+        DOCS / "RENDER_BASELINES.md", "5.")[:4]
     f = new_forest()
     a = session(f, "A")
-    x = theory(a, "X", beginning=M.READY, ending=M.READY)
+    x = theory(a, "X", beginning=READY, ending=READY)
     f_ = leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=["e"])
     p = leaf(Lemma, x, "lemma", "P")
     lines = []
-    for status, owes in ((M.READY, False), (NOT_EVALUATED, True), (M.READY, True)):
+    for status, owes in ((READY, False), (NOT_EVALUATED, True), (READY, True)):
         p._status = status
         p._owes_nothing = lambda owes=owes: not owes          # type: ignore[method-assign]
         lines.append(render(f, p, OUT_FOCUS)[0])
@@ -186,6 +191,9 @@ def test_the_lines_of_render_baselines_section_5():
     out = io.StringIO()
     print_error(0, out, "Type unification failed: ...")
     assert out.getvalue().splitlines() == error_block
+    out = io.StringIO()
+    print_error(0, out, "Ignoring duplicate rewrite rule: ...", "Notice:")
+    assert out.getvalue().splitlines() == notice_block
 
 
 # --- the mark ---------------------------------------------------------------
@@ -193,10 +201,10 @@ def test_the_lines_of_render_baselines_section_5():
 def test_the_default_mark_first_row_wins():
     f = new_forest()
     a = session(f, "A")
-    base = theory(a, "Base", beginning=M.READY, ending=M.READY)
-    g = leaf(Definition, base, "definition", "g", status=M.READY)
-    x = theory(a, "X", beginning=M.READY)
-    p = leaf(Lemma, x, "lemma", "P", status=M.READY)
+    base = theory(a, "Base", beginning=READY, ending=READY)
+    g = leaf(Definition, base, "definition", "g", status=READY)
+    x = theory(a, "X", beginning=READY)
+    p = leaf(Lemma, x, "lemma", "P", status=READY)
     q = leaf(Lemma, x, "lemma", "Q")
     mark = lambda n: n.mark(OUT_FOCUS, 1)             # noqa: E731
     assert mark(base) == "success" and mark(g) == "success" and mark(a) is None
@@ -228,8 +236,8 @@ def test_a_class_may_say_more_than_the_default():
             return super().mark(mode, depth) or "not proven"
     f = new_forest()
     a = session(f, "A")
-    x = theory(a, "X", beginning=M.READY, ending=M.READY)
-    n = Theorem(x, slot()); n.name = "P"; n._status = M.READY
+    x = theory(a, "X", beginning=READY, ending=READY)
+    n = Theorem(x, slot()); n.name = "P"; n._status = READY
     enter(x, n, "lemma")
     assert render(f, n, OUT_FOCUS) == ["- lemma_P (not proven)"]
     n._status = NOT_EVALUATED
@@ -243,9 +251,9 @@ def deep_forest():
     f = new_forest()
     a = session(f, "A", options=[{"name": "quick_and_dirty", "value": "true"}],
                 description="Sorting,\nverified.")
-    x = theory(a, "X", imports=("Main", "HOL-Library.Multiset"), beginning=M.READY)
+    x = theory(a, "X", imports=("Main", "HOL-Library.Multiset"), beginning=READY)
     s = section(x, "S")
-    p = leaf(Lemma, s, "lemma", "P", status=M.READY)
+    p = leaf(Lemma, s, "lemma", "P", status=READY)
     return f, a, x, s, p
 
 
@@ -350,8 +358,7 @@ def test_detailed_is_a_focus_and_recall_above_the_grandchildren():
 def failing_theory():
     f = new_forest()
     a = session(f, "A")
-    x = theory(a, "X", beginning=CANNOT_EVALUATE, ending=M.READY)
-    x.beginning_errors = ["header broke"]
+    x = theory(a, "X", beginning=failing("header broke"), ending=READY)
     return f, a, x
 
 
@@ -400,10 +407,25 @@ def test_the_briefing_closure_clears_the_seen_set_and_renders_the_root():
     assert not f.conversation.seen and answer == f.render(f, BRIEFING)
 
 
+def rerun(x, operation):
+    """Rerun one operation of `x` as the walk does: the hook, then its
+    setter, which writes the status the run left and discards the seen
+    set's key (PRINT.md §4)."""
+    import asyncio
+
+    async def go():
+        ev = M.Evaluation(None, False)
+        if operation == "beginning":
+            x._set_beginning(ev, await x._eval_beginning_opr())
+        else:
+            await x._set_ending(ev, await x._eval_ending_opr())
+    asyncio.run(go())
+
+
 def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     f, a, x = failing_theory()
-    x.evaluation_status_beginning, x.beginning_errors = M.READY, []
-    x.evaluation_status_ending, x.ending_errors = CANNOT_EVALUATE, ["end broke"]
+    x.evaluation_status_beginning = READY
+    x.evaluation_status_ending = failing("end broke")
     render(f, f, focus(x))
     assert (x.identity, "ending") in f.conversation.seen
     inside = []
@@ -412,11 +434,7 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
         inside.append(render(f, x, RECALL)[-2:])      # a recall inside the round trip
         return ["end broke"]
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
-
-    async def rerun():
-        assert not await x._eval_ending_opr()
-    import asyncio
-    asyncio.run(rerun())
+    rerun(x, "ending")
     assert inside == [["  Error:", "    end broke"]]   # the previous run's, still standing
     assert (x.identity, "ending") not in f.conversation.seen
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    end broke"]
@@ -430,20 +448,16 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     async def fails_the_same_way(conn, name, arg):
         return ["header broke"]
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
-
-    async def rerun():
-        assert not await x._eval_beginning_opr()
-    import asyncio
-    asyncio.run(rerun())
+    rerun(x, "beginning")
     assert (x.identity, "beginning") not in f.conversation.seen
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke"]
 
 
 def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypatch):
-    """PRINT.md §4: the hook records the run's messages and discards their
-    key together, after the call — so a `recall`, which takes no lock,
-    landing inside the round trip reads the previous run's messages, and
-    the quickview after the rerun shows the new ones."""
+    """PRINT.md §4: the setter writes the run's status, messages and all,
+    and discards their key after the call — so a `recall`, which takes
+    no lock, landing inside the round trip reads the previous run's
+    messages, and the quickview after the rerun shows the new ones."""
     f, a, x = failing_theory()
     render(f, f, focus(x))
     inside = []
@@ -452,20 +466,23 @@ def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypa
         inside.append(render(f, x, RECALL))
         return ["header broke anew"]
     monkeypatch.setattr(isabelle_driver, "call", fails_anew)
-    import asyncio
-    asyncio.run(x._eval_beginning_opr())
+    rerun(x, "beginning")
     assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke"]]
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke anew"]
 
 
-def test_messages_show_only_while_the_operation_is_an_own_stop():
+def test_messages_follow_the_status_that_stands():
+    """PRINT.md §3: the block is the standing status's — `Error:` under a
+    `CannotEvaluate`, `Notice:` under a `Ready` that reported something,
+    nothing under a clean `Ready` or `not_evaluated`."""
     f, a, x = failing_theory()
-    x.ending_errors = ["end broke"]                    # left by an earlier run
-    for status in (M.READY, NOT_EVALUATED):
+    for status in (READY, NOT_EVALUATED):
         x.evaluation_status_beginning = status         # the header's message: not standing
         assert "header broke" not in "".join(render(f, x, RECALL))
-    assert "end broke" not in "".join(render(f, x, RECALL))   # the ending is READY: copied through
-    x.evaluation_status_ending = CANNOT_EVALUATE
+    assert "Error:" not in "".join(render(f, x, RECALL))   # the ending is READY: copied through
+    x.evaluation_status_ending = M.Ready((IsaTerm.from_agent("end warned"),))
+    assert render(f, x, RECALL)[-2:] == ["  Notice:", "    end warned"]
+    x.evaluation_status_ending = failing("end broke")
     assert render(f, x, RECALL)[-2:] == ["  Error:", "    end broke"]
 
 

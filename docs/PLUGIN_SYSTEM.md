@@ -30,6 +30,16 @@ module under the package counting — and the assembled `edit` schema, so a
 second conversation in the same process reads the registry rather than
 registering again (MODULE_STRUCTURE §4.4).
 
+A package may also register compile hooks: a module-level function under
+`@TAT_compile_hook`, of one positional argument, the forest root,
+returning nothing, which a compile runs after it has written its files
+(COMPILATION.md §5). The decorator registers it as `TAT_node` registers a
+class, at import, into a registry of its own, `compile_hooks`, kept in
+registration order, which holds a hook exactly while its defining module
+is in `sys.modules`; the sweep at the start of `load` clears both
+registries of entries whose module is gone, and `load` returns the hooks
+the listed packages define beside the kind table.
+
 A package that fails to import — a syntax error, a registration check
 below — fails the conversation start: a plugin's bug is never skipped
 quietly. The failed import takes the failing module out of `sys.modules`,
@@ -52,17 +62,26 @@ Besides its hooks a class declares, as class attributes:
 | --- | --- |
 | `construct_schema` | the complete JSON schema of a construct of this class, hand-written (§3) |
 | `argument_schema` | a TypedDict of the same fields, which the framework checks a submitted construct against and which types `gen`'s `raw` (MODULE_STRUCTURE §4.4) |
-| `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1 |
+| `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1; compulsory in both directions and priority 0 by default, so an omissible class declares them and a leaf declares none |
 | `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.2), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
+| `construction_job_class`, `evaluation_job_class`, optional | the class's job classes, `None` by default: the `Construction_Job` subclass `construct` starts on the node, the `Evaluation_Job` subclass an evaluation starts on it (CONSTRUCT_INTERACTION §3) |
 
 The two schemas describe one thing twice, for two readers — the agent and
-the type checker — and the loader holds them to each other (§5).
+the type checker — and the loader holds them to each other (§5). Isabelle
+text among a class's fields is typed `IsaTerm` (node_classes/THEOREM.md
+§2), which `gen` builds with `IsaTerm.from_agent` from the submitted
+string.
 
 A class sets `name` in its `gen` to the name the agent supplied; the
 framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
-§2). Besides its own node, a class may read `forest().conversation` — the
-connection to the Isabelle side and the working directory (MODULE_STRUCTURE
-§4.1) — and nothing with a leading underscore.
+§2). Besides its own node, a class may read `forest().conversation` — what
+MODULE_STRUCTURE §4.1 lists; of its log a class writes `note` records
+alone, the named events being the framework's (LOGGING.md §3, §5) — and
+nothing with a leading underscore, except the hooks it is
+meant to override: `_unfinished` on the node, and on its job classes
+`_run`, `_check`, `_on_context_change`, `_start` and `_finished`
+(CONSTRUCT_INTERACTION §3.2, §3.3), as the evaluation hooks `_eval_opr`,
+`_eval_beginning_opr` and `_eval_ending_opr` already are.
 
 ## 3. The construct schema
 
@@ -76,13 +95,12 @@ invents no key and rewrites no schema of the class's own.
 class Theorem(Leaf):
     construct_schema = {
         "type": "object",
-        "description": "A theorem, stated but not proved.",
         "properties": {
-            "kind":      {"type": "string", "enum": ["lemma", "theorem", "corollary"]},
+            "kind":      {"type": "string", "enum": ["lemma", "theorem", "corollary", "proposition"]},
+            "name":      {"type": "string", "description": "The fact's name"},
             "statement": {"$ref": "#/$defs/LongStatement"},
-            "tags":      {"type": "array", "items": {"type": "string"}, "description": "..."},
         },
-        "required": ["kind", "statement"],
+        "required": ["kind", "name", "statement"],
         "additionalProperties": False,
         "$defs": STATEMENT_DEFS,
     }
@@ -135,10 +153,10 @@ The assembled schema keeps its references. The loader never inlines a
 ## 5. What the loader checks
 
 Every failure is a `CannotLoadPlugin` (EXCEPTIONS.md §1: a
-`TAT_StartupError`, raised out of `launch_TAT` into the ML call that
-started the conversation),
-carrying the package, the class, and the reason. At registration, per
-class:
+`TAT_StartupError`, raised out of `launch_TAT`, or out of `compile_TAT`
+during a compile, into the ML call that started the conversation or the
+compile), carrying the package, the class, and the reason. At
+registration, per class:
 
 - `construct_schema` is a well-formed JSON schema
   (`jsonschema.Draft202012Validator.check_schema`), an object with
@@ -153,12 +171,20 @@ class:
   `#/$defs/<Name>`, or an `anyOf` of such;
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
-- the class does not override `is_finished` — `_owes_nothing` is the
-  override point (ARCHITECTURE §3.2) — nor `_operations_ready` —
-  `_own_statuses` is (MODULE_STRUCTURE §4.1) — nor `print` nor
-  `_children_to_print` — `print_fields` and `mark` are (PRINT.md);
-- `print_fields` and `mark` are plain functions, not coroutines: rendering
-  is synchronous (PRINT.md);
+- the class does not override `is_finished` — `_unfinished` is the
+  override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
+  `_own_statuses` (MODULE_STRUCTURE §4.1), nor `print` nor
+  `_children_to_print` — `print_fields` and `mark` are (PRINT.md); the
+  methods a class never overrides carry `typing.final` as well, so the
+  type checker says it before the loader does;
+- a `StdBlock` class does not override `emit` — the children are the
+  framework's to place (COMPILATION.md §3) — and it overrides
+  `_eval_ending_opr` exactly when it overrides `emit_ending`, since both
+  say whether the class has an ending command;
+- an override is a coroutine function exactly when the framework's method
+  is: `print_fields` and `mark` are plain, as rendering is synchronous
+  (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning` and
+  `emit_ending`; the evaluation hooks are coroutines;
 - the class defines neither `__eq__` nor `__hash__`: a node is equal to,
   and hashed as, itself alone, since nodes live in sets (PRINT.md §2);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's
@@ -189,6 +215,19 @@ At assembly, once every class is known:
 
 TAT's test suite validates the assembled schema again, with `jsonschema`,
 against the classes TAT ships.
+
+A compile hook (§1) is checked at registration too: a plain function of
+one positional argument, not a coroutine. A compile runs on a forest
+loaded from the database and never evaluated, every instant status
+`not_evaluated`, so `can_emit`, `emit` and a hook read only what is
+stored — authored fields, the recorded fields the class stores,
+`last_evaluation_statuses()`, `check_outcome()` and `job()`
+(COMPILATION.md §3).
+A hook finds its paths through `paths(working_directory)` of
+`compile.py`, the one framework function it calls for them; it removes
+only paths that listing yields, writes only beside a tree's file,
+creating each file afresh, and never touches a `.thy` or the ROOT
+(COMPILATION.md §5).
 
 ## 6. Where
 

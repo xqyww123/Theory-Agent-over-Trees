@@ -18,7 +18,8 @@ from test_model import locked, run, st
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent import edit
 from isabelle_theory_agent.model import (
-    BRIEFING, CANNOT_EVALUATE, INVALIDATING, NOT_EVALUATED, READY, EvaluationResult, Session)
+    BRIEFING, INVALIDATING, NOT_EVALUATED, EvaluationResult, Session)
+from test_model import CANNOT_EVALUATE, READY
 
 table = ts.table                     # the fake state slot table and the fake wire, per test
 
@@ -246,7 +247,7 @@ def test_blocked_by_a_failed_header():
     a, b = f.sub_nodes[0].sub_nodes
     r = run(b.evaluate_to(False))
     assert RUNS == ["begin A"]                                   # no stop of A's own
-    assert st(a) == (CANNOT_EVALUATE, READY)
+    assert isinstance(st(a)[0], M.CannotEvaluate) and st(a)[1] is READY
     assert st(b) == NE and r.stopped_at is a                     # the import's Theory node
     assert mark(a) == "failed" and mark(b) == "not evaluated"
     inv(f)
@@ -257,7 +258,7 @@ def test_blocked_by_a_failed_end():
     a, b = f.sub_nodes[0].sub_nodes
     r = run(b.evaluate_to(False))
     assert RUNS == ["begin A", "end A"]
-    assert st(a) == (READY, CANNOT_EVALUATE) and st(b) == NE
+    assert st(a)[0] is READY and isinstance(st(a)[1], M.CannotEvaluate) and st(b) == NE
     assert r.stopped_at is a                                     # the import's own stop, once
     inv(f)
 

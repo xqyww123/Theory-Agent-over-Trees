@@ -63,9 +63,9 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
                  Example: -P My_Nodes.Locale_Node
 
   Create WORKING_DIRECTORY for TAT. Afterwards, you can start TAT on it
-  with: isabelle TAT WORKING_DIRECTORY
+  with: isabelle TAT_mcp WORKING_DIRECTORY
 
-Usage: isabelle TAT [OPTIONS] WORKING_DIRECTORY
+Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
 
   Options are:
     -l BASE      the base heap (default: ISABELLE_LOGIC)
