@@ -18,7 +18,7 @@ from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import (
     BRIEFING, NOT_EVALUATED, OUT_FOCUS, RECALL, Isar_State_Slot,
     Relative_Focus, print_error)
-from isabelle_theory_agent.isabelle_driver import IsaTerm
+from Isabelle_RPC_Host.unicode import IsaTerm
 from isabelle_theory_agent.store import Forest_Store
 
 READY = M.READY_CLEAN
@@ -212,7 +212,7 @@ def test_the_default_mark_first_row_wins():
     assert mark(q) == "not evaluated"
     assert mark(x) == "not evaluated"                  # its ending has not run
     x.evaluation_status_beginning = CANNOT_EVALUATE
-    assert mark(x) == "failed"                         # an own stop beats the ending's not evaluated
+    assert mark(x) == "failed"                         # an obstacle beats the ending's not evaluated
     empty = session(f, "Empty")
     assert mark(empty) == "success"                    # nothing under it, nothing owed
 
@@ -418,7 +418,7 @@ def rerun(x, operation):
         if operation == "beginning":
             x._set_beginning(ev, *await M._timed(x._eval_beginning_opr()))
         else:
-            await x._set_ending(ev, *await M._timed(x._eval_ending_opr()))
+            x._set_ending(ev, *await M._timed(x._eval_ending_opr()))
     asyncio.run(go())
 
 

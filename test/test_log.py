@@ -16,7 +16,7 @@ import pytest
 
 import stand_ins
 from baselines import DOCS, event_tables
-from isabelle_theory_agent.isabelle_driver import IsaTerm
+from Isabelle_RPC_Host.unicode import IsaTerm
 from isabelle_theory_agent.log import current_agent, current_call
 
 TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$")

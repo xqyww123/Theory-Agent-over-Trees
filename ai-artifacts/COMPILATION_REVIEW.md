@@ -996,14 +996,25 @@ with `import_sessions`.
 The owner lifted the freeze on 2026-10-03 ("建议在 compact 后开工"), the
 design having passed reader 10, then held the start the same day until
 the logging session's Python-side batch was in and he approves again
-("在我批准前你不准开工。要等待另一个 agent 工作完成"); that batch is in
-and committed (steps 1–4, `2e8f6e7` and `d9472b3`; its Isabelle-side
-batch uncommitted), and as of this writing nothing of items 1–7 is in
-the working tree — the code is the frozen step-1 code under those
-commits. The work, in order, on `isabelle_theory_agent/model.py`,
-`edit.py`, `store.py`, `isabelle_driver.py`, `plugin.py` and `test/` as
-they stand (never `toplevel.py`, `mcp_server.py`, `log.py` or
-`Conversation`'s constructor, the logging session's):
+("在我批准前你不准开工。要等待另一个 agent 工作完成"); on 2026-10-04,
+the logging session's batches in and committed (`ba5f999`), he approved
+the start, to begin once the plan is checked ("接下来你可以开始实现了";
+"在检查通过后请告诉我，我们将在 compact 后开始实施"). Items 1–7 are
+implemented (2026-10-04) and passed an adversarial code review the same
+day — 28 findings, 23 confirmed and fixed, 4 rejected, one ruled by the
+owner (a slot a class owns: the class's to mint and list, the framework
+releasing it through `_slots_written_by`; below); the
+record is the plan's §7 and
+ai-artifacts/review_phase_a/review_result.json. The detailed plan — the code shapes, each test's
+change, the compile round's steps and what each phase needs from the
+other sessions and the owner — is
+ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md, whose steps A1–A8 are
+the items below under the same numbers; where the two differ the plan
+holds. The work, in order, on `isabelle_theory_agent/model.py`,
+`edit.py`, `store.py`, `isabelle_driver.py`, `plugin.py`, `mcp.py` and
+`test/` as they stand (never `toplevel.py`, `mcp_server.py` or
+`Conversation`'s constructor, the logging session's; `log.py` only
+item 5's one import line):
 
 1. The walk (ruling 3 of §10, rulings simplicity-1/-2/-3 of §13, reader
    8's ruling): `Seeking`, `Invalidating`, `Blocked`, `EvaluationMode`,
@@ -1031,14 +1042,13 @@ they stand (never `toplevel.py`, `mcp_server.py`, `log.py` or
    own deletion count, from `flush`), an edit's `_invalidate_from`
    writing only `operation` records (the logging review's funnels-2);
    `stopped` written once, in `_handle_tree`; every record naming nodes
-   by `Forest.full_id`; `Theory._eval_beginning_opr` making
-   `<working directory>/<Session name>/` before every run of the
-   header, through the compile's folder function (below).
+   by `Forest.full_id`.
 2. The setters (§10 rulings 1, 4–7; §13 status-1, simplicity-4): plain
    methods writing both fields; the guard "stored already
    `not_evaluated` → nothing" at the top of each of the three, before
-   `_stored` (funnels-4); release on written→unwritten, the node's
-   `owned_slots` released with the operation's resulting state (below);
+   the stored write (funnels-4); release on written→unwritten, the
+   further slots the class says the operation wrote released with the
+   operation's resulting state (below);
    the seen-set keys discarded through `Conversation.forget(key)`, added
    in its minimal form (one set) for the jobs code to reimplement over
    the agents; `ev.stored.add`; `on_invalidated` through `_completed`;
@@ -1057,17 +1067,22 @@ they stand (never `toplevel.py`, `mcp_server.py`, `log.py` or
    node whose parent chain does not reach the forest; `move` keeps its
    two `_invalidate_from` calls; `_carry_forward`'s release branch goes;
    the four "store transaction + `committed` record" blocks become one
-   context manager named from "the edit's one store transaction"
-   (elegance-8); a deleted or amended-away node's `owned_slots` released
-   with its `state`.
+   function named from "the edit's one store transaction" (elegance-8;
+   a function, since what each entry stores is data and the block has
+   no body); a deleted or amended-away node's slots, the class's own
+   among them, released as its `_states_inside()` lists them.
 4. The store (§10 code-1, status-5): the reserved stored rows (`kind`,
    `children`, `last_evaluation_statuses`; the jobs code adds its own)
    split from the construct's two framework fields (`kind`, `children`)
    that plugin.py checks against; a malformed `last_evaluation_statuses`
-   row → `TAT_StartupError`; `Theory.from_store` reads a missing
-   `import_sessions` as the empty list; `import_sessions` committed with
-   the step; the loader minting a node's `owned_slots` beside its
-   `state`, as `edit._construct_element` does.
+   row → `TAT_StartupError` (in HEAD).
+   `import_sessions` — the field, its row with the missing-row rule and
+   the answer of `TAT.Theory.begin` it is recorded from — is the compile
+   round's first step (the plan's B1): it needs the ML side, which this
+   round does not touch. §10's simplicity-1 ("step 1 committed only with
+   `import_sessions`") was overtaken when the step-1 code entered HEAD
+   with the logging commits; what it protects holds as long as B1 lands
+   before the compile that reads the field.
 5. `IsaTerm` (§10 code-4-move): one class in `Isabelle_RPC_Host.unicode`
    (contrib/Isabelle_RPC), TAT and AoA both importing it from there.
    Which class it is awaits the owner, asked on 2026-10-03: TAT's
@@ -1103,27 +1118,39 @@ they stand (never `toplevel.py`, `mcp_server.py`, `log.py` or
 
 Two rules of the construct session's AoA path (2026-10-03, the forked
 session [7f92f0]; ai-artifacts/review/DOC_SYNC_LIST.md entry 23) are
-folded into items 1–4 above, as MODULE_STRUCTURE §4.1 "States" and its
-`Theory` bullet state them. `owned_slots`: a class attribute, a tuple of
-slot names, empty on `Node`, `('goal_state',)` on `Theorem`; the
-framework mints one `Isar_State_Slot` per name wherever it mints the
-node's `state` — construction and load — and sets it as the node's
-attribute of that name; only the class's evaluation callback writes
-them; every setter taking an operation from written to unwritten
-releases them with that operation's resulting state, never on a
-rewrite; a deleted or amended-away node's go into the released set with
-its `state`. The `Session` folder: before every run of `Theory`'s
+this session's, as MODULE_STRUCTURE §4.1 "States" and its `Theory`
+bullet state them: the first folded into items 2–4 above, the second in
+the compile round (the plan's B5), where the function it shares with
+the compile is written. A slot a class owns besides `state`
+(`Theorem`'s `goal_state`): first specified as `owned_slots`, a class
+attribute the framework minted, released in every setter and deleted;
+the code review found that rule releasing, on a nesting class, a slot
+its still-`ready` beginning had written, and the owner ruled on
+2026-10-04 ("我们不能让 adhoc deriving node 自己去做吗？必须做进框架里
+吗？"; "赞同甲") that the class does it itself — it mints the slot in
+`gen` and `from_store` and appends it in `_states_inside()`, as `Theory`
+does with its resulting slot — the framework keeping the release alone:
+`Node._slots_written_by(operation)`, empty by default, names the
+further slots an operation writes, and the setter taking that
+operation from written to unwritten releases them with its resulting
+state, never on a rewrite; only the class's evaluation callback writes
+them. The `Session` folder: before every run of `Theory`'s
 beginning, the framework makes `<working directory>/<Session name>/`
 if absent, through the function the compile uses (COMPILATION §4);
-what the beginning does when that function refuses — a symbolic link
-or a file at the path — awaits the owner's ruling (the construct
-session's proposal: the beginning fails with the refusal's sentence as
-its message); until it comes, the refusal is raised as the compile
-raises it.
+when that function refuses — a symbolic link or a file at the path —
+or the system will not make the folder, the conversation ends with a
+`TAT_StartupError`: the owner's ruling of 2026-10-04 ("整个 TAT 的规约
+是 working diretory 完全由 TAT 管理。是不允许出现外部擅自修改 the
+working directory 的结构的。这种情况足以拒绝为用户服务"; "the agent
+在看到这些问题后也无从下手"), written into MODULE_STRUCTURE §4.1's
+`Theory` bullet and EXCEPTIONS §1; the launcher's three sentences,
+approved the same day, are COMPILATION §7's item 6.
 
-After item 8 the compile round: `compile.py`, `Node.can_emit`, `emit`,
+After item 8 the compile round (the plan's B1–B8): `import_sessions`
+and `file_path()`, the names Isabelle refuses caught at creation,
+`compile.py`, `Node.can_emit`, `emit`,
 `emit_beginning`, `emit_ending`, the compile hooks' framework side and
-the ML/Scala side of `TAT_compile` (COMPILATION §3, §5) — `Theorem`'s
+the ML/Scala side of `TAT_compile` (COMPILATION §2, §3, §5) — `Theorem`'s
 own `can_emit`/`emit` and its package's proof-store hook being the
 construct session's. The `evaluate_to` tool (mcp.py, `tools/
 evaluate_to.jsonc`, `checks`) and `Theory`'s `description` field are

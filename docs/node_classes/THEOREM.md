@@ -56,16 +56,19 @@ nothing else (CONSTRUCT_INTERACTION §3.3, ARCHITECTURE §4.1). The mark
 there.
 
 One thing more the node holds in the process and never stores:
-`goal_state`, a state slot the class owns beside the node's own — the
-one name in its `owned_slots` (ARCHITECTURE §3.1, MODULE_STRUCTURE
-§4.1) — holding the `Toplevel.state`
+`goal_state`, a state slot the class owns beside the node's own
+(ARCHITECTURE §3.1, MODULE_STRUCTURE §4.1), holding the `Toplevel.state`
 in which the statement's goal stands open and no proof step has been
 taken — what the evaluation's first transition yields (§6). It holds a
-state exactly while the node's instant status is `ready`: the framework
-mints it with `state`, releases it with the node's resulting state
-whenever the status leaves `ready`, deletes it with the node, and on
-load reassigns it empty, like `state`; only the evaluation callback
-writes it. The proof construction and the proof check both work on the
+state exactly while the node's instant status is `ready`: the class
+mints it where the node is built, in `gen` and `from_store`, so that a
+loaded node's is empty, like its `state`; appends it in
+`_states_inside()`, so that it is deleted with the node; and names it
+in `_slots_written_by`, so that the framework releases it with the
+node's resulting state when the status goes to `not_evaluated`. Only
+the evaluation callback writes it, and it clears it when a rerun of a
+`ready` node fails, a rewrite that releases nothing.
+The proof construction and the proof check both work on the
 goal it holds (§7).
 
 The construction job is compulsory: the node is finished only when

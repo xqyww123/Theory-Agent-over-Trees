@@ -56,6 +56,11 @@ arguments. An `Unchained_Node` chains no children, so a child class that
 has a result owns the slot for it, as `Theory` does: it mints the slot in
 `gen` and `from_store`, returns it from `resulting_state()`, and appends it
 in `_states_inside()`, so it is released when the node leaves.
+A class may own a further slot besides, as `Theorem` does with
+`goal_state`: it mints and appends it the same way, and names it in
+`_slots_written_by(operation)`, so that the framework releases it with
+the result of the operation that writes it (MODULE_STRUCTURE §4.1,
+"States").
 Besides its hooks a class declares, as class attributes:
 
 | attribute | what it is |
@@ -78,7 +83,8 @@ framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
 MODULE_STRUCTURE §4.1 lists; of its log a class writes `note` records
 alone, the named events being the framework's (LOGGING.md §3, §5) — and
 nothing with a leading underscore, except the hooks it is
-meant to override: `_unfinished` on the node, and on its job classes
+meant to override: `_unfinished` on the node, `_states_inside` and
+`_slots_written_by` for a slot the class owns, and on its job classes
 `_run`, `_check`, `_on_context_change`, `_start` and `_finished`
 (CONSTRUCT_INTERACTION §3.2, §3.3), as the evaluation hooks `_eval_opr`,
 `_eval_beginning_opr` and `_eval_ending_opr` already are.
@@ -166,6 +172,10 @@ registration, per class:
   id component `<kind>_<name>` — and `kind` is in `required`;
 - no kind it names is registered by another class, and no other class has
   the same Python class name;
+- no field of `construct_schema` bears the name of a row the framework
+  stores of every node, `kind` and `children` aside — today
+  `last_evaluation_statuses` (COMPILATION.md §4): such a class would load
+  and then fail at its first store;
 - if `children` is declared, the class is not a `Leaf`, and the property
   is `{"type": "array", "items": X, ...}` with `X` a `$ref` of the form
   `#/$defs/<Name>`, or an `anyOf` of such;

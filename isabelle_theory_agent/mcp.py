@@ -16,9 +16,7 @@ from . import edit
 from .exceptions import (
     HoldsNoChildren, MoveBesideItself, ProtectedNode, TAT_Error, TAT_InternalError)
 from .mcp_server import Body, Tool
-from .model import (
-    BRIEFING, Evaluating, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL,
-    Relative_Focus)
+from .model import BRIEFING, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus
 from .plugin import Loaded, check_call, validate_call_schema
 
 _TOOLS = Path(__file__).parent / "tools"
@@ -155,7 +153,7 @@ async def _evaluate(forest: Forest, destination: Node) -> Node | None:
     """`evaluate` true (MCP_SPECIFICATION §3.2): run up to the change's
     natural destination under the lock the call holds, `ignore_error`
     unset; the node the walk stopped at, if it stopped."""
-    return (await forest._run(Evaluation(destination, False), Evaluating())).stopped_at
+    return (await forest._run(destination, False)).stopped_at
 
 
 def _done(forest: Forest, what: str, stopped: Node | None, nodes: list[Node], depth: int) -> str:

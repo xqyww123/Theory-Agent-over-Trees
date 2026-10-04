@@ -18,8 +18,8 @@ from test_model import locked, run, st
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent import edit
-from isabelle_theory_agent.model import (
-    BRIEFING, INVALIDATING, NOT_EVALUATED, EvaluationResult, Session)
+from isabelle_theory_agent.model import BRIEFING, NOT_EVALUATED, EvaluationResult, Session
+from isabelle_theory_agent.store import Forest_Store
 from test_model import CANNOT_EVALUATE, READY
 
 table = ts.table                     # the fake state slot table and the fake wire, per test
@@ -58,7 +58,7 @@ class Rt(tm.T):
 
 
 KINDS = {"session": Session, "theory": Good, "bad_header": Bad_Header, "bad_end": Bad_End,
-         "t": Rt}
+         "t": Rt, "block": tm.Block}
 
 theory, session = ts.theory, ts.session
 
@@ -117,7 +117,7 @@ def test_an_importer_runs_its_imports_first():
     assert f._closure([c]) == [a, b, c]
     assert c.header() == 'theory C\n  imports "S.B" "Main"\nbegin'          # every item quoted
     r = run(c.evaluate_to(False))
-    assert r == EvaluationResult(None, INVALIDATING)
+    assert r == EvaluationResult(None, None)
     assert RUNS == ["begin A", "end A", "begin B", "end B", "begin C", "end C"]
     assert f.is_finished()
     inv(f)
@@ -142,14 +142,14 @@ def test_a_session_and_the_root_as_destination():
     RUNS.clear()
     # every tree under the Session to its end, an import outside it first;
     # a tree no target imports is not touched, evaluated or not
-    assert run(u.evaluate_to(False)) == EvaluationResult(None, INVALIDATING)
+    assert run(u.evaluate_to(False)) == EvaluationResult(None, None)
     assert RUNS == ["begin A", "end A", "begin C", "end C", "begin D", "end D"]
     assert u.is_finished() and st(b) == (NOT_EVALUATED, NOT_EVALUATED)
     assert st(e) == (READY, READY)
     inv(f)
     # the root: every tree, the ready ones not rerun
     RUNS.clear()
-    assert run(f.evaluate_to(False)) == EvaluationResult(None, INVALIDATING)
+    assert run(f.evaluate_to(False)) == EvaluationResult(None, None)
     assert RUNS == ["begin B", "end B"] and f.is_finished()
     inv(f)
 
@@ -184,7 +184,7 @@ def test_the_order_constraint():
     RUNS.clear()
     assert f._order_violation(b) is None
     r = run(b.evaluate_to(True))
-    assert r == EvaluationResult(None, INVALIDATING)
+    assert r == EvaluationResult(None, None)
     assert RUNS == ["end C", "begin B", "x", "end B"] and b.is_finished()
     inv(f)
 
@@ -260,7 +260,7 @@ def test_blocked_by_a_failed_header():
     records = stand_ins.records("evaluation")[walk_start:]
     id_a, id_b = f.full_id(a), f.full_id(b)
     assert records[0]["event"] == "walk_started" and records[0]["data"] == {
-        "destination": id_b, "ignore_error": False}
+        "destination": id_b, "ignore_error": False, "checks": "no"}
     operations = {(r["data"]["node"], r["data"]["operation"]): r["data"]
                   for r in records if r["event"] == "operation"}
     begin_a = operations[id_a, "beginning"]
@@ -280,7 +280,7 @@ def test_blocked_by_a_failed_end():
     r = run(b.evaluate_to(False))
     assert RUNS == ["begin A", "end A"]
     assert st(a)[0] is READY and isinstance(st(a)[1], M.CannotEvaluate) and st(b) == NE
-    assert r.stopped_at is a                                     # the import's own stop, once
+    assert r.stopped_at is a                                     # the import's stop, once
     inv(f)
 
 
@@ -330,10 +330,10 @@ def test_ignore_error_passes_a_leafs_stop_but_not_a_missing_theory_value():
     f = forest(session("S", theory("A"), theory("B", "A")))
     a, b = f.sub_nodes[0].sub_nodes
     x, y = insert(f, a, 0, [t("x", fail=True), t("y")])
-    # the leaf's own stop is carried past: the import's `end` runs and the
+    # the leaf's stop is carried past: the import's `end` runs and the
     # importer runs after it
     r = run(b.evaluate_to(True))
-    assert r == EvaluationResult(None, INVALIDATING)
+    assert r == EvaluationResult(None, None)
     assert RUNS == ["begin A", "x", "y", "end A", "begin B", "end B"]
     assert st(x) is CANNOT_EVALUATE and b.is_finished()
     inv(f)
@@ -346,7 +346,7 @@ def test_ignore_error_passes_a_leafs_stop_but_not_a_missing_theory_value():
         (z,) = insert(f, b, 0, [t("z")])
         RUNS.clear()
         r = run(b.evaluate_to(True))
-        assert r == EvaluationResult(None, INVALIDATING), kind
+        assert r == EvaluationResult(None, None), kind
         assert "begin B" not in RUNS
         not_evaluated(b)
         inv(f)
@@ -386,7 +386,7 @@ def test_each_tree_flushes_what_its_walk_released():
     assert a.evaluation_status_ending is READY and b.evaluation_status_ending is READY
     inv(f)
     tm.TABLE.calls.clear()
-    r = run(f.evaluate_to(False))                                # each own stop releases its tree's
+    r = run(f.evaluate_to(False))                                # each stop releases its tree's
     assert r.stopped_at is x
     released = deletes()
     assert len(released) == 2 and released[0] and released[1], released
@@ -396,6 +396,33 @@ def test_each_tree_flushes_what_its_walk_released():
     assert released[0] == {x2.resulting_state().name, a._state_after_ending.name}
     assert released[1] == {y2.resulting_state().name, b._state_after_ending.name}
     inv(f)
+
+
+def test_each_tree_is_stored_at_its_end(tmp_path):
+    """ARCHITECTURE §3.4: a walk stores what it wrote at each tree's end, so
+    a conversation that ends inside a later tree keeps the earlier trees'
+    statuses."""
+    f = forest(session("S", theory("A"), theory("B")))
+    tm.TABLE.clear_writes()
+    run(f.evaluate_to(False))
+    assert tm.TABLE.transactions == 2             # one per tree; nothing is left for the walk's end
+
+    class Crashing(Rt):
+        async def _eval_opr(self):
+            raise ZeroDivisionError("the conversation ends here")
+    kinds = KINDS | {"crashing": Crashing}
+    path = tmp_path / "TAT.sqlite"
+    f = ts.Forest_Under_Test(store=Forest_Store(path, stand_ins.log()), kinds=kinds)
+    run(locked(f, edit.insert(f, 0, [session("S", theory("A"), theory("B", "A"))], kinds)))
+    a, b = f.sub_nodes[0].sub_nodes
+    run(locked(f, edit.insert(b, 0, [{"kind": "crashing", "name": "z"}], kinds)))
+    with pytest.raises(ZeroDivisionError):
+        run(b.evaluate_to(False))
+    f.store.close()
+    f2 = ts.Forest_Under_Test(store=Forest_Store(path, stand_ins.log()), kinds=kinds)
+    a2, b2 = f2.sub_nodes[0].sub_nodes
+    assert a2.last_evaluation_statuses() == (READY, READY)
+    assert b2.last_evaluation_statuses() == NE    # its header ran; the walk ended before B's store
 
 
 # --- the Theory ending's rule (the plan's §4.1) -------------------------------
@@ -426,10 +453,17 @@ def test_an_edit_inside_an_import_invalidates_its_importers_whole():
 
 def test_evaluate_to_inside_an_import_invalidates_its_importers_whole():
     f, a, b, c, x = chain()
+    written = len(stand_ins.records("evaluation"))
     run(x.evaluate_to(False))
     assert RUNS == [] and st(a) == (READY, NOT_EVALUATED)
     not_evaluated(b, c)
     assert ("C", "ending") in EVENTS
+    # what the walk invalidated — the import's ending and both importers
+    # whole — each written by no run: no messages, no duration (LOGGING.md §4)
+    assert [r["data"] for r in stand_ins.records("evaluation")[written:] if r["event"] == "operation"] == [
+        {"node": f.full_id(n), "operation": operation, "ran": False, "status": "not_evaluated"}
+        for n, operation in ((a, "ending"), (b, "beginning"), (b, "ending"),
+                             (c, "beginning"), (c, "ending"))]
     inv(f)
 
 
@@ -438,12 +472,12 @@ def test_an_ending_leaving_ready_for_a_stop_invalidates_its_importers():
     a, b, c = f.sub_nodes[0].sub_nodes
     (x,) = insert(f, a, 0, [t("x", fail=True)])
     (z,) = insert(f, c, 0, [t("z", fail=True)])
-    run(c.evaluate_to(True))                                     # every ending ready, past the own stops
+    run(c.evaluate_to(True))                                     # every ending ready, past the obstacles
     assert b.is_finished() and st(c) == (READY, READY) and st(z) is CANNOT_EVALUATE
     EVENTS.clear()
     r = run(a.evaluate_to(False))                                # A's ending: ready -> not evaluated
     assert r.stopped_at is x and st(a) == (READY, NOT_EVALUATED)
-    not_evaluated(b, c)                                          # both outside the walk; C's own stop reset
+    not_evaluated(b, c)                                          # both outside the walk; C's obstacle reset
     assert {("B", "ending"), ("C", "ending")} <= set(EVENTS)
     inv(f)
 
@@ -611,7 +645,133 @@ def test_reorders_and_edits_inside_a_tree_change_no_record():
     inv(f)
 
 
-# --- evaluate_to(evaluate=False) on a node nothing chains (the plan's §6) ---
+def test_after_a_restart_an_import_losing_its_theory_value_invalidates_the_stored_importer(tmp_path):
+    """COMPILATION.md §4: the `Theory` ending's rule reads the stored
+    status, so on a loaded forest — every instant status `not_evaluated` —
+    an import whose stored `ready` ending is invalidated, by a walk or by
+    an edit, takes its importer's stored statuses with it."""
+    for change in ("walk", "edit"):
+        path = tmp_path / f"{change}.sqlite"
+        f = ts.Forest_Under_Test(store=Forest_Store(path, stand_ins.log()), kinds=KINDS)
+        insert(f, f, 0, [session("S", theory("A"), theory("B", "A"))])
+        a, b = f.sub_nodes[0].sub_nodes
+        insert(f, a, 0, [t("x"), t("y")])
+        run(b.evaluate_to(False))
+        assert b.last_evaluation_statuses() == (READY, READY)
+        f.store.close()
+
+        f2 = ts.Forest_Under_Test(store=Forest_Store(path, stand_ins.log()), kinds=KINDS)
+        a2, b2 = f2.sub_nodes[0].sub_nodes
+        assert b2.last_evaluation_statuses() == (READY, READY) and st(b2) == NE
+        RUNS.clear()
+        if change == "walk":
+            run(a2.sub_nodes[0].evaluate_to(False))   # to x: A's ending lies past the destination
+        else:
+            insert(f2, a2, 1, [t("z")])
+        assert a2.last_evaluation_statuses()[1] is NOT_EVALUATED
+        assert b2.last_evaluation_statuses() == NE, change
+        assert "begin B" not in RUNS and "end B" not in RUNS
+        inv(f2)
+        f2.store.close()
+        f3 = ts.Forest_Under_Test(store=Forest_Store(path, stand_ins.log()), kinds=KINDS)
+        assert f3.sub_nodes[0].sub_nodes[1].last_evaluation_statuses() == NE, change
+
+
+def test_amending_a_theory_node_invalidates_its_inherited_children():
+    """An amend that keeps the name and the imports changes no tree's
+    record, and under a `Session` the replacement's own position marks
+    nothing: the children it inherits are invalidated from the first
+    (ARCHITECTURE §3.5), and the importers follow through the record, which
+    holds the node itself."""
+    f = forest(session("S", theory("A"), theory("B", "A")))
+    a, b = f.sub_nodes[0].sub_nodes
+    x, y = insert(f, a, 0, [t("x"), t("y")])
+    run(b.evaluate_to(False))
+    assert f.is_finished()
+    (a2,) = run(locked(f, edit.amend(a, [theory("A")], KINDS)))
+    assert a2.sub_nodes == [x, y]
+    not_evaluated(a2, b)
+    inv(f)
+    RUNS.clear()
+    run(b.evaluate_to(False))
+    assert RUNS == ["begin A", "x", "y", "end A", "begin B", "end B"] and f.is_finished()
+    inv(f)
+
+
+# --- a move across trees; a nesting node inside a tree ------------------------
+
+def test_a_move_across_trees_invalidates_from_both_positions():
+    """ARCHITECTURE §3.5: a `move` invalidates from the position its
+    successor holds where the node left — so that tree's ending and,
+    through it, that tree's importers — and from the node's new position."""
+    f = forest(session("S", theory("A"), theory("B", "A"), theory("C")))
+    a, b, c = f.sub_nodes[0].sub_nodes
+    x, y = insert(f, a, 0, [t("x"), t("y")])
+    (z,) = insert(f, c, 0, [t("z")])
+    run(f.evaluate_to(False))
+    assert f.is_finished()
+    tm.TABLE.clear_writes()
+    run(locked(f, edit.move(x, c, 0)))
+    assert a.sub_nodes == [y] and c.sub_nodes == [x, z]
+    assert st(a) == (READY, NOT_EVALUATED) and st(y) is NOT_EVALUATED      # where it left
+    not_evaluated(b)                                                       # A's importer, whole
+    assert st(c) == (READY, NOT_EVALUATED)                                 # where it arrived
+    assert st(x) is NOT_EVALUATED and st(z) is NOT_EVALUATED
+    assert tm.TABLE.values[x.state.name] == "begin C" and tm.TABLE.values[y.state.name] == "begin A"
+    assert tm.TABLE.transactions == 1
+    inv(f)
+    RUNS.clear()
+    run(f.evaluate_to(False))
+    assert RUNS == ["y", "end A", "begin B", "end B", "x", "z", "end C"] and f.is_finished()
+    inv(f)
+
+
+def test_a_failed_beginning_inside_a_tree():
+    """ARCHITECTURE §3.3 on the real `Forest`: a nesting node whose
+    beginning failed is passed by a walk going on after it, and is the stop
+    of a call whose destination lies under it; there the tree's walk ends
+    and everything after the destination is invalidated, the tree's ending
+    and so its importer included."""
+    f = forest(session("S", theory("T"), theory("W", "T")))
+    tree, w = f.sub_nodes[0].sub_nodes
+    s, d = insert(f, tree, 0, [
+        {"kind": "block", "name": "S", "fail": True, "children": [t("a"), t("b")]}, t("d")])
+    a, b = s.sub_nodes
+    r = run(w.evaluate_to(True))
+    assert r == EvaluationResult(None, None)
+    assert st(s) == (CANNOT_EVALUATE, READY) and st(a) is st(b) is NOT_EVALUATED
+    assert st(d) is READY and st(tree) == (READY, READY) and st(w) == (READY, READY)
+    inv(f)
+    # a destination under the failed beginning: the block is the stop
+    walk_start = len(stand_ins.records("evaluation"))
+    r = run(a.evaluate_to(False))
+    assert r == EvaluationResult(s, None)
+    assert [r["data"] for r in stand_ins.records("evaluation")[walk_start:] if r["event"] == "stopped"] == [
+        {"node": f.full_id(s), "reason": "command_failed"}]
+    def statuses():
+        return [st(n) for n in (*tree._tree_order(), *w._tree_order())]
+    after_the_strict_call = statuses()
+    assert st(s) == (CANNOT_EVALUATE, NOT_EVALUATED) and st(b) is NOT_EVALUATED
+    assert st(d) is NOT_EVALUATED and st(tree) == (READY, NOT_EVALUATED)
+    not_evaluated(w)
+    inv(f)
+    # a destination after it: the ending is the copy again, and what follows runs
+    RUNS.clear()
+    r = run(tree.evaluate_to(False))
+    assert r == EvaluationResult(None, None) and RUNS == ["d", "end T"]
+    assert st(s) == (CANNOT_EVALUATE, READY) and st(tree) == (READY, READY)
+    assert tm.TABLE.values[d.state.name] == tm.TABLE.values[s.state.name] == "begin T"
+    inv(f)
+    # under it with ignore_error: no stop is reported, and the same invalidation
+    walk_start = len(stand_ins.records("evaluation"))
+    r = run(a.evaluate_to(True))
+    assert r == EvaluationResult(None, None)
+    assert "stopped" not in [r["event"] for r in stand_ins.records("evaluation")[walk_start:]]
+    assert statuses() == after_the_strict_call
+    inv(f)
+
+
+# --- `_invalidate` on a node nothing chains (the plan's §6) -------------------
 
 def test_invalidating_a_session_whole():
     f = forest(session("S", theory("A"), theory("B")))
@@ -619,7 +779,6 @@ def test_invalidating_a_session_whole():
     a, b = s.sub_nodes
     run(f.evaluate_to(False))
     assert f.is_finished()
-    r = run(s.evaluate_to(False, evaluate=False))
-    assert r == EvaluationResult(None, INVALIDATING)
+    tm.invalidate(s)
     not_evaluated(a, b)
     inv(f)

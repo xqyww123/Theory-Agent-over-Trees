@@ -5,10 +5,10 @@ review and the owner's rulings on it (ai-artifacts/COMPILATION_REVIEW.md
 §13). A sentence ending in *(decided)* carries the owner's ruling, of
 2026-09-30, 2026-10-01, 2026-10-02 or 2026-10-03;
 every other sentence is the author's; §7 holds the approved wording and
-names. The document was approved on 2026-10-02. §4's statuses and
-setters are implemented, uncommitted and frozen
-(ai-artifacts/COMPILATION_REVIEW.md §9); no node emits, no ROOT has been
-written.
+names. The document was approved on 2026-10-02. §4's statuses,
+setters and walk are implemented
+(ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md, Phase A); no node
+emits, no ROOT has been written.
 
 Compile is turning the forest into `.thy` files and a ROOT on disk; emit
 is a node writing its own Isar text (ARCHITECTURE §1). TAT is the compiler
@@ -432,10 +432,10 @@ dataclasses with one field, `messages: tuple[IsaTerm, ...]` (THEOREM.md
 instance may be reused for clean runs, as a value and never by
 identity *(decided)*. Its name is §7's. The evaluation hooks return the status the run leaves —
 `_eval_opr`, `_eval_beginning_opr` and `_eval_ending_opr` return a
-`Ready` or a `CannotEvaluate` *(decided)*. They raise nothing: whatever
-escapes one of them, a `TAT_Error` included, is the class's bug, turned
-into a `TAT_InternalError` once in `Forest._run`, which ends the
-conversation (EXCEPTIONS §1) *(decided)*. So the messages shown, stored
+`Ready` or a `CannotEvaluate` *(decided)*. They raise nothing: a
+`TAT_Error` escaping one of them is the class's bug, turned into a
+`TAT_InternalError` once in `Forest._run`, and anything else that
+escapes ends the conversation as it is (EXCEPTIONS §1) *(decided)*. So the messages shown, stored
 and reported are those of the run whose status stands: an invalidation
 replaces the value and the messages go with it, a rerun brings its own.
 Rendering is the framework's: wherever `print_fields` is called
@@ -796,8 +796,9 @@ passage it replaces by section, quoted as it stands.
    methods; what `can_emit`, `emit` and a hook may read; EXCEPTIONS §1:
    `can_emit`, `emit` and a compile hook join what node classes raise, a
    bug ending the compile with `2`; the three evaluation hooks raise
-   nothing, whatever escapes one being the class's bug, a
-   `TAT_InternalError` raised in `Forest._run`.
+   nothing, a `TAT_Error` escaping one being the class's bug, a
+   `TAT_InternalError` raised in `Forest._run`, and anything else
+   ending the conversation as it is.
 3. **The second status field, one form per status, the messages on the
    status values, the stored check, the walk past the destination.** Retires `READY`,
    `CANNOT_EVALUATE`, `errors`, `beginning_errors`, `ending_errors`,
@@ -1052,7 +1053,7 @@ passage it replaces by section, quoted as it stands.
 
 ## 7. Wording and names
 
-All of it approved on 2026-10-02 *(decided)*.
+Items 1 to 5 approved on 2026-10-02 *(decided)*.
 
 1. The report's lines are §2's, read by the pipeline or on a terminal;
    the order-constraint line's variant is `it imports itself`.
@@ -1088,4 +1089,15 @@ All of it approved on 2026-10-02 *(decided)*.
    ```
    TAT cannot compile into <working directory>: <Session name>/ is a symbolic link; a session's folder must be a directory or absent
    TAT cannot compile into <working directory>: <Session name>/ is not a directory; a session's folder must be a directory or absent
+   ```
+
+6. The same folder refused in a conversation, when a theory of the
+   `Session` begins and the folder cannot be made (MODULE_STRUCTURE
+   §4.1; EXCEPTIONS §1): the conversation ends and the launcher prints
+   one of these, approved on 2026-10-04 *(decided)*:
+
+   ```
+   TAT cannot use <working directory> as its working directory: <Session name>/ is a symbolic link; a session's folder must be a directory or absent
+   TAT cannot use <working directory> as its working directory: <Session name>/ is not a directory; a session's folder must be a directory or absent
+   TAT cannot use <working directory> as its working directory: <Session name>/ cannot be made: <the system's message>
    ```

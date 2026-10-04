@@ -22,9 +22,9 @@ from typing import (TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NotRequir
                     TypeAlias, TypedDict, TypeVar, final)
 
 from Isabelle_RPC_Host import Connection
+from Isabelle_RPC_Host.unicode import IsaTerm
 
 from . import isabelle_driver
-from .isabelle_driver import IsaTerm
 from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedTheoryName,
@@ -125,9 +125,11 @@ class Ready:
 @dataclass(frozen=True)
 class CannotEvaluate:
     """The operation ran and its class judged the failure fatal: the node is
-    an obstacle (ARCHITECTURE §3.3), not rerun until edited, its input
-    standing as its result.  What it blocks is `NotEvaluated`, and runs as
-    soon as a walk reaches it unblocked.  `messages`: the reason."""
+    an obstacle (ARCHITECTURE §3.3) — while it stands it is not rerun
+    unless a walk rewrote its input, and its input stands as its result;
+    once invalidated (ARCHITECTURE §3.4) it is `NotEvaluated` and runs when
+    a walk reaches it unblocked.  What it blocks is `NotEvaluated` too.
+    `messages`: the reason."""
     messages: tuple[IsaTerm, ...] = ()
 
 NOT_EVALUATED = NotEvaluated()
@@ -138,7 +140,7 @@ EvaluationStatus = NotEvaluated | Ready | CannotEvaluate
 
 def _wrote(status: EvaluationStatus) -> bool:
     """Whether an operation in this status has written its resulting state:
-    `ready`, or an own stop, which copied its input through
+    `ready`, or an obstacle, which copied its input through
     (ARCHITECTURE §3.1)."""
     return status is not NOT_EVALUATED
 
@@ -179,20 +181,22 @@ async def _timed(hook: Coroutine[Any, Any, _T]) -> tuple[_T, float]:
 
 
 class Evaluation:
-    """One walk: its two constants, and the states it releases, deleted in
-    one round trip when it is flushed.  Whoever creates one flushes it
-    once, when its walk ends (`Forest._run` does so for the walks it
-    drives); the forest's evaluating walk gives each tree its own
-    (`Forest._handle_tree`).  `destination` is the node an evaluating walk
-    runs up to and including; an invalidation has none, and its mode says
-    where it starts."""
+    """One walk, or one edit's commit (MODULE_STRUCTURE §4.1): its
+    constants, the nodes it passed, the nodes whose status it wrote, and
+    the states it releases, deleted in one round trip at each flush — an
+    evaluating walk's at each tree's end and when it ends
+    (`Forest._handle_tree`, `Forest._run`), an edit's after its commit.
+    `destination` is the node an evaluating walk runs up to and including;
+    an edit's invalidation has none."""
 
-    def __init__(self, destination: Node | None, ignore_error: bool):
+    def __init__(self, destination: Node | None, ignore_error: bool, checks: str = "no"):
         self.destination = destination
         self.ignore_error = ignore_error
+        self.checks = checks                 # "no" | "quick" | "blocking" (CONSTRUCT_INTERACTION §5)
+        self.passed: list[Node] = []         # reached in `Evaluating`: a leaf when reached, a nesting node at its ending
+        self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
         self._released: set[str] = set()
         self.releases = 0                    # the slots deleted over every flush: `walk_ended`'s `slots_released`
-        self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
 
     def release(self, slot: Isar_State_Slot) -> None:
         self._released.add(slot.name)
@@ -206,38 +210,19 @@ class Evaluation:
 
 @dataclass(frozen=True)
 class Evaluating:
-    """Before the destination: run what is not `Ready`.  `rewritten`: the
-    state at this position was written by an operation that ran in this
-    walk, so whatever stands here runs again even if `Ready` or an own
-    stop — its input changed under it."""
+    """Where an evaluating walk is: run what is `not_evaluated`.
+    `rewritten`: the state at this position was written by an operation
+    that ran in this walk, so whatever stands here runs again even if
+    `Ready` or an obstacle — its input changed under it."""
     rewritten: bool = False
-
-class Blocked(_Singleton):
-    """Before the destination, where nothing can run: mark `NotEvaluated`,
-    an own stop kept as it is (ARCHITECTURE §3.3)."""
-
-@dataclass(frozen=True)
-class Seeking:
-    """Before `destination` without evaluating: touch nothing.  The
-    destination is a position, not a node, so the walk turns `Invalidating`
-    before entering whatever stands there — a nesting node is then
-    invalidated whole, opening first (MODULE_STRUCTURE §4.1)."""
-    destination: Location
-
-class Invalidating(_Singleton):
-    """Past the destination, or throughout a walk that invalidates trees
-    whole: mark `NotEvaluated`."""
-
-BLOCKED = Blocked()
-INVALIDATING = Invalidating()
-
-EvaluationMode = Evaluating | Blocked | Seeking | Invalidating
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
     stopped_at: Node | None      # the node evaluation stopped at, if it stopped
-    mode: EvaluationMode         # the mode the node after this one runs under
+    mode: Evaluating | None      # the mode the node after this one runs under; None past the
+                                 # destination, past a stop when `ignore_error` is unset, or at
+                                 # a failed beginning the destination lies under: nothing more runs
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +342,8 @@ class Node(ABC):
         raise TAT_InternalError(f"{cls.__name__} has no gen")
 
     # --- Persistence (ARCHITECTURE §4.1, the plan's §2): each class writes
-    # and reads its own fields; `kind` and `children` are the framework's.
+    # and reads its own fields; the rows `kind`, `children` and the stored
+    # statuses are the framework's.
 
     def to_store(self, rows: Node_Rows) -> None:
         """Write the authored fields, and the recorded fields the class keeps
@@ -391,21 +377,54 @@ class Node(ABC):
         """The stored statuses, what `can_emit` and a compile read."""
         return tuple(self._last_evaluation_statuses)
 
-    def _stored(self, ev: Evaluation, index: int, new: EvaluationStatus,
-                duration: float | None) -> None:
-        """The setter's stored half of a write (COMPILATION.md §4): the entry,
-        the seen set's keys of the operation's messages, the walk's store,
-        and the `operation` record (LOGGING.md §4) — `duration` is how long
-        the evaluation hook ran, None when no run produced the write."""
+    # --- What the three setters share (MODULE_STRUCTURE §4.1, "Status").
+    # A setter: the guard; the release when its operation goes from written
+    # to unwritten; the instant status; `_written`.
+
+    def _unchanged(self, index: int, new: EvaluationStatus) -> bool:
+        """The setter's guard: `not_evaluated` for an operation whose stored
+        status is already `not_evaluated` writes nothing, so a repeated
+        marking stores and logs nothing again."""
+        return new is NOT_EVALUATED and self._last_evaluation_statuses[index] is NOT_EVALUATED
+
+    def _slots_written_by(self, operation: Any) -> Sequence[Isar_State_Slot]:
+        """The further slots the operation writes besides its resulting
+        state (MODULE_STRUCTURE §4.1, "States"): slots of the class's own,
+        which it mints in `gen` and `from_store` and appends in
+        `_states_inside`.  The framework releases them with the operation's
+        result.  `operation` is what `on_invalidated` is told.  None by
+        default."""
+        return ()
+
+    def _release(self, ev: Evaluation, index: int, slot: Isar_State_Slot) -> None:
+        """Operation `index` went from written to unwritten: `slot`, its
+        resulting state, is released, and with it the further slots the
+        class says the operation wrote."""
+        ev.release(slot)
+        for further in self._slots_written_by(self._operation_names()[index]):
+            ev.release(further)
+
+    def _written(self, ev: Evaluation, index: int, old: EvaluationStatus,
+                 duration: float | None) -> None:
+        """What every setter ends on, the instant status of operation `index`
+        assigned (COMPILATION.md §4): the stored entry, the seen set's key
+        of the operation's messages, the walk's store, and the `operation`
+        record (LOGGING.md §4) — `duration` is how long the evaluation hook
+        ran, None when no run produced the write; and last, both fields
+        written, `on_invalidated` when the instant status, `old` before the
+        write, left `Ready`."""
+        new = self._own_statuses()[index]
         self._last_evaluation_statuses[index] = new
         operation = self._operation_names()[index]
         forest = self.forest()
-        forest.conversation.seen.discard((self.identity, operation))
+        forest.conversation.forget((self.identity, operation))
         ev.stored.add(self)
         kind, messages = _status_to_store(new)
         forest.conversation.log.evaluation.operation(
             node=forest.full_id(self), operation=operation or "own", ran=duration is not None,
             status=kind, messages=messages if duration is not None else None, duration=duration)
+        if isinstance(old, Ready) and not isinstance(new, Ready):
+            _completed(self.on_invalidated, operation)
 
     def id_component(self) -> Id_Component:
         """The node's one component of an id, `<kind>_<name>`
@@ -434,6 +453,16 @@ class Node(ABC):
             n = n.parent
         assert isinstance(n, Forest)
         return n
+
+    def _is_under(self, ancestor: Node) -> bool:
+        """Whether `ancestor` is one of this node's ancestors — strictly:
+        no node is under itself."""
+        n = self.parent
+        while n is not None:
+            if n is ancestor:
+                return True
+            n = n.parent
+        return False
 
     # --- Subtree traversals.  Each appends to `out` and returns it, so a
     # walk over many nodes fills one list instead of concatenating one per
@@ -603,52 +632,53 @@ class Node(ABC):
         """Every state owned by this subtree, appended to `out`: `state` and,
         under a nesting node, its children's and the one after them.  The
         resulting state is not among them — it is the successor's — unless
-        the node owns it, as a `Theory` does."""
+        the node owns it, as a `Theory` does.  A class appends the further
+        slots it owns; what is listed here is deleted with the node."""
         if out is None:
             out = []
         out.append(self.state)
         return out
 
     @abstractmethod
-    async def _evaluate(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
-        """One recursion for evaluation and invalidation (ARCHITECTURE §3.5),
-        visiting every node of the subtree under `mode`.  A nesting node is
-        reached at its ending, so its children come before it."""
+    async def _evaluate(self, ev: Evaluation, mode: Evaluating) -> EvaluationResult:
+        """The evaluating recursion (ARCHITECTURE §3.5): run what is
+        `not_evaluated`, and what the walk rewrote the input of, up to the
+        destination or a stop.  A nesting node is reached at its ending, so
+        its children come before it."""
 
     @abstractmethod
-    async def _mark_not_evaluated(self, ev: Evaluation) -> None:
-        """Mark the node — for a nesting node, its ending — `NotEvaluated`.
-        What an edit does before evaluating."""
+    def _invalidate(self, ev: Evaluation) -> None:
+        """Invalidate the node whole (ARCHITECTURE §3.4): every operation of
+        it and of its subtree written `not_evaluated` through the setters,
+        which release, store and log onto `ev`.  Runs and awaits nothing."""
 
-    def _mode_after(self, ev: Evaluation, mode: Evaluating | Blocked, stop: Node | None,
-                    ran: bool) -> EvaluationMode:
-        """The one place the mode changes: the destination turns it into
-        `Invalidating`; otherwise a stop blocks what follows, and `ran` tells
-        the successor whether its input was just rewritten."""
-        if self is ev.destination:
-            return INVALIDATING
-        if stop is not None or mode is BLOCKED:
-            return BLOCKED
+    def _mode_after(self, ev: Evaluation, stop: Node | None, ran: bool) -> Evaluating | None:
+        """The mode after a node the walk reached: None at the destination
+        and at a stop — nothing more runs in the tree; otherwise `ran`
+        tells the successor whether its input was just rewritten.  The
+        other answer of None is a nesting node's whose beginning failed
+        with the destination under it (`StdBlock._evaluate`)."""
+        if self is ev.destination or stop is not None:
+            return None
         return Evaluating(rewritten=ran)
 
-    async def evaluate_to(self, ignore_error: bool, evaluate: bool = True) -> EvaluationResult:
-        """The `evaluate_to` tool's entry: takes the forest's lock itself —
-        an edit, whose tool entry already holds it, drives the walk through
-        `Forest._run` instead (MODULE_STRUCTURE §4.1).  With
-        `evaluate`: run up to and including this node.  Without: only
-        invalidate from this node on — a node nothing chains, the child of
-        an `Unchained_Node`, whole (ARCHITECTURE §3.5).  The walk visits
-        every node, so the result's `mode` is always `Invalidating`; what
-        happened to this node it reports itself."""
+    def _reached(self, ev: Evaluation, ran: bool) -> EvaluationResult:
+        """The walk reached the node, its last operation settled: the node
+        joins `ev.passed`, and is the walk's stop when that operation is
+        not `Ready` and `ignore_error` is unset.  `ran`: whether the
+        operation wrote its result in this walk."""
+        ev.passed.append(self)
+        stop = self if not isinstance(self._resulting_status(), Ready) and not ev.ignore_error else None
+        return EvaluationResult(stop, self._mode_after(ev, stop, ran))
+
+    async def evaluate_to(self, ignore_error: bool) -> EvaluationResult:
+        """The `evaluate_to` tool's entry: run up to and including this
+        node.  Takes the forest's lock itself — an edit, whose tool entry
+        already holds it, drives the walk through `Forest._run` instead
+        (MODULE_STRUCTURE §4.1)."""
         forest = self.forest()
         async with forest.lock:
-            if evaluate:
-                return await forest._run(Evaluation(self, ignore_error), Evaluating())
-            if self.parent is None:
-                raise TAT_InternalError("the forest root has no position")
-            if isinstance(self.parent, Unchained_Node):
-                return await forest._invalidate_whole(self)
-            return await forest._invalidate_from(Location(self.parent, self.index_of()))
+            return await forest._run(self, ignore_error)
 
 
 class Leaf(Node):
@@ -673,18 +703,17 @@ class Leaf(Node):
 
     def _set_status(self, ev: Evaluation, new: EvaluationStatus, duration: float | None) -> None:
         """The operation's one setter: the instant status and its stored
-        entry (COMPILATION.md §4); `duration` as `_stored` takes it."""
+        entry (COMPILATION.md §4); `duration` as `_written` takes it."""
+        if self._unchanged(0, new):
+            return
         old = self._status
         if _wrote(old) and not _wrote(new):       # written -> unwritten; a rewrite releases nothing
-            ev.release(self.resulting_state())
+            self._release(ev, 0, self.resulting_state())
         self._status = new
-        if isinstance(old, Ready) and not isinstance(new, Ready):
-            _completed(self.on_invalidated, None)
-        self._stored(ev, 0, new, duration)
+        self._written(ev, 0, old, duration)
 
-    async def _mark_not_evaluated(self, ev):
-        if self._status is not NOT_EVALUATED or self._last_evaluation_statuses[0] is not NOT_EVALUATED:
-            self._set_status(ev, NOT_EVALUATED, None)
+    def _invalidate(self, ev):
+        self._set_status(ev, NOT_EVALUATED, None)
 
     @abstractmethod
     async def _eval_opr(self) -> Ready | CannotEvaluate:
@@ -694,28 +723,15 @@ class Leaf(Node):
         `resulting_state()`, which `ignore_error` will run from."""
 
     async def _evaluate(self, ev, mode):
-        if mode is BLOCKED:
-            # an own stop keeps reporting itself, judged on the stored status
-            if not isinstance(self._last_evaluation_statuses[0], CannotEvaluate):
-                self._set_status(ev, NOT_EVALUATED, None)
-            return EvaluationResult(None, self._mode_after(ev, BLOCKED, None, False))
-        if isinstance(mode, Evaluating):
-            stop, ran = None, False
-            # Not rerun: a Ready operation, or an own stop — unless the
-            # input under it was rewritten this walk.
-            if mode.rewritten or not _wrote(self._status):
-                ran = True
-                status, duration = await _timed(self._eval_opr())
-                if isinstance(status, CannotEvaluate):
-                    await self.state.copy_to(self.resulting_state())
-                self._set_status(ev, status, duration)
-            if not isinstance(self._status, Ready) and not ev.ignore_error:
-                stop = self
-            return EvaluationResult(stop, self._mode_after(ev, mode, stop, ran))
-        if isinstance(mode, Seeking):
-            return EvaluationResult(None, mode)
-        await self._mark_not_evaluated(ev)                 # past the destination
-        return EvaluationResult(None, INVALIDATING)
+        # Not rerun: a Ready operation, or an obstacle — unless the input
+        # under it was rewritten this walk.
+        ran = mode.rewritten or not _wrote(self._status)
+        if ran:
+            status, duration = await _timed(self._eval_opr())
+            if isinstance(status, CannotEvaluate):
+                await self.state.copy_to(self.resulting_state())
+            self._set_status(ev, status, duration)
+        return self._reached(ev, ran)
 
 
 class NonLeaf_Node(Node):
@@ -803,10 +819,10 @@ class NonLeaf_Node(Node):
     def _predecessor_wrote(self, index: int) -> bool:
         """Whether the predecessor operation — the one that writes the state
         at position `index` — has written it, judged with no round trip
-        (MODULE_STRUCTURE §4.2 step 3).  An own stop wrote too: it copied
+        (MODULE_STRUCTURE §4.2 step 3).  An obstacle wrote too: it copied
         its input through, so whatever follows has something to run from
-        (ARCHITECTURE §3.1).  A failed beginning wrote the block's resulting
-        state instead, so at position 0 only `ready` counts."""
+        (ARCHITECTURE §3.1).  A failed beginning writes nothing — at
+        position 0 only `ready` counts."""
         if index > 0:
             return _wrote(self.sub_nodes[index - 1]._resulting_status())
         return isinstance(self._beginning_status(), Ready)
@@ -822,33 +838,24 @@ class NonLeaf_Node(Node):
         a node arriving there to take — or None when nothing was written."""
         return self._state_at(index) if self._predecessor_wrote(index) else None
 
-    async def _carry_forward(self, index: int, node: Node, ev: Evaluation) -> None:
+    async def _carry_forward(self, index: int, node: Node) -> None:
         """The source side of removing `node` from position `index`: the
         predecessor's result, which lived under `node.state`, carried into
-        the successor's slot.  When the predecessor wrote nothing, that slot
-        is instead released if `node` wrote it — an own stop's copy-through
-        would otherwise outlive its writer.  Nothing when neither wrote."""
+        the successor's slot.  Nothing when the predecessor wrote nothing:
+        then `node` wrote nothing either (ARCHITECTURE §3.4)."""
         if self._predecessor_wrote(index):
             await node.state.copy_to(self._state_at(index + 1))
-        elif _wrote(node._resulting_status()):
-            ev.release(self._state_at(index + 1))
 
-    async def _evaluate_children(self, ev: Evaluation, mode: EvaluationMode) -> EvaluationResult:
-        """The children in order.  A seeking walk turns `Invalidating` on
-        reaching its destination position — before the child standing
-        there, or after all children when the position is the end."""
-        stopped_at = None
-        for i, child in enumerate(self.sub_nodes):
-            if isinstance(mode, Seeking) and mode.destination == Location(self, i):
-                mode = INVALIDATING
+    async def _evaluate_children(self, ev: Evaluation, mode: Evaluating) -> EvaluationResult:
+        """The children in order, each under the mode the one before it
+        answered.  A child answering no mode — the destination or a stop
+        lies in it — ends the loop, its result returned as it is."""
+        for child in self.sub_nodes:
             r = await child._evaluate(ev, mode)
+            if r.mode is None:
+                return r
             mode = r.mode
-            if r.stopped_at is not None:                  # at most once: the rest run blocked
-                stopped_at = r.stopped_at
-        if (isinstance(mode, Seeking)
-                and mode.destination == Location(self, len(self.sub_nodes))):
-            mode = INVALIDATING
-        return EvaluationResult(stopped_at, mode)
+        return EvaluationResult(None, mode)
 
 
 class StdBlock(NonLeaf_Node):
@@ -896,39 +903,41 @@ class StdBlock(NonLeaf_Node):
 
     def _set_beginning(self, ev: Evaluation, new: EvaluationStatus, duration: float | None) -> None:
         """The beginning's one setter: the instant status and its stored
-        entry (COMPILATION.md §4); `duration` as `_stored` takes it."""
+        entry (COMPILATION.md §4); `duration` as `_written` takes it."""
+        if self._unchanged(0, new):
+            return
         old = self.evaluation_status_beginning
-        if isinstance(old, Ready) and not isinstance(new, Ready):   # written -> unwritten; a rewrite releases nothing
-            ev.release(self._state_after_beginning())
+        if isinstance(old, Ready) and not isinstance(new, Ready):   # written -> unwritten: a failed beginning writes nothing
+            self._release(ev, 0, self._state_after_beginning())
         self.evaluation_status_beginning = new
-        if isinstance(old, Ready) and not isinstance(new, Ready):
-            _completed(self.on_invalidated, "beginning")
-        self._stored(ev, 0, new, duration)
+        self._written(ev, 0, old, duration)
 
-    async def _set_ending(self, ev: Evaluation, new: EvaluationStatus, duration: float | None) -> None:
-        """The ending's one setter, both fields.  Async, alone among the
-        three setters, while `Theory`'s rule walks other trees through
-        the async recursion (ARCHITECTURE §3.4)."""
+    def _set_ending(self, ev: Evaluation, new: EvaluationStatus, duration: float | None) -> None:
+        """The ending's one setter: the instant status and its stored
+        entry (COMPILATION.md §4); `duration` as `_written` takes it."""
+        if self._unchanged(1, new):
+            return
         old = self.evaluation_status_ending
-        if _wrote(old) and not _wrote(new):               # written -> unwritten; a rewrite releases nothing
-            ev.release(self.resulting_state())
+        if _wrote(old) and not _wrote(new):       # written -> unwritten; a rewrite releases nothing
+            self._release(ev, 1, self.resulting_state())
         self.evaluation_status_ending = new
-        if isinstance(old, Ready) and not isinstance(new, Ready):
-            _completed(self.on_invalidated, "ending")
-        self._stored(ev, 1, new, duration)
+        self._written(ev, 1, old, duration)
 
-    async def _mark_not_evaluated(self, ev):
-        if (self.evaluation_status_ending is not NOT_EVALUATED
-                or self._last_evaluation_statuses[1] is not NOT_EVALUATED):
-            await self._set_ending(ev, NOT_EVALUATED, None)
+    def _invalidate(self, ev):
+        self._set_beginning(ev, NOT_EVALUATED, None)
+        for child in self.sub_nodes:
+            child._invalidate(ev)
+        self._set_ending(ev, NOT_EVALUATED, None)
 
     @abstractmethod
     async def _eval_beginning_opr(self) -> Ready | CannotEvaluate:
         """Run the opening from `state` into `_state_after_beginning()`.
         Return the status the run leaves, carrying what it reported.  On a
-        `CannotEvaluate` the children cannot run, the framework copies
-        `state` into `resulting_state()` so the block's input stands as its
-        result, and evaluation resumes after it (ARCHITECTURE §3.3)."""
+        `CannotEvaluate` the children cannot run; when the walk goes on
+        after the block the framework copies `state` into
+        `resulting_state()`, so the block's input stands as its result, and
+        evaluation resumes after it — unless the destination lies under the
+        block: then the tree's walk ends there (ARCHITECTURE §3.3)."""
 
     async def _eval_ending_opr(self) -> Ready | CannotEvaluate:
         """Run the closing from `_state_before_ending` into `resulting_state()`.
@@ -939,66 +948,34 @@ class StdBlock(NonLeaf_Node):
         return READY_CLEAN
 
     async def _evaluate(self, ev, mode):
-        if isinstance(mode, Evaluating):
-            beginning = self.evaluation_status_beginning
-            began = mode.rewritten or not _wrote(beginning)   # not evaluated reruns; an own stop does not
-            if began:
-                status, duration = await _timed(self._eval_beginning_opr())
-                self._set_beginning(ev, status, duration)
-            if isinstance(self.evaluation_status_beginning, CannotEvaluate):   # the children have no context
-                r = await self._evaluate_children(ev, BLOCKED)
-                if r.mode is INVALIDATING:
-                    await self._mark_not_evaluated(ev)
-                    return EvaluationResult(None, INVALIDATING)
-                # The input stands as the result — copied again when the
-                # input was rewritten; a standing copy is left alone.
-                copied = mode.rewritten or not isinstance(self.evaluation_status_ending, Ready)
-                if copied:
-                    await self.state.copy_to(self.resulting_state())
-                    await self._set_ending(ev, READY_CLEAN, None)
-                return EvaluationResult(None, self._mode_after(ev, mode, None, copied))
+        began = mode.rewritten or self.evaluation_status_beginning is NOT_EVALUATED   # an obstacle is not rerun
+        if began:
+            status, duration = await _timed(self._eval_beginning_opr())
+            self._set_beginning(ev, status, duration)
+        if isinstance(self.evaluation_status_beginning, CannotEvaluate):   # the children have no context
+            for child in self.sub_nodes:
+                child._invalidate(ev)
+            if ev.destination is not None and ev.destination._is_under(self):
+                # the tree's walk ends here: a stop to this call alone (ARCHITECTURE §3.3)
+                return EvaluationResult(None if ev.ignore_error else self, None)
+            # The input stands as the result — copied again when the input
+            # was rewritten; a standing copy is left alone.
+            copied = mode.rewritten or not isinstance(self.evaluation_status_ending, Ready)
+            if copied:
+                await self.state.copy_to(self.resulting_state())
+                self._set_ending(ev, READY_CLEAN, None)
+            return self._reached(ev, copied)
 
-            r = await self._evaluate_children(ev, Evaluating(rewritten=began))
-            if r.mode is INVALIDATING:                    # the ending lies past the destination
-                await self._mark_not_evaluated(ev)
-                return EvaluationResult(r.stopped_at, INVALIDATING)
-            if r.stopped_at is not None:                  # no state to run the ending from
-                if not isinstance(self._last_evaluation_statuses[1], CannotEvaluate):
-                    await self._set_ending(ev, NOT_EVALUATED, None)
-                return EvaluationResult(r.stopped_at, self._mode_after(ev, mode, r.stopped_at, False))
-            assert isinstance(r.mode, Evaluating)
-            ended = r.mode.rewritten or not _wrote(self.evaluation_status_ending)
-            if ended:
-                status, duration = await _timed(self._eval_ending_opr())
-                if isinstance(status, CannotEvaluate):
-                    await self._state_before_ending.copy_to(self.resulting_state())
-                await self._set_ending(ev, status, duration)
-            stop = None                                   # an ending that failed stays a stop until edited
-            if not isinstance(self.evaluation_status_ending, Ready) and not ev.ignore_error:
-                stop = self
-            return EvaluationResult(stop, self._mode_after(ev, mode, stop, ended))
-
-        # Not running here: blocked, past the destination, or seeking.  A
-        # blocked walk never overwrites an own stop: the node keeps
-        # reporting itself as the obstacle, and is not rerun
-        # (ARCHITECTURE §3.3); an invalidating walk resets it.
-        if mode is BLOCKED:
-            if not isinstance(self._last_evaluation_statuses[0], CannotEvaluate):
-                self._set_beginning(ev, NOT_EVALUATED, None)
-        elif mode is INVALIDATING:
-            if (self.evaluation_status_beginning is not NOT_EVALUATED
-                    or self._last_evaluation_statuses[0] is not NOT_EVALUATED):
-                self._set_beginning(ev, NOT_EVALUATED, None)
-        r = await self._evaluate_children(ev, mode)
-        if r.mode is INVALIDATING:
-            await self._mark_not_evaluated(ev)
-        elif mode is BLOCKED:
-            if not isinstance(self._last_evaluation_statuses[1], CannotEvaluate):
-                await self._set_ending(ev, NOT_EVALUATED, None)
-        reached = r.mode is INVALIDATING or self is ev.destination
-        if reached:
-            return EvaluationResult(None, INVALIDATING)
-        return EvaluationResult(None, mode)
+        r = await self._evaluate_children(ev, Evaluating(rewritten=began))
+        if r.mode is None:                        # the destination or a stop lies under: nothing more runs
+            return r
+        ended = r.mode.rewritten or not _wrote(self.evaluation_status_ending)
+        if ended:
+            status, duration = await _timed(self._eval_ending_opr())
+            if isinstance(status, CannotEvaluate):
+                await self._state_before_ending.copy_to(self.resulting_state())
+            self._set_ending(ev, status, duration)
+        return self._reached(ev, ended)
 
 
 class Unchained_Node(NonLeaf_Node):
@@ -1034,11 +1011,12 @@ class Unchained_Node(NonLeaf_Node):
     def _source_before(self, index) -> Isar_State_Slot | None:
         return None                              # no predecessor's result to take
 
-    async def _carry_forward(self, index, node, ev):
+    async def _carry_forward(self, index, node):
         pass                                     # nor to carry
 
-    async def _mark_not_evaluated(self, ev):
-        pass                                     # no ending to mark
+    def _invalidate(self, ev):
+        for child in self.sub_nodes:             # no operation of its own
+            child._invalidate(ev)
 
 
 # ---------------------------------------------------------------------------
@@ -1137,6 +1115,11 @@ class Conversation:
     ending: Ending
     seen: set[Any] = field(default_factory=set)
 
+    def forget(self, key: Any) -> None:
+        """Remove a key from the seen set: the status setter's, at every
+        write of the operation the key names (COMPILATION.md §4)."""
+        self.seen.discard(key)
+
 
 # The empty forest's one line under `Sessions:` (PRINT.md §6), approved wording.
 EMPTY_FOREST = ('There are no Isabelle sessions yet. Call `edit` with `{"action": "append",'
@@ -1190,12 +1173,26 @@ class Forest(Unchained_Node):
                 f"the forest database has no field `{e.field}` for node {e.node}") from e
 
     # --- persistence: what the framework stores of a node, and how it
-    # rebuilds one (the plan's §2).  Every write below needs an open
-    # transaction; the edit entries open one each.
+    # rebuilds one (the plan's §2).  `_store_written` is the one writer,
+    # in one transaction: a walk's at each tree's end and when it ends, an
+    # edit's in its commit.
+
+    def _in_forest(self, node: Node) -> bool:
+        """Whether the node's parent chain reaches this root."""
+        return node is self or node._is_under(self)
 
     def _store_node(self, node: Node) -> None:
-        """Rewrite one node's rows: `kind`, a nesting node's `children`,
-        the stored statuses, then what the class writes."""
+        """Rewrite one node's rows, inside an open transaction: `kind`, a
+        nesting node's `children`, the stored statuses, then what the class
+        writes; of the root, its `children` row alone.  A node that is not
+        in the forest is refused (MODULE_STRUCTURE §4.2)."""
+        if node is self:
+            self._store_children(self)
+            return
+        if not self._in_forest(node):
+            raise TAT_InternalError(
+                f"{type(node).__name__} `{getattr(node, 'name', '?')}` is not in the forest:"
+                " its rows cannot be stored")
         self.store.delete_node(node.identity)
         self.store.put(node.identity, "kind", node.kind)
         if isinstance(node, NonLeaf_Node):
@@ -1204,18 +1201,28 @@ class Forest(Unchained_Node):
                        [_status_to_store(s) for s in node._last_evaluation_statuses])
         node.to_store(self.store.rows(node.identity))
 
-    def _store_written(self, ev: Evaluation) -> None:
-        """The walk's store (COMPILATION.md §4): every node whose status it
-        wrote, whole, in one transaction with nothing awaited inside."""
-        if ev.stored:
-            with self.store.transaction():
-                self._store_written_rows(ev)
-
-    def _store_written_rows(self, ev: Evaluation) -> None:
-        """The rows of `_store_written`, inside the caller's transaction —
-        an edit's, which writes them with its own (MODULE_STRUCTURE §4.2)."""
+    def _store_written(self, ev: Evaluation, changed: Sequence[Node] = (),
+                       deleted: Sequence[Node] = ()) -> None:
+        """The one store of a walk's stretch or of an edit's commit
+        (COMPILATION.md §4, MODULE_STRUCTURE §4.2): every node whose status
+        `ev` wrote, and each node of `changed` that is still in the forest,
+        whole and once, the rows of `deleted` removed first — one
+        transaction with nothing awaited inside, none when there is nothing
+        to write.  A status written on a node outside the forest is refused
+        before the transaction opens."""
         for node in ev.stored:
-            self._store_node(node)
+            if not self._in_forest(node):
+                raise TAT_InternalError(
+                    f"a status was written on {type(node).__name__}"
+                    f" `{getattr(node, 'name', '?')}`, which is not in the forest")
+        nodes = list(ev.stored)
+        nodes += [n for n in dict.fromkeys(changed) if n not in ev.stored and self._in_forest(n)]
+        if nodes or deleted:
+            with self.store.transaction():
+                for node in deleted:
+                    self.store.delete_node(node.identity)
+                for node in nodes:
+                    self._store_node(node)
         ev.stored.clear()
 
     def _restore_statuses(self, node: Node, identity: int) -> None:
@@ -1233,10 +1240,6 @@ class Forest(Unchained_Node):
                 " is not a list of statuses")
         if len(statuses) == len(node._last_evaluation_statuses):
             node._last_evaluation_statuses = [s for s in statuses if s is not None]
-
-    def _store_subtree(self, node: Node) -> None:
-        for n in node._tree_order():
-            self._store_node(n)
 
     def _store_children(self, parent: NonLeaf_Node) -> None:
         """The ordered identities of `parent`'s children — the root's one
@@ -1459,55 +1462,44 @@ class Forest(Unchained_Node):
     # `Theory.gen` judges nothing about what an item names, and every
     # reading of it is finite under cycles.
 
-    async def _run(self, ev: Evaluation, mode: EvaluationMode, store: bool = True
+    async def _run(self, destination: Node, ignore_error: bool, checks: str = "no"
                    ) -> EvaluationResult:
-        """One walk under the lock, already held: the store of every node
-        whose status it wrote — unless the caller stores them in a
-        transaction of its own, as an edit does — then one round trip
-        releasing every state it invalidated; nothing of either, after an
-        evaluating walk, whose trees each did their own (`_handle_tree`)."""
+        """The evaluating walk up to and including `destination`, under the
+        lock, already held; it makes the walk's `Evaluation`.  Each tree
+        stores and flushes at its end (`_handle_tree`), and the walk once
+        more when it ends.  A `TAT_Error` escaping the walk comes from an
+        evaluation hook and is its class's bug, so that none is rendered to
+        the agent; anything else passes as it is (EXCEPTIONS.md §1)."""
         assert self.lock.locked(), "a walk runs under the forest lock"
+        ev = Evaluation(destination, ignore_error, checks)
         log = self.conversation.log.evaluation
-        log.walk_started(destination=None if ev.destination is None else self.full_id(ev.destination),
-                         ignore_error=ev.ignore_error, checks=None)
+        log.walk_started(destination=self.full_id(destination),
+                         ignore_error=ignore_error, checks=checks)
         started = time.monotonic()
-        r = await self._evaluate(ev, mode)
-        if store:
-            self._store_written(ev)
+        try:
+            r = await self._evaluate(ev, Evaluating())
+        except TAT_Error as e:
+            raise TAT_InternalError("an evaluation hook raised a TAT_Error") from e
+        self._store_written(ev)
         await ev.flush(self.conversation)
         log.walk_ended(outcome="continue" if r.stopped_at is None else self.full_id(r.stopped_at),
                        slots_released=ev.releases, duration=time.monotonic() - started)
         return r
 
-    async def _invalidate_from(self, position: Location, ev: Evaluation | None = None
-                               ) -> EvaluationResult:
-        """An edit's unconditional invalidation (MCP_SPECIFICATION §3.2):
-        everything from `position` on in its tree, the node standing there
-        whole; nothing under a `Session` or the root, where sibling trees
+    def _invalidate_from(self, position: Location, ev: Evaluation) -> None:
+        """Invalidate from `position` to the end of its tree (ARCHITECTURE
+        §3.4, §3.5): the siblings from that index, each whole, then the
+        parent's ending, then the parent's later siblings, and so on up to
+        the tree's `end`; the index after the last child is the parent's
+        ending.  Nothing under a `Session` or the root, where sibling trees
         are independent — what an edit there disturbed is
-        `_invalidate_changed_trees`'.  Under the caller's `ev`, the caller
-        stores what the walk wrote."""
-        if ev is None:
-            return await self._run(Evaluation(None, False), Seeking(position))
-        return await self._run(ev, Seeking(position), store=False)
-
-    async def _invalidate_whole(self, node: Node) -> EvaluationResult:
-        """`evaluate_to(evaluate=False)` on a node nothing chains, the child
-        of an `Unchained_Node`: the node whole — for a `Session`, every tree
-        under it — under one `Evaluation`, flushed here."""
-        ev = Evaluation(None, False)
-        await self._invalidate_trees(
-            ev, list(node.sub_nodes) if isinstance(node, Session) else [node])
-        self._store_written(ev)
-        await ev.flush(self.conversation)
-        return EvaluationResult(None, INVALIDATING)
-
-    async def _invalidate_trees(self, ev: Evaluation, trees: Sequence[Node]) -> None:
-        """Walk each of `trees` whole in `Invalidating` mode under the
-        caller's `Evaluation`, which the caller flushes."""
-        assert self.lock.locked(), "a walk runs under the forest lock"
-        for tree in trees:
-            await tree._evaluate(ev, INVALIDATING)
+        `_invalidate_changed_trees`'.  Runs and awaits nothing."""
+        parent, index = position.parent, position.index
+        while isinstance(parent, StdBlock):
+            for child in parent.sub_nodes[index:]:
+                child._invalidate(ev)
+            parent._set_ending(ev, NOT_EVALUATED, None)
+            index, parent = parent.index_of() + 1, parent.parent
 
     def _trees(self) -> list[Theory]:
         """The trees in tree order: the `Theory` nodes under the `Session`
@@ -1599,17 +1591,32 @@ class Forest(Unchained_Node):
                 return item
         return None
 
+    async def _evaluate_tree(self, ev: Evaluation, tree: Node) -> Node | None:
+        """The run of one tree and its one `_invalidate_from`
+        (MODULE_STRUCTURE §4.1): after the stop the run ended at — after the
+        destination instead when that stop is a nesting node above it whose
+        beginning failed; else after the destination, when it lies in the
+        tree; not at all for a tree run to its own `end`.  Returns the
+        stop."""
+        destination = ev.destination
+        assert destination is not None                    # an evaluating walk has one (`_run`)
+        stop = (await tree._evaluate(ev, Evaluating())).stopped_at
+        after = destination if stop is None or destination._is_under(stop) else stop
+        if self._tree_of(after) is tree:
+            assert after.parent is not None               # a node of a tree
+            self._invalidate_from(Location(after.parent, after.index_of() + 1), ev)
+        return stop
+
     async def _handle_tree(self, ev: Evaluation, tree: Theory) -> Node | None:
         """One tree of an evaluating walk, and its stop, if any, by the
         first case that applies: the order constraint's stop, the stop
         crossing an import dependency, the run (MODULE_STRUCTURE §4.1;
         ARCHITECTURE §3.3).  Under either stop the tree is not run but
-        walked whole in `Invalidating` mode.  The tree has its own
-        `Evaluation`, flushed here, so a slot released for one tree is gone
-        before a later tree of the walk could write it."""
-        own = Evaluation(ev.destination, ev.ignore_error)
+        invalidated whole.  The walk's store and flush at the tree's end
+        are here, so a slot released for one tree is gone before a later
+        tree of the walk could write it."""
         if self._order_violation(tree) is not None:
-            await self._invalidate_trees(own, [tree])
+            tree._invalidate(ev)
             stop: Node | None = tree                      # reported whatever ignore_error says
             reason = "order_constraint"
         else:
@@ -1617,44 +1624,35 @@ class Forest(Unchained_Node):
             missing = next((i for i in self._resolved_imports(tree)
                             if not i._operations_ready()), None)
             if missing is not None:
-                await self._invalidate_trees(own, [tree])
+                tree._invalidate(ev)
                 stop = None if ev.ignore_error else missing
                 reason = "import_without_theory"
             else:
-                stop = (await tree._evaluate(own, Evaluating())).stopped_at
+                stop = await self._evaluate_tree(ev, tree)
                 reason = "command_failed"
         if stop is not None:                              # the one place a stop is recorded (LOGGING.md §4)
             self.conversation.log.evaluation.stopped(
                 node=self.full_id(stop), reason=reason,
                 tree=self.full_id(tree) if reason == "import_without_theory" else None)
-        self._store_written(own)
-        await own.flush(self.conversation)
-        ev.releases += own.releases
+        self._store_written(ev)
+        await ev.flush(self.conversation)
         return stop
 
     async def _evaluate(self, ev, mode):
         """The forest's part of the recursion (ARCHITECTURE §3.5), which
-        works on the trees directly.  `Seeking`: routed to the one tree the
-        position lies in; under a `Session` or the root nothing is walked.
-        `Evaluating`, with `ev.destination` set: the closure of the trees
-        the destination stands for, in tree order, each by `_handle_tree`
-        — a tree reaching the second case there has every resolved import
+        works on the trees directly: the closure of the trees the
+        destination stands for, in tree order, each by `_handle_tree` — a
+        tree reaching the second case there has every resolved import
         earlier in tree order and already handled, so its statuses are
         current.  The result names the first stop in tree order
         (MCP_SPECIFICATION §4)."""
-        if isinstance(mode, Seeking):
-            parent = mode.destination.parent
-            if isinstance(parent, Unchained_Node):
-                return EvaluationResult(None, INVALIDATING)
-            return await self._tree_of(parent)._evaluate(ev, mode)
-        if not isinstance(mode, Evaluating) or ev.destination is None:
-            raise TAT_InternalError("a forest walk evaluates to a destination or seeks a position")
+        assert ev.destination is not None                 # an evaluating walk has one (`_run`)
         stopped_at: Node | None = None
         for tree in self._closure(self._trees_under(ev.destination)):
             stop = await self._handle_tree(ev, tree)
             if stopped_at is None:
                 stopped_at = stop
-        return EvaluationResult(stopped_at, INVALIDATING)
+        return EvaluationResult(stopped_at, None)
 
     # --- what an edit compares (ARCHITECTURE §3.4)
 
@@ -1665,27 +1663,27 @@ class Forest(Unchained_Node):
                                        frozenset(self._resolved_imports(t, table)))
                 for t in self._trees()}
 
-    async def _invalidate_changed_trees(self, ev: Evaluation, before: Tree_Records) -> list[Theory]:
-        """After an edit's commit, against the record taken at its start:
+    def _invalidate_changed_trees(self, ev: Evaluation, before: Tree_Records
+                                  ) -> tuple[list[Theory], list[str]]:
+        """Inside an edit's commit, against the record taken at its start:
         every tree present in both whose record changed — its `Session`
         renamed, itself renamed, moved into another `Session`, a tree it
         imports vanished, appeared or replaced by an `amend`, or a name it
-        imports now naming another tree — is walked whole in `Invalidating`
-        mode, its ending then carrying the rule of `Theory._set_ending`
-        onward; every qualified name present before and absent after is
-        removed from the ML theory table, in one round trip
-        (EVALUATOR_DESIGN §3).  Returns the trees so invalidated, for the
-        edit's `committed` record."""
+        imports now naming another tree — is invalidated whole, its ending
+        then carrying the rule of `Theory._set_ending` onward.  Returns
+        those trees, for the edit's `committed` record, and every qualified
+        name present before and absent after, sorted, which the edit
+        removes from the ML theory table after its commit
+        (EVALUATOR_DESIGN §3)."""
         after = self._record()
         changed = [t for t in self._trees()
                    if t.identity in before and before[t.identity] != after[t.identity]]
-        await self._invalidate_trees(ev, changed)
+        for tree in changed:
+            tree._invalidate(ev)
         kept = {record.qualified_name for record in after.values()}
         vanished = sorted(record.qualified_name for record in before.values()
                           if record.qualified_name not in kept)
-        if vanished:
-            await isabelle_driver.theory_delete(self.conversation, vanished)
-        return changed
+        return changed, vanished
 
 
 # ---------------------------------------------------------------------------
@@ -1978,20 +1976,20 @@ class Theory(StdBlock):
         imports = " ".join(f'"{item}"' for item in self.imports)
         return f"theory {self.name}\n  imports {imports}\nbegin"
 
-    async def _set_ending(self, ev, new, duration):
+    def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever
         a stored `Ready` ending is replaced by a value that is not a `Ready`,
-        the tree's direct importers are walked whole in `Invalidating` mode
-        under the same `Evaluation`, each ending so moved firing the same
-        rule for its own importers.  The assignment comes first, so within
-        one cascade no ending leaves `Ready` twice, cycles included: a tree
-        importing itself re-enters its own walk, and the inner call finds
-        the ending already `not_evaluated`."""
+        the tree's direct importers are invalidated whole under the same
+        `Evaluation`, each ending so moved firing the same rule for its own
+        importers.  The assignment comes first, so within one cascade no
+        ending leaves `Ready` twice, cycles included: a tree importing
+        itself re-enters its own invalidation, and the inner call finds the
+        ending already `not_evaluated`."""
         old = self._last_evaluation_statuses[1]
-        await super()._set_ending(ev, new, duration)
+        super()._set_ending(ev, new, duration)
         if isinstance(old, Ready) and not isinstance(new, Ready):
-            forest = self.forest()
-            await forest._invalidate_trees(ev, forest._importers(self))
+            for importer in self.forest()._importers(self):
+                importer._invalidate(ev)
 
     def print_fields(self, indent, out, mode, depth):
         """SESSION_AND_THEORY §4: `imports` in the briefing, when detailed

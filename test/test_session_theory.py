@@ -19,9 +19,8 @@ from isabelle_theory_agent import edit, isabelle_driver
 from isabelle_theory_agent.exceptions import (
     BadSessionNodeParent, BadTheoryNodeParent, DuplicateTheoryShortName,
     InvalidField, InvalidName, ReservedTheoryName, TAT_InternalError)
-from isabelle_theory_agent.model import (
-    INVALIDATING, NOT_EVALUATED, EvaluationResult, Session, Theory)
-from isabelle_theory_agent.isabelle_driver import IsaTerm
+from isabelle_theory_agent.model import NOT_EVALUATED, EvaluationResult, Session, Theory
+from Isabelle_RPC_Host.unicode import IsaTerm
 from test_model import CANNOT_EVALUATE, READY
 from isabelle_theory_agent.store import Forest_Store
 
@@ -94,6 +93,8 @@ def shape(forest):
             return (n.parent_session, n.options, n.description)
         if isinstance(n, Theory):
             return tuple(n.imports)
+        if isinstance(n, tm.Block):
+            return (n.fail_beginning, n.fail_ending)
         return n.fail
     return [(n.identity, n.kind, n.name, fields(n),
              len(n.sub_nodes) if isinstance(n, M.NonLeaf_Node) else None)
@@ -219,7 +220,7 @@ def test_children_are_not_chained():
 def test_a_walk_never_reaches_a_session():
     f, s, x, y, a = arith()
     with pytest.raises(TAT_InternalError, match="reached a Session"):
-        run(s._evaluate(M.Evaluation(None, False), INVALIDATING))
+        run(s._evaluate(M.Evaluation(None, False), M.Evaluating()))
 
 
 def test_the_owned_slot_under_each_outcome_of_a_tree():
@@ -239,21 +240,21 @@ def test_the_owned_slot_under_each_outcome_of_a_tree():
     values = tm.TABLE.values
 
     r = run(good.evaluate_to(False))
-    assert r == EvaluationResult(None, INVALIDATING)
+    assert r == EvaluationResult(None, None)
     assert tm.st(good) == (READY, READY) and good.is_finished()
     assert values[a.state.name] == "begin Good" and a.consumed == "begin Good"
     assert values[good._state_after_ending.name] == "end Good"
     inv(f)
 
     r = run(bad_end.evaluate_to(False))
-    assert r.stopped_at is bad_end                           # an own stop at the ending
+    assert r.stopped_at is bad_end                           # a stop at the ending
     assert tm.st(bad_end)[0] is READY and isinstance(tm.st(bad_end)[1], M.CannotEvaluate)
     assert tm.st(bad_end)[1].messages
     assert values[bad_end._state_after_ending.name] == "begin BadEnd"   # copied through
     inv(f)
 
     r = run(bad_header.evaluate_to(False))
-    assert r == EvaluationResult(None, INVALIDATING)          # not a stop for its successors
+    assert r == EvaluationResult(None, None)                  # not a stop for its successors
     assert isinstance(tm.st(bad_header)[0], M.CannotEvaluate) and tm.st(bad_header)[1] is READY
     assert tm.st(bad_header)[0].messages and not bad_header.is_finished()
     assert bad_header._state_after_ending.name not in values
@@ -262,7 +263,7 @@ def test_the_owned_slot_under_each_outcome_of_a_tree():
     for tree in (good, bad_end, bad_header):
         assert tree.state.name not in values                 # nobody writes a tree's input
     # invalidating a tree releases what it wrote; deleting one, its whole slot set
-    run(good.evaluate_to(False, evaluate=False))
+    tm.invalidate(good)
     assert tm.st(good) == (NOT_EVALUATED, NOT_EVALUATED) and tm.st(a) is NOT_EVALUATED
     assert a.state.name not in values and good._state_after_ending.name not in values
     inv(f)

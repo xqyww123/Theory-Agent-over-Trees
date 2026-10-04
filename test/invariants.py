@@ -3,18 +3,23 @@ the fake state slot table of `test_model.py` and the forest's real store
 (not a pytest module).
 
 - Release: a slot holds a value iff the operation that writes it is still
-  current — `ready`, or an own stop, which copied its input through; a
+  current — `ready`, or an obstacle, which copied its input through; a
   beginning writes only when `ready` (ARCHITECTURE §3.1, §3.4).  Under an
   unchained container nobody writes a child's input, and a child owning
   its resulting slot (a `Theory`) holds a value there exactly when its
   ending really wrote one — not after a failed beginning, whose
   copy-through copied an input holding nothing (the plan's §6).
 - Provenance: every operation still `ready` consumed exactly what its input
-  slot holds now (MCP_SPECIFICATION §3.2's "invalidates … unconditionally").
+  slot holds now (MCP_SPECIFICATION §3.2's "invalidates … unconditionally"),
+  and every obstacle's input slot still holds what it copied through.
   Judged on the recording fakes of `test_model.py`, which remember it.
+- Prefix: in the walk's order within a tree no operation is evaluated
+  after one that is `not_evaluated`, but for the children of a nesting
+  node whose beginning is `cannot_evaluate`, which are `not_evaluated`
+  while its ending and what follows may be evaluated (ARCHITECTURE §3.4).
 - Mirror: the store loads back as this forest — same nodes in the same
-  order with the same identities, kinds, names and fields — and holds no
-  row of a node that has left (the plan's §2).
+  order with the same identities, kinds, names, fields and stored
+  statuses — and holds no row of a node that has left (the plan's §2).
 - The theory table, two one-way statements over the fake one of
   `test_model.py`, which the fakes' endings write: every tree answering
   `_operations_ready()` has its qualified name in the table, and every
@@ -51,8 +56,38 @@ def _chained(parent):
     return True
 
 
+def _walk_order(node, out):
+    """The instant statuses of the subtree's operations in the order the
+    walk reaches them, each with its node; the children of a nesting node
+    whose beginning is `cannot_evaluate` are left out, after checking that
+    they are `not_evaluated` throughout."""
+    if not isinstance(node, StdBlock):
+        out.extend((node, s) for s in node._own_statuses())
+        return out
+    out.append((node, node.evaluation_status_beginning))
+    if isinstance(node.evaluation_status_beginning, M.CannotEvaluate):
+        for child in node.sub_nodes:
+            assert all(s is NOT_EVALUATED for n in child._tree_order() for s in n._own_statuses()), \
+                f"{child}: holds a status under {node}, whose beginning failed"
+    else:
+        for child in node.sub_nodes:
+            _walk_order(child, out)
+    out.append((node, node.evaluation_status_ending))
+    return out
+
+
 def assert_invariants(forest, table):
     values = table.values
+    for parent in [forest] + [n for n in forest._all_nodes() if isinstance(n, M.NonLeaf_Node)]:
+        if isinstance(parent, M.Unchained_Node):     # each child is a tree, or holds trees
+            for tree in parent.sub_nodes:
+                unevaluated = None
+                for node, status in _walk_order(tree, []):
+                    if status is NOT_EVALUATED:
+                        unevaluated = unevaluated or node
+                    else:
+                        assert unevaluated is None, \
+                            f"{node}: evaluated after {unevaluated}, which is not"
     for parent in [forest] + [n for n in forest._all_nodes()
                               if isinstance(n, M.NonLeaf_Node)]:
         if not _chained(parent):
@@ -85,15 +120,17 @@ def assert_invariants(forest, table):
             assert values.get(node.state.name) == node.consumed, \
                 f"{node}: ready, consumed {node.consumed!r}, input now {values.get(node.state.name)!r}"
         if isinstance(node, T) and node._status is CANNOT_EVALUATE:
-            # its copy-through stands, and still matches its input where that is current
+            # an obstacle: its copy-through stands, and its input is still what it copied
             assert values.get(node.resulting_state().name) == node.copied, \
-                f"{node}: own stop, copied {node.copied!r}, result now {values.get(node.resulting_state().name)!r}"
-            if node.state.name in values:
-                assert values[node.state.name] == node.copied, \
-                    f"{node}: own stop copied {node.copied!r}, input now {values[node.state.name]!r}"
+                f"{node}: obstacle, copied {node.copied!r}, result now {values.get(node.resulting_state().name)!r}"
+            parent = node.parent
+            first_with_no_beginning = node.index_of() == 0 and not isinstance(parent, StdBlock)
+            if _chained(parent) and not first_with_no_beginning:
+                assert node.state.name in values and values[node.state.name] == node.copied, \
+                    f"{node}: obstacle copied {node.copied!r}, input now {values.get(node.state.name)!r}"
         if isinstance(node, Block) and node.evaluation_status_ending is CANNOT_EVALUATE:
             assert values.get(node.resulting_state().name) == node.copied_end, \
-                f"{node}: ending own stop, copied {node.copied_end!r}"
+                f"{node}: obstacle at its ending, copied {node.copied_end!r}"
         if isinstance(node, Block):
             if node.evaluation_status_beginning is READY:
                 assert values.get(node.state.name) == node.consumed_begin, \
@@ -129,7 +166,8 @@ def assert_invariants(forest, table):
 def assert_store_mirrors(forest, kinds, shape=shape):
     """The same store, loaded again by the forest's own class, has the
     `shape` of this forest — what a round trip must preserve, node by node
-    in tree order."""
+    in tree order — and every node's stored statuses, in their stored
+    form, whatever `shape` holds."""
     store = forest.store
     live = {n.identity for n in forest._all_nodes()}
     assert set(store.nodes()) - {forest.identity} == live, "rows of nodes not in the forest"
@@ -138,3 +176,7 @@ def assert_store_mirrors(forest, kinds, shape=shape):
     assert shape(twin) == shape(forest)
     for n in twin._all_nodes():
         assert n.parent is not None and n in n.parent.sub_nodes
+    for mine, theirs in zip(forest._all_nodes(), twin._all_nodes()):
+        stored = [M._status_to_store(s) for s in mine.last_evaluation_statuses()]
+        loaded = [M._status_to_store(s) for s in theirs.last_evaluation_statuses()]
+        assert loaded == stored, f"{mine}: stored statuses {stored}, the database's {loaded}"

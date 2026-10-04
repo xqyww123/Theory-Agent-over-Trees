@@ -37,7 +37,7 @@ from .exceptions import (
     UnexpectedField)
 from .model import (JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, StdBlock, Unchained_Node,
                     is_valid_name)
-from .store import FRAMEWORK_FIELDS
+from .store import CONSTRUCT_FRAMEWORK_FIELDS, FRAMEWORK_FIELDS
 
 
 class CannotLoadPlugin(TAT_StartupError):
@@ -179,6 +179,9 @@ def _check_class(cls: type[Node]) -> list[str]:
     if any(c.__name__ == cls.__name__ for c in registry):
         raise _refuse(cls, "another node class has this name")
     properties = _properties(cls)
+    for field in properties:                # such a class would fail at its first store
+        if field in FRAMEWORK_FIELDS and field not in CONSTRUCT_FRAMEWORK_FIELDS:
+            raise _refuse(cls, f"declares the field `{field}`, the name of a row the framework stores")
     if "children" in properties:
         if issubclass(cls, Leaf):
             raise _refuse(cls, "a Leaf declares no `children`")
@@ -211,12 +214,12 @@ def _check_class(cls: type[Node]) -> list[str]:
     except TAT_InternalError as e:
         raise _refuse(cls, f"argument_schema: {e}") from e
     hints, typed_required = _declared(cls.argument_schema)
-    schema_fields = set(properties) - set(FRAMEWORK_FIELDS)
+    schema_fields = set(properties) - set(CONSTRUCT_FRAMEWORK_FIELDS)
     typed_fields = set(hints) - {"kind"}
     if schema_fields != typed_fields:
         raise _refuse(cls, f"construct_schema declares the fields {sorted(schema_fields)},"
                            f" argument_schema the fields {sorted(typed_fields)}")
-    schema_required = set(required) - set(FRAMEWORK_FIELDS)
+    schema_required = set(required) - set(CONSTRUCT_FRAMEWORK_FIELDS)
     typed_required = typed_required - {"kind"}
     if schema_required != typed_required:
         raise _refuse(cls, f"construct_schema requires {sorted(schema_required)},"
@@ -401,7 +404,7 @@ def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
     """The mechanical shape of a submitted construct, before its class is
     consulted: no field the class does not declare, required fields
     present, types right — against the class's `argument_schema`."""
-    _check_fields(cls.argument_schema, kind, raw, prefix="", framework=FRAMEWORK_FIELDS)
+    _check_fields(cls.argument_schema, kind, raw, prefix="", framework=CONSTRUCT_FRAMEWORK_FIELDS)
 
 
 def _check_names(declared: Collection[str], required: Collection[str], holder: str,

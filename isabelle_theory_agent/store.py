@@ -18,8 +18,8 @@ There is no per-field delete: to rewrite a node's fields, `delete_node` and
 `put` them again inside the one transaction.  `delete_node` removes one node;
 deleting a subtree is the caller's walk.
 
-Two field names are the framework's, `kind` and `children`; a node class
-reaches its own fields through `Node_Rows`, which refuses to write those two.
+Some rows of a node are the framework's (`FRAMEWORK_FIELDS`); a node class
+reaches its own fields through `Node_Rows`, which refuses to write those.
 
 The connection belongs to the thread that opened the store — `sqlite3`
 refuses any other — so background work hands its results to the event loop
@@ -261,17 +261,22 @@ class Forest_Store:
         self.close()
 
 
-# The framework's fields of a node, never a class's: the rows it writes
-# here, and the names a construct reserves (the plan's §2; the stored
-# statuses, COMPILATION.md §4).
-FRAMEWORK_FIELDS = ("kind", "children", "last_evaluation_statuses")
+# The framework's two fields of a construct (MODULE_STRUCTURE §4.2): `kind`
+# selects the class and `children` holds a nesting node's contents.  Each
+# is also a row the framework stores.
+CONSTRUCT_FRAMEWORK_FIELDS = ("kind", "children")
+
+# The rows the framework stores of a node, never a class's (the plan's §2;
+# the stored statuses, COMPILATION.md §4).
+FRAMEWORK_FIELDS = (*CONSTRUCT_FRAMEWORK_FIELDS, "last_evaluation_statuses")
 
 
 class Node_Rows:
     """One node's rows, as a node class sees them in `to_store` and
     `from_store` (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §2): its own
-    fields to write and read, the framework's two to read only.  Made by
-    `Forest_Store.rows` for one call; a class never keeps it."""
+    fields to write and read, the framework's rows (`FRAMEWORK_FIELDS`) to
+    read only.  Made by `Forest_Store.rows` for one call; a class never
+    keeps it."""
 
     def __init__(self, store: Forest_Store, node: int):
         self._store = store
@@ -289,6 +294,6 @@ class Node_Rows:
         return self._store.get(self._node, field)
 
     def fields(self) -> dict[str, Any]:
-        """The class's own fields; `kind` and `children` are left out."""
+        """The class's own fields; the framework's rows are left out."""
         return {field: value for field, value in self._store.fields(self._node).items()
                 if field not in FRAMEWORK_FIELDS}

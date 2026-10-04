@@ -12,7 +12,8 @@ import pytest
 import stand_ins
 from isabelle_theory_agent.exceptions import (
     TAT_DisasterError, TAT_InternalError, TAT_StartupError)
-from isabelle_theory_agent.store import SCHEMA_VERSION, Forest_Store, IncompatibleStore
+from isabelle_theory_agent.store import (
+    FRAMEWORK_FIELDS, SCHEMA_VERSION, Forest_Store, IncompatibleStore)
 
 
 @pytest.fixture
@@ -208,7 +209,7 @@ def test_node_rows_keeps_the_framework_fields_read_only(store):
         store.put(7, "children", [8, 9])
         rows = store.rows(7)
         rows.put("name", "P")
-        for field in ("kind", "children"):
+        for field in FRAMEWORK_FIELDS:
             with pytest.raises(TAT_InternalError, match="framework's field"):
                 rows.put(field, "x")
     rows = store.rows(7)

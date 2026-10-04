@@ -733,6 +733,15 @@ broken down).
   failed is reported as stopped at that node when `ignore_error` is
   unset); the documents are amended accordingly and passed four
   readers (reader7–reader10.json, the last FIT; COMPILATION_REVIEW
-  §13). The code stays frozen until the owner lifts it; then the code
-  items of COMPILATION §6 item 9 join review 5's, and a code review
-  precedes the commit.
+  §13). The step-1 code entered HEAD with the logging session's commits
+  (2026-10-03). The owner approved the implementation on 2026-10-04;
+  its plan, checked by two readers, is
+  ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md — Phase A (the walk,
+  the setters, the edit's commit, the store, `IsaTerm` in
+  Isabelle_RPC; Python only), then Phase B (compilation, with
+  `import_sessions` and the `Session` folder made before a theory
+  begins), then the jobs session's steps 4 to 17; a code review
+  precedes each phase's commit. Phase A is implemented and reviewed
+  (2026-10-04; the plan's §7); on its one open finding the owner ruled
+  that a class mints and lists a slot of its own itself, the framework
+  releasing it through `_slots_written_by`; Phase B is next.

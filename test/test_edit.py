@@ -18,7 +18,7 @@ from isabelle_theory_agent import edit, plugin
 from isabelle_theory_agent.exceptions import (
     BadEdit, ChildrenNotInheritable, DuplicateName, DuplicateTheoryShortName,
     InvalidField, InvalidName, MalformedRawAST, MissingField,
-    MoveIntoOwnSubtree, TAT_InternalError, UnexpectedChildren,
+    MoveIntoOwnSubtree, TAT_DisasterError, TAT_InternalError, UnexpectedChildren,
     UnexpectedField, UnknownKind)
 from isabelle_theory_agent.model import NOT_EVALUATED, Location
 from test_model import CANNOT_EVALUATE, READY
@@ -184,6 +184,9 @@ def test_the_rawast_error_family():
     with pytest.raises(MalformedRawAST) as e:
         run(insert(42))
     assert not e.value.missing_kind
+    with pytest.raises(UnexpectedField) as e:        # a row the framework stores is no field of a construct
+        run(insert({"kind": "t", "name": "x", "last_evaluation_statuses": [["ready", []]]}))
+    assert (e.value.holder, e.value.field) == ("t", "last_evaluation_statuses")
     with pytest.raises(MalformedRawAST) as e:
         run(insert({"name": "x"}))
     assert e.value.missing_kind
@@ -365,13 +368,13 @@ def test_insert_moves_the_value_from_the_source_slot():
     assert tm.TABLE.values[u.state.name] == "end Section"
     assert c.state.name not in tm.TABLE.values
 
-def test_insert_after_own_stop_receives_the_written_input():
+def test_insert_after_an_obstacle_receives_the_written_input():
     f, thy, sec, t1, t2, t3, t4 = tm.build(T1=True)
     run(t4.evaluate_to(True))
     assert st(t1) is CANNOT_EVALUATE
     (n,) = run(locked(f, edit.insert(sec,
         1, [{"kind": "t", "name": "N"}], {"t": T})))
-    # An own stop wrote its resulting state (the input copied through), so
+    # An obstacle wrote its resulting state (the input copied through), so
     # the one ARCHITECTURE-§3.4 copy happens.
     assert tm.TABLE.values[n.state.name] == "begin Section"
     assert t2.state.name not in tm.TABLE.values
@@ -447,20 +450,20 @@ def test_amend_inherits_position_slot_identity_children():
     inv(f)
 
 def test_amending_a_childless_block_counts_each_deleted_slot_once():
-    """`walk_ended`'s `slots_released` (LOGGING.md §4) is the number of
-    names the walk's one `state_delete` named.  A block with no children
-    ends on the state its beginning wrote, so the amend releases that slot
-    twice; it is deleted, and counted, once."""
+    """A block with no children ends on the state its beginning wrote, so
+    the amend releases that slot twice; the edit's one `state_delete`
+    names it once.  An edit's invalidation is no walk: it writes no
+    `walk_started` (LOGGING.md §4)."""
     f, thy, sec, a, b, c = rbuild()
     (e,) = run(locked(f, edit.insert(thy, 1, [{"kind": "block", "name": "E"}], KINDS)))
     run(c.evaluate_to(False))
     assert st(e) == (READY, READY)
     tm.TABLE.calls.clear()
+    walks = stand_ins.events("evaluation").count("walk_started")
     run(locked(f, edit.amend(e, [{"kind": "block", "name": "E2"}], KINDS)))
     [(_, names)] = deletes()
-    walk_ended = stand_ins.records("evaluation")[-1]         # the amend's invalidation walk
-    assert walk_ended["event"] == "walk_ended"
-    assert walk_ended["data"]["slots_released"] == len(names) == 3
+    assert len(names) == len(set(names)) == 3
+    assert stand_ins.events("evaluation").count("walk_started") == walks
     inv(f)
 
 def test_amend_may_keep_the_name():
@@ -645,7 +648,9 @@ def test_a_namespaced_name_collides_across_the_forest_and_the_batch():
 # --- one transaction per write operation, storing only what changed ----------
 
 def test_each_edit_is_one_transaction_touching_what_it_changed():
-    """One store transaction per edit, its `transaction` record naming the
+    """One store transaction per edit, writing the new nodes, the nodes a
+    completed hook fired on and the parents whose `children` row changed
+    (MODULE_STRUCTURE §4.2 step 3); its `transaction` record naming the
     nodes it deleted by identity, and after it the edit's `committed`
     record (LOGGING.md §4), naming what the edit changed by full ids."""
     def committed():
@@ -662,20 +667,23 @@ def test_each_edit_is_one_transaction_touching_what_it_changed():
                            "invalidated": []}
     tm.TABLE.clear_writes()
     run(locked(f, edit.move(c, thy, 0)))                 # within one parent
-    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity}
+    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity, c.identity}
     assert nodes_deleted() == []
     assert committed() == {"operation": "move", "parent": f.full_id(thy), "index": 0,
                            "created": [], "removed": [], "moved": [f.full_id(c)], "invalidated": []}
     tm.TABLE.clear_writes()
     run(locked(f, edit.move(c, sec, 0)))                 # across parents
-    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {thy.identity, sec.identity}
+    assert tm.TABLE.transactions == 1
+    assert tm.TABLE.touched == {thy.identity, sec.identity, c.identity}
     assert nodes_deleted() == []
     assert (committed()["parent"], committed()["index"], committed()["moved"]) == (
         f.full_id(sec), 0, [f.full_id(c)])
     tm.TABLE.clear_writes()
     old_sec, sec_index = f.full_id(sec), sec.index_of()
     (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}], KINDS)))
-    assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {s9.identity}
+    assert tm.TABLE.transactions == 1                    # the replacement, its parent, the inherited children
+    assert tm.TABLE.touched == {s9.identity, thy.identity} | {n.identity for n in s9.sub_nodes}
+    assert [n.name for n in s9.sub_nodes] == ["c", "a", "u", "b"]
     assert nodes_deleted() == []                         # one identity, its rows rewritten
     assert committed() == {"operation": "amend", "parent": f.full_id(thy), "index": sec_index,
                            "created": [[f.full_id(s9), "block"]], "removed": [old_sec],
@@ -696,9 +704,13 @@ def test_move_between_parents():
     f, thy, sec, a, b, c = rbuild()
     run(c.evaluate_to(False))
     EVENTS.clear()
+    written = len(stand_ins.events("evaluation"))
     run(locked(f, edit.move(b, thy, 0)))   # to the front of the theory
     assert sec.sub_nodes == [a] and thy.sub_nodes == [b, sec, c]
     assert b.parent is thy
+    # the move's invalidation is no walk (LOGGING.md §4): it writes the
+    # statuses it changed and no walk record
+    assert set(stand_ins.events("evaluation")[written:]) == {"operation"}
     # The destination-side copy survives: b's new input is written by the
     # theory's beginning, which stays ready.
     assert tm.TABLE.values[b.state.name] == "begin Theory"
@@ -742,11 +754,11 @@ def test_on_invalidated_distinguishes_the_operation():
     f, thy, sec, a, b, c = rbuild()
     run(c.evaluate_to(False))
     EVENTS.clear()
-    run(a.evaluate_to(False, evaluate=False))    # invalidate from a on
+    tm.invalidate(a)                             # invalidate from a on
     inv = events("invalidated")
     assert ("a", "invalidated", None) in inv
     assert ("Section", "invalidated", "ending") in inv
-    # its opening still stands: the walk enters the block before a
+    # its beginning stands: the invalidation starts at a, inside the block
     assert ("Section", "invalidated", "beginning") not in inv
 
 def test_on_invalidated_fires_once_per_operation():
@@ -780,7 +792,7 @@ def test_failed_opening_repeated_pass_keeps_the_result():
         run(t4.evaluate_to(False))
     assert st(sec) == (CANNOT_EVALUATE, READY)
     assert tm.TABLE.values[sec.resulting_state().name] == "begin Theory"
-    assert sec.begin_runs == 1                   # an own stop is not rerun
+    assert sec.begin_runs == 1                   # an obstacle is not rerun
 
 
 # --- the invariants, and the shapes that escaped every earlier sweep --------
@@ -812,7 +824,7 @@ def test_move_past_a_nesting_successor_invalidates_it_whole():
     run(locked(f, edit.move(x, thy, 2)))    # -> [Section, c, x]
     assert thy.sub_nodes == [sec, c, x]
     assert st(sec) == (NOT_EVALUATED, NOT_EVALUATED) and st(a) is NOT_EVALUATED
-    assert len(deletes()) <= 2                    # one flush per walk
+    assert len(deletes()) == 1                    # one round trip after the commit
     inv(f)
 
 def test_amend_with_a_nesting_first_child_invalidates_it_whole():
@@ -829,9 +841,10 @@ def test_amend_with_a_nesting_first_child_invalidates_it_whole():
     assert st(inner) == (NOT_EVALUATED, NOT_EVALUATED) and st(a) is NOT_EVALUATED
     inv(f)
 
-def test_failed_opening_after_failed_ending_keeps_its_result():
-    """Theory > [A(fails), B > [z], Y]; B's ending fails, then its beginning
-    fails on its second run: the copy-through must not be released."""
+def test_a_beginning_failing_after_its_block_was_invalidated_copies_the_input_through():
+    """Theory > [A(fails), B > [z], Y]: a strict walk ends at A and
+    invalidates B whole; B's beginning then fails on its second run, and
+    the block's input stands as its result."""
     f = tm.OneTreeForest(tm.CONN)
     thy = add(f, Block(f, slot(), "Theory", slot()))
     a = add(thy, T(thy, slot(), "A", fail=True))
@@ -840,72 +853,154 @@ def test_failed_opening_after_failed_ending_keeps_its_result():
     y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(True)); inv(f)
     assert st(b) == (READY, CANNOT_EVALUATE)
-    run(y.evaluate_to(False)); inv(f)            # A stops; B's ending keeps its own stop
-    assert st(b) == (NOT_EVALUATED, CANNOT_EVALUATE)
+    run(y.evaluate_to(False)); inv(f)            # A stops: everything after it is invalidated
+    assert st(b) == (NOT_EVALUATED, NOT_EVALUATED)
     record(b, fail_beginning=True)
     run(y.evaluate_to(True)); inv(f)             # B's beginning reruns and fails
     assert st(b) == (CANNOT_EVALUATE, READY) and st(y) is READY
     assert (tm.TABLE.values[b.resulting_state().name]
             == tm.TABLE.values[b.state.name])
 
-def test_own_stop_reruns_when_its_input_is_rewritten():
-    """Theory > [A(fails), P, X(fails), Y]: P, blocked then unblocked, reruns
-    and rewrites X's input — X, an own stop, must run again on it."""
+def test_an_obstacle_after_a_strict_stop_runs_again_when_a_walk_reaches_it():
+    """Theory > [A(fails), P, X(fails), Y]: a strict walk ends at A and
+    invalidates everything after it, the obstacle X included; the next walk
+    that goes past A runs P and X again."""
     f = tm.OneTreeForest(tm.CONN)
     thy = add(f, Block(f, slot(), "Theory", slot()))
     a = add(thy, T(thy, slot(), "A", fail=True)); p = add(thy, T(thy, slot(), "P"))
     x = add(thy, T(thy, slot(), "X", fail=True)); y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(True)); inv(f)
     assert (p.runs, x.runs) == (1, 1)
-    run(y.evaluate_to(False)); inv(f)            # A stops: P blocked, X keeps its own stop
-    assert st(p) is NOT_EVALUATED and st(x) is CANNOT_EVALUATE
-    run(y.evaluate_to(True)); inv(f)             # P reruns, so X does too
+    run(y.evaluate_to(False)); inv(f)            # A stops: P, X and Y are invalidated
+    assert st(p) is NOT_EVALUATED and st(x) is NOT_EVALUATED
+    run(y.evaluate_to(True)); inv(f)             # P runs again, and X after it
     assert (p.runs, x.runs) == (2, 2) and st(x) is CANNOT_EVALUATE
     run(y.evaluate_to(True)); inv(f)             # nothing rewritten: nothing reruns
     assert (p.runs, x.runs) == (2, 2)
-
-def test_removing_an_own_stop_behind_a_blocked_predecessor_releases_its_copy():
-    """Theory > [A(fails), S > [z], B(fails), C]: after a strict pass S's
-    ending is blocked while B keeps its own stop; deleting or moving B must
-    not leave B's copy-through in C's input, whose writer is now S."""
-    def build():
-        f = tm.OneTreeForest(tm.CONN)
-        thy = add(f, Block(f, slot(), "Theory", slot()))
-        a = add(thy, T(thy, slot(), "A", fail=True))
-        s = add(thy, Block(thy, slot(), "S", slot()))
-        z = add(s, T(s, slot(), "z"))
-        b = add(thy, T(thy, slot(), "B", fail=True)); c = add(thy, T(thy, slot(), "C"))
-        run(c.evaluate_to(True)); run(c.evaluate_to(False)); inv(f)
-        assert st(s)[1] is NOT_EVALUATED and st(b) is CANNOT_EVALUATE
-        return f, thy, s, b, c
-    f, thy, s, b, c = build()
-    run(locked(f, edit.delete(b)))
-    assert c.state.name not in tm.TABLE.values
-    inv(f)
-    f, thy, s, b, c = build()
-    run(locked(f, edit.move(b, s, 1)))
-    assert c.state.name not in tm.TABLE.values
-    inv(f)
-
-def test_the_root_has_no_position():
-    f, thy, sec, a, b, c = rbuild()
-    with pytest.raises(TAT_InternalError):
-        run(f.evaluate_to(False, evaluate=False))
 
 def test_the_root_has_no_parent():
     f, thy, sec, a, b, c = rbuild()
     with pytest.raises(TAT_InternalError):
         run(locked(f, edit.delete(f)))
 
-def test_own_stop_survives_being_blocked():
-    f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
-    d = add(thy, T(thy, slot(), "d", fail=True)); e = add(thy, T(thy, slot(), "e", fail=True))
-    g = add(thy, T(thy, slot(), "g"))
-    for ignore in (True, True, False, True, False, True):
-        run(g.evaluate_to(ignore))
-        assert e.runs == 1 and st(e) is CANNOT_EVALUATE      # never rerun, never misreported
-        inv(f)
+def test_on_invalidated_fires_before_the_other_completed_hooks():
+    """MODULE_STRUCTURE §4.1, "Events": `on_invalidated` fires in the
+    commit's invalidation, so before every other completed hook of the
+    edit."""
+    changes = {
+        "insert": lambda f, thy, sec, a: edit.insert(sec, 0, [{"kind": "t", "name": "u"}], KINDS),
+        "amend": lambda f, thy, sec, a: edit.amend(sec, [{"kind": "block", "name": "S9"}], KINDS),
+        "delete": lambda f, thy, sec, a: edit.delete(a),
+        "move": lambda f, thy, sec, a: edit.move(a, thy, 1),
+    }
+    for name, change in changes.items():
+        f, thy, sec, a, b, c = rbuild()
+        run(c.evaluate_to(False))
+        EVENTS.clear()
+        run(locked(f, change(f, thy, sec, a)))
+        kinds = [e[1] for e in EVENTS]
+        last_invalidated = max(i for i, kind in enumerate(kinds) if kind == "invalidated")
+        first_completed = min(i for i, kind in enumerate(kinds)
+                              if kind in ("deleted", "inserted", "inherited", "added_child", "moved"))
+        assert last_invalidated < first_completed, (name, EVENTS)
+
+
+def test_a_repeated_invalidation_stores_and_logs_nothing():
+    """The setter's guard (MODULE_STRUCTURE §4.1, "Status"): `not_evaluated`
+    for an operation whose stored status is already `not_evaluated` writes
+    nothing — no transaction, no `operation` record, nothing released."""
+    f, thy, sec, a, b, c = rbuild()
+    run(c.evaluate_to(False))
+    tm.invalidate(a)
+    assert st(a) is NOT_EVALUATED and st(c) is NOT_EVALUATED
+    tm.TABLE.clear_writes(); tm.TABLE.calls.clear(); EVENTS.clear()
+    operations = stand_ins.events("evaluation").count("operation")
+    tm.invalidate(a)
+    assert tm.TABLE.transactions == 0 and not tm.TABLE.touched
+    assert stand_ins.events("evaluation").count("operation") == operations
+    assert deletes() == [] and events("invalidated") == []
+    inv(f)
+
+
+class Noting:
+    """Completed hooks that record on the node, in a stored field `note`."""
+    note = ""
+    def to_store(self, rows):
+        super().to_store(rows)
+        rows.put("note", self.note)
+    @classmethod
+    def from_store(cls, config, rows):
+        node = super().from_store(config, rows)
+        node.note = rows.get("note")
+        return node
+    def on_inherited(self, old_parent): self.note = f"inherited from {old_parent.name}"
+    def on_moved(self, old_location): self.note = f"moved from {old_location.parent.name}"
+    def on_deleted(self, reason): self.note = f"deleted by {reason}"
+
+class NT(Noting, T):
+    pass
+
+class NBlock(Noting, Block):
+    def on_added_child(self, child, mode): self.note = f"added {child.name} by {mode}"
+
+
+def test_what_a_completed_hook_records_is_stored_with_the_edit():
+    """MODULE_STRUCTURE §4.1, "Events": a completed hook fires before the
+    edit's store, so what it changes on a node still in the forest is in
+    the database when the edit returns."""
+    kinds = {"t": NT, "block": NBlock}
+    f = tm.OneTreeForest(tm.CONN, kinds=kinds)
+    (thy,) = run(locked(f, edit.insert(f, 0, [
+        {"kind": "block", "name": "Theory", "children": [
+            {"kind": "block", "name": "Section", "children": [
+                {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]},
+            {"kind": "t", "name": "c"}]}], kinds)))
+    sec, c = thy.sub_nodes
+    a, b = sec.sub_nodes
+    def stored(node):
+        return f.store.get(node.identity, "note")
+    def mirrors():
+        assert_store_mirrors(f, kinds, shape=lambda forest: [
+            (n.identity, n.kind, n.name, n.note) for n in forest._all_nodes()])
+    assert stored(sec) == "added b by insert_or_delete"        # a new node's own hooks, too
+    # an amend: the inherited children and the parent; the replacement's
+    # rows are its own — what `on_deleted` wrote on the node it replaced
+    # is stored nowhere
+    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}], kinds)))
+    assert stored(a) == stored(b) == "inherited from Section"
+    assert stored(thy) == "added S9 by amend"
+    assert sec.note == "deleted by amend" and stored(s9) == "added b by inheritance"
+    mirrors()
+    # a move: the moved node and its new parent
+    run(locked(f, edit.move(c, s9, 0)))
+    assert stored(c) == "moved from Theory" and stored(s9) == "added c by move"
+    mirrors()
+    # a delete: the hooks fire on nodes that have left; none is refused, no row remains
+    gone = {n.identity for n in s9._tree_order()}
+    run(locked(f, edit.delete(s9)))
+    assert s9.note == a.note == "deleted by delete" and not gone & set(f.store.nodes())
+    mirrors()
+
+
+def test_a_node_outside_the_forest_is_not_stored():
+    """MODULE_STRUCTURE §4.2 step 3: a status written on a node whose parent
+    chain does not reach the forest is refused before any transaction
+    opens; `_store_node` on such a node inside one is the cause of that
+    transaction's `TAT_DisasterError`."""
+    f, thy, sec, a, b, c = rbuild()
+    run(locked(f, edit.delete(b)))
+    ev = M.Evaluation(None, False)
+    ev.stored.add(b)
+    tm.TABLE.clear_writes()
+    with pytest.raises(TAT_InternalError, match="not in the forest"):
+        f._store_written(ev)
+    assert tm.TABLE.transactions == 0
+    with pytest.raises(TAT_DisasterError) as e:
+        with f.store.transaction():
+            f._store_node(b)
+    assert isinstance(e.value.__cause__, TAT_InternalError)
+    inv(f)
+
 
 def test_random_interleavings_keep_the_invariants():
     kinds = {"t": T, "block": Block}
@@ -966,7 +1061,7 @@ def test_random_interleavings_keep_the_invariants():
             elif op == "evaluate":
                 await rng.choice(nodes).evaluate_to(rng.random() < 0.5)
             elif op == "invalidate":
-                await rng.choice(nodes).evaluate_to(False, evaluate=False)
+                await tm._invalidate(rng.choice(nodes))
 
         for _ in range(60):                  # the budget at which the invariants catch
             run(step())                      # each of the three release-side mechanisms

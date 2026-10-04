@@ -593,15 +593,17 @@ each a round trip; nothing about the table is mirrored on
 the Python side. Persistence keeps neither the name nor the connection: a
 loaded forest is reassigned its slots.
 
-Every node holds one, `state`, the state before it; a class may declare,
-in the class attribute `owned_slots` (a tuple of names, empty by
-default), further slots the node owns — `Theorem`'s `goal_state`
-(THEOREM.md §6) — which the framework mints with
-`state` on construction and on load, sets as the node's attributes of
-those names, releases with the operation's resulting state in every
-setter that takes an operation from written to unwritten, and deletes
-with the node; only the class's evaluation callback writes them. The
-state after it,
+Every node holds one, `state`, the state before it. A class may own
+further slots — `Theorem`'s `goal_state` (THEOREM.md §6) — and does so
+itself: it mints each where the node is built, in `gen` and
+`from_store`; appends it in `_states_inside()`, so that it is deleted
+with the node; and names it in `_slots_written_by(operation)`, empty by
+default, which answers the further slots an operation writes besides
+its resulting state — `operation` as `on_invalidated` is told it. The
+framework releases them with the operation's resulting state, in the
+setter that takes the operation from written to unwritten; only the
+class's evaluation callback writes them. The
+state after a node,
 `resulting_state()`, is computed, as in AoA
 (`contrib/Isa-Mini/IsaMini/AoA/model.py`'s `Node.resulting_state`): under a chaining parent it
 asks the parent, which answers with the next sibling's `state`, or with the
@@ -628,8 +630,9 @@ answers — every operation of the node and of its subtree `Ready`, and
 (ARCHITECTURE §3.2, CONSTRUCT_INTERACTION §3.1); a class may override
 `_unfinished()` and never `is_finished()`, and the loader refuses one
 that does (PLUGIN_SYSTEM §5). Every status write goes through one setter per
-operation, which releases the operation's resulting state, and the slots
-the node's class declared (above), when the status goes from written to
+operation, which releases the operation's resulting state, and the
+further slots the class says the operation writes (above), when the
+status goes from written to
 unwritten — never on a rewrite; a loaded forest's
 instant statuses are all `NOT_EVALUATED`, its stored ones what the last
 run left. Each setter writes the instant status
@@ -692,9 +695,13 @@ the same `Evaluation` (the invalidation functions, below).
   header's `master_dir`, the compile and the compile hooks share; and
   `import_sessions`, recorded when the header runs (COMPILATION.md §2).
   Before its header runs it makes its `Session`'s folder when that is
-  absent, with the function the compile uses (COMPILATION.md §4), so
+  absent, with the function the compile uses (COMPILATION.md §2, §5), so
   that AoA's proof store beside the file has a directory to be written
-  in (THEOREM.md §7).
+  in (THEOREM.md §7). A folder that cannot be made — its path holds
+  something that is not a directory, or the system refuses — ends the
+  conversation with a `TAT_StartupError` (EXCEPTIONS.md §1): the
+  working directory's structure is TAT's alone, and nothing an agent
+  can do repairs it.
 - `Forest(Unchained_Node)` — the root above every `Session`. Holds the
   lock, the store (ARCHITECTURE §4.1) and the `Conversation`; resolves ids
   and prints their shortest form; and, in the walk, keeps the import graph

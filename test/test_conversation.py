@@ -547,7 +547,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     # tree owns, and the theory value into the theory table; the input
     # slot stays what nobody wrote
     r = await ta.evaluate_to(False)
-    assert r == M.EvaluationResult(None, M.INVALIDATING), r
+    assert r == M.EvaluationResult(None, None), r
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)
     assert ta.evaluation_status_beginning == READY and ta.evaluation_status_ending == READY
     assert ta.is_finished() and sess.is_finished() and forest.is_finished()
@@ -561,18 +561,18 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     # the conversation's theory table, under the session's name
     (tb,) = await insert(sess, 1, [theory("TAT_E2E_B", "TAT_E2E_A")])
     r = await tb.evaluate_to(False)
-    assert r == M.EvaluationResult(None, M.INVALIDATING), r
+    assert r == M.EvaluationResult(None, None), r
     assert tb.is_finished() and tb.evaluation_status_beginning == READY
 
     # a header that fails -- an import found nowhere, refused under the
     # name Isabelle resolved it to (RENDER_BASELINES §3, the whole
-    # sentence) -- is the node's own stop at its beginning, with the
+    # sentence) -- makes the node an obstacle at its beginning, with the
     # message; the ending is the framework's copy-through of an input that
     # holds nothing, so the owned resulting slot stays empty under a
     # `ready` ending
     (tc,) = await insert(sess, 2, [theory("TAT_E2E_C", "TAT_E2E_Nowhere")])
     r = await tc.evaluate_to(False)
-    assert r == M.EvaluationResult(None, M.INVALIDATING), r   # its successors are not blocked
+    assert r == M.EvaluationResult(None, None), r   # its successors are not blocked
     beginning = tc.evaluation_status_beginning
     assert isinstance(beginning, M.CannotEvaluate)
     assert any(not_found("TAT_E2E.TAT_E2E_Nowhere") in m.unicode for m in beginning.messages), \
@@ -598,7 +598,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     assert not await tb._state_after_ending.is_initialized()
     assert theory_deletes == [["TAT_E2E.TAT_E2E_A"]], theory_deletes
     r = await tb.evaluate_to(False)
-    assert r == M.EvaluationResult(None, M.INVALIDATING), r
+    assert r == M.EvaluationResult(None, None), r
     beginning = tb.evaluation_status_beginning
     assert isinstance(beginning, M.CannotEvaluate)
     assert any(not_found("TAT_E2E.TAT_E2E_A") in m.unicode for m in beginning.messages), \

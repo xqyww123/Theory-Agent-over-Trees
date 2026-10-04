@@ -299,6 +299,17 @@ def test_the_two_schemas_must_agree():
             r"requires \[\], argument_schema requires \['name'\]")
 
 
+def test_a_field_may_not_take_the_name_of_a_row_the_framework_stores():
+    """A construct's two framework fields are `kind` and `children`; a
+    class declaring a field under the name of another row the framework
+    stores would load and then fail at its first store."""
+    class Statuses(TypedDict):
+        last_evaluation_statuses: NotRequired[str]
+    schema = leaf_schema(["st"], {"last_evaluation_statuses": {"type": "string"}})
+    refused(leaf("St", ["st"], construct_schema=schema, argument_schema=Statuses),
+            "declares the field `last_evaluation_statuses`, the name of a row the framework stores")
+
+
 # --- a tool call's arguments against its schema (TOOL_SCHEMAS.md §4) ---------
 
 def call_schema(properties, **more):

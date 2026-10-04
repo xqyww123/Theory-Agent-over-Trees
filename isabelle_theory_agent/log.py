@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Concatenate, Literal, ParamSpec
 
-from .isabelle_driver import IsaTerm
+from Isabelle_RPC_Host.unicode import IsaTerm
 
 Level = Literal["debug", "info", "warning", "error"]
 

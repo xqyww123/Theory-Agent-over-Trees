@@ -200,8 +200,9 @@ Every node owns one **state slot**: a name standing for the `Toplevel.state` the
 node starts from. The name belongs to the node for as long as the node exists,
 and re-evaluating the node writes that same name again. The Python side never
 holds a state, only a name. A class may own further slots beside the
-node's own — declared on the class, minted, released and reassigned on
-load with it (MODULE_STRUCTURE §4.1); `Theorem`'s `goal_state`, the
+node's own: it mints them itself and names the operation that writes
+each, and the framework releases them with that operation's result
+(MODULE_STRUCTURE §4.1); `Theorem`'s `goal_state`, the
 state in which its goal stands open (THEOREM.md §6), is the one so far.
 
 A node's resulting state is the slot of its next sibling, or, for a last child,

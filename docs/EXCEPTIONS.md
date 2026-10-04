@@ -52,9 +52,11 @@ schema version or is not a database, a node class package cannot be
 loaded (PLUGIN_SYSTEM §1, §5), another conversation or a compile holds
 the working directory (ARCHITECTURE §9), its lock file cannot be opened,
 its log directory cannot be made (LOGGING.md §2), a `Session`'s folder
-path under it holds something that is not a directory, which a compile
-refuses before it removes anything (COMPILATION.md §2, §7), the port cannot be
-bound, the agent client that connects states, in its MCP
+path under it holds something that is not a directory — a compile
+refuses it before it removes anything (COMPILATION.md §2, §7), and a
+conversation ends on it, or on a folder the system will not make, when
+a theory of that `Session` begins (MODULE_STRUCTURE §4.1) — the port
+cannot be bound, the agent client that connects states, in its MCP
 `initialize`, a version lower than the one TAT's client facts were
 measured on, or none, or another client's name, or Claude Code saves no
 transcript for an agent that announces a call, or a Codex tool call
@@ -118,9 +120,13 @@ The same line sorts what node classes raise:
   (COMPILATION.md §5).
 - `_eval_opr`, `_eval_beginning_opr` and `_eval_ending_opr` raise
   nothing: they answer the operation's status, a failure included
-  (COMPILATION.md §4). Whatever escapes one of them, a `TAT_Error`
-  included, is the class's bug: `Forest._run` raises
-  `TAT_InternalError` from it, and the conversation ends.
+  (COMPILATION.md §4). A `TAT_Error` escaping one of them is the
+  class's bug: `Forest._run` raises `TAT_InternalError` from it, so that
+  it is never rendered to the agent. Anything else that escapes ends
+  the conversation as it is, as at the tool boundary, keeping what it
+  is — a bug of the class's; the connection going; the
+  `TAT_StartupError` of `Theory`'s beginning for a `Session`'s folder
+  that cannot be made (above).
 
 ## 2. Classified by the cause, not by the tool
 
