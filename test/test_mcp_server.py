@@ -122,9 +122,11 @@ class Bodies:
 @asynccontextmanager
 async def serving(port: int, tools: list[Tool], on_compaction=no_briefing):
     """A server listening and serving in a task, on an ending object of its
-    own; yields the server and the serving task, which raises what ended
-    the conversation (`ended`)."""
-    async with stand_ins.ending() as ending, TAT_Server(ending, port, tools, on_compaction) as server:
+    own — Claude Code's, the client the harness's `client()` is; yields the
+    server and the serving task, which raises what ended the conversation
+    (`ended`)."""
+    async with stand_ins.ending() as ending, \
+            Claude_Code_Server(ending, port, tools, on_compaction) as server:
         serve = asyncio.create_task(server.serve())
         try:
             yield server, serve
@@ -142,7 +144,7 @@ async def launched(tools: list[Tool], block: Callable[[TAT_Server], Awaitable[An
     of their own, running `block` inside them — the task the RPC host
     cancels; returned once the server listens."""
     ending = stand_ins.ending()
-    server = TAT_Server(ending, free_port(), tools, no_briefing)
+    server = Claude_Code_Server(ending, free_port(), tools, no_briefing)
     listening = asyncio.Event()
 
     async def launch_TAT():
@@ -460,9 +462,9 @@ def test_what_escapes_the_servers_block_before_serve_enters_the_ending_at_its_ex
         assert isinstance(await ended(launch), ConnectionResetError)
         assert "slow" not in bodies.finished
         call_record, while_ending = stand_ins.records("tool")
-        ending_record, ended_record = stand_ins.records("conversation")
-        assert [r["event"] for r in (call_record, ending_record, while_ending, ended_record)] == [
-            "call", "ending", "while_ending", "ended"]
+        connected, ending_record, ended_record = stand_ins.records("conversation")
+        assert [r["event"] for r in (connected, call_record, ending_record, while_ending, ended_record)] == [
+            "client_connected", "call", "ending", "while_ending", "ended"]
         assert call_record["ts"] <= ending_record["ts"] <= while_ending["ts"] <= ended_record["ts"]
     run(scenario)
 
@@ -587,7 +589,7 @@ def test_the_endpoint_answers_as_soon_as_it_listens():
     request between the two is answered normally."""
     async def scenario():
         port = free_port()
-        async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing) as server, \
+        async with stand_ins.ending() as ending, Claude_Code_Server(ending, port, [], no_briefing) as server, \
                 client(server.url) as session:
             assert (await session.list_tools()).tools == []
     run(scenario)
@@ -728,8 +730,8 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             with pytest.raises(raised):
                 await asyncio.create_task(enter(port))
             monkeypatch.setattr(uvicorn.Server, "startup", real_startup)
-            async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing) as again, \
-                    client(again.url) as session:
+            async with stand_ins.ending() as ending, \
+                    Claude_Code_Server(ending, port, [], no_briefing) as again, client(again.url) as session:
                 assert (await session.list_tools()).tools == []
         assert reached_the_window
     run(scenario)

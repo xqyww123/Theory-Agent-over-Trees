@@ -13,24 +13,33 @@ import signal
 import socket
 import subprocess
 import traceback
+import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any, NoReturn
 
 import anyio
+import httpx
 from Isabelle_RPC_Host import Connection, Server, isabelle_remote_procedure
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 
 from isabelle_theory_agent import isabelle_driver, toplevel
-from isabelle_theory_agent.mcp_server import HOST, Ending
+from isabelle_theory_agent.mcp_server import HOOK, HOST, PATH, TOOL_PREFIX, Claude_Code_Server, Ending
 
 PLUGIN = "Theory_Agent_over_Trees.Test_TAT_Framework"
 PACKAGES = ["tat_test_plugin"]          # what the plugin's registrations name, deduplicated
 DEADLINE = 120.0                        # a case's, in seconds; the marker may override it
 STARTUP = 900.0                         # the first run on a machine may build the base heap
 TERMINATION = 10.0                      # a child that outlived SIGINT: after SIGTERM, before SIGKILL
+
+# The client the suite is: Claude Code, at the version the subclass requires,
+# its main conversation announcing every call (CONSTRUCT_INTERACTION §8).
+CLIENT_INFO = types.Implementation(name=Claude_Code_Server.client_name,
+                                   version=Claude_Code_Server.measured_version)
+SESSION_ID = "6c1f0e4a-2b7d-4f3e-9a58-0d2c7b1e8f90"            # invented, as the payloads' other ids
+TRANSCRIPT_PATH = f"/home/agent/.claude/projects/-work-TAT-agents/{SESSION_ID}.jsonl"   # named, not read
 
 
 def free_port() -> int:
@@ -75,11 +84,52 @@ async def end_group(process: subprocess.Popen[Any], exited: asyncio.Future[Any])
     await asyncio.wait({exited})                # unbounded: the waiting thread must end
 
 
+def hook_url(url: str) -> str:
+    """`/hook` beside the endpoint `url`."""
+    return url.removesuffix(PATH) + HOOK
+
+
+async def announce(url: str, payload: Any) -> httpx.Response:
+    """One hook payload posted to `/hook` as the hook script does
+    (CLIENT_HOOKS.md §1)."""
+    async with httpx.AsyncClient() as http:
+        return await http.post(url, json=payload)
+
+
+class Announcing_Session(ClientSession):
+    """An `mcp` client session that announces each tool call to `/hook`
+    the way Claude Code's main conversation does — a `PreToolUse` payload
+    in the measured shape, with an invented `tool_use_id` — and then sends
+    the call with the matching `_meta` (CONSTRUCT_INTERACTION §8).  An
+    announcement the ending answers 503 does not stop the call, as it does
+    not stop an interactive client whose user allows it: the call is sent,
+    and the ending answers it (RENDER_BASELINES §4)."""
+
+    def __init__(self, read: Any, write: Any, url: str, **kwargs: Any):
+        super().__init__(read, write, **kwargs)
+        self._hook_url = hook_url(url)
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None,
+                        read_timeout_seconds: Any = None, progress_callback: Any = None, *,
+                        meta: dict[str, Any] | None = None) -> types.CallToolResult:
+        tool_use_id = "toolu_" + uuid.uuid4().hex
+        answer = await announce(self._hook_url, {
+            "session_id": SESSION_ID, "transcript_path": TRANSCRIPT_PATH, "cwd": "/work/TAT.agents",
+            "permission_mode": "default", "hook_event_name": "PreToolUse",
+            "tool_name": TOOL_PREFIX + name, "tool_input": arguments or {}, "tool_use_id": tool_use_id,
+            "mcp_server": {"name": "TAT", "source": "dynamic"}})
+        assert answer.status_code in (200, 503), (answer, answer.text)
+        return await super().call_tool(name, arguments, read_timeout_seconds, progress_callback,
+                                       meta={Claude_Code_Server.call_key: tool_use_id, **(meta or {})})
+
+
 @asynccontextmanager
-async def client(url: str) -> AsyncGenerator[ClientSession]:
-    """An initialised `mcp` client session on the endpoint."""
+async def client(url: str, client_info: types.Implementation = CLIENT_INFO
+                 ) -> AsyncGenerator[ClientSession]:
+    """An initialised `mcp` client session on the endpoint, stating
+    `client_info` and announcing its calls."""
     async with streamable_http_client(url) as (read, write, _):
-        async with ClientSession(read, write) as session:
+        async with Announcing_Session(read, write, url, client_info=client_info) as session:
             await session.initialize()
             yield session
 

@@ -1,8 +1,9 @@
 """The Streamable HTTP MCP server (MODULE_STRUCTURE §4.6): the endpoint
-`http://127.0.0.1:<port>/mcp`, the path `/on-compaction` the agent
-clients' hooks call (CLIENT_HOOKS.md); the tool boundary of EXCEPTIONS.md
-§1; the conversation's ending, `Ending`; one subclass of the server per
-agent client (CONSTRUCT_INTERACTION §8).
+`http://127.0.0.1:<port>/mcp`, the path `/hook` the conversation's hooks
+post to and the path `/on-compaction` (CLIENT_HOOKS.md); the tool
+boundary of EXCEPTIONS.md §1; the conversation's ending, `Ending`; one
+subclass of the server per agent client (CONSTRUCT_INTERACTION §8),
+which names the calling agent and judges the hooks.
 
 TAT's own transport code, on the Python `mcp` SDK's low-level server and
 session manager and on uvicorn.  Two lessons from AoA's server
@@ -16,11 +17,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
 import sys
 import time
+import weakref
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -33,17 +36,27 @@ import anyio.lowlevel
 import uvicorn
 from mcp import types
 from mcp.server.lowlevel import Server
+from mcp.server.lowlevel.server import request_ctx
+from mcp.server.session import ServerSession
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from starlette.requests import Request
 
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
-from .log import Log
+from .jobs import Agent
+from .log import Judged, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
 HOST = "127.0.0.1"
 PATH = "/mcp"
+HOOK = "/hook"
 ON_COMPACTION = "/on-compaction"
+TOOL_PREFIX = "mcp__TAT__"              # a TAT tool's name as the client sees it (CONSTRUCT_INTERACTION §8)
+
+# A call no `PreToolUse` announced (CONSTRUCT_INTERACTION §8): the client's
+# hooks do not reach TAT; the `unannounced` record's message, never shown.
+UNANNOUNCED = ("This call was not announced by the client's hooks, so TAT cannot tell which agent "
+               "is calling.")
 
 AGENTS = "TAT.agents"                   # the agent directory (ARCHITECTURE §1)
 SCRIPTS = ".tat"                        # where the hooks' scripts go (CLIENT_HOOKS.md §1)
@@ -138,10 +151,25 @@ def stopped_for(reason: str) -> str:
             "otherwise tell the user that TAT has stopped.")
 
 
+class ClientRefused(TAT_StartupError):
+    """A refusal raised while serving (EXCEPTIONS.md §3): the client's
+    version or name, Codex's sandbox, an agent with no transcript.  `line`
+    is the ending's answer to every tool call meanwhile (RENDER_BASELINES
+    §4), required here so that no refusal is answered as an internal
+    error; the message is what the launcher prints."""
+
+    def __init__(self, message: str, line: str):
+        super().__init__(message)
+        self.line = line
+
+
 def stopped(ended_by: BaseException) -> str:
     """The one answer while the conversation is ending (RENDER_BASELINES
-    §4), by what ended it: a `TAT_DisasterError`; the connection gone; a
-    `Session`'s folder that cannot be made; else a bug."""
+    §4), by what ended it: a refusal, which carries its line; a
+    `TAT_DisasterError`; the connection gone; a `Session`'s folder that
+    cannot be made; else a bug."""
+    if isinstance(ended_by, ClientRefused):
+        return ended_by.line
     if isinstance(ended_by, TAT_DisasterError):
         return stopped_for("the sessions could not be saved")
     if connection_went(ended_by):
@@ -152,6 +180,31 @@ def stopped(ended_by: BaseException) -> str:
 
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class Announcement:
+    """A `PreToolUse` on a TAT tool (CONSTRUCT_INTERACTION §8): the agent
+    that is about to send the call `tool_use_id` names."""
+    agent: Agent
+    tool_use_id: str
+
+
+def _field(payload: dict[str, Any], name: str) -> Any:
+    """A field the client documents for the hook; its absence breaks TAT's
+    premise about the client, a bug like any other on the path."""
+    try:
+        return payload[name]
+    except KeyError:
+        raise TAT_InternalError(
+            f"the {payload.get('hook_event_name')} payload carries no {name}") from None
+
+
+def _numbers(version: str) -> tuple[int, ...]:
+    """The leading dotted numbers of a version, `2.1.286` of `2.1.286-beta`;
+    empty when it starts with none, which is lower than any version."""
+    m = re.match(r"\d+(?:\.\d+)*", version)
+    return tuple(int(n) for n in m.group().split(".")) if m else ()
 
 
 class Ending:
@@ -234,11 +287,17 @@ class TAT_Server:
     runs the conversation until its ending and raises what ended it.  The
     ending is `ending`'s, given; the server keeps no ending state of its
     own.  One subclass per agent client (CONSTRUCT_INTERACTION §8), each
-    stating the `clientInfo.name` its client's MCP sessions open with and
-    the client's version its facts were measured on."""
+    stating the `clientInfo.name` its client's MCP sessions open with, the
+    client's version its facts were measured on, the `_meta` key under
+    which a call carries the id its announcement named, and what the
+    announcement is answered.  The server keeps the client's agents, by
+    the identity the client gives them, and the calls announced and not
+    yet sent."""
 
     client_name: ClassVar[str]
     measured_version: ClassVar[str]
+    call_key: ClassVar[str]
+    announcement_answer: ClassVar[Any]
 
     def __init__(self, ending: Ending, port: int, tools: list[Tool],
                  on_compaction: Callable[[], str]):
@@ -250,6 +309,10 @@ class TAT_Server:
         self._tools = {tool.name: tool for tool in tools}
         self._on_compaction = on_compaction
         self.url = f"http://{HOST}:{port}{PATH}"
+
+        self.agents: dict[str, Agent] = {}
+        self._announced: dict[str, Agent] = {}      # tool_use_id -> the agent, until the call arrives
+        self._checked: weakref.WeakSet[ServerSession] = weakref.WeakSet()  # the MCP sessions whose client passed
 
         self._requests = 0                  # in flight, the standalone GET stream excepted
         self._idle = asyncio.Event()        # no request in flight
@@ -308,6 +371,81 @@ class TAT_Server:
         entry: dict[str, Any] = {} if matcher is None else {"matcher": matcher}
         entry["hooks"] = [{"type": "command", "timeout": HOOK_TIMEOUT, "command": command}]
         return entry
+
+    # --- the agents (CONSTRUCT_INTERACTION §4, §8) ------------------------
+
+    def _main_identity(self, payload: dict[str, Any]) -> str:
+        """How the client names its main conversation in a hook payload,
+        which carries no `agent_id` for it (CLIENT_HOOKS.md §2, §3)."""
+        raise NotImplementedError
+
+    def event_of_hook(self, payload: dict[str, Any]) -> Announcement | None:
+        """The client's JSON as an event (CONSTRUCT_INTERACTION §8): a
+        `PreToolUse` on a TAT tool is the announcement of a call by the
+        agent `agent_id` names, the main conversation without one; every
+        other hook is consumed — None."""
+        if (payload.get("hook_event_name") != "PreToolUse"
+                or not str(payload.get("tool_name", "")).startswith(TOOL_PREFIX)):
+            return None
+        agent_id = payload.get("agent_id")
+        identity = self._main_identity(payload) if not agent_id else str(agent_id)
+        current_agent.set(identity)
+        return Announcement(self._agent(identity, main=not agent_id), str(_field(payload, "tool_use_id")))
+
+    def _agent(self, identity: str, main: bool) -> Agent:
+        """The agent so named, created at its first hook (CONSTRUCT_INTERACTION
+        §4) and never discarded."""
+        agent = self.agents.get(identity)
+        if agent is None:
+            agent = self.agents[identity] = Agent(identity, main)
+            self.ending.log.agent.created(identity=identity, main=main, first="hook")
+        return agent
+
+    def call_id(self, meta: types.RequestParams.Meta | None) -> str | None:
+        """The client's id of a tool call, under the subclass's key of its
+        `_meta`; None when the call carries none."""
+        extra = meta.model_extra if meta is not None else None
+        value = extra.get(self.call_key) if extra else None
+        return str(value) if value is not None else None
+
+    def agent_of_call(self, meta: types.RequestParams.Meta | None) -> Agent | None:
+        """The agent whose announcement named this call, taken off the
+        announced calls; None when no announcement did — TAT never guesses
+        (CONSTRUCT_INTERACTION §8)."""
+        call_id = self.call_id(meta)
+        return self._announced.pop(call_id, None) if call_id is not None else None
+
+    # --- the client (CONSTRUCT_INTERACTION §8) ----------------------------
+
+    def _check_client(self, session: ServerSession) -> None:
+        """At the first request of an MCP session that reaches TAT: its
+        `clientInfo` against the client `-c` chose and the version TAT's
+        facts were measured on; a session that fails is refused, which ends
+        the conversation."""
+        if session in self._checked:
+            return
+        self._checked.add(session)
+        if session.client_params is None:   # the SDK serves no request before `initialize`
+            self.ending.end(TAT_InternalError("a request reached TAT before its session's initialize"))
+            return
+        client = session.client_params.clientInfo
+        if client.name != self.client_name or _numbers(client.version) < _numbers(self.measured_version):
+            self._refuse(f"TAT cannot serve this client: it is {client.name} {client.version}; "
+                         f"TAT requires {self.client_name} {self.measured_version} or newer.",
+                         "a client TAT does not serve connected", client)
+        else:
+            self.ending.log.conversation.client_connected(name=client.name, version=client.version)
+
+    def _refuse(self, message: str, reason: str, client: types.Implementation,
+                _meta: Any = None) -> None:
+        """The one way a client is refused (CONSTRUCT_INTERACTION §8): the
+        `client_refused` record, then the ending entered with the
+        `ClientRefused` — `message` for the launcher, `reason` completing
+        the line of RENDER_BASELINES §4 every tool call is answered
+        meanwhile."""
+        self.ending.log.conversation.client_refused(
+            name=client.name, version=client.version, message=message, _meta=_meta)
+        self.ending.end(ClientRefused(message, stopped_for(reason)))
 
     async def __aenter__(self) -> TAT_Server:
         self._socket = _bind(self._port)
@@ -385,6 +523,9 @@ class TAT_Server:
     async def _asgi(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":         # cannot fire: lifespan off, ws none
             return
+        if scope["path"] == HOOK:
+            await self._counted(self._hook_request(scope, receive, send))
+            return
         if scope["path"] == ON_COMPACTION:
             await self._counted(self._compaction(scope, receive, send))
             return
@@ -406,6 +547,57 @@ class TAT_Server:
             self._requests -= 1
             if self._requests == 0:
                 self._idle.set()
+
+    async def _hook_request(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """`POST /hook` (MODULE_STRUCTURE §4.6; CLIENT_HOOKS.md §1): the
+        transport check as for `/mcp`, the payload read and recorded, then
+        in one synchronous step under no lock the ending tested — an empty
+        503 while the conversation is ending — and the event judged, its
+        answer the client's JSON or nothing; anything the judgement raises
+        enters the ending and is answered an empty 500."""
+        started = time.monotonic()
+        request = Request(scope, receive)
+        is_post = scope["method"] == "POST"
+        refused = await self._security.validate_request(request, is_post=is_post)
+        if refused is not None:
+            await refused(scope, receive, send)
+            return
+        if not is_post:
+            await _answer(send, 405, b"", "text/plain")
+            return
+        body = await request.body()
+        try:
+            payload: Any = json.loads(body)
+        except ValueError:
+            payload = body.decode(errors="replace")
+        log = self.ending.log.hook
+        log.request(payload=payload)
+        judged: Judged = "ignored"
+        if not isinstance(payload, dict):
+            status, answer = 400, None
+        elif self.ending.entered:
+            status, answer = 503, None
+        else:
+            try:
+                judged, answer = self._judge(payload)
+                status = 200
+            except Exception as bug:
+                self.ending.end(bug)
+                status, answer = 500, None
+        if answer is None:
+            await _answer(send, status, b"", "text/plain")
+        else:
+            await _answer(send, status, json.dumps(answer).encode(), "application/json")
+        log.answer(judged=judged, status=status, body=answer, duration=time.monotonic() - started)
+
+    def _judge(self, payload: dict[str, Any]) -> tuple[Judged, Any]:
+        """What the hook is and what it is answered (CLIENT_HOOKS.md §1's
+        table): an announcement records the call for `agent_of_call`."""
+        event = self.event_of_hook(payload)
+        if event is None:
+            return "ignored", None
+        self._announced[event.tool_use_id] = event.agent
+        return "announcement", self.announcement_answer
 
     async def _compaction(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """`POST /on-compaction?client=<name>` (MODULE_STRUCTURE §4.6): the
@@ -441,6 +633,10 @@ class TAT_Server:
     # --- the tool boundary (EXCEPTIONS.md §1) ----------------------------
 
     async def _list_tools(self) -> list[types.Tool]:
+        if not self.ending.entered:
+            self._check_client(request_ctx.get().session)
+        if self.ending.entered and isinstance(self.ending.ended_by, ClientRefused):
+            return []                       # no tool is served to a refused client
         return [types.Tool(name=tool.name, description=tool.description,
                            inputSchema=tool.input_schema,
                            annotations=types.ToolAnnotations(readOnlyHint=tool.read_only))
@@ -448,12 +644,32 @@ class TAT_Server:
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         """Every call writes `call`, then exactly one of `result`,
-        `given_up` and `while_ending` (LOGGING.md §4)."""
+        `given_up` and `while_ending` (LOGGING.md §4), each carrying the
+        call's id and its agent (§3): the id first of all, so that a
+        `while_ending` carries it too; the agent before `call`, once
+        `agent_of_call` names it — an unannounced call ends the
+        conversation (CONSTRUCT_INTERACTION §8).  The SDK runs each
+        request in a task of its own, so the two context variables are
+        this call's alone and need no reset."""
+        context = request_ctx.get()
+        current_call.set(self.call_id(context.meta))
         log = self.ending.log.tool
+        if not self.ending.entered:
+            self._check_client(context.session)
+        agent: Agent | None = None
+        if not self.ending.entered:
+            agent = self.agent_of_call(context.meta)
+            if agent is None:
+                meta = (context.meta.model_dump(by_alias=True, exclude_none=True)
+                        if context.meta is not None else None)
+                log.unannounced(tool=name, _meta=meta, message=UNANNOUNCED)
+                self.ending.end(TAT_InternalError(UNANNOUNCED))
+            else:
+                current_agent.set(agent.identity)
         log.call(tool=name, arguments=arguments)
         started = time.monotonic()
         tool = self._tools.get(name)
-        if self.ending.entered:
+        if self.ending.entered or agent is None:
             result: Result | None = None    # the ending answers
         elif tool is None:
             result = Result(f"unknown tool `{name}`", True, None)
@@ -461,11 +677,16 @@ class TAT_Server:
             # The body runs as a task of its own, outside the request's
             # cancel scope, and the wait is shielded: neither a client's
             # cancellation nor the SDK's unwind reaches it mid-edit.
-            # `asyncio.wait` never cancels what it waits on.
-            body = self.ending.spawn(_run(tool, arguments))
-            with anyio.CancelScope(shield=True):
-                await asyncio.wait({body})
-            result = self._result_of(name, body)
+            # `asyncio.wait` never cancels what it waits on.  The agent's
+            # working-call count holds for exactly as long (CONSTRUCT_INTERACTION §4).
+            agent.working_calls += 1
+            try:
+                body = self.ending.spawn(_run(tool, arguments))
+                with anyio.CancelScope(shield=True):
+                    await asyncio.wait({body})
+                result = self._result_of(name, body)
+            finally:
+                agent.working_calls -= 1
         duration = time.monotonic() - started
         try:
             # a cancellation that arrived meanwhile passes here: the SDK has
@@ -505,6 +726,13 @@ class TAT_Server:
 class Claude_Code_Server(TAT_Server):
     client_name = "claude-code"
     measured_version = "2.1.286"
+    call_key = "claudecode/toolUseId"
+    # the grant, without which Claude Code refuses the call under -p
+    announcement_answer = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                  "permissionDecision": "allow"}}
+
+    def _main_identity(self, payload: dict[str, Any]) -> str:
+        return "main"
 
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """CLIENT_HOOKS.md §2: the server entry; the environment, the
@@ -535,6 +763,11 @@ class Claude_Code_Server(TAT_Server):
 class Codex_Server(TAT_Server):
     client_name = "codex-mcp-client"
     measured_version = "0.156.1"
+    call_key = "callId"
+    announcement_answer = None              # Codex rejects a bare `allow`; nothing is needed
+
+    def _main_identity(self, payload: dict[str, Any]) -> str:
+        return str(_field(payload, "session_id"))   # the main conversation's own thread id
 
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """CLIENT_HOOKS.md §3: the configuration with the permission profile

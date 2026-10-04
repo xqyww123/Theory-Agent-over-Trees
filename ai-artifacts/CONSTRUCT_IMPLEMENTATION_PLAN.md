@@ -1,8 +1,9 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Step 1 is in the tree since
-2026-10-05 (review/DOC_SYNC_LIST.md entry 32); the rest is not implemented.
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 and 2 are in the tree
+since 2026-10-05 (review/DOC_SYNC_LIST.md entries 32, 33); the rest is not
+implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -52,7 +53,7 @@ jar, `test/harness.py` and the test plugin's theory (CP §2). Steps 1 to
 steps; the owner had not allowed their start when the compilation
 session reached those steps, so it took the files, and Phase B was
 committed first (ee9e4f5). The owner allowed the start on 2026-10-05,
-and step 1 is in. Steps 1 and 3 build on what its B1, B2 and B7 leave
+and steps 1 and 2 are in. Steps 1 and 3 build on what its B1, B2 and B7 leave
 in `TAT.start`'s path and in `TAT_Common_Nodes`. Of this plan, steps 4 to 13 need
 nothing of Phase B but its files; step 15 needs its folder (B5), and
 step 16 its emission contract, `compile.py` and the hooks (B3, B4, B6).
@@ -94,7 +95,7 @@ Measured on 2026-10-03: of the cases that need no Isabelle, 307 pass
 and 18 fail, each because a document is ahead of the code. Measured
 again on 2026-10-05 with step 1 in, the whole suite: 399 pass and 17
 fail — the 18 less `test_the_field_checks`, which Phase B's B2 made
-pass.
+pass; with step 2 in, 418 pass and the same 17 fail.
 
 | case | waits for |
 | --- | --- |

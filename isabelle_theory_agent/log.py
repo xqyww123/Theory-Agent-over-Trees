@@ -189,6 +189,10 @@ class _Tool(_Category):
     def while_ending(self, *, tool: str) -> None: ...
 
 
+# What a hook request was judged to be (§4, `hook.answer`).
+Judged = Literal["announcement", "interruption", "stop", "compaction", "session_start", "ignored"]
+
+
 class _Hook(_Category):
     category = "hook"
 
@@ -196,9 +200,7 @@ class _Hook(_Category):
     def request(self, *, payload: Any) -> None: ...
 
     @_event("info")
-    def answer(self, *, judged: Literal["announcement", "interruption", "stop", "compaction",
-                                        "session_start", "ignored"],
-               status: int, body: Any, duration: float) -> None: ...
+    def answer(self, *, judged: Judged, status: int, body: Any, duration: float) -> None: ...
 
 
 class _Agent(_Category):
