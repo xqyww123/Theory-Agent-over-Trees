@@ -590,6 +590,148 @@ Specification: CO §1–§3, §5, §7; ST §1–§3; MS §2.3, §2.6, §3 (the
 `Theory` row), §4.4, §4.6, §5; PLUGIN_SYSTEM §1, §5; EXCEPTIONS §1, §3;
 RENDER_BASELINES §2.
 
+**Where it stands (2026-10-04, Phase A committed as `dfefca1`).** The
+jobs session's steps 1 to 3 did not start — the owner has not yet let
+them — so the order changed: Phase B takes the ML and Scala files
+first, and that session's steps 1 and 3 build on what B1, B2 and B7
+leave; it has released ML/TAT_Framework.ML, ML/TAT_Common_Nodes.ML,
+ML/TAT_Boot.ML, src/scala/tat.scala, lib/tat.jar, etc/build.props,
+exceptions.py, isabelle_driver.py, toplevel.py, test/harness.py and
+test/Test_TAT_Framework.thy to this session, which tells it when they
+are free again. The logging session's steps 10 and 11 wait for the end
+of Phase B.
+
+In the tree, uncommitted, with their tests (fast suite 353 passed, the
+same 18 known failures; pyright clean):
+
+- B3 whole: `Node.can_emit`, `Node.emit`, `StdBlock.emit` (`final`)
+  with `emit_beginning`/`emit_ending`, `Theory`'s two through
+  `header()`, `Unchained_Node.emit` refusing; the loader's rules
+  (`_check_coroutines` compares every override with the method it
+  overrides); every test node class has its `emit`.
+- B4 whole: `compile.py` — `render(forest) -> Rendering` (the first
+  step), `compile(forest, hooks)`, `paths`, `Entry`, `Compile_Report`
+  (its `removed` holds `Entry`s, so that a folder's line ends in `/`),
+  `report_lines`; `Forest._misplaced_imports`, the position test the
+  walk and the compile share; `test/test_compile.py`, CO §2's report
+  and ROOT read from the document.
+- B6 whole: `TAT_compile_hook`, `compile_hooks`, `Loaded.compile_hooks`.
+- B5 but for its harness cases: `isabelle_theory_agent/invariants.py`
+  (`assert_store_mirrors(forest, kinds)`, called by
+  `test/invariants.py` after every edit and walk of the suites);
+  `session_folder_refusal` and `make_session_folder` in `model.py`,
+  which `compile.py` and `Theory._eval_beginning_opr` share;
+  `model.CannotUseWorkingDirectory`; `mcp_server.stopped`'s seventh
+  reason (both sessions told).
+- B1 whole: `Theory.import_sessions` (stored; a missing row reads
+  empty) and `Theory.file_path()`; in `ML/TAT_Common_Nodes.ML`,
+  `TAT.Theory.begin` answers the pair of the header's messages and the
+  session of each import (`import_sessions`, computed in the class's
+  own ML: the framework's `begin_theory` keeps its type, as MS §2.5
+  lists it), which `_eval_beginning_opr` records when the header
+  passed. Through the harness: `Main` records `["HOL"]`, a tree of the
+  forest its `Session`, kept across a restart.
+- B5's harness case: the folder made at a theory's first run, and a
+  file at its path raising `CannotUseWorkingDirectory` before anything
+  runs (`test_conversation.py`). That the exception ends a conversation
+  is the tool boundary's rule for anything that is no `TAT_Error`,
+  which `test_mcp_server.py` covers; no case drives it through the
+  harness, where it would end the run the cases share.
+- Of B2: the namespace compared without regard to case
+  (`edit._take_name`).
+
+- B2 whole, as the shapes below: the jar rebuilt with
+  `TAT.reserved_name` (`etc/build.props` names `TAT_Functions` under
+  `services`, `no_build` restored); `test_the_field_checks` passes with
+  ST §3's seven lines, so the known failures are 17. The options were
+  first checked in ML (`Options.update`), whose message is `Unknown
+  system option "documnet"` where the documents' example shows
+  Isabelle/Scala's `Unknown option "documnet"`; §8's F2 moved the check
+  to the Scala side, whose message it is.
+- `test/stand_ins.py`: `conversation()` no longer takes the repository
+  as its working directory — a `Theory`'s beginning makes a folder
+  there — but `<the case's temporary directory>/work` (the logging
+  session's file; told).
+
+- B7 whole. Python: `toplevel.compile_TAT` on `conversation()`; the
+  lock's refusal in CO §7's wording. ML: `collect` (MS §2.6's step 2),
+  `compile`, and one handler, `define_entry`, behind `TAT.start` and
+  `TAT.compile` — each command reads its arguments into the plugins'
+  theory names and a function of the loaded theories answering the code
+  and the lines, every exception `2`; `TAT.boot` runs the command its
+  first argument names and answers a failure before the hand-off with
+  `2`. Scala: `TAT.launch`, steps 1 to 5 up to what `TAT.finished`
+  carried, which `TAT_mcp` and the new `TAT_compile` share; `Getopts`
+  in its `internal` mode, `Build.build_logic` strict, the process's
+  termination `2`; `TAT_compile`'s final reading through
+  `Sessions.load_structure(select_dirs = <the working directory>)`,
+  the empty selection — which selects exactly the sessions of a
+  selected directory — and `Sessions.deps(...).check_errors`; the jar
+  rebuilt. `test/Test_TAT_Framework.thy` needed no change: `start'`
+  keeps its type. Two things for the owner: the usage text and the
+  one-line description of `isabelle TAT_compile` are the author's
+  drafts; and the lines `TAT.finished` carried on `2` are printed
+  through the progress as errors, as CO §5 says, which Isabelle's
+  `Console_Progress` writes to the standard output — an error the tool
+  itself raises (a usage error, Isabelle refusing what was written)
+  goes to the standard error.
+- Tests of B7: `test_toplevel.py` — a compile on a directory a
+  conversation left (the report, the files, the one round trip, the
+  database untouched, no `ending`), a forest written whole, what
+  escapes a compile entering its ending, a compile refused by the lock;
+  `test_launcher.py` — the refusals before the process exiting `2` in
+  both tools, and three Isabelle-backed cases on directories the run's
+  conversations left, the tool's process calling `compile_TAT` on the
+  run's RPC host: exit `0` with the `Log:` line and the files, then
+  `2` under a layout declaring the session again; exit `1`; exit `2`
+  while a conversation holds the directory. `harness.release_run`
+  expects `2`.
+
+- B8: the status lines (CO's opening, STEP5_HANDOFF's compilation
+  bullet); the code review and its fixes, §8.
+
+The Isabelle-backed cases: 27 pass. Without Isabelle: 368 pass, 17
+known failures (`ai-artifacts/review_phase_b/known_failures.txt`).
+`pyright isabelle_theory_agent` is clean.
+
+Ruled on 2026-10-05: the lines `TAT.finished` carries on `2` stay on
+the standard output, as Isabelle's `Console_Progress` prints an error;
+the delta after Phase A's review needs no further review; the version
+floor of `isabelle-rpc` in Isa-Mini is the release agent's. Still to
+do: the usage text of `isabelle TAT_compile`; his "批准提交".
+
+The shapes B2 was written to:
+
+- Scala: `object Reserved_Name extends Scala.Fun_String("TAT.reserved_name")`
+  answering the words, separated by a space, of the predicates that
+  hold of the name — `file` (`Path.is_reserved`), `theory`
+  (`Sessions.illegal_theory`), `session` (`Sessions.illegal_session`);
+  `class TAT_Functions extends Scala.Functions(TAT.Reserved_Name)`,
+  named under `services` in `etc/build.props`.
+- ML `Loader`: `reserved_as name` reads that answer through
+  `Scala.function1`; `check_new_theory_short_name` answers `Reserved`
+  also on `file` or `theory`; `check_session {name, parent, options}`
+  answers the first of: the name reserved (`file` or `session`), the
+  name known (`is_known_session`), option `i` refused (the Scala
+  function `TAT.check_options`, applying each in turn as Isabelle reads
+  a ROOT, Isabelle's message kept), the parent unknown — `parent` an option, `NONE` when
+  the Python side settled it. The wire callback `TAT.check_session`
+  replaces `TAT.is_known_session`; its answer is a tagged list of
+  strings in `check_new_theory_short_name`'s shape, the option's index
+  as digits.
+- Python: `isabelle_driver.check_session` decoding the answer into
+  one of five dataclasses; `Session.gen` in this order — the
+  grammar, `ROOT` in any spelling (`ReservedSessionName`, no round
+  trip), the non-empty and no-option-twice checks, then the one round
+  trip (the parent passed as not to be asked when a `Session` of the
+  call bears it or it is the session's own name), then "must not name
+  the session itself" — which differs from ST §1's in one place, a
+  name Isabelle reserves being judged in the round trip, after the
+  checks that cost none, where ST §1 lists it beside `ROOT` (§8, F11,
+  the owner's); `exceptions.ReservedSessionName` beside
+  `ReservedTheoryName`. The fakes of `test_session_theory.py` and the
+  probes of `test_conversation.py` follow.
+
 ### B1. `import_sessions` and `file_path()`
 
 Needs: the two ML files free.
@@ -602,10 +744,12 @@ header passes, stored, a missing row read as the empty list (CO §4,
 `master_dir` uses (CO §2; ST §2).
 Files: `ML/TAT_Framework.ML`, `ML/TAT_Common_Nodes.ML`, `model.py`,
 the fakes of `test_session_theory.py`.
-Tests: `test_conversation.py` — a theory importing `Main` and
-`HOL-Library.Multiset` records `["HOL", "HOL-Library"]` as Isabelle
-answers them, kept across a restart; `test_model.py` — a database
-without the row.
+Tests: `test_conversation.py` — a theory importing `Main`, `HOL.List`
+and `HOL-Library.Phantom_Type` (a small theory of another session, in
+`HOL-Library.Multiset`'s place: it loads in a moment) records `["HOL",
+"HOL", "HOL-Library"]` as Isabelle answers them, and one importing
+`Main` and that theory keeps `["HOL", "HOL-Library"]` across a restart;
+`test_model.py` — a database without the row.
 
 ### B2. The names Isabelle refuses, caught at creation
 
@@ -678,7 +822,9 @@ Tests: a class whose `emit` reads an instant status is caught by the
 helper; a theory's first evaluation makes the folder; a file and a
 symbolic link at the folder's path each end the conversation with
 their sentence, the forest and the database as they were
-(`test_conversation.py`, through the harness).
+(`test_conversation.py`, through the harness, and
+`test_session_theory.py` without Isabelle, which also drives a folder
+the system will not make).
 
 ### B6. Compile hooks
 
@@ -843,3 +989,96 @@ the result is `ai-artifacts/review_phase_a/review_result.json`.
   `owned_slots` and the framework's minting are gone; MS §4.1 "States"
   and "Status", AR §3.1, PLUGIN_SYSTEM §2 and THEOREM.md §1 say so. F12
   is the nesting class's case of A7's sixth test.
+
+## 8. The code review of Phase B
+
+On 2026-10-04, by the owner's recipe: five challengers (emission and
+compile's first step; the disk step, the folder, the hooks and the
+Python entry; the creation checks and the Isabelle side; the tests;
+elegance, reuse and false sentences), a merge of their 61 findings into
+52, one fresh defender per finding, a judge. Verdict READY_WITH_FIXES,
+no blocker; the result is
+`ai-artifacts/review_phase_b/review_result.json`.
+
+- Confirmed and fixed, 40.
+  - Behaviour, 6. An option's value is read in one place,
+    `model._option_value` — what the agent supplied less the quotes it
+    may have come in — for creation's check and for the ROOT alike: the
+    check had been sent the value with its quotes, which Isabelle
+    refuses for a `bool`, `int` or `real` option (F1). A removed path
+    that is not valid UTF-8 is spelled in the report with the escape
+    the log writes, so that the answer can travel (F5). The folders a
+    compile keeps are known by what the file system says they are, not
+    by their names' spelling (F8). An interrupt during `TAT_compile`'s
+    final reading exits `2` (F10). The Isabelle-backed cases'
+    `isabelle TAT_compile` runs in a process group of its own, ended as
+    the child's is at a case's deadline (`Harness.run_tool`), and
+    `leave` ends its conversation on every path (F14, F33).
+  - Shape, 7. `compile._placed`, the one rule placing a refusing node
+    at an operation (F16); `Session.folder()`, from which a tree's file
+    path, the folder made, the folders kept and the ROOT's `in` path
+    follow (F17); the parent as an option on the wire (F37); the hook
+    registry a dict (F38); `call_python`, the load-call-error phrase
+    both ML entries end on, and `working_directory_argument` for the
+    two tools' one argument (F39); `model._indented`, the one
+    split-and-indent (F40); `baselines.fenced_blocks` reading a fence
+    indented inside a list item, so that CO §7's sentences are read
+    from the document by all four tests (F41).
+  - Tests, 19 (F18–F32, F34–F36, F42): each gap closed with a case, and
+    each new case checked against the wrong implementation it is there
+    for — 29 mutations swapped in in memory, every one caught
+    (`ai-artifacts/review_phase_b/mutations.py`, `run_mutations.sh`).
+  - Text, 8 (F44–F51): the order of `tat.scala`'s sections, six
+    comments and docstrings, MS §2.3's "an option Isabelle does not
+    know".
+- Rejected, 2 (F43, F52).
+- For the owner, 10 — the specification silent or at odds with itself,
+  or the fix a change to a decided design or to wording someone reads:
+  - F2: an option value Isabelle/ML accepts and Isabelle/Scala refuses
+    when it reads the ROOT (`timeout = 10min`): creation checks with
+    `Options.update` in ML, as CO §2 decides, and CO §2 also says
+    creation catches a value of the wrong type.
+  - F3: CO §2's decided sentence that nothing a compile does enters a
+    dot-folder or follows a link is false of the lock and the log, which
+    a compile shares with a conversation.
+  - F4: a folder at a tree's file path makes every compile fail midway;
+    CO §5 calls the refusal there a bug.
+  - F6: a generator function passes the hook's check and never runs.
+  - F7: a compile on a database `TAT_new` made writes the schema into
+    it, against "it writes nothing to the database".
+  - F9: two `Session`s whose names differ only in case.
+  - F11: where `Session.gen` judges a name Isabelle reserves — ST §1
+    lists it beside `ROOT`, the code asks in the one round trip, after
+    the checks that cost none.
+  - F12: Isabelle's message for a value of the wrong type holds a line
+    break, inside the agent's one-line sentence.
+  - F13: the coroutine rule compares an override with the method it
+    overrides, a plugin's own included; PLUGIN_SYSTEM §5 says "the
+    framework's method".
+  - F15: a class that leaves `emit` or `emit_beginning` abstract
+    registers, and fails at its first instantiation with a bare
+    `TypeError`.
+
+  Ruled on 2026-10-04, and done the same day but for F2: F3, CO §2's
+  sentence narrowed to the disk step, no refusal of a link at the lock;
+  F4, a folder at a path the compile will create refused before anything
+  is removed, with CO §7 item 5's third sentence; F6, a generator
+  refused at registration ("可以批准，但其实无所谓"); F7, a compile's
+  store read-only, a database without the store's tables the empty
+  forest ("赞同，但其实无所谓"); F9, session names compared without
+  regard to case through a namespace whose refusal is the id component's
+  `DuplicateName`, no new sentence ("直接说命名冲突就行"); F11, ST §1
+  and MS §2.3 reworded to the code's order; F12, the lines of Isabelle's
+  message joined by single spaces; F13, PLUGIN_SYSTEM §5 and CO §3
+  widened to "the method it overrides"; F15, no check — plugins are
+  trusted ("我们始终可以相信 plugins 的"), which PLUGIN_SYSTEM's opening
+  now states, with what TAT does not trust. F2, approved on 2026-10-05
+  once the owner had asked whether the Scala call would run at every
+  evaluation (it runs once per `Session` created, never at an
+  evaluation): the options are checked by a second Scala function in
+  `lib/tat.jar`, `TAT.check_options`, a `Scala.Fun_Strings` taking the
+  names and values in turn and applying each as `Options.init() +
+  spec`, answering nothing or the first refused option's index and
+  Isabelle/Scala's message — the message the documents' example shows —
+  in place of ML's `Options.update`; `Options.init()` is read once per
+  process.

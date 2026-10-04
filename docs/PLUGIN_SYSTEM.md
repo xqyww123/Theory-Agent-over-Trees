@@ -10,6 +10,20 @@ schema (TOOL_SCHEMAS.md §1). The ML side of registration is
 MODULE_STRUCTURE §2.5; the conversation start that collects the packages,
 §2.6.
 
+**What TAT trusts.** A plugin is trusted code: its node classes, its
+compile hooks and the theories its package names run with the
+framework's own authority, and TAT does not defend itself against them.
+What the loader checks (§5) turns a mistake into an early refusal that
+names it, where that is cheap; a mistake it does not check for surfaces
+where it happens, as the plugin's bug (EXCEPTIONS.md §1) — a class that
+leaves an abstract method unimplemented, for one, fails at its first
+instantiation. The same trust goes to whoever runs the `isabelle` tools
+(MODULE_STRUCTURE §5) and to the Isabelle installation. TAT does not
+trust the agent, whose every input is checked (MCP_SPECIFICATION §2,
+EXCEPTIONS.md §3), nor the working directory as it finds it, which is
+TAT's alone (COMPILATION.md §2): a change made there from outside is
+refused, never repaired.
+
 ## 1. Loading
 
 The Python side of a plugin is a package, named by the module strings the
@@ -191,10 +205,11 @@ registration, per class:
   framework's to place (COMPILATION.md §3) — and it overrides
   `_eval_ending_opr` exactly when it overrides `emit_ending`, since both
   say whether the class has an ending command;
-- an override is a coroutine function exactly when the framework's method
-  is: `print_fields` and `mark` are plain, as rendering is synchronous
-  (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning` and
-  `emit_ending`; the evaluation hooks are coroutines;
+- an override is a coroutine function exactly when the method it
+  overrides is — the framework's, or one of the plugin's own base
+  classes: `print_fields` and `mark` are plain, as rendering is
+  synchronous (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning`
+  and `emit_ending`; the evaluation hooks are coroutines;
 - the class defines neither `__eq__` nor `__hash__`: a node is equal to,
   and hashed as, itself alone, since nodes live in sets (PRINT.md §2);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's
@@ -227,7 +242,7 @@ TAT's test suite validates the assembled schema again, with `jsonschema`,
 against the classes TAT ships.
 
 A compile hook (§1) is checked at registration too: a plain function of
-one positional argument, not a coroutine. A compile runs on a forest
+one positional argument, neither a coroutine nor a generator. A compile runs on a forest
 loaded from the database and never evaluated, every instant status
 `not_evaluated`, so `can_emit`, `emit` and a hook read only what is
 stored — authored fields, the recorded fields the class stores,

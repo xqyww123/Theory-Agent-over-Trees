@@ -278,6 +278,9 @@ TAT_StartupError              outside both; TAT cannot run here (§1)
 │                             which the constructor requires, so no
 │                             refusal is answered as an internal error
 │                                                              [TAT_Server]
+├─ CannotUseWorkingDirectory  a `Session`'s folder cannot be made when a
+│                             theory of it begins; the conversation ends
+│                             (§1; MODULE_STRUCTURE §4.1)           [Theory]
 └─ CannotLoadPlugin           package, node_class, reason — a package would
                               not import, or a node class failed a check
                               of PLUGIN_SYSTEM §5; node_class is None when

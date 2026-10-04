@@ -118,10 +118,11 @@ Import resolution in the order of EVALUATOR_DESIGN §2, behind one
   (node_classes/SESSION_AND_THEORY.md §1), answered with the first defect
   found: the name reserved (`TAT.reserved_name`, above), the name one the
   Isabelle session layout knows (`is_known_session`, below), an option
-  the layout does not know or whose value is of the wrong type
-  (`Options.update`, each option in turn), or a `parent_session` the
-  layout does not know; the forest half and every rejection are
-  Python's;
+  Isabelle does not know or whose value is of the wrong type (the Scala
+  function `TAT.check_options` of `lib/tat.jar`, §5, which applies the
+  options in turn as Isabelle reads a ROOT, so that what passes here the
+  compile's final reading accepts), or a `parent_session` the layout
+  does not know; the forest half and every rejection are Python's;
 - `is_known_session` — whether the Isabelle session layout knows a session
   of the name (`Resources.check_session`); serves `check_session` and
   nothing on the wire.
@@ -390,6 +391,7 @@ isabelle_theory_agent/
   hook.py              the conversation's hooks' script, copied into the working directory's .tat/ by configure (CLIENT_HOOKS.md §1)
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
+  invariants.py        the store-mirror helper a node class's test suite calls on its forests (COMPILATION.md §3)
   plugin.py            loading node classes and their table; the argument schema grammar
   builtins.py          the predefined node classes
   theorem_node.py      Theorem with Proof_Job and Proof_Check (THEOREM.md)
@@ -1047,7 +1049,7 @@ forest root, register (COMPILATION.md §5); the sweep at the start of
 framework's two classes and the listed packages' — the assembled `edit`
 schema from it (PLUGIN_SYSTEM §1), and the compile hooks the listed
 packages define. The loader checks a hook is a plain function of one
-positional argument, not a coroutine. The table is what `edit`
+positional argument, neither a coroutine nor a generator. The table is what `edit`
 dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
 schema, is PLUGIN_SYSTEM.md. `check_call(schema, tool, arguments)` checks
@@ -1350,9 +1352,11 @@ managers, the two procedures sharing the first two:
      one framework callback a compile's command carries (COMPILATION.md
      §5).
 2. **Entered by both:** the `Forest_Store` on `<working
-   directory>/TAT.sqlite`, given the `Log`; the plugins (§4.4); the
-   `Forest`, handed to the ending object. Here `compile_TAT` calls
-   `compile` with the hooks the `Loaded` yields and returns.
+   directory>/TAT.sqlite`, given the `Log` — a compile's read-only, a
+   database without the store's tables read as the empty forest
+   (COMPILATION.md §5); the plugins (§4.4); the `Forest`, handed to the
+   ending object. Here `compile_TAT` calls `compile` with the hooks the
+   `Loaded` yields and returns.
 3. **`launch_TAT` alone:** the `TAT_Server` subclass the client's name
    selects makes the agent directory, `TAT.agents/`, when it is absent,
    and writes the client's files into it and the two scripts into `.tat/`
@@ -1391,10 +1395,10 @@ descriptor.
 ## 5. The launcher
 
 `src/scala/tat.scala` defines the Isabelle tools `TAT_new`, `TAT_mcp` and
-`TAT_compile` (ARCHITECTURE §9) and the Scala function
-`TAT.reserved_name` (§2.3), a `Scala.Fun_String`, registered through
+`TAT_compile` (ARCHITECTURE §9) and the Scala functions
+`TAT.reserved_name` and `TAT.check_options` (§2.3), registered through
 `etc/build.props` the way `contrib/Isabelle_RPC` registers its Scala
-functions — the tools through `Isabelle_Scala_Tools`, the function
+functions — the tools through `Isabelle_Scala_Tools`, the functions
 through a `Scala.Functions` service; `lib/tat.jar` is
 committed, and `etc/build.props` sets `no_build`, so no `isabelle`
 invocation on a user's machine rebuilds it; after a change the jar is

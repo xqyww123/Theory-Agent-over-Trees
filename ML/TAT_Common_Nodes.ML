@@ -63,23 +63,44 @@ fun operation slot (run : unit -> Toplevel.state option * string list) =
 (*The two operations of the Python `Theory` (model.py; docs/node_classes/
   SESSION_AND_THEORY.md §2).  Each answers the operation's error messages,
   empty when it passed, so that a failed header or `end` is the node's
-  result and not a failed call.  The Python half is registered by the loader
-  itself, hence no python_packages (PLUGIN_SYSTEM §1).*)
+  result and not a failed call; the beginning answers beside them the
+  session of each import, when it passed, which the Python class stores on
+  the node.  The Python half is registered by the loader itself, hence no
+  python_packages (PLUGIN_SYSTEM §1).*)
 
 local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
-(*the header, from a fresh toplevel state, into the first child's slot*)
+(*the session of each import, in the header's order: the qualifier of the
+  name the import resolves to, which the Python class records for the ROOT's
+  `sessions` clause (docs/COMPILATION.md §2)*)
+fun import_sessions {session_name, master_dir} (header : Thy_Header.header) =
+  map (fn (import, _) =>
+        Resources.theory_qualifier
+          (#theory_name (Resources.import_name session_name master_dir import)))
+      (#imports header)
+
+(*the header, from a fresh toplevel state, into the first child's slot;
+  answers the header's error messages and, when it passed, the session of
+  each import*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Theory.begin",
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackPair (#slot_unpacker env,
                    unpackTuple3 (unpackString, unpackString, unpackString)),
-    ret_schema = packList packString,
+    ret_schema = packPair (packList packString, packList packString),
     function = fn (slot, (session_name, master_dir, header)) =>
-      operation slot (fn () =>
-        (SOME (#begin_theory env {session_name = session_name, master_dir = Path.explode master_dir}
-                 (Thy_Header.read Position.start header)),
-         [])),
+      let
+        val context = {session_name = session_name, master_dir = Path.explode master_dir}
+        val errors =
+          operation slot (fn () =>
+            (SOME (#begin_theory env context (Thy_Header.read Position.start header)), []))
+      in
+        (*a header that passed is read a second time: it parsed, and every
+          import resolved*)
+        (errors,
+         if null errors then import_sessions context (Thy_Header.read Position.start header)
+         else [])
+      end,
     timeout = NONE}))
 
 (*`end`, from the slot after the children into the resulting slot, and the

@@ -27,10 +27,20 @@ def ending() -> Ending:
     return Ending(log())
 
 
+def working_directory() -> Path:
+    """The case's working directory, beside its log under the case's
+    temporary directory: a `Theory`'s beginning makes its session's folder
+    there, never in the repository."""
+    assert directory is not None, "a working directory is built inside a case"
+    path = directory.parent / "work"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def conversation(conn) -> Conversation:
-    """A `Conversation` for a case that touches no working directory."""
+    """A `Conversation` for a case that runs without Isabelle."""
     the_log = log()
-    return Conversation(conn, Path("."), the_log, Ending(the_log))
+    return Conversation(conn, working_directory(), the_log, Ending(the_log))
 
 
 def records(category: str, log_directory: Path | None = None) -> list[dict]:

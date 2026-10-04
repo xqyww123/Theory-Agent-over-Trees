@@ -35,6 +35,7 @@ the fake state slot table of `test_model.py` and the forest's real store
 """
 
 import isabelle_theory_agent.model as M
+from isabelle_theory_agent import invariants as package_invariants
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import NOT_EVALUATED, StdBlock
 from test_model import CANNOT_EVALUATE, NOT_RUN, READY, Block, CONN, T, shape
@@ -166,8 +167,9 @@ def assert_invariants(forest, table):
 def assert_store_mirrors(forest, kinds, shape=shape):
     """The same store, loaded again by the forest's own class, has the
     `shape` of this forest — what a round trip must preserve, node by node
-    in tree order — and every node's stored statuses, in their stored
-    form, whatever `shape` holds."""
+    in tree order; and the package's helper holds: the stored statuses,
+    `can_emit` and what a compile would write are the loaded forest's too
+    (COMPILATION.md §3)."""
     store = forest.store
     live = {n.identity for n in forest._all_nodes()}
     assert set(store.nodes()) - {forest.identity} == live, "rows of nodes not in the forest"
@@ -176,7 +178,4 @@ def assert_store_mirrors(forest, kinds, shape=shape):
     assert shape(twin) == shape(forest)
     for n in twin._all_nodes():
         assert n.parent is not None and n in n.parent.sub_nodes
-    for mine, theirs in zip(forest._all_nodes(), twin._all_nodes()):
-        stored = [M._status_to_store(s) for s in mine.last_evaluation_statuses()]
-        loaded = [M._status_to_store(s) for s in theirs.last_evaluation_statuses()]
-        assert loaded == stored, f"{mine}: stored statuses {stored}, the database's {loaded}"
+    package_invariants.assert_store_mirrors(forest, kinds)

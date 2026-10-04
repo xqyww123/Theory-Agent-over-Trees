@@ -1,12 +1,13 @@
-"""The RPC entry point Isabelle calls into (MODULE_STRUCTURE §4.6).
+"""The two RPC entry points Isabelle calls into (MODULE_STRUCTURE §4.6).
 
 `TAT_Framework.start` on the ML side calls the procedure `launch_TAT`, which
 builds the conversation and serves until its ending; it does not return
 (ARCHITECTURE §9): everything the conversation does, it does through this
 call's callbacks, and the call ends only by raising what ended the
-conversation.  The start is three layers of context managers:
-`conversation()` is the first two, which a compile shares; `served()` adds
-the third, the server.
+conversation.  `TAT_Framework.compile` calls `compile_TAT`, which writes
+the stored forest and returns (COMPILATION.md §5).  The start is three
+layers of context managers: `conversation()` is the first two, which a
+compile shares; `served()` adds the third, the server.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import NoReturn
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 
 from . import isabelle_driver, mcp, plugin
+from .compile import compile, report_lines
 from .exceptions import TAT_StartupError
 from .log import Log, now
 from .mcp_server import Ending, TAT_Server
@@ -38,19 +40,19 @@ Announce = Callable[[int], None]        # the lock's port line, written once the
 @contextmanager
 def _held(working_directory: Path) -> Generator[Announce]:
     """The working directory's lock: an exclusive `flock` on a descriptor
-    kept open for the life of the conversation, so the kernel releases it
-    when the process dies and the `finally` when the conversation ends any
-    other way.  `flock`, not a POSIX record lock, because only `flock`
-    conflicts between two descriptors in one process — what refuses a
-    second conversation in this host as well as in another.  The holder
-    writes its pid into the file when it takes the lock and, through the
-    `announce` it yields, its port once the server is listening, one line
-    each, and clears the file on release; each reader takes the line it
-    needs — the refusal here the first, the hooks of CLIENT_HOOKS.md the
-    second, and the first to see the holder is alive.  Between taking the
-    lock and writing, the file is still empty or still a crashed holder's,
-    and between clearing it on release and closing the descriptor it is
-    empty."""
+    kept open for the life of the conversation or the compile, so the
+    kernel releases it when the process dies and the `finally` when it
+    ends any other way.  `flock`, not a POSIX record lock, because only
+    `flock` conflicts between two descriptors in one process — what
+    refuses a second holder in this host as well as in another.  The holder
+    writes its pid into the file when it takes the lock and, a conversation
+    only, through the `announce` it yields, its port once the server is
+    listening, one line each, and clears the file on release; each reader
+    takes the line it needs — the refusal here the first, the hooks of
+    CLIENT_HOOKS.md the second, and the first to see the holder is alive.
+    Between taking the lock and writing, the file is still empty or still
+    a crashed holder's, and between clearing it on release and closing the
+    descriptor it is empty."""
     try:
         fd = os.open(working_directory / LOCK, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as e:
@@ -62,7 +64,7 @@ def _held(working_directory: Path) -> Generator[Announce]:
         except BlockingIOError as e:
             holder = os.pread(fd, 64, 0).decode(errors="replace").split("\n")[0].strip()
             raise TAT_StartupError(
-                f"another TAT conversation holds {working_directory}"
+                f"{working_directory} is held by another TAT conversation or compile"
                 + (f" (its Python process is pid {holder})" if holder.isdigit() else "")) from e
         os.ftruncate(fd, 0)
         os.write(fd, f"{os.getpid()}\n".encode())
@@ -93,15 +95,16 @@ def _log_directory(working_directory: Path) -> Path:
 
 @asynccontextmanager
 async def conversation(python_packages: list[str], working_directory: str, connection: Connection,
-                       port: int | None = None
+                       port: int | None = None, read_only: bool = False
                        ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, Announce]]:
     """The first two layers of the start (MODULE_STRUCTURE §4.6), which a
     conversation and a compile share, torn down in reverse when the block
     ends: the lock; the log directory and the `Log`; the ending object,
     which whatever escapes from here on enters; the `Conversation`; then
-    the store, the plugins and the `Forest`.  `port` is a conversation's,
-    recorded in `start`; a compile has none.  Yields the `Forest`, the
-    loaded plugins and the lock's `announce` for the third layer."""
+    the store — `read_only` for a compile — the plugins and the `Forest`.
+    `port` is a conversation's, recorded in `start`; a compile has none.
+    Yields the `Forest`, the loaded plugins and the lock's `announce` for
+    the third layer."""
     directory = Path(working_directory)
     with _held(directory) as announce:
         log = Log(_log_directory(directory), connection.server.logger)
@@ -111,7 +114,7 @@ async def conversation(python_packages: list[str], working_directory: str, conne
                 version=version("isabelle_theory_agent"), pid=os.getpid(),
                 working_directory=str(directory), python_packages=python_packages, port=port)
             await isabelle_driver.log_directory(conv, log.directory)
-            with Forest_Store(directory / DATABASE, log) as store:
+            with Forest_Store(directory / DATABASE, log, read_only=read_only) as store:
                 log.conversation.store_opened(schema_version=SCHEMA_VERSION, nodes=len(store.nodes()))
                 loaded = plugin.load(python_packages)
                 log.conversation.plugins_loaded(
@@ -145,3 +148,17 @@ async def launch_TAT(arg: tuple[list[str], str, int], connection: Connection) ->
         # a line nothing depends on, and the launcher does not echo (§5)
         await connection.writeln(f"TAT is serving on {server.url}")
         await server.serve()
+
+
+@isabelle_remote_procedure("compile_TAT")
+async def compile_TAT(arg: tuple[list[str], str], connection: Connection) -> tuple[bool, list[str]]:
+    """`arg` as `TAT_Framework.compile` packs it: the packages, the working
+    directory.  The stored forest written under the working directory
+    (COMPILATION.md §5): whether every tree was written, and the report's
+    lines.  Its one call over the connection is `TAT.log_directory`, and
+    its store cannot write."""
+    python_packages, working_directory = arg
+    async with conversation(python_packages, working_directory, connection, read_only=True
+                            ) as (forest, loaded, _):
+        report = compile(forest, loaded.compile_hooks)
+        return all(reason is None for _, reason in report.trees), report_lines(report)

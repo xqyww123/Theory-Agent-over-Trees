@@ -33,7 +33,7 @@ from starlette.requests import Request
 
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .log import Log
-from .model import Forest, JSON_Schema
+from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
 HOST = "127.0.0.1"
 PATH = "/mcp"
@@ -107,12 +107,14 @@ def stopped_for(reason: str) -> str:
 
 def stopped(ended_by: BaseException) -> str:
     """The one answer while the conversation is ending (RENDER_BASELINES
-    §4), by what ended it: a `TAT_DisasterError`; the connection gone; else
-    a bug."""
+    §4), by what ended it: a `TAT_DisasterError`; the connection gone; a
+    `Session`'s folder that cannot be made; else a bug."""
     if isinstance(ended_by, TAT_DisasterError):
         return stopped_for("the sessions could not be saved")
     if connection_went(ended_by):
         return stopped_for("Isabelle is gone")
+    if isinstance(ended_by, CannotUseWorkingDirectory):
+        return stopped_for("it cannot use its working directory")
     return stopped_for("an internal error")
 
 

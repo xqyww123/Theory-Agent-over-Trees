@@ -333,10 +333,11 @@ class DuplicateTheoryShortName(BadEdit):
 
 
 class ReservedTheoryName(BadEdit):
-    """Raised by `Theory.gen`: no loaded theory bears the name, and the
-    Isabelle session layout declares it global — `FOL`, `ZF`, … on a HOL
-    heap — so Isabelle would leave a tree so named unqualified
-    (EXCEPTIONS.md §3)."""
+    """Raised by `Theory.gen`: no loaded theory bears the name, and either
+    the Isabelle session layout declares it global — `FOL`, `ZF`, … on a
+    HOL heap — so Isabelle would leave a tree so named unqualified, or
+    Isabelle reserves it as a file name or a theory name — `Aux`, `ROOT`,
+    `bib`, … (EXCEPTIONS.md §3)."""
 
     def __init__(self, name: str):
         super().__init__()
@@ -344,6 +345,19 @@ class ReservedTheoryName(BadEdit):
 
     def _cause(self) -> str:
         return f"`{self.name}` is a reserved theory name; choose another name."
+
+
+class ReservedSessionName(BadEdit):
+    """Raised by `Session.gen`: Isabelle reserves the name as a file or
+    session name, or it is `ROOT` in some spelling, where the session's
+    folder would be the ROOT file's path (EXCEPTIONS.md §3)."""
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    def _cause(self) -> str:
+        return f"`{self.name}` is a reserved session name; choose another name."
 
 
 class UnexpectedChildren(BadEdit):

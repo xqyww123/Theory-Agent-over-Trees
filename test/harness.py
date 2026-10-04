@@ -39,6 +39,42 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+# A process the harness starts leads a process group of its own
+# (`start_new_session`), so that a signal reaches the JVM and its Isabelle
+# process together, and takes `SIGINT` as a terminal's foreground process
+# does: this is its `preexec_fn`.
+def default_sigint() -> None:
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
+def signal_group(process: subprocess.Popen[Any], sig: int) -> None:
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:              # the group is gone already
+        pass
+
+
+def group_alive(process: subprocess.Popen[Any]) -> bool:
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+async def end_group(process: subprocess.Popen[Any], exited: asyncio.Future[Any]) -> None:
+    """A group that outlived its wait after `SIGINT`: terminated — the
+    JVM's shutdown hook then running Isabelle's own termination of the ML
+    process's group — and killed if it outlives that too, so that the run
+    always ends."""
+    signal_group(process, signal.SIGTERM)
+    with anyio.move_on_after(TERMINATION):
+        await asyncio.wait({exited})
+    if group_alive(process):
+        signal_group(process, signal.SIGKILL)
+    await asyncio.wait({exited})                # unbounded: the waiting thread must end
+
+
 @asynccontextmanager
 async def client(url: str) -> AsyncGenerator[ClientSession]:
     """An initialised `mcp` client session on the endpoint."""
@@ -314,10 +350,31 @@ class Harness:
                 ["isabelle", "TAT_mcp", "-p", str(self.port), str(self.launcher_directory)],
                 stdout=log, stderr=subprocess.STDOUT,
                 env={**os.environ, "RPC_Host": self.host_address},
-                start_new_session=True,
-                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                start_new_session=True, preexec_fn=default_sigint)
         self.child_exit = asyncio.ensure_future(asyncio.to_thread(self.child.wait))
         self.child_exit.add_done_callback(self._child_done)
+
+    async def run_tool(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        """An `isabelle` tool of a case's own, beside the child and on the
+        run's RPC host, in a process group of its own.  When the caller's
+        wait ends first — the case's deadline — the group is ended as the
+        child's is; nothing may be left in it either way."""
+        process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   env={**os.environ, "RPC_Host": self.host_address},
+                                   start_new_session=True, preexec_fn=default_sigint)
+        exited = asyncio.ensure_future(asyncio.to_thread(process.communicate))
+        try:
+            output, errors = await asyncio.shield(exited)
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                signal_group(process, signal.SIGINT)
+                with anyio.move_on_after(TERMINATION):
+                    await asyncio.wait({exited})
+                if not exited.done():
+                    await end_group(process, exited)
+            raise
+        assert not group_alive(process), f"a process is left in the group of {argv}"
+        return subprocess.CompletedProcess(argv, process.returncode, output, errors)
 
     async def await_launch(self) -> None:
         """Stage 3: the harness's `launch_TAT` called.  The child's exit and
@@ -338,20 +395,8 @@ class Harness:
             return ""
 
     def signal_child(self, sig: int) -> None:
-        if self.child is None:                  # a host that could not bind: no child yet
-            return
-        try:
-            os.killpg(self.child.pid, sig)
-        except ProcessLookupError:              # the group is gone already
-            pass
-
-    def group_alive(self) -> bool:
-        assert self.child is not None
-        try:
-            os.killpg(self.child.pid, 0)
-        except ProcessLookupError:
-            return False
-        return True
+        if self.child is not None:              # None: a host that could not bind, no child yet
+            signal_group(self.child, sig)
 
     async def await_child(self, what: str) -> int:
         """The child's exit — not a settlement: waited on alone, whatever
@@ -371,26 +416,19 @@ class Harness:
         over = self.run_end.result()
         echoed = "*** " + traceback.format_exception_only(over)[-1].rstrip("\n")
         output = self.child_output()
-        assert rc == 1 and echoed in output, (rc, output)
+        assert rc == 2 and echoed in output, (rc, output)       # an exception: 2 (MODULE_STRUCTURE §5)
 
     async def release_child(self) -> None:
         """Stage 2's: a child still alive is signalled and waited for —
         `SIGINT`, as at a terminal; a child that outlives the wait is
-        terminated, the JVM's shutdown hook then running Isabelle's own
-        termination of the ML process's group, and killed if it outlives
-        that too, so that the run always ends.  Nothing may be left in the
-        child's process group."""
-        assert self.child_exit is not None
+        ended (`end_group`).  Nothing may be left in the child's process
+        group."""
+        assert self.child is not None and self.child_exit is not None
         if not self.child_exit.done():
             self.signal_child(signal.SIGINT)
             try:
                 await self.await_child("isabelle TAT_mcp's exit after SIGINT")
             except TimeoutError as expired:
-                self.signal_child(signal.SIGTERM)
-                with anyio.move_on_after(TERMINATION):
-                    await asyncio.wait({self.child_exit})
-                if self.group_alive():
-                    self.signal_child(signal.SIGKILL)
-                await asyncio.wait({self.child_exit})      # unbounded: the waiting thread must end
+                await end_group(self.child, self.child_exit)
                 raise expired
-        assert not self.group_alive(), "a process is left in isabelle TAT_mcp's group"
+        assert not group_alive(self.child), "a process is left in isabelle TAT_mcp's group"

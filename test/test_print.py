@@ -53,15 +53,17 @@ class Stub:
 
 class Lemma(Stub, M.Leaf):
     def _owes_nothing(self): return False
+    def emit(self, indent, out): raise NotImplementedError
 
 
-class Definition(Stub, M.Leaf):
-    pass                                 # its messages are the framework's (PRINT.md §3)
+class Definition(Stub, M.Leaf):          # its messages are the framework's (PRINT.md §3)
+    def emit(self, indent, out): raise NotImplementedError
 
 
 class Section(Stub, M.StdBlock):
     output_omissible = input_omissible = True
     async def _eval_beginning_opr(self): raise NotImplementedError
+    def emit_beginning(self, indent, out): raise NotImplementedError
 
 
 KINDS = {"session": M.Session, "theory": M.Theory, "lemma": Lemma,
@@ -446,7 +448,7 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     assert (x.identity, "beginning") in f.conversation.seen
 
     async def fails_the_same_way(conversation, name, arg):
-        return ["header broke"]
+        return (["header broke"], [])                 # `TAT.Theory.begin`: the messages, no session
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "beginning")
     assert (x.identity, "beginning") not in f.conversation.seen
@@ -464,7 +466,7 @@ def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypa
 
     async def fails_anew(conversation, name, arg):
         inside.append(render(f, x, RECALL))
-        return ["header broke anew"]
+        return (["header broke anew"], [])            # `TAT.Theory.begin`: the messages, no session
     monkeypatch.setattr(isabelle_driver, "call", fails_anew)
     rerun(x, "beginning")
     assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke"]]

@@ -1156,3 +1156,9 @@ construct session's. The `evaluate_to` tool (mcp.py, `tools/
 evaluate_to.jsonc`, `checks`) and `Theory`'s `description` field are
 in the construct session's plan unless the owner assigns them
 otherwise.
+
+The compile round is implemented (2026-10-04) and passed an adversarial
+code review the same day — five challengers, 52 merged findings, 40
+confirmed and fixed, 2 rejected, 10 put to the owner, none a blocker;
+the record is the plan's §8 and
+ai-artifacts/review_phase_b/review_result.json.

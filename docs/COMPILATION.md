@@ -5,10 +5,10 @@ review and the owner's rulings on it (ai-artifacts/COMPILATION_REVIEW.md
 §13). A sentence ending in *(decided)* carries the owner's ruling, of
 2026-09-30, 2026-10-01, 2026-10-02 or 2026-10-03;
 every other sentence is the author's; §7 holds the approved wording and
-names. The document was approved on 2026-10-02. §4's statuses,
-setters and walk are implemented
-(ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md, Phase A); no node
-emits, no ROOT has been written.
+names. The document was approved on 2026-10-02. It is implemented
+(ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md) but for what the
+construction jobs bring (ai-artifacts/CONSTRUCT_IMPLEMENTATION_PLAN.md):
+§4's stored check, and `Theorem`'s compile hook (§5).
 
 Compile is turning the forest into `.thy` files and a ROOT on disk; emit
 is a node writing its own Isar text (ARCHITECTURE §1). TAT is the compiler
@@ -213,8 +213,9 @@ the wrong type, a cycle through `parent_session` or through the derived
   answers the first defect as a tagged value in
   `TAT.check_new_theory_short_name`'s shape: `["ok"]`, `["name_reserved"]` — Isabelle's predicates above —
   `["name_known"]` — the session's own name is one the layout knows —
-  `["option", i, <Isabelle's message>]` — option `i` refused by
-  `Options.update` — or `["parent_unknown"]`; `gen` renders each (§7 for
+  `["option", i, <Isabelle's message>]` — option `i` refused as Isabelle
+  reads a ROOT, by the Scala function `TAT.check_options` (§5) — or
+  `["parent_unknown"]`; `gen` renders each (§7 for
   the sentences). A `parent_session` naming a
   `Session` the call keeps or adds before this one is settled on the
   Python side first (SESSION_AND_THEORY §1) and passed as not to be
@@ -235,16 +236,22 @@ hooks (§5), removes the folders left empty, then writes the ROOT
 *(decided)*. Compile makes the folder of
 every `Session` before it writes, and removes only the empty folders it
 did not make, so that every ROOT entry's directory exists *(decided)*.
-Nothing a compile does to the directory enters a folder whose name
-begins with a dot or follows a symbolic link, so a `.git`, a client's
-dot-folder, and anything a link points at are out of reach *(decided)*.
-Every removal, the hooks' included, goes through one path listing (§5)
-that keeps this rule, and every file a compile writes is created
-afresh at a path the forest gives, under a `Session` folder that is a
-directory. A `Session`'s folder that is a symbolic link is
+Nothing the disk step does — the `.thy` files, the ROOT and the folders
+— enters a folder whose name begins with a dot or follows a symbolic
+link, so a `.git`, a client's dot-folder, and anything a link points at
+are out of reach *(decided)*; the lock file and the log under `.tat/`,
+which a compile shares with a conversation (§1), it opens as a
+conversation does. Every removal, the hooks' included, goes through one
+path listing (§5) that keeps this rule, and every file a compile writes
+is created afresh at a path the forest gives, under a `Session` folder
+that is a directory. A `Session`'s folder that is a symbolic link is
 refused before anything is removed, and the compile did not complete
 *(decided)*. The same holds for anything else at its path that is not a
 directory, a file for instance: the folder is a directory or absent.
+And a folder at a path the compile will create — a tree's file, the
+ROOT, the ROOT's temporary sibling (§5) — is refused the same way,
+before anything is removed *(decided)*: the `.thy` removal takes no
+folder, and the file could not be created afresh.
 The consequence to know: a
 `.thy` anyone else puts under the working directory — the agent's client
 runs there (CLIENT_HOOKS.md) — is gone at the next compile. Files of
@@ -359,9 +366,10 @@ place, and a class that forgot them would write a file silently missing
 half its content; it overrides `_eval_ending_opr` exactly when it
 overrides `emit_ending`, since both say whether the class has an ending
 command, and one without the other leaves a theory open in the file; and
-an override is a coroutine function exactly when the framework's method
-is, which none of these is — an `async def can_emit` would answer with a
-coroutine object, which is true. The methods a class never overrides
+an override is a coroutine function exactly when the method it overrides
+is — the framework's, or one of the plugin's own base classes — which
+none of these is: an `async def can_emit` would answer with a coroutine
+object, which is true. The methods a class never overrides
 carry `typing.final` as well, so the type checker says it before the
 loader does *(decided)*.
 
@@ -381,6 +389,7 @@ the default `mark` — is a class bug: on a loaded forest every instant
 status is `not_evaluated`. The rule is kept by the store-mirror
 invariant the test suites already run after every edit and walk
 (`assert_store_mirrors`, `test/invariants.py`), moved into the package
+— `isabelle_theory_agent/invariants.py` —
 as a helper that takes the forest and the kind table and nothing
 class-specific, which every class's suite calls on its own forests: it
 reloads the forest from the store beside the one in memory and
@@ -628,10 +637,14 @@ class Import_Not_Written:
 class Order_Constraint:
     tree: Theory                  # the forest tree it imports that is placed after it, or itself (§2)
 
+class Entry(NamedTuple):          # one entry under the working directory, as the path listing yields it
+    path: Path                    # relative to the working directory
+    kind: Literal["file", "folder", "link"]      # as `lstat` reads it
+
 @dataclass(frozen=True)
 class Compile_Report:
     trees: tuple[tuple[Theory, Does_Not_Emit | Import_Not_Written | Order_Constraint | None], ...]  # tree order; None: written
-    removed: tuple[Path, ...]     # relative to the working directory: removed and not written again
+    removed: tuple[Entry, ...]    # removed and not written again
 ```
 
 Synchronous, no round trip, and under no lock: its one caller holds the
@@ -639,11 +652,13 @@ working directory's lock on a `Forest` of its own with no server, so
 nothing changes the forest meanwhile. Two steps. The first is a
 function of the stored forest alone and touches no disk: decide each
 tree by §2's rule, render every written tree's text and the ROOT's text
-in memory, and run the conversion of §2; it is one function, which the
+in memory, and run the conversion of §2; it is one function,
+`render(forest)`, which the
 store-mirror helper of §3 calls too. The second is the disk, in this
 order: refuse, as a `TAT_StartupError` (§7 for its sentences), a
 `Session` folder's path that `lstat` shows holding anything but a
-directory; remove the ROOT; remove every `.thy` the path listing
+directory, and a folder at a path it will create — a tree's file, the
+ROOT, the ROOT's temporary sibling; remove the ROOT; remove every `.thy` the path listing
 yields; make every `Session`'s folder; write each tree's file in place;
 run the hooks it is given, those `load` returned; remove the empty
 folders compile did not make; write the ROOT last, to a temporary
@@ -688,7 +703,8 @@ while its defining module is in `sys.modules`; the sweep at the start
 of `plugin.load` clears both registries of entries whose module is
 gone, and `load` returns the hooks the listed packages define beside
 its kind table. The loader checks a plain function of one positional
-argument, not a coroutine. `compile` calls the hooks it is given after
+argument, neither a coroutine nor a generator — either would be made and
+never run. `compile` calls the hooks it is given after
 its files are written, in registration order, removes the empty
 folders after them, and writes the ROOT last *(decided)*. A hook
 removes only paths the path listing yields, writes only beside a tree's
@@ -723,7 +739,9 @@ is a conversation's; nothing reads it during a compile (MODULE_STRUCTURE
 the `ending` record of the compile's log (LOGGING.md §5). It calls
 `compile` with the hooks the `Loaded` yields; and returns whether every
 tree was written, and the report's lines. It writes nothing to the
-database, and its one call over the connection is `TAT.log_directory`.
+database: its store is opened read-only, a database `TAT_new` made and
+no conversation has set up read as the empty forest; and its one call
+over the connection is `TAT.log_directory`.
 
 **`TAT_Framework.ML`**: `TAT.compile` does not go through `start'`, whose
 command packs a port and builds the state slot table, the theory table,
@@ -763,8 +781,8 @@ Step 4 sends `TAT.boot` with `TAT.compile` and no port; step 5 waits for
 — prints its lines — with `progress.echo` on `0` and `1`,
 as errors otherwise — then, on `0` or `1`, has Isabelle read what was
 written (§2) and exits `2` with Isabelle's message if it is refused,
-else with the code. The `TAT.reserved_name` function (§2) lives in the
-same jar. The directory's lock, the plugins' loading and the base heap
+else with the code. The functions `TAT.reserved_name` and
+`TAT.check_options` (§2) live in the same jar. The directory's lock, the plugins' loading and the base heap
 are the conversation's own mechanisms, so nothing is added for them.
 
 ## 6. Amendments to the other documents, by the rule each replaces
@@ -1089,7 +1107,11 @@ Items 1 to 5 approved on 2026-10-02 *(decided)*.
    ```
    TAT cannot compile into <working directory>: <Session name>/ is a symbolic link; a session's folder must be a directory or absent
    TAT cannot compile into <working directory>: <Session name>/ is not a directory; a session's folder must be a directory or absent
+   TAT cannot compile into <working directory>: <path>/ is a folder; compile writes a file there
    ```
+
+   The third, approved on 2026-10-04, for a folder at a path the
+   compile will create (§2), `<path>` relative to the working directory.
 
 6. The same folder refused in a conversation, when a theory of the
    `Session` begins and the folder cannot be made (MODULE_STRUCTURE

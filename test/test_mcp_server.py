@@ -23,6 +23,7 @@ from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.mcp_server import (
     CLIENTS, HOST, ON_COMPACTION, TAT_Server, Tool, stopped, stopped_for, unknown_client)
+from isabelle_theory_agent.model import CannotUseWorkingDirectory
 from test_toplevel import Recorder, cancelled_by_the_host
 
 
@@ -294,6 +295,7 @@ def test_the_stopped_line_names_the_reason():
     assert stopped(TAT_DisasterError("x")) == UNSAVED
     assert stopped(ConnectionResetError()) == GONE
     assert stopped(asyncio.CancelledError()) == GONE
+    assert stopped(CannotUseWorkingDirectory("x")) == NO_WORKING_DIRECTORY
     assert stopped(RuntimeError()) == INTERNAL
     # one form for every reason, those no branch chooses yet included
     for line in SERVER_LINES:

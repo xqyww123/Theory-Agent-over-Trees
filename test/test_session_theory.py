@@ -6,11 +6,14 @@ Running a real header needs Isabelle: test/test_conversation.py.
 Run: python -m pytest test/test_session_theory.py
 """
 
+import os
+from pathlib import Path
+
 import pytest
 
 import stand_ins
 import test_model as tm
-from baselines import DOCS, fenced_lines
+from baselines import DOCS, fenced_blocks, fenced_lines
 from invariants import assert_invariants, assert_store_mirrors
 from test_model import CONN, locked, run
 
@@ -18,7 +21,8 @@ import isabelle_theory_agent.model as M
 from isabelle_theory_agent import edit, isabelle_driver
 from isabelle_theory_agent.exceptions import (
     BadSessionNodeParent, BadTheoryNodeParent, DuplicateTheoryShortName,
-    InvalidField, InvalidName, ReservedTheoryName, TAT_InternalError)
+    InvalidField, InvalidName, ReservedSessionName, ReservedTheoryName, TAT_InternalError,
+    TAT_StartupError)
 from isabelle_theory_agent.model import NOT_EVALUATED, EvaluationResult, Session, Theory
 from Isabelle_RPC_Host.unicode import IsaTerm
 from test_model import CANNOT_EVALUATE, READY
@@ -26,7 +30,10 @@ from isabelle_theory_agent.store import Forest_Store
 
 HEAP = {"List": "HOL.List", "Main": "Main"}   # the fake base heap: short name -> long name
 RESERVED = {"FOL"}                # global in the fake Isabelle session layout, loaded nowhere
-KNOWN_SESSIONS = {"HOL", "HOL-Library"}       # the sessions the fake layout knows
+KNOWN_SESSIONS = {"HOL", "HOL-Library", "Graph_Theory"}   # the sessions the fake layout knows
+RESERVED_SESSIONS = {"AUX"}       # what the fake Isabelle refuses as a file or session name, in any spelling
+KNOWN_OPTIONS = {"document", "document_tags", "quick_and_dirty", "timeout"}
+BOOL_OPTIONS = {"quick_and_dirty"}  # of those, the ones whose value is `true` or `false`
 
 
 # Three `Theory` fakes against the fake state slot table, each standing for
@@ -61,7 +68,7 @@ class Failing_End_Theory(Fake_Theory):
 KINDS = {"session": Session, "theory": Theory, "fake_theory": Fake_Theory,
          "failing_header_theory": Failing_Header_Theory,
          "failing_end_theory": Failing_End_Theory,
-         "t": tm.T}                                          # `t`: a theory's child
+         "t": tm.T, "block": tm.Block}                       # a theory's children
 
 
 class Forest_Under_Test(M.Forest):
@@ -82,9 +89,22 @@ def table(monkeypatch):
         return isabelle_driver.Free()
     monkeypatch.setattr(isabelle_driver, "check_new_theory_short_name",
                         check_new_theory_short_name)
-    async def is_known_session(conversation, name):
-        return name in KNOWN_SESSIONS
-    monkeypatch.setattr(isabelle_driver, "is_known_session", is_known_session)
+    async def check_session(conversation, name, parent_session, options):
+        """The first defect, in `Loader.check_session`'s order."""
+        if name.upper() in RESERVED_SESSIONS:
+            return isabelle_driver.Name_Reserved()
+        if name in KNOWN_SESSIONS:
+            return isabelle_driver.Name_Known()
+        for i, (option, value) in enumerate(options):
+            if option not in KNOWN_OPTIONS:
+                return isabelle_driver.Option_Refused(i, f'Unknown option "{option}"')
+            if option in BOOL_OPTIONS and value not in ("true", "false"):   # Isabelle's two lines
+                return isabelle_driver.Option_Refused(
+                    i, f'Malformed value for option "{option}" : bool =\n"{value}"')
+        if parent_session is not None and parent_session not in KNOWN_SESSIONS:
+            return isabelle_driver.Parent_Unknown()
+        return isabelle_driver.Session_Ok()
+    monkeypatch.setattr(isabelle_driver, "check_session", check_session)
 
 
 def shape(forest):
@@ -191,6 +211,140 @@ def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(t
     assert tm.st(bad2) == (NOT_EVALUATED, NOT_EVALUATED)   # not entered: instant untouched
     assert bad2.last_evaluation_statuses()[0] == beginning  # and the stored status kept
     inv(f2)
+
+
+def test_import_sessions_is_stored_and_a_missing_row_reads_as_the_empty_list(tmp_path):
+    """COMPILATION.md §4, "Storage": the recorded field rides with the
+    node's rows; a database that predates the row loads it empty."""
+    store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
+    f = Forest_Under_Test(store=store)
+    (s,) = insert(f, f, 0, [session("S", theory("A", kind="fake_theory"),
+                            theory("B", kind="fake_theory"))])
+    a, b = s.sub_nodes
+    assert a.import_sessions == [] and (a.file_path(), b.file_path()) == (Path("S/A.thy"), Path("S/B.thy"))
+    a.import_sessions = ["HOL", "HOL-Library"]              # what a header's run records
+    with store.transaction():
+        f._store_node(a)
+    store._conn.execute("DELETE FROM fields WHERE node = ? AND field = 'import_sessions'",
+                        (b.identity,))
+    store.close()
+    f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log()))
+    a2, b2 = f2.sub_nodes[0].sub_nodes
+    assert a2.import_sessions == ["HOL", "HOL-Library"] and b2.import_sessions == []
+
+
+class Real_Theories:
+    """A forest of the real `Theory` on a working directory of its own, the
+    class's two callbacks faked, both passing; `refused` is a tree whose
+    beginning cannot make its `Session`'s folder."""
+    def __init__(self, tmp_path, monkeypatch, *sessions):
+        self.calls = []
+        async def call(conversation, name, args):
+            self.calls.append((name, args))
+            return ([], ["HOL"]) if name == "TAT.Theory.begin" else []
+        monkeypatch.setattr(isabelle_driver, "call", call)
+        self.directory = tmp_path / "work"
+        self.directory.mkdir()
+        log = stand_ins.log()
+        self.forest = M.Forest(M.Conversation(CONN, self.directory, log, stand_ins.ending()),
+                               Forest_Store(":memory:", log), KINDS)
+        self.sessions = insert(self.forest, self.forest, 0, list(sessions))
+
+    def refused(self, s, sentence):
+        """COMPILATION.md §7's sentence ends the conversation — a
+        `TAT_StartupError`, no `TAT_Error`, so the walk passes it on as it
+        is — and nothing ran: no round trip, the statuses and the
+        database's rows as they were."""
+        (tree,) = s.sub_nodes
+        store = self.forest.store
+        calls, rows = len(self.calls), {n: store.fields(n) for n in store.nodes()}
+        with pytest.raises(M.CannotUseWorkingDirectory) as e:
+            run(tree.evaluate_to(False))
+        assert isinstance(e.value, TAT_StartupError)
+        assert str(e.value) == (sentence.replace("<working directory>", str(self.directory))
+                                .replace("<Session name>", s.name))
+        assert tm.st(tree) == (NOT_EVALUATED, NOT_EVALUATED) and len(self.calls) == calls
+        assert {n: store.fields(n) for n in store.nodes()} == rows
+
+
+def test_a_theorys_beginning_makes_its_sessions_folder_or_ends_the_conversation(tmp_path, monkeypatch):
+    """MODULE_STRUCTURE §4.1: before its header runs, a `Theory` makes its
+    `Session`'s folder when that is absent; a path that holds anything but
+    a directory ends the conversation."""
+    case = Real_Theories(tmp_path, monkeypatch, session("Arith", theory("X")),
+                         session("Taken", theory("T")), session("Linked", theory("L")))
+    arith, taken, linked = case.sessions
+    (x,) = arith.sub_nodes
+    assert not (case.directory / "Arith").exists()            # creating the session makes nothing
+    run(x.evaluate_to(False))
+    assert (case.directory / "Arith").is_dir() and tm.st(x) == (READY, READY)
+    name, (_, (_, master_dir, _)) = case.calls[0]
+    assert (name, master_dir) == ("TAT.Theory.begin", str(case.directory / "Arith"))
+    assert x.import_sessions == ["HOL"]                       # what the header's run answered
+
+    _, _, (a_link, not_a_directory, _) = fenced_blocks(DOCS / "COMPILATION.md", "7.")
+    (case.directory / "Taken").write_text("a file")
+    (case.directory / "Linked").symlink_to(case.directory / "Arith")
+    case.refused(linked, a_link)
+    case.refused(taken, not_a_directory)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
+def test_a_session_folder_the_system_will_not_make_ends_the_conversation(tmp_path, monkeypatch):
+    case = Real_Theories(tmp_path, monkeypatch, session("Late", theory("N")))
+    _, _, (_, _, cannot_be_made) = fenced_blocks(DOCS / "COMPILATION.md", "7.")
+    os.chmod(case.directory, 0o500)
+    try:
+        case.refused(case.sessions[0],
+                     cannot_be_made.replace("<the system's message>", "Permission denied"))
+    finally:
+        os.chmod(case.directory, 0o700)
+
+
+# --- what a tree writes (COMPILATION.md §3) ----------------------------------
+
+def test_a_tree_emits_its_header_its_nodes_and_its_end(tmp_path):
+    """The `Theory` root emits the header its beginning runs, its nodes
+    their text in tree order with one empty line between siblings, and
+    `end`, every line whole.  `can_emit` reads the stored statuses, so a
+    loaded tree, every instant status `not_evaluated`, answers as before
+    the restart; a `Session` emits no Isar."""
+    import io
+    def text(tree):
+        out = io.StringIO()
+        assert tree.emit(0, out) == 0
+        return out.getvalue()
+    path = tmp_path / "TAT.sqlite"
+    f = Forest_Under_Test(store=Forest_Store(path, stand_ins.log()))
+    (s,) = insert(f, f, 0, [session("Arith", theory("Y", "Main", "HOL-Library.Multiset", kind="fake_theory"))])
+    (y,) = s.sub_nodes
+    insert(f, y, 0, [{"kind": "t", "name": "a"},
+                     {"kind": "block", "name": "S", "children": [{"kind": "t", "name": "b"},
+                                                                 {"kind": "t", "name": "c"}]},
+                     {"kind": "t", "name": "d"}])
+    written = text(y)
+    assert written == ('theory Y\n  imports "Main" "HOL-Library.Multiset"\nbegin\n'
+                       'text ‹a›\n'
+                       '\n'
+                       'section ‹S›\n'
+                       'text ‹b›\n'
+                       '\n'
+                       'text ‹c›\n'
+                       'text ‹end of S›\n'
+                       '\n'
+                       'text ‹d›\n'
+                       'end\n')
+    assert written.startswith(y.header() + "\n")           # the header the evaluation runs
+    assert not any(n.can_emit() for n in y._tree_order())
+    run(y.evaluate_to(False))
+    assert all(n.can_emit() for n in y._tree_order())
+    f.store.close()
+    f2 = Forest_Under_Test(store=Forest_Store(path, stand_ins.log()))
+    y2 = f2.sub_nodes[0].sub_nodes[0]
+    assert not y2.is_finished() and all(n.can_emit() for n in y2._tree_order())
+    assert text(y2) == written
+    with pytest.raises(TAT_InternalError, match="emits no Isar"):
+        f2.sub_nodes[0].emit(0, io.StringIO())
 
 
 # --- the unchained container -------------------------------------------------
@@ -361,8 +515,15 @@ def test_names():
         with pytest.raises(InvalidName) as e:
             insert(f, f, 0, [session(bad)])
         assert (e.value.name, e.value.grammar) == (bad, "session name")
-    (lib,) = insert(f, f, 0, [session("HOL-Library")])
-    assert lib.name == "HOL-Library" and f.id_of(lib) == "session_HOL-Library"
+    (lib,) = insert(f, f, 0, [session("My-Library")])
+    assert lib.name == "My-Library" and f.id_of(lib) == "session_My-Library"
+    # a name Isabelle reserves as a file or session name, asked of Isabelle;
+    # and `ROOT` in any spelling, TAT's own rule: the folder would be the
+    # ROOT file's path
+    for bad in ("Aux", "ROOT", "Root"):
+        with pytest.raises(ReservedSessionName) as e:
+            insert(f, f, 0, [session(bad)])
+        assert e.value.name == bad and e.value.raw_ast_path == "constructs[0]"
     (sessions,) = insert(f, f, 0, [session("Sessions")])       # no name is reserved
     assert f.id_of(sessions) == "session_Sessions" and f.resolve("Sessions") is f
     (p,) = insert(f, y, 0, [{"kind": "t", "name": "p'"}])      # every other node keeps the prime
@@ -389,6 +550,14 @@ def test_a_theory_short_name_is_unique_everywhere():
         insert(f, f, 2, [session("More", theory("Q")), session("Yet", theory("Q"))])
     assert e.value.holder == "constructs[0].children[0]"
     assert e.value.raw_ast_path == "constructs[1].children[0]"
+    # without regard to case: Isabelle refuses two theory files whose names
+    # differ only in case — against the forest, and within the call
+    with pytest.raises(DuplicateTheoryShortName) as e:
+        insert(f, s2, 0, [theory("x")])
+    assert (e.value.short_name, e.value.holder) == ("x", "theory_X")
+    with pytest.raises(DuplicateTheoryShortName) as e:
+        insert(f, f, 2, [session("More", theory("Queue")), session("Yet", theory("QUEUE"))])
+    assert (e.value.short_name, e.value.holder) == ("QUEUE", "constructs[0].children[0]")
     # an amend may keep the short name: the node it replaces is leaving
     (x2,) = run(locked(f, edit.amend(x, [theory("X", "Main", "HOL.Rat")], KINDS)))
     assert x2.imports == ["Main", "HOL.Rat"] and x2.identity == x.identity
@@ -440,8 +609,51 @@ def test_the_field_checks():
     refused(f, session("S", options=[{"name": "document", "value": "pdf"},
                                      {"name": "document", "value": "false"}]),
             "options[1].name", "sets the option `document` a second time")
+    # what only Isabelle can say, the first defect of its one answer: the
+    # name known to the session layout, an option refused, the parent last
+    refused(f, session("Graph_Theory", parent_session="Nowhere",
+                       options=[{"name": "documnet", "value": "pdf"}]),
+            "name", "must not be the name of an existing Isabelle session; `Graph_Theory` is one")
+    refused(f, session("S", parent_session="Nowhere",
+                       options=[{"name": "document", "value": "pdf"},
+                                {"name": "documnet", "value": "pdf"}]),
+            "options[1]", 'is not accepted by Isabelle: Unknown option "documnet"')
+    # a parent naming the session itself is judged after Isabelle's answer
+    refused(f, session("S", parent_session="S", options=[{"name": "documnet", "value": "pdf"}]),
+            "options[0]", 'is not accepted by Isabelle: Unknown option "documnet"')
+    # a name Isabelle reserves is judged in that answer too, after the checks that cost none
+    refused(f, session("Aux") | {"parent_session": ""}, "parent_session", empty)
+    # a value supplied in quotes is read without them, as the ROOT writes
+    # it; the lines of Isabelle's message are joined by single spaces
+    refused(f, session("S", options=[{"name": "quick_and_dirty", "value": '"yes"'}]),
+            "options[0]",
+            'is not accepted by Isabelle: Malformed value for option "quick_and_dirty" : bool = "yes"')
+    (quoted,) = insert(f, f, 1, [session("S", options=[{"name": "quick_and_dirty",
+                                                        "value": '"true"'}])])
+    assert quoted.options == [{"name": "quick_and_dirty", "value": '"true"'}]    # stored as supplied
+    run(locked(f, edit.delete(quoted)))
     assert f.sub_nodes == [s] and s.sub_nodes == [x, y]
     assert COVERED == REASONS
+    inv(f)
+
+
+def test_session_names_are_compared_without_regard_to_case():
+    """SESSION_AND_THEORY §1: a session named like one of the forest, or
+    like an earlier construct of the call, but for case, is refused as the
+    id component's conflict is."""
+    from isabelle_theory_agent.exceptions import DuplicateName
+    f, s, x, y, a = arith()                                    # session_Arith
+    with pytest.raises(DuplicateName) as e:
+        insert(f, f, 1, [session("ARITH")])
+    assert (e.value.id_component, e.value.taken_by) == ("session_ARITH", "session_Arith")
+    with pytest.raises(DuplicateName) as e:
+        insert(f, f, 1, [session("P"), session("p")])
+    assert (e.value.id_component, e.value.taken_by, e.value.raw_ast_path) == \
+        ("session_p", "constructs[0]", "constructs[1]")
+    assert f.sub_nodes == [s]
+    # an amend may keep the name, in any case
+    (arith2,) = run(locked(f, edit.amend(s, [session("ARITH")], KINDS)))
+    assert f.sub_nodes == [arith2] and arith2.name == "ARITH"
     inv(f)
 
 

@@ -66,11 +66,16 @@ sig
 
   (*** Conversation (§2.6) ***)
   val start' : string -> theory list -> string -> int -> unit
-                      (*the Python procedure that is the conversation; the theories
-                        whose ancestries name the node classes; the working
-                        directory; the port to serve on*)
+                      (*the Python procedure that is the conversation, called once
+                        its package is loaded; the theories whose ancestries name
+                        the node classes; the working directory; the port to serve
+                        on*)
   val start : theory list -> string -> int -> unit
-                      (*loads the Python package, then start' "launch_TAT"*)
+                      (*start' "launch_TAT"*)
+  val compile : theory list -> string -> bool * string list
+                      (*the same theories and working directory, through the Python
+                        procedure compile_TAT (docs/COMPILATION.md §5): whether every
+                        tree was written, and the report's lines*)
 end
 
 structure TAT_Framework : TAT_FRAMEWORK =
@@ -359,27 +364,69 @@ fun fetch_named name =
   else error ("The plugin theory must be fully qualified (SESSION.THEORY), but provided " ^
               quote name)
 
+(*Isabelle's own predicates on a name, asked instead of copying its lists
+  (docs/COMPILATION.md §2): the Scala function TAT.reserved_name of
+  lib/tat.jar answers the words of those that hold -- `file`
+  (Path.is_reserved), `theory` (Sessions.illegal_theory), `session`
+  (Sessions.illegal_session).  The launcher's process answers the call
+  through its protocol loop (§5).*)
+fun reserved kinds name =
+  exists (member (op =) kinds) (space_explode " " (Scala.function1 "TAT.reserved_name" name))
+
 (*The Isabelle half of the short-name check (§2.3), one of three answers in
   this order: a loaded theory bears the short name -- its long name, which
   for a global theory is the short name itself; none does but the Isabelle
   session layout declares the name global -- reserved, since theory_name
-  would leave a tree so named unqualified; free.  The rejection and its
-  wording are Python's (RENDER_BASELINES.md).*)
+  would leave a tree so named unqualified -- or Isabelle refuses it as a
+  file or theory name; free.  The rejection and its wording are Python's
+  (RENDER_BASELINES.md).*)
 datatype short_name_answer = Taken of string | Reserved | Free
 
 fun check_new_theory_short_name name =
   let val short = Long_Name.base_name name in
     (case List.find (fn n => Long_Name.base_name n = short) (Thy_Info.get_names ()) of
       SOME long => Taken long
-    | NONE => if is_some (Resources.global_theory short) then Reserved else Free)
+    | NONE =>
+        if is_some (Resources.global_theory short) orelse reserved ["file", "theory"] short
+        then Reserved else Free)
   end
 
-(*The Isabelle half of `parent_session`'s check (§2.3): whether the Isabelle
-  session layout knows a session of the name.  Resources.check_session fails
-  on an unknown one; the context serves its report only.  The forest half
-  and the rejection are Python's (SESSION_AND_THEORY.md §1).*)
+(*Whether the Isabelle session layout knows a session of the name (§2.3).
+  Resources.check_session fails on an unknown one; the context serves its
+  report only.*)
 fun is_known_session name =
   can (Resources.check_session \<^context>) (name, Position.none)
+
+(*`Session.gen`'s one question (§2.3), answered with the first defect: the
+  name reserved as a file or session name; the name one the Isabelle session
+  layout knows; an option Isabelle does not know, or whose value is of the
+  wrong type -- its place among the options and Isabelle's message; a parent
+  the layout does not know -- `parent` is NONE when the forest settled it.
+  The options are applied as Isabelle reads a ROOT, by the Scala function
+  TAT.check_options of lib/tat.jar (§5), so that what passes here the final
+  reading accepts.  The forest half and every rejection are Python's
+  (SESSION_AND_THEORY.md §1).*)
+datatype session_answer =
+  Session_Ok | Name_Reserved | Name_Known | Option_Refused of int * string | Parent_Unknown
+
+fun check_session (name, parent, options) =
+  let
+    fun refused () =
+      (case Scala.function "TAT.check_options" (maps (fn (option, value) => [option, value]) options) of
+        [] => NONE
+      | [i, msg] => SOME (Value.parse_int i, msg)
+      | answer => raise Fail ("TAT.check_options answered " ^ commas_quote answer))
+  in
+    if reserved ["file", "session"] name then Name_Reserved
+    else if is_known_session name then Name_Known
+    else
+      (case refused () of
+        SOME answer => Option_Refused answer
+      | NONE =>
+          (case parent of
+            SOME session => if is_known_session session then Session_Ok else Parent_Unknown
+          | NONE => Session_Ok))
+  end
 
 end
 
@@ -680,6 +727,18 @@ fun pack_short_name_answer (Loader.Taken long) = packList packString ["taken", l
   | pack_short_name_answer Loader.Reserved = packList packString ["reserved"]
   | pack_short_name_answer Loader.Free = packList packString ["free"]
 
+(*the session check's answers in the same shape: ["ok"], ["name_reserved"],
+  ["name_known"], ["option", <its index, in digits>, <Isabelle's message>],
+  ["parent_unknown"]*)
+fun pack_session_answer answer =
+  packList packString
+    (case answer of
+      Loader.Session_Ok => ["ok"]
+    | Loader.Name_Reserved => ["name_reserved"]
+    | Loader.Name_Known => ["name_known"]
+    | Loader.Option_Refused (i, msg) => ["option", string_of_int i, msg]
+    | Loader.Parent_Unknown => ["parent_unknown"])
+
 (*The Python side names the log directory, absolute (LOGGING.md §5, §7):
   the records held so far go there, and the launcher is told, as
   TAT.finished tells it.  The one framework callback a compile's command
@@ -723,10 +782,11 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
      ret_schema = pack_short_name_answer, function = Loader.check_new_theory_short_name,
      timeout = NONE},
   make_callback
-    {name = "TAT.is_known_session",
+    {name = "TAT.check_session",
      on_interrupt = Remote_Procedure_Calling.Reraise,
-     arg_schema = unpackString,
-     ret_schema = packBool, function = Loader.is_known_session, timeout = NONE},
+     arg_schema = unpackTuple3 (unpackString, unpackOption unpackString,
+                                unpackList (unpackPair (unpackString, unpackString))),
+     ret_schema = pack_session_answer, function = Loader.check_session, timeout = NONE},
   log_directory,
   (*a fresh conversation begins on the same process: both tables emptied,
     recorded into this conversation's log, which a fresh one then replaces
@@ -748,6 +808,20 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
      timeout = NONE}
 ]
 
+(*Step 2 (§2.6), which a conversation and a compile share: the theories'
+  registrations -- one reached through several ancestries counts once -- and
+  their Python packages*)
+fun collect theories =
+  let val regs = distinct (eq_fst op =) (maps (rev o Registrations.get) theories)
+  in (regs, distinct (op =) (maps (#python_packages o #2) regs)) end
+
+(*What both entries end on (§2.6): the Python package loaded, its procedure
+  called, a failure of the call an ERROR*)
+fun call_python command arg =
+  (Remote_Procedure_Calling.load ["isabelle_theory_agent"];
+   Remote_Procedure_Calling.call_command command arg
+     handle Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => error message)
+
 fun start' procedure theories working_directory port =
   let
     val _ = Loader.check_parallel_proofs ()
@@ -763,50 +837,55 @@ fun start' procedure theories working_directory port =
         let val (name, src') = unpackString src in (Slots.slot slots name, src') end,
       begin_theory = begin_theory theory_table,
       end_theory = end_theory theory_table}
-    (*a registration reached through several ancestries counts once (§2.6)*)
-    val regs = distinct (eq_fst op =) (maps (rev o Registrations.get) theories)
+    val (regs, packages) = collect theories
     val callbacks =
       map (fn (_, {make, ...}) => make env) regs @ framework_callbacks slots theory_table
     (*the dispatch table would silently keep one of two same-named callbacks*)
     val _ = (case duplicates (op =) (map #name callbacks)
               of [] => ()
                | names => error ("Callback registered twice: " ^ commas_quote names))
-    val packages = distinct (op =) (maps (#python_packages o #2) regs)
     val _ = Output_Routing.install ()
     val conversation : (string list * string * int, unit) Remote_Procedure_Calling.command =
       {name = procedure, arg_schema = packTuple3 (packList packString, packString, packInt),
        ret_schema = unpackUnit, callback = callbacks, timeout = NONE}
-  in
-    Remote_Procedure_Calling.call_command conversation (packages, working_directory, port)
-      handle Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => error message
-  end
+  in call_python conversation (packages, working_directory, port) end
+
+(*The compile's command carries the framework's TAT.log_directory and no
+  class's callback: nothing a compile does can run anything in Isabelle
+  (docs/COMPILATION.md §5).*)
+fun compile theories working_directory =
+  let
+    val (_, packages) = collect theories
+    val command : (string list * string, bool * string list) Remote_Procedure_Calling.command =
+      {name = "compile_TAT", arg_schema = packPair (packList packString, packString),
+       ret_schema = unpackPair (unpackBool, unpackList unpackString),
+       callback = [log_directory], timeout = NONE}
+  in call_python command (packages, working_directory) end
 
 end
 
-fun start theories working_directory port =
-  (Remote_Procedure_Calling.load ["isabelle_theory_agent"];
-   start' "launch_TAT" theories working_directory port)
+val start = start' "launch_TAT"
 
-(*The protocol command the boot runs once this theory is loaded (§2.6, §5):
-  arguments the working directory, the port, then the plugins' theory names.
-  Forked off the protocol loop -- which reads one message at a time, and
-  answers the Scala.function calls of a loading theory -- as a plain
-  Isabelle thread, inside no theory, interruptible as build_session's is
+(*The handler of the two protocol commands the boot runs once this theory is
+  loaded (§2.6, §5).  `entry` reads the command's arguments into the
+  plugins' theory names and what to run on the loaded theories, which
+  answers the code and the lines of a normal result.  Forked off the
+  protocol loop -- which reads one message at a time, and answers the
+  Scala.function calls of a loading theory -- as a plain Isabelle thread,
+  inside no theory, interruptible as build_session's is
   (Pure/Build/build.ML); every path ends in TAT.finished, in
-  build_session_finished's shape: 0 when the conversation ended by start
-  returning, 1 with the exception's messages otherwise -- "Interrupt" for
-  an interrupt, "CRASHED" when the messages could not be rendered.*)
-val _ =
-  Protocol_Command.define "TAT.start" (fn args =>
+  build_session_finished's shape: the entry's answer, or 2 with the
+  exception's messages -- "Interrupt" for an interrupt, "CRASHED" when the
+  messages could not be rendered.*)
+fun define_entry name (entry : string list -> string list * (theory list -> int * string list)) =
+  Protocol_Command.define name (fn args =>
     let
-      val (working_directory, port, plugins) =
-        (case args of wd :: port :: plugins => (wd, port, plugins) | _ => raise Match)
       (*by name: \<^theory> here is this theory before TAT_Common_Nodes registers
         its node classes; Thy_Info holds the finished value*)
       val own_theory_name = Context.theory_long_name \<^theory>
-      fun conversation () =
-        start (map Loader.fetch_named (own_theory_name :: plugins))
-          working_directory (Value.parse_int port)
+      fun body () =
+        let val (plugins, run) = entry args
+        in run (map Loader.fetch_named (own_theory_name :: plugins)) end
       (*a terminal interrupt arrives as Interrupt_Breakdown, which
         exn_message_list does not name; the sic arm is build_session's*)
       fun messages exn =
@@ -816,13 +895,32 @@ val _ =
             Exn.Res msgs => msgs
           | Exn.Exn _ (*sic!*) => ["CRASHED"])
       fun finished result =
-        (case result of Exn.Res () => (0, []) | Exn.Exn exn => (1, messages exn))
+        (case result of Exn.Res answer => answer | Exn.Exn exn => (2, messages exn))
         |> let open XML.Encode in pair int (list string) end
         |> single
         |> Output.protocol_message [Markup.function "TAT.finished"]
     in
-      ignore (Isabelle_Thread.fork (Isabelle_Thread.params "TAT.start") (fn () =>
-        finished (Exn.capture_body (Future.interruptible_task conversation))))
+      ignore (Isabelle_Thread.fork (Isabelle_Thread.params name) (fn () =>
+        finished (Exn.capture_body (Future.interruptible_task body))))
     end)
+
+(*TAT.start: the working directory, the port, then the plugins' theory
+  names; 0 when the conversation ended by start returning*)
+val _ =
+  define_entry "TAT.start"
+    (fn working_directory :: port :: plugins =>
+          (plugins, fn theories =>
+            (start theories working_directory (Value.parse_int port); (0, [])))
+      | _ => raise Match)
+
+(*TAT.compile: the working directory, then the plugins' theory names; the
+  report's lines, with 0 when every tree was written and 1 when one was not*)
+val _ =
+  define_entry "TAT.compile"
+    (fn working_directory :: plugins =>
+          (plugins, fn theories =>
+            let val (written, lines) = compile theories working_directory
+            in (if written then 0 else 1, lines) end)
+      | _ => raise Match)
 
 end

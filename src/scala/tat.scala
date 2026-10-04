@@ -1,8 +1,8 @@
 /*  Title:      src/scala/tat.scala
     Author:     Qiyuan Xu
 
-The launcher (docs/MODULE_STRUCTURE.md §5): the Isabelle tools TAT_new and
-TAT_mcp.  Both run in the JVM that `isabelle` starts.
+The launcher (docs/MODULE_STRUCTURE.md §5): the Isabelle tools TAT_new,
+TAT_mcp and TAT_compile.  All run in the JVM that `isabelle` starts.
 */
 
 package isabelle.tat
@@ -39,6 +39,7 @@ object TAT {
       else Nil
   }
 
+
   /* absolute: the path travels to the Python side, which may be a process
      started elsewhere (ARCHITECTURE §9); no `[` or `]`, which both clients
      read as pattern syntax in the entries that hide the directory from the
@@ -50,6 +51,56 @@ object TAT {
       error(dir.implode + " contains [ or ], which TAT cannot use in a working directory path")
     }
     dir
+  }
+
+
+  /* the one argument of TAT_mcp and TAT_compile, read with Getopts in its
+     internal mode: a usage error is an ERROR, which ends the tool with 2 */
+
+  def working_directory_argument(getopts: Getopts, args: List[String]): Path =
+    getopts(args, internal = true) match {
+      case List(arg) => working_directory(arg)
+      case _ => getopts.usage(internal = true)
+    }
+
+
+
+  /** the names Isabelle refuses, for the ML side to ask (docs/COMPILATION.md §2) **/
+
+  /* Isabelle's own predicates, not a copy of its lists: the answer is the
+     words, separated by a space, of those that hold of the name */
+
+  object Reserved_Name extends Scala.Fun_String("TAT.reserved_name") {
+    val here = Scala_Project.here
+    def apply(name: String): String =
+      List(
+        "file" -> Path.is_reserved(name),
+        "theory" -> Sessions.illegal_theory(name),
+        "session" -> Sessions.illegal_session(name)).filter(_._2).map(_._1).mkString(" ")
+  }
+
+  /* a ROOT entry's options, applied as Isabelle reads a ROOT -- so that
+     what creation accepts, the final reading accepts: the names and values
+     in turn; the answer is empty when every one is accepted, else the
+     index of the first refused and Isabelle's message */
+
+  object Check_Options extends Scala.Fun_Strings("TAT.check_options") {
+    val here = Scala_Project.here
+    private lazy val defaults: Options = Options.init()
+    def apply(args: List[String]): List[String] = {
+      def check(options: Options, specs: List[List[String]], i: Int): List[String] =
+        specs match {
+          case Nil => Nil
+          case List(name, value) :: rest =>
+            Exn.capture(options + Options.Spec(name, Some(value))) match {
+              case Exn.Res(options1) => check(options1, rest, i + 1)
+              case Exn.Exn(ERROR(msg)) => List(i.toString, msg)
+              case Exn.Exn(exn) => throw exn
+            }
+          case _ => error("TAT.check_options: the arguments are not pairs")
+        }
+      check(defaults, args.grouped(2).toList, 0)
+    }
   }
 
 
@@ -217,11 +268,154 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 
 
 
+  /** the Isabelle process of TAT_mcp and TAT_compile **/
+
+  val boot: Path = Path.explode("$TAT_HOME/ML/TAT_Boot.ML")
+
+  /* Steps 1 to 5 of MODULE_STRUCTURE §5, up to the ending: the Isabelle
+     process on the base heap `logic`, booted with the protocol command
+     `command` on the working directory `dir`, then `arguments`, then the
+     plugins' theory names.  Answers what TAT.finished carried -- or 2 and
+     the reason, when the process ended without it; whatever fails before
+     the process answers is an ERROR, which ends the tool with 2. */
+
+  def launch(
+    progress: Progress,
+    dir: Path,
+    logic: String,
+    dirs: List[Path],
+    options: Options,
+    command: String,
+    arguments: List[String] = Nil
+  ): (Int, List[String]) = {
+
+    /* 1. the working directory */
+
+    if (!dir.is_dir) error(dir.implode + " is not a directory")
+    if (!(dir + database).is_file) {
+      error(dir.implode + " holds no " + database.implode + "; run isabelle TAT_new first")
+    }
+    val plugins = using(SQLite.open_database(dir + database))(Plugins.read)
+
+
+    /* 2. the options: TAT's two last, so they win -- nobody answers a
+       dialogue in a headless process, and the tracing limiter asks one */
+
+    val tat_options =
+      options.string.update("isabelle_rpc_dialogue", "absent").
+        int.update("editor_tracing_messages", 0)
+
+    // the boot restores this option's value, and every load asserts it
+    // below 3 (docs/EVALUATOR_DESIGN.md §6)
+    val parallel_proofs = tat_options.int("parallel_proofs")
+    if (parallel_proofs >= 3) {
+      error("TAT requires parallel_proofs below 3, but the options give " + parallel_proofs)
+    }
+
+
+    /* 3. the Isabelle session layout, the base heap, the process */
+
+    val session_background = Sessions.background(tat_options, logic, dirs = dirs).check_errors
+
+    // no theory is ever loaded from under the working directory
+    // (docs/EVALUATOR_DESIGN.md §2): a session declared there is refused,
+    // so that no file under it can be found by its session name
+    val session_directories =
+      session_background.sessions_structure.session_directories.toList.sortBy(_._1.getPath)
+    for ((file, name) <- session_directories) {
+      if (File.relative_path(dir.canonical, File.path(file)).isDefined) {
+        error("Isabelle session " + name + " is declared under the working directory " +
+          dir.implode + "; TAT never loads theories from there")
+      }
+    }
+
+    val log = new Log_Follower(progress)
+
+    // strict: a base heap that does not build is an ERROR
+    progress.interrupt_handler {
+      Build.build_logic(tat_options, logic, build_heap = true, progress = progress,
+        dirs = dirs, strict = true)
+    }
+
+    val session_heaps = Store(tat_options).session_heaps(session_background, logic = logic)
+
+    val session =
+      new Session {
+        override def session_options: Options = tat_options
+        override val resources: Resources = new Resources(session_background)
+      }
+
+    // the first ending wins: TAT.finished, or the process's termination
+    val finished = Synchronized[Option[(Int, List[String])]](None)
+    def finish(rc: Int, messages: List[String]): Unit =
+      finished.change(_ orElse Some((rc, messages)))
+
+    session.init_protocol_handler(new Session.Protocol_Handler {
+      override val functions: Session.Protocol_Functions =
+        List("TAT.finished" -> ((msg: Prover.Protocol_Output) => {
+          // as build_job.scala decodes build_session_finished: the messages carry markup
+          val (rc, messages) =
+            try {
+              val (rc, errs) = {
+                import XML.Decode._
+                pair(int, list(self))(Symbol.decode_yxml(msg.text))
+              }
+              (rc, errs.map(Pretty.string_of(_, metric = Symbol.Metric, pure = true)))
+            }
+            // wider than build_job's clause: XML.Decode throws XML.Error, not
+            // ERROR, and this message is the launcher's only ending
+            catch {
+              case exn: Throwable =>
+                (Process_Result.RC.failure,
+                  List("TAT.finished could not be decoded: " + Exn.message(exn)))
+            }
+          finish(rc, messages)
+          true
+        }),
+        // the Isabelle side passes the directory the Python side named
+        // (LOGGING.md §7), absolute, as the Python side spelled it
+        "TAT.log_directory" -> ((msg: Prover.Protocol_Output) => {
+          log.follow(Path.explode(XML.Decode.string(Symbol.decode_yxml(msg.text))))
+          true
+        }))
+    })
+
+    // the process ending before it answers is an ending too
+    session.phase_changed += Session.Consumer[Session.Phase]("TAT") {
+      case Session.Terminated(result) =>
+        finish(Process_Result.RC.failure, List("Isabelle process terminated: " + result.print_rc))
+      case _ =>
+    }
+
+    val process =
+      Isabelle_Process.start(tat_options, session, session_background, session_heaps,
+        use_prelude = List(File.platform_path(boot)),
+        eval_main = Command_Line.ML_tool(List("Isabelle_Process.init_build ()")))
+
+    POSIX_Interrupt.handler { process.terminate() } {
+      process.await_startup()
+
+
+      /* 4. the boot */
+
+      session.protocol_command("TAT.boot",
+        (command :: File.platform_path(dir) :: arguments ::: plugins).map(XML.Encode.string): _*)
+
+
+      /* 5. the ending, after the log's last records */
+
+      val ending = finished.guarded_access(st => st.map(x => (x, st)))
+      log.stop()
+      session.stop()
+      ending
+    }
+  }
+
+
+
   /** isabelle TAT_mcp **/
 
   val default_port = 8191
-
-  val boot: Path = Path.explode("$TAT_HOME/ML/TAT_Boot.ML")
 
   val tat_mcp_tool: Isabelle_Tool =
     Isabelle_Tool("TAT_mcp", "start a TAT conversation", Scala_Project.here,
@@ -249,140 +443,72 @@ Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
           "o:" -> (arg => options = options + arg),
           "p:" -> (arg => port = Value.Int.parse(arg)))
 
-        val dir =
-          getopts(args) match {
-            case List(arg) => working_directory(arg)
-            case _ => getopts.usage()
-          }
-
-
-        /* 1. the working directory */
-
-        if (!dir.is_dir) error(dir.implode + " is not a directory")
-        if (!(dir + database).is_file) {
-          error(dir.implode + " holds no " + database.implode + "; run isabelle TAT_new first")
-        }
-        val plugins = using(SQLite.open_database(dir + database))(Plugins.read)
-
-
-        /* 2. the options: TAT's two last, so they win -- nobody answers a
-           dialogue in a headless process, and the tracing limiter asks one */
-
-        val tat_options =
-          options.string.update("isabelle_rpc_dialogue", "absent").
-            int.update("editor_tracing_messages", 0)
-
-        // the boot restores this option's value, and every load asserts it
-        // below 3 (docs/EVALUATOR_DESIGN.md §6)
-        val parallel_proofs = tat_options.int("parallel_proofs")
-        if (parallel_proofs >= 3) {
-          error("TAT requires parallel_proofs below 3, but the options give " + parallel_proofs)
-        }
-
-
-        /* 3. the Isabelle session layout, the base heap, the process */
-
-        val session_background =
-          Sessions.background(tat_options, logic, dirs = dirs.toList).check_errors
-
-        // no theory is ever loaded from under the working directory
-        // (docs/EVALUATOR_DESIGN.md §2): a session declared there is refused,
-        // so that no file under it can be found by its session name
-        val session_directories =
-          session_background.sessions_structure.session_directories.toList.sortBy(_._1.getPath)
-        for ((file, name) <- session_directories) {
-          if (File.relative_path(dir.canonical, File.path(file)).isDefined) {
-            error("Isabelle session " + name + " is declared under the working directory " +
-              dir.implode + "; TAT never loads theories from there")
-          }
-        }
+        val dir = working_directory_argument(getopts, args)
 
         val progress = new Console_Progress()
-        val log = new Log_Follower(progress)
+        val (rc, messages) =
+          launch(progress, dir, logic, dirs.toList, options, "TAT.start", List(port.toString))
+        messages.foreach(progress.echo_error_message(_))
+        if (rc != Process_Result.RC.ok) sys.exit(rc)
+      })
 
-        val results =
-          progress.interrupt_handler {
-            Build.build_logic(tat_options, logic, build_heap = true, progress = progress,
-              dirs = dirs.toList)
+
+
+  /** isabelle TAT_compile (docs/COMPILATION.md) **/
+
+  val tat_compile_tool: Isabelle_Tool =
+    Isabelle_Tool("TAT_compile", "write a TAT working directory's theories and ROOT",
+      Scala_Project.here,
+      { args =>
+        val dirs = new mutable.ListBuffer[Path]
+        var logic = Isabelle_System.default_logic()
+        var options = Options.init()
+
+        val getopts = Getopts("""
+Usage: isabelle TAT_compile [OPTIONS] WORKING_DIRECTORY
+
+  Options are:
+    -l BASE      the base heap (default: ISABELLE_LOGIC=""" + quote(logic) + """)
+    -d DIR       as Isabelle's -d: a further directory whose ROOT declares
+                 Isabelle sessions
+    -o OPTION    as Isabelle's -o: override an Isabelle system option
+
+  Write the theories of WORKING_DIRECTORY as .thy files, and a ROOT that
+  declares its sessions, into WORKING_DIRECTORY. No TAT conversation may
+  be running on it.
+
+  Exit code 0: every theory was written. 1: some theory was not written,
+  and the report says which and why. 2: the compile did not complete.
+""",
+          "d:" -> (arg => dirs += Path.explode(arg)),
+          "l:" -> (arg => logic = arg),
+          "o:" -> (arg => options = options + arg))
+
+        val dir = working_directory_argument(getopts, args)
+
+        val progress = new Console_Progress()
+        val (rc, lines) = launch(progress, dir, logic, dirs.toList, options, "TAT.compile")
+        if (Process_Result.RC.regular(rc)) {
+          lines.foreach(progress.echo(_))
+          // Isabelle reads what was written: the steps `isabelle build` takes
+          // before building, which evaluate nothing; a refusal is an ERROR,
+          // and so is an interrupt -- 130 is for one before the process starts
+          try {
+            progress.interrupt_handler {
+              val structure =
+                Sessions.load_structure(options, dirs = dirs.toList, select_dirs = List(dir))
+              Sessions.deps(structure.selection(Sessions.Selection.empty), progress = progress).
+                check_errors
+            }
           }
-        if (!results.ok) sys.exit(results.rc)
-
-        val session_heaps = Store(tat_options).session_heaps(session_background, logic = logic)
-
-        val session =
-          new Session {
-            override def session_options: Options = tat_options
-            override val resources: Resources = new Resources(session_background)
-          }
-
-        // the first ending wins: TAT.finished, or the process's termination
-        val finished = Synchronized[Option[(Int, List[String])]](None)
-        def finish(rc: Int, messages: List[String]): Unit =
-          finished.change(_ orElse Some((rc, messages)))
-
-        session.init_protocol_handler(new Session.Protocol_Handler {
-          override val functions: Session.Protocol_Functions =
-            List("TAT.finished" -> ((msg: Prover.Protocol_Output) => {
-              // as build_job.scala decodes build_session_finished: the messages carry markup
-              val (rc, messages) =
-                try {
-                  val (rc, errs) = {
-                    import XML.Decode._
-                    pair(int, list(self))(Symbol.decode_yxml(msg.text))
-                  }
-                  (rc, errs.map(Pretty.string_of(_, metric = Symbol.Metric, pure = true)))
-                }
-                // wider than build_job's clause: XML.Decode throws XML.Error, not
-                // ERROR, and this message is the launcher's only ending
-                catch {
-                  case exn: Throwable =>
-                    (Process_Result.RC.failure,
-                      List("TAT.finished could not be decoded: " + Exn.message(exn)))
-                }
-              finish(rc, messages)
-              true
-            }),
-            // the Isabelle side passes the directory the Python side named
-            // (LOGGING.md §7), absolute, as the Python side spelled it
-            "TAT.log_directory" -> ((msg: Prover.Protocol_Output) => {
-              log.follow(Path.explode(XML.Decode.string(Symbol.decode_yxml(msg.text))))
-              true
-            }))
-        })
-
-        // the process ending before it answers is an ending too
-        session.phase_changed += Session.Consumer[Session.Phase]("TAT") {
-          case Session.Terminated(result) =>
-            finish(Process_Result.RC.error, List("Isabelle process terminated: " + result.print_rc))
-          case _ =>
+          catch { case Exn.Interrupt() => error("Interrupt") }
         }
-
-        val process =
-          Isabelle_Process.start(tat_options, session, session_background, session_heaps,
-            use_prelude = List(File.platform_path(boot)),
-            eval_main = Command_Line.ML_tool(List("Isabelle_Process.init_build ()")))
-
-        val rc =
-          POSIX_Interrupt.handler { process.terminate() } {
-            process.await_startup()
-
-
-            /* 4. the boot */
-
-            session.protocol_command("TAT.boot",
-              (File.platform_path(dir) :: port.toString :: plugins).map(XML.Encode.string): _*)
-
-
-            /* 5. the ending: the log's last records, then the messages */
-
-            val (rc, messages) = finished.guarded_access(st => st.map(x => (x, st)))
-            log.stop()
-            messages.foreach(progress.echo_error_message(_))
-            session.stop()
-            rc
-          }
+        else lines.foreach(progress.echo_error_message(_))
         if (rc != Process_Result.RC.ok) sys.exit(rc)
       })
 }
 
-class TAT_Tools extends Isabelle_Scala_Tools(TAT.tat_new_tool, TAT.tat_mcp_tool)
+class TAT_Tools
+  extends Isabelle_Scala_Tools(TAT.tat_new_tool, TAT.tat_mcp_tool, TAT.tat_compile_tool)
+
+class TAT_Functions extends Scala.Functions(TAT.Reserved_Name, TAT.Check_Options)

@@ -8,16 +8,18 @@ conversation forgets.  Run: python -m pytest test/test_conversation.py
 import asyncio
 import json
 import time
+from pathlib import Path
 
 import pytest
 from Isabelle_RPC_Host import IsabelleError
 
 import stand_ins
-from baselines import DOCS, fenced_lines
+from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import text_of
 from isabelle_theory_agent import edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import (
-    DuplicateTheoryShortName, InvalidField, ReservedTheoryName, TAT_IsabelleError)
+    DuplicateTheoryShortName, InvalidField, ReservedTheoryName, TAT_IsabelleError,
+    TAT_StartupError)
 from isabelle_theory_agent.isabelle_driver import call
 from isabelle_theory_agent.model import NOT_EVALUATED, Isar_State_Slot
 from test_model import CANNOT_EVALUATE, READY
@@ -90,8 +92,9 @@ class Probes:
     async def short_name(self, name: str) -> isabelle_driver.Short_Name_Answer:
         return await isabelle_driver.check_new_theory_short_name(self.conversation, name)
 
-    async def known_session(self, name: str) -> bool:
-        return await isabelle_driver.is_known_session(self.conversation, name)
+    async def session(self, name: str, parent: str | None = None, options=()
+                      ) -> isabelle_driver.Session_Answer:
+        return await isabelle_driver.check_session(self.conversation, name, parent, options)
 
     async def begun(self, header_src: str) -> Isar_State_Slot:
         """A theory begun into a fresh slot."""
@@ -207,14 +210,39 @@ async def test_the_short_name_check_answers_taken_reserved_and_free(probes):
     assert await probes.short_name("Main") == isabelle_driver.Taken("Main")
     assert await probes.short_name("FOL") == isabelle_driver.Reserved()
     assert await probes.short_name("TAT_Test_A_Fresh_Name") == isabelle_driver.Free()
+    # reserved also: what Isabelle refuses as a file name, in any spelling,
+    # or as a theory name -- its own predicates, answered by the launcher's
+    # Scala function `TAT.reserved_name` (COMPILATION.md §2)
+    for name in ("Aux", "aux", "COM1", "ROOT", "ROOTS", "bib"):
+        assert await probes.short_name(name) == isabelle_driver.Reserved(), name
+    assert await probes.short_name("Draft") == isabelle_driver.Free()    # a session's reserved name
 
 
-async def test_the_known_session_check_reads_the_whole_layout(probes):
-    """The Isabelle half of `parent_session`'s check (§2.3): the layout
-    lists every session Isabelle knows, in the base heap's ancestry or not."""
-    assert await probes.known_session("HOL") is True
-    assert await probes.known_session("HOL-Library") is True
-    assert await probes.known_session("HOL-Libary") is False
+async def test_the_session_check_answers_the_first_defect(probes):
+    """`Session.gen`'s one question (§2.3), in its order: the name
+    reserved, the name known to the Isabelle session layout, an option
+    refused with Isabelle's message, the parent unknown.  The layout lists
+    every session Isabelle knows, in the base heap's ancestry or not."""
+    D = isabelle_driver
+    assert await probes.session("TAT_Fresh", "HOL") == D.Session_Ok()
+    assert await probes.session("TAT_Fresh", "HOL-Library") == D.Session_Ok()
+    assert await probes.session("TAT_Fresh", "HOL-Libary") == D.Parent_Unknown()
+    assert await probes.session("TAT_Fresh", None) == D.Session_Ok()      # the forest settled the parent
+    assert await probes.session("TAT_Fresh", "HOL", [("document", "pdf"), ("timeout", "600"),
+                                                     ("quick_and_dirty", "true")]) == D.Session_Ok()
+    for name in ("aux", "LPT1", "Draft"):                # a file's reserved name, a session's
+        assert await probes.session(name, "HOL") == D.Name_Reserved(), name
+    assert await probes.session("HOL-Library", "HOL") == D.Name_Known()
+    # the options as Isabelle reads a ROOT (TAT.check_options), its messages
+    # verbatim: a value Isabelle/ML would read as a number is refused too
+    unknown = await probes.session("TAT_Fresh", "HOL-Libary", [("document", "pdf"), ("documnet", "pdf")])
+    assert unknown == D.Option_Refused(1, 'Unknown option "documnet"')
+    for value in ("soon", "10min"):
+        assert await probes.session("TAT_Fresh", "HOL", [("timeout", value)]) == \
+            D.Option_Refused(0, f'Malformed value for option "timeout" : real =\n"{value}"'), value
+    # the first defect: the name before the options before the parent
+    assert await probes.session("Aux", "Nowhere", [("documnet", "x")]) == D.Name_Reserved()
+    assert await probes.session("HOL", "Nowhere", [("documnet", "x")]) == D.Name_Known()
 
 
 async def test_commands_run_in_order_with_output_routed_to_their_own_records(probes):
@@ -522,7 +550,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
 
     (sess,) = await insert(forest, 0, [
         {"kind": "session", "name": "TAT_E2E", "parent_session": "HOL",
-         "children": [theory("TAT_E2E_A", "Main")]}])
+         "children": [theory("TAT_E2E_A", "Main", "HOL.List", "HOL-Library.Phantom_Type")]}])
     (ta,) = sess.sub_nodes
     assert (sess.name, ta.name) == ("TAT_E2E", "TAT_E2E_A")
     assert (forest.id_of(sess), forest.id_of(ta)) == ("session_TAT_E2E", "theory_TAT_E2E_A")
@@ -556,6 +584,12 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     assert ta.resulting_state() is ta._state_after_ending
     assert await probes.is_toplevel(ta._state_after_ending) is True      # after `end`
     assert await probes.short_name("TAT_E2E_A") == isabelle_driver.Free()   # the table, not Thy_Info
+    # the header's run made the session's folder, and recorded the session
+    # of each import as Isabelle answers it (COMPILATION.md §2): a global
+    # theory's, a qualified name's in the parent session and in another
+    assert (forest.conversation.working_directory / "TAT_E2E").is_dir()
+    assert ta.file_path() == Path("TAT_E2E/TAT_E2E_A.thy")
+    assert ta.import_sessions == ["HOL", "HOL", "HOL-Library"]
 
     # a second tree importing the first by its bare name: resolved through
     # the conversation's theory table, under the session's name
@@ -563,6 +597,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     r = await tb.evaluate_to(False)
     assert r == M.EvaluationResult(None, None), r
     assert tb.is_finished() and tb.evaluation_status_beginning == READY
+    assert tb.import_sessions == ["TAT_E2E"]                   # a tree of the forest: its `Session`
 
     # a header that fails -- an import found nowhere, refused under the
     # name Isabelle resolved it to (RENDER_BASELINES §3, the whole
@@ -578,6 +613,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     assert any(not_found("TAT_E2E.TAT_E2E_Nowhere") in m.unicode for m in beginning.messages), \
         beginning.messages
     assert tc.evaluation_status_ending is READY and not tc.is_finished()
+    assert tc.import_sessions == []                            # recorded only when the header passes
     for sl in (tc.state, tc._state_before_ending, tc._state_after_ending):
         assert not await sl.is_initialized()
     assert theory_deletes == [], theory_deletes                # nothing has vanished so far
@@ -614,6 +650,38 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
         theory_deletes
 
 
+async def test_a_session_folder_that_cannot_be_made_stops_the_header_before_it_runs(conversation):
+    """MODULE_STRUCTURE §4.1: a `Theory`'s beginning makes its `Session`'s
+    folder, and one that cannot be made — a file, a symbolic link at its
+    path — raises a `TAT_StartupError` with COMPILATION.md §7's sentence,
+    which ends a conversation at the tool boundary, before anything runs:
+    nothing of the tree is written, in Isabelle or in the database."""
+    forest = conversation.forest
+    async with forest.lock:
+        blocked, linked = await edit.insert(forest, 0, [
+            {"kind": "session", "name": "TAT_E2E_Blocked", "parent_session": "HOL",
+             "children": [theory("TAT_E2E_D", "Main")]},
+            {"kind": "session", "name": "TAT_E2E_Linked", "parent_session": "HOL",
+             "children": [theory("TAT_E2E_L", "Main")]}], conversation.kinds)
+    directory = forest.conversation.working_directory
+    (directory / "TAT_E2E_Blocked").write_text("not a directory")
+    (directory / "TAT_E2E_Linked").symlink_to(directory)
+    _, _, (a_link, not_a_directory, _) = fenced_blocks(DOCS / "COMPILATION.md", "7.")
+    store = forest.store
+    rows = {node: store.fields(node) for node in store.nodes()}
+    for session, sentence in ((blocked, not_a_directory), (linked, a_link)):
+        (tree,) = session.sub_nodes
+        with pytest.raises(M.CannotUseWorkingDirectory) as refused:
+            await tree.evaluate_to(False)
+        assert isinstance(refused.value, TAT_StartupError)
+        assert str(refused.value) == (sentence.replace("<working directory>", str(directory))
+                                      .replace("<Session name>", session.name))
+        assert (tree.evaluation_status_beginning, tree.last_evaluation_statuses()) == \
+            (NOT_EVALUATED, (NOT_EVALUATED, NOT_EVALUATED))
+        assert not await tree._state_after_beginning().is_initialized()
+    assert {node: store.fields(node) for node in store.nodes()} == rows
+
+
 # --- the tools, and the next conversation on the same working directory ------------
 
 async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(conversation):
@@ -626,7 +694,8 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
             "constructs": [{"kind": "session", "name": "TAT_E2E", "parent_session": "HOL",
-                            "children": [theory("TAT_E2E_A", "Main")]}]})
+                            "children": [theory("TAT_E2E_A", "Main",
+                                                "HOL-Library.Phantom_Type")]}]})
     text = text_of(result)
     assert not result.isError, text
     assert text.startswith("Done: append Sessions.\n"), text
@@ -639,6 +708,9 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
     assert not sess.is_finished()
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == \
         (NOT_EVALUATED, NOT_EVALUATED)
+    # what the run before the restart stored: the statuses, and the session of each import
+    assert ta.last_evaluation_statuses() == (READY, READY)
+    assert ta.import_sessions == ["HOL", "HOL-Library"]
     r = await ta.evaluate_to(False)
     assert r.stopped_at is None, r
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)

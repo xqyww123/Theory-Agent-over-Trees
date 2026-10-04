@@ -82,21 +82,29 @@ since the name becomes a path element — with its own rendering of
 `InvalidName` (RENDER_BASELINES §2), a grammar strictly narrower than the
 framework's (MCP_SPECIFICATION §2), whose sentence is a backstop that
 cannot fire for a `Session`; the name is not `ROOT` in any spelling, since
-the session's folder would be the ROOT file's path, and not a name
-Isabelle reserves — `Path.is_reserved`'s and `Sessions.illegal_session`'s,
-asked through Isabelle's own predicates (`ReservedSessionName`,
+the session's folder would be the ROOT file's path (`ReservedSessionName`,
 RENDER_BASELINES §2); `parent_session`, and every option's `name` and
 `value`, are non-empty (`InvalidField`); no option name appears twice
-(`InvalidField`, naming the option); the name is not one the Isabelle
-session layout knows (`InvalidField`, §3); every option is accepted by
-Isabelle's `Options.update` (`InvalidField`, §3, carrying Isabelle's
-message); last, `parent_session` is not the session's own name, and is the
+(`InvalidField`, naming the option); then, in one question to Isabelle
+answered with the first defect: the name is not one Isabelle reserves —
+`Path.is_reserved`'s and `Sessions.illegal_session`'s, asked through
+Isabelle's own predicates (`ReservedSessionName`) — nor one the Isabelle
+session layout knows (`InvalidField`, §3), and every option is accepted
+as Isabelle reads a ROOT — the Scala function `TAT.check_options`,
+MODULE_STRUCTURE §2.3 — (`InvalidField`, §3, carrying Isabelle's
+message, its lines joined by single spaces); last, `parent_session` is
+not the session's own name, and is the
 name of a `Session` the call keeps in the forest or adds before this one —
 `NodeConfig`'s `parent`, `role` and `batch_before`, MODULE_STRUCTURE §4.1;
 one the call adds after it is not built yet — or of a session the Isabelle
 session layout knows (`InvalidField`, §3). The questions to Isabelle go
 through one callback, `TAT.check_session`, which answers the first defect
-(MODULE_STRUCTURE §2.3). Nothing checks them again: a parent deleted or
+(MODULE_STRUCTURE §2.3). The name's uniqueness is the framework's,
+comparing names without regard to case — on a file system that does not
+distinguish case two such sessions would share one folder, and Isabelle
+refuses a ROOT whose entries do — through a namespace of session names
+whose refusal is the id component's, `DuplicateName`, naming the holder.
+Nothing checks them again: a parent deleted or
 renamed afterwards, or two sessions each the other's parent, surface when
 `isabelle TAT_compile` has Isabelle read the ROOT it wrote (COMPILATION.md
 §2). Its trees are not chained: no tree's state is the next tree's input
@@ -190,7 +198,8 @@ and an empty option name or value; the second and third for
 the fourth for an option set twice; the fifth for an item of `imports`
 that is not a theory name in one of its two shapes; the sixth for a
 session name the Isabelle session layout already knows; the last for an
-option Isabelle refuses, with Isabelle's message:
+option Isabelle refuses, with Isabelle's message, its lines joined by
+single spaces:
 
 ```
 The field `parent_session` must not be empty.

@@ -89,9 +89,12 @@ class MissingRow(KeyError):
 
 class Forest_Store:
 
-    def __init__(self, path: str | Path, log: Log):
+    def __init__(self, path: str | Path, log: Log, read_only: bool = False):
         """`log` is the conversation's, for the `store` records of every
-        transaction (LOGGING.md §4)."""
+        transaction (LOGGING.md §4).  `read_only` is a compile's
+        (COMPILATION.md §5): the connection cannot write, and a database
+        without the store's tables — `TAT_new`'s, before any conversation
+        — is read as the empty forest."""
         if sqlite3.sqlite_version_info < SQLITE_MINIMUM:
             raise TAT_StartupError(
                 f"TAT needs SQLite {'.'.join(map(str, SQLITE_MINIMUM))} or newer;"
@@ -100,30 +103,29 @@ class Forest_Store:
         # the open transaction's net effect: a node's fields written, or
         # None once it was deleted — what the `transaction` record says
         self._changed: dict[int, list[str] | None] = {}
+        self._conn = self._connect(path)
         try:
-            # autocommit mode: the only transactions are the explicit ones below
-            self._conn = sqlite3.connect(path, isolation_level=None, check_same_thread=True)
-        except sqlite3.Error as e:
-            raise TAT_StartupError(f"{path}: {e}") from e
-        try:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            with self._transaction():           # nothing is committed in memory yet
-                self._conn.execute(
-                    "CREATE TABLE IF NOT EXISTS fields ("
-                    " node INTEGER NOT NULL, field TEXT NOT NULL, value BLOB NOT NULL,"
-                    " PRIMARY KEY (node, field)) STRICT")
-                self._conn.execute(
-                    "CREATE TABLE IF NOT EXISTS meta ("
-                    " key TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT")
-                version = self._meta("schema_version")
-                if version is None:
-                    self._set_meta("schema_version", SCHEMA_VERSION)
-                    self._set_meta("next_identity", 1)      # 0 is the forest root's
-                elif version != SCHEMA_VERSION:
-                    raise IncompatibleStore(
-                        f"{path}: schema version {version}, this TAT reads {SCHEMA_VERSION}")
-                elif type(self._meta("next_identity")) is not int:
-                    raise TAT_StartupError(f"{path}: meta `next_identity` is not an identity")
+            if read_only and self._has_tables():
+                self._check_version(path)
+            else:
+                if read_only:                   # the empty forest, set up in memory
+                    self._conn.close()
+                    self._conn = self._connect(":memory:")
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                with self._transaction():       # nothing is committed in memory yet
+                    self._conn.execute(
+                        "CREATE TABLE IF NOT EXISTS fields ("
+                        " node INTEGER NOT NULL, field TEXT NOT NULL, value BLOB NOT NULL,"
+                        " PRIMARY KEY (node, field)) STRICT")
+                    self._conn.execute(
+                        "CREATE TABLE IF NOT EXISTS meta ("
+                        " key TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT")
+                    if self._meta("schema_version") is None:
+                        self._set_meta("schema_version", SCHEMA_VERSION)
+                        self._set_meta("next_identity", 1)  # 0 is the forest root's
+                    self._check_version(path)
+            if read_only:
+                self._conn.execute("PRAGMA query_only = 1")
         except sqlite3.Error as e:
             self._conn.close()
             raise TAT_StartupError(f"{path}: {e}") from e
@@ -133,6 +135,27 @@ class Forest_Store:
         except BaseException:
             self._conn.close()
             raise
+
+    @staticmethod
+    def _connect(path: str | Path) -> sqlite3.Connection:
+        try:
+            # autocommit mode: the only transactions are the explicit ones below
+            return sqlite3.connect(path, isolation_level=None, check_same_thread=True)
+        except sqlite3.Error as e:
+            raise TAT_StartupError(f"{path}: {e}") from e
+
+    def _has_tables(self) -> bool:
+        names = {name for (name,) in self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('fields', 'meta')")}
+        return names == {"fields", "meta"}
+
+    def _check_version(self, path: str | Path) -> None:
+        version = self._meta("schema_version")
+        if version != SCHEMA_VERSION:
+            raise IncompatibleStore(
+                f"{path}: schema version {version}, this TAT reads {SCHEMA_VERSION}")
+        if type(self._meta("next_identity")) is not int:
+            raise TAT_StartupError(f"{path}: meta `next_identity` is not an identity")
 
     # -- transactions --------------------------------------------------------
 

@@ -5,16 +5,17 @@ The boot (docs/MODULE_STRUCTURE.md §5): the one file the launcher loads
 before TAT's theory exists, as the Isabelle process's prelude.  Compiled by
 Poly/ML's own compiler, outside any theory: Standard ML over Isabelle's
 structures, no antiquotations.  Defines the protocol command TAT.boot, whose
-arguments are those of TAT.start (TAT_Framework.ML): the working directory,
-the port, then the plugins' theory names.
+first argument names the protocol command to run once TAT's theory is
+loaded, TAT.start or TAT.compile (TAT_Framework.ML), and whose other
+arguments are that command's.
 *)
 
 val _ =
   Protocol_Command.define_bytes "TAT.boot" (fn args =>
     let
-      (*the launcher's answer on a failure before the hand-off; TAT.start
-        answers every later path, rendering the exception the same way
-        (TAT_Framework.ML)*)
+      (*the launcher's answer on a failure before the hand-off; the command
+        handed to answers every later path, rendering the exception the same
+        way (TAT_Framework.ML)*)
       fun messages exn =
         if Exn.is_interrupt exn then ["Interrupt"]
         else
@@ -23,7 +24,7 @@ val _ =
           | Exn.Exn _ (*sic!*) => ["CRASHED"])
       fun finished exn =
         Output.protocol_message [Markup.function "TAT.finished"]
-          [let open XML.Encode in pair int (list string) (1, messages exn) end]
+          [let open XML.Encode in pair int (list string) (2, messages exn) end]
       fun boot () =
        ((*the isabelle.Session's handshake, Prover.options, set it to 3 for any
           positive option value (Pure/System/isabelle_process.ML,
@@ -32,7 +33,9 @@ val _ =
         Multithreading.parallel_proofs := Options.default_int "parallel_proofs";
         Thy_Info.use_theories (Options.default ()) ""
           [("Theory_Agent_over_Trees.Theory_Agent_over_Trees", Position.none)];
-        Protocol_Command.run "TAT.start" args)
+        (case args of
+          command :: rest => Protocol_Command.run (Bytes.content command) rest
+        | [] => error "TAT.boot: no protocol command to run"))
     in
       (*forked: the protocol loop reads one message at a time, and a loading
         theory's Scala.function calls are answered through it*)

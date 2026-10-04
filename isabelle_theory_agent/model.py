@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import difflib
 import io
+import os
 import re
+import stat
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine, Mapping, Sequence
@@ -26,9 +28,9 @@ from Isabelle_RPC_Host.unicode import IsaTerm
 
 from . import isabelle_driver
 from .exceptions import (
-    AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
-    DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedTheoryName,
-    TAT_Error, TAT_InternalError, TAT_StartupError)
+    AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent, DuplicateName,
+    DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
+    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError)
 from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
 
@@ -260,12 +262,22 @@ PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 INDENT = "  "                            # one level
 
 
+def _indented(indent: int, text: str) -> list[str]:
+    """The lines of `text`, each at `indent`."""
+    return [INDENT * indent + line for line in text.split("\n")]
+
+
+def _emit_lines(indent: int, out: TextIO, text: str) -> None:
+    """Write `text` as whole lines at `indent`, each ending in a newline
+    (COMPILATION.md §3)."""
+    out.write("".join(line + "\n" for line in _indented(indent, text)))
+
+
 def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
     """The message block (PRINT.md §3): `header` at `indent`, every line of
     the message one level deeper."""
-    out.write(INDENT * indent + header + "\n")
-    for line in message.rstrip("\n").split("\n"):
-        out.write(INDENT * (indent + 1) + line + "\n")
+    _emit_lines(indent, out, header)
+    _emit_lines(indent + 1, out, message.rstrip("\n"))
 
 
 def is_valid_name(name: str) -> bool:
@@ -484,6 +496,7 @@ class Node(ABC):
         out.append(self)
         return out
 
+    @final
     def is_finished(self) -> bool:
         """Whether the node still owes anything (ARCHITECTURE §3.2): every
         operation of the node and of its subtree `Ready`, and it and every
@@ -582,6 +595,24 @@ class Node(ABC):
         """The children `print` descends into and the mode each gets
         (PRINT.md §2's table); none for a leaf."""
         return []
+
+    # --- Emission (COMPILATION.md §3): the two questions a compile asks of
+    # a node.  A compile runs on a forest loaded from the database and
+    # never evaluated, so both read only what is stored — authored fields,
+    # the recorded fields the class stores, `last_evaluation_statuses()`;
+    # never an instant status.
+
+    def can_emit(self) -> bool:
+        """Whether the node writes its text.  Default: every stored status
+        is a `Ready`; a class narrows it with `super().can_emit() and …`,
+        or replaces it."""
+        return all(isinstance(s, Ready) for s in self._last_evaluation_statuses)
+
+    @abstractmethod
+    def emit(self, indent: int, out: TextIO) -> int:
+        """Write the node at `indent`, whole lines each ending in a newline;
+        return the indent in effect after it.  Called only on the nodes of
+        a tree every node of which answered `can_emit`."""
 
     # --- Event hooks (MODULE_STRUCTURE §4.1), empty by default, driven by
     # the framework; two more, on_removing_child and on_added_child, live on
@@ -947,6 +978,30 @@ class StdBlock(NonLeaf_Node):
         await self._state_before_ending.copy_to(self.resulting_state())
         return READY_CLEAN
 
+    @final
+    def emit(self, indent, out):
+        """The framework's (COMPILATION.md §3): the beginning command, the
+        children in order with one empty line between siblings, the ending
+        command."""
+        below = self.emit_beginning(indent, out)
+        for i, child in enumerate(self.sub_nodes):
+            if i:
+                out.write("\n")
+            below = child.emit(below, out)
+        return self.emit_ending(indent, out)      # the block's own indent, not the last child's
+
+    @abstractmethod
+    def emit_beginning(self, indent: int, out: TextIO) -> int:
+        """The beginning command at `indent`; returns the indent the
+        children get."""
+
+    def emit_ending(self, indent: int, out: TextIO) -> int:
+        """The ending command at the block's own `indent`; returns the indent
+        in effect after the block.  Default: no ending command, the indent
+        unchanged — a class overrides it exactly when it overrides
+        `_eval_ending_opr` (PLUGIN_SYSTEM §5)."""
+        return indent
+
     async def _evaluate(self, ev, mode):
         began = mode.rewritten or self.evaluation_status_beginning is NOT_EVALUATED   # an obstacle is not rerun
         if began:
@@ -1017,6 +1072,10 @@ class Unchained_Node(NonLeaf_Node):
     def _invalidate(self, ev):
         for child in self.sub_nodes:             # no operation of its own
             child._invalidate(ev)
+
+    def emit(self, indent, out):
+        raise TAT_InternalError(
+            f"{type(self).__name__} emits no Isar: a compile writes the trees under it")
 
 
 # ---------------------------------------------------------------------------
@@ -1582,14 +1641,25 @@ class Forest(Unchained_Node):
         every run of the tree, so a repairing `move` clears it by itself."""
         if not isinstance(node, Theory):
             return None
+        misplaced = self._misplaced_imports(node)
+        return misplaced[0][0] if misplaced else None
+
+    def _misplaced_imports(self, tree: Theory, table: dict[str, Theory] | None = None
+                           ) -> list[tuple[str, Theory]]:
+        """The order constraint's position test, which the walk and the
+        compile share (COMPILATION.md §2): the `imports` items of `tree`
+        whose forest tree does not lie strictly earlier in tree order, each
+        with that tree, in the items' order."""
         trees = self._trees()
-        table = {t.qualified_name(): t for t in trees}
-        position = trees.index(node)
-        for item in node.imports:
-            target = self._import_of(node, item, table)
+        if table is None:
+            table = {t.qualified_name(): t for t in trees}
+        position = trees.index(tree)
+        out: list[tuple[str, Theory]] = []
+        for item in tree.imports:
+            target = self._import_of(tree, item, table)
             if target is not None and trees.index(target) >= position:
-                return item
-        return None
+                out.append((item, target))
+        return out
 
     async def _evaluate_tree(self, ev: Evaluation, tree: Node) -> Node | None:
         """The run of one tree and its one `_invalidate_from`
@@ -1716,6 +1786,44 @@ def is_valid_session_name(name: str) -> bool:
     return bool(_SESSION_NAME.fullmatch(name)) and not name.endswith(("-", "_"))
 
 
+# A `Session`'s folder, `Session.folder()` under the working directory
+# (COMPILATION.md §2): a compile writes the session's files into it, and a
+# theory's header is evaluated under it.  The two functions answer a
+# reason, and each caller puts its own opening before it (COMPILATION.md
+# §7).
+
+def session_folder_refusal(working_directory: Path, folder: Path) -> str | None:
+    """Why the path cannot be a session's folder, or None: the folder is a
+    directory or absent."""
+    try:
+        mode = os.lstat(working_directory / folder).st_mode
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(mode):
+        return f"{folder}/ is a symbolic link; a session's folder must be a directory or absent"
+    if not stat.S_ISDIR(mode):
+        return f"{folder}/ is not a directory; a session's folder must be a directory or absent"
+    return None
+
+
+def make_session_folder(working_directory: Path, folder: Path) -> str | None:
+    """Make a `Session`'s folder when it is absent.  Answers None, or the
+    reason it cannot be made: `session_folder_refusal`'s, or the system's."""
+    reason = session_folder_refusal(working_directory, folder)
+    if reason is None:
+        try:
+            (working_directory / folder).mkdir(exist_ok=True)
+        except OSError as e:
+            reason = f"{folder}/ cannot be made: {e.strerror}"
+    return reason
+
+
+class CannotUseWorkingDirectory(TAT_StartupError):
+    """A `Session`'s folder cannot be made when a theory of it begins
+    (MODULE_STRUCTURE §4.1): the working directory's structure is TAT's
+    alone, nothing an agent can do repairs it, and the conversation ends."""
+
+
 def is_theory_name_item(item: str) -> bool:
     """An item of `imports` (SESSION_AND_THEORY §2): `<short name>` or
     `<session>.<short name>`, each half in the session name's grammar so
@@ -1735,6 +1843,17 @@ def is_theory_name_item(item: str) -> bool:
 class Session_Option(TypedDict):
     name: str
     value: str
+
+
+def _option_value(option: Session_Option) -> str:
+    """An option's value as Isabelle is to read it: what the agent
+    supplied, less the double quotes it may have come in
+    (SESSION_AND_THEORY §1).  The one reading: creation's check sends it,
+    and the ROOT carries it."""
+    value = option["value"]
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1]
+    return value
 
 
 class Session_RawAST(TypedDict):
@@ -1779,6 +1898,11 @@ class Session(Unchained_Node):
     argument_schema = Session_RawAST
     output_omissible = input_omissible = True
     drop_priority = 1                   # after `Section`, before `Theory` (MCP_SPECIFICATION §2.1)
+    # Names compared without regard to case (SESSION_AND_THEORY §1), the
+    # refusal the id component's: on a file system that does not
+    # distinguish case, two such sessions would share one folder.
+    namespace = Namespace("session names",
+                          lambda name, holder: DuplicateName(f"session_{name}", holder))
 
     name: str                           # the Isabelle session name
     parent_session: str
@@ -1797,8 +1921,11 @@ class Session(Unchained_Node):
     async def gen(cls, config, raw: Session_RawAST):
         if not isinstance(config.parent, Forest):
             raise BadSessionNodeParent(raw["kind"], _parent_id(config))
-        if not is_valid_session_name(raw["name"]):
-            raise InvalidName(raw["name"], "session name")
+        name = raw["name"]
+        if not is_valid_session_name(name):
+            raise InvalidName(name, "session name")
+        if name.upper() == "ROOT":          # the session's folder would be the ROOT file's path
+            raise ReservedSessionName(name)
         if not raw["parent_session"]:
             raise InvalidField("parent_session", "must not be empty")
         options = raw.get("options", [])
@@ -1811,26 +1938,49 @@ class Session(Unchained_Node):
                 raise InvalidField(f"options[{i}].name",
                                    f"sets the option `{option['name']}` a second time")
             seen.add(option["name"])
-        # The parent: a session the call keeps in the forest or adds before
-        # this one, else one the Isabelle session layout knows; the last
-        # check, so a malformed construct costs no round trip
-        # (SESSION_AND_THEORY §1).
+        # What only Isabelle can say, in one round trip that answers the
+        # first defect, after every check that costs none: the name
+        # reserved, the name one the Isabelle session layout knows, an
+        # option refused, the parent unknown.  The parent is judged last
+        # (SESSION_AND_THEORY §1), and Isabelle is not asked about it in
+        # two cases: a session the call keeps in the forest or adds before
+        # this one bears its name; or it is the session's own name, so
+        # that "must not name the session itself", below, is not hidden
+        # behind "must name an existing session".
         parent_session = raw["parent_session"]
-        if parent_session == raw["name"]:
-            raise InvalidField("parent_session", "must not name the session itself")
         sessions = [s for s in (*config.parent.sub_nodes, *config.batch_before)
                     if isinstance(s, Session) and s is not _leaving(config.role)]
-        in_forest = any(s.name == parent_session for s in sessions)
-        if not in_forest and not await isabelle_driver.is_known_session(
-                config.parent.conversation, parent_session):
-            raise InvalidField("parent_session",
-                               f"must name an existing session; `{parent_session}` is not one")
-        return cls(config.parent, config.state, raw["name"], parent_session,
+        settled = parent_session == name or any(s.name == parent_session for s in sessions)
+        match await isabelle_driver.check_session(
+                config.parent.conversation, name, None if settled else parent_session,
+                [(option["name"], _option_value(option)) for option in options]):
+            case isabelle_driver.Name_Reserved():
+                raise ReservedSessionName(name)
+            case isabelle_driver.Name_Known():
+                raise InvalidField(
+                    "name", f"must not be the name of an existing Isabelle session; `{name}` is one")
+            case isabelle_driver.Option_Refused(i, message):
+                raise InvalidField(f"options[{i}]",                 # one line: the agent's sentence is one
+                                   f"is not accepted by Isabelle: {' '.join(message.splitlines())}")
+            case isabelle_driver.Parent_Unknown():
+                raise InvalidField("parent_session",
+                                   f"must name an existing session; `{parent_session}` is not one")
+            case isabelle_driver.Session_Ok():
+                pass
+        if parent_session == name:
+            raise InvalidField("parent_session", "must not name the session itself")
+        return cls(config.parent, config.state, name, parent_session,
                    list(options), raw.get("description", ""))
 
     def on_moving(self, new_location):
         if not isinstance(new_location.parent, Forest):
             raise BadSessionNodeParent(self.kind, self.forest().id_of(new_location.parent))
+
+    def folder(self) -> Path:
+        """The session's folder, relative to the working directory: its
+        name (COMPILATION.md §2).  The one place that says so — its trees'
+        files, the folder made for them and the ROOT's `in` path follow."""
+        return Path(self.name)
 
     def to_store(self, rows):
         rows.put("name", self.name)
@@ -1854,9 +2004,7 @@ class Session(Unchained_Node):
                 out.write(INDENT * indent + "options: "
                           + ", ".join(f"{o['name']} = {o['value']}" for o in self.options) + "\n")
             if self.description:
-                out.write(INDENT * indent + "description:\n")
-                for line in self.description.rstrip("\n").split("\n"):
-                    out.write(INDENT * (indent + 1) + line + "\n")
+                print_error(indent, out, self.description, "description:")
 
     async def _evaluate(self, ev, mode):
         raise TAT_InternalError(
@@ -1898,6 +2046,9 @@ class Theory(StdBlock):
 
     name: str                           # the short name; the qualified name is computed
     imports: list[str]
+    import_sessions: list[str]          # recorded when the header runs: the session of each
+                                        # import, which the ROOT's `sessions` clause is written
+                                        # from (COMPILATION.md §2); stored
     _state_after_ending: Isar_State_Slot    # the resulting slot: owned, since no successor's
                                             # input is (`Unchained_Node`); nothing reads it
 
@@ -1906,6 +2057,7 @@ class Theory(StdBlock):
         super().__init__(parent, state, [], state_before_ending)
         self.name = name
         self.imports = imports
+        self.import_sessions = []
         self._state_after_ending = state_after_ending
 
     @classmethod
@@ -1945,12 +2097,16 @@ class Theory(StdBlock):
     def to_store(self, rows):
         rows.put("name", self.name)
         rows.put("imports", self.imports)
+        rows.put("import_sessions", self.import_sessions)
 
     @classmethod
     def from_store(cls, config, rows):
         conversation = config.parent.forest().conversation
-        return cls(config.parent, config.state, rows.get("name"), rows.get("imports"),
+        node = cls(config.parent, config.state, rows.get("name"), rows.get("imports"),
                    Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation))
+        # a missing row reads as the empty list (COMPILATION.md §4, "Storage")
+        node.import_sessions = rows.fields().get("import_sessions", [])
+        return node
 
     def resulting_state(self):
         return self._state_after_ending
@@ -1969,12 +2125,27 @@ class Theory(StdBlock):
         the ML theory table (EVALUATOR_DESIGN §7)."""
         return f"{self.session().name}.{self.name}"
 
+    def file_path(self) -> Path:
+        """The tree's file, `<Session name>/<short name>.thy`, relative to
+        the working directory (COMPILATION.md §2): what a compile writes,
+        and its folder the `master_dir` the header is evaluated under."""
+        return self.session().folder() / f"{self.name}.thy"
+
     def header(self) -> str:
         """The `theory … begin` span, as the tree's file will open; every
         import quoted, so a hyphenated name is one token to Isabelle's
         lexer."""
         imports = " ".join(f'"{item}"' for item in self.imports)
         return f"theory {self.name}\n  imports {imports}\nbegin"
+
+    def emit_beginning(self, indent, out):
+        """The header, the one `_eval_beginning_opr` runs."""
+        _emit_lines(indent, out, self.header())
+        return indent
+
+    def emit_ending(self, indent, out):
+        _emit_lines(indent, out, "end")
+        return indent
 
     def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever
@@ -1999,21 +2170,31 @@ class Theory(StdBlock):
             out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
-    # operation's errors, empty when it passed (ARCHITECTURE §6.2), and
-    # whatever it lets escape is a bug (`isabelle_driver.call`).  The
-    # status the run leaves carries them (COMPILATION.md §4); a rendering
-    # inside the call — a `recall` takes no lock — reads the previous
-    # run's.
+    # operation's errors, empty when it passed (ARCHITECTURE §6.2) — the
+    # beginning's also the session of each import, recorded when it passed
+    # — and whatever it lets escape is a bug (`isabelle_driver.call`).  The
+    # status the run leaves carries the errors (COMPILATION.md §4); a
+    # rendering inside the call — a `recall` takes no lock — reads the
+    # previous run's.
 
     async def _eval_beginning_opr(self):
         session = self.session()
         conversation = self.forest().conversation
-        errors = await isabelle_driver.call(
+        # The session's folder, before the header runs: AoA's proof store
+        # beside the tree's file needs a directory to be written in.
+        reason = make_session_folder(conversation.working_directory, session.folder())
+        if reason is not None:
+            raise CannotUseWorkingDirectory(
+                f"TAT cannot use {conversation.working_directory} as its working directory:"
+                f" {reason}")
+        errors, import_sessions = await isabelle_driver.call(
             conversation, "TAT.Theory.begin",
             (self._state_after_beginning().to_msgpack(),
              (session.name,
-              str(conversation.working_directory / session.name),   # the plan's §1
+              str(conversation.working_directory / self.file_path().parent),   # the `master_dir`
               self.header())))
+        if not errors:
+            self.import_sessions = import_sessions          # stored with the status this run leaves
         return _status_of_errors(errors)
 
     async def _eval_ending_opr(self):

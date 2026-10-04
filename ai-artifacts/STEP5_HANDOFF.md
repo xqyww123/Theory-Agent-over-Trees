@@ -744,4 +744,10 @@ broken down).
   precedes each phase's commit. Phase A is implemented and reviewed
   (2026-10-04; the plan's §7); on its one open finding the owner ruled
   that a class mints and lists a slot of its own itself, the framework
-  releasing it through `_slots_written_by`; Phase B is next.
+  releasing it through `_slots_written_by`. Phase B is implemented
+  (2026-10-04; the plan's §4 "Where it stands"): `can_emit`/`emit`,
+  `compile.py`, the compile hooks, the names caught at creation
+  (`TAT.check_session`, the Scala function `TAT.reserved_name`),
+  `import_sessions`, the `Session` folder made at a theory's
+  beginning, and the three entries — `compile_TAT`, `TAT.compile`,
+  `isabelle TAT_compile`; its review is the plan's §8.

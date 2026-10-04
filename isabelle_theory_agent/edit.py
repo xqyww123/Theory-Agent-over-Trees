@@ -330,8 +330,8 @@ class Edit_Call:
     taken: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
                                      # the names the constructs built so far have
                                      # taken in each forest-wide namespace:
-                                     # namespace name -> name -> the construct's
-                                     # full path
+                                     # namespace name -> casefolded name -> the
+                                     # construct's full path
 
 
 def _holder_id(holder: Node | str, forest: Forest) -> str:
@@ -344,22 +344,26 @@ def _take_name(node: Node, full_path: str, call: Edit_Call) -> None:
     """For a class with a `namespace`: refuse the node's name if a node of
     the forest (other than the one the call replaces) or an earlier
     construct of the call already bears it in that namespace, else record
-    it for the rest of the call.  The forest's takers are found by walking
-    it, never recorded (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §3);
-    `DuplicateName` among siblings is `_construct_siblings`' own `taken`."""
+    it for the rest of the call.  Names are compared without regard to
+    case: Isabelle refuses two theory files whose names differ only in
+    case (MODULE_STRUCTURE §4.2).  The forest's takers are found by
+    walking it, never recorded
+    (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §3); `DuplicateName` among
+    siblings is `_construct_siblings`' own `taken`."""
     namespace = type(node).namespace
     if namespace is None:
         return
     leaving = _leaving(call.role)
+    name = node.name.casefold()
     for other in call.forest._all_nodes():
         theirs = type(other).namespace
-        if (other is not leaving and other.name == node.name
+        if (other is not leaving and other.name.casefold() == name
                 and theirs is not None and theirs.name == namespace.name):
             raise namespace.duplicate(node.name, call.forest.id_of(other))
     taken = call.taken.setdefault(namespace.name, {})
-    if node.name in taken:
-        raise namespace.duplicate(node.name, taken[node.name])
-    taken[node.name] = full_path
+    if name in taken:
+        raise namespace.duplicate(node.name, taken[name])
+    taken[name] = full_path
 
 
 async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname: str,

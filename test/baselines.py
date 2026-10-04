@@ -11,18 +11,21 @@ DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 def fenced_blocks(doc: Path, *section_prefixes: str) -> list[list[str]]:
     """Every ``` fence within the `## ` sections whose title starts with one
-    of `section_prefixes`, in document order, each as its lines."""
+    of `section_prefixes`, in document order, each as its lines.  A fence
+    inside a list item is indented: its lines are read less that indent,
+    and it closes at a fence line of the same indent."""
     blocks: list[list[str]] = []
-    in_section, in_fence = False, False
+    in_section, indent = False, None            # the open fence's indent; None outside one
     for line in doc.read_text().splitlines():
         if line.startswith("## "):
             in_section = line.removeprefix("## ").startswith(section_prefixes)
-        elif in_section and line.startswith("```"):
-            in_fence = not in_fence
-            if in_fence:
-                blocks.append([])
-        elif in_section and in_fence:
-            blocks[-1].append(line)
+        elif in_section and indent is None and line.lstrip(" ").startswith("```"):
+            indent = " " * (len(line) - len(line.lstrip(" ")))
+            blocks.append([])
+        elif in_section and indent is not None and line.startswith(indent + "```"):
+            indent = None
+        elif in_section and indent is not None:
+            blocks[-1].append(line.removeprefix(indent))
     return blocks
 
 

@@ -9,4 +9,5 @@ requirements = \
 sources = \
   src/scala/tat.scala
 services = \
-  isabelle.tat.TAT_Tools
+  isabelle.tat.TAT_Tools \
+  isabelle.tat.TAT_Functions

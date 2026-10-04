@@ -31,6 +31,7 @@ class Thm(Stub, M.Leaf):                  # compulsory in both directions
     def from_store(cls, config, rows):
         n = cls(config.parent, config.state); n.name = rows.get("name"); return n
     async def _eval_opr(self): raise NotImplementedError
+    def emit(self, indent, out): raise NotImplementedError
 
 class Sec(Stub, M.StdBlock):
     output_omissible = input_omissible = True
@@ -39,6 +40,7 @@ class Sec(Stub, M.StdBlock):
     def from_store(cls, config, rows):
         n = cls(config.parent, config.state, [], slot()); n.name = rows.get("name"); return n
     async def _eval_beginning_opr(self): raise NotImplementedError
+    def emit_beginning(self, indent, out): raise NotImplementedError
 
 class Sess(Sec):
     drop_priority = 1

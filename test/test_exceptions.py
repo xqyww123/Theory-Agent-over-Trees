@@ -13,7 +13,8 @@ from isabelle_theory_agent.exceptions import (
     ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
-    ReservedTheoryName, ResolutionError, TAT_DisasterError, TAT_Error, TAT_InternalError,
+    ReservedSessionName, ReservedTheoryName, ResolutionError, TAT_DisasterError, TAT_Error,
+    TAT_InternalError,
     TAT_IsabelleError, TAT_StartupError, UnexpectedChildren, UnexpectedField,
     UnknownKind)
 
@@ -162,6 +163,12 @@ def test_reserved_theory_name():
     check(ReservedTheoryName(name="FOL"),
           "`FOL` is a reserved theory name; choose another name.")
 
+def test_reserved_session_name():
+    check(ReservedSessionName(name="Aux"),
+          "`Aux` is a reserved session name; choose another name.")
+    check(ReservedSessionName(name="ROOT"),
+          "`ROOT` is a reserved session name; choose another name.")
+
 def test_holds_no_children():
     check(HoldsNoChildren(id="theory_X.lemma_P", kind="lemma"),
           "`theory_X.lemma_P` is a `lemma`, and it cannot hold children.")
@@ -286,6 +293,7 @@ def test_groups():
     assert issubclass(MalformedRawAST, RawASTError)
     assert issubclass(DuplicateTheoryShortName, BadEdit)
     assert issubclass(ReservedTheoryName, BadEdit)
+    assert issubclass(ReservedSessionName, BadEdit)
     assert issubclass(BadSessionNodeParent, BadEdit)
     assert issubclass(BadTheoryNodeParent, BadEdit)
     assert issubclass(ConstructNotSupported, ConstructFailed)

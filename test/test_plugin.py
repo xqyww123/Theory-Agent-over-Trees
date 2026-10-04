@@ -24,6 +24,7 @@ SHIPPED = list(M.FRAMEWORK_NODE_CLASSES)
 @pytest.fixture(autouse=True)
 def fresh_registry(monkeypatch):
     monkeypatch.setattr(plugin, "registry", {})
+    monkeypatch.setattr(plugin, "compile_hooks", {})
     monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [])
 
 
@@ -240,6 +241,52 @@ def test_the_descent_is_the_frameworks_for_leaves_and_nesting_classes_alike():
     rogue._children_to_print = descent                # type: ignore[method-assign]
     refused(rogue, "overrides `_children_to_print`")
     plugin.TAT_node(block("Plain", {"type": "array", "items": {"$ref": "#/$defs/Construct"}}))
+
+
+def test_emission_is_the_frameworks_to_place_and_an_override_keeps_its_methods_kind():
+    """COMPILATION.md §3's three rules: a `StdBlock` class does not
+    override `emit`; it overrides `_eval_ending_opr` exactly when it
+    overrides `emit_ending`; an override is a coroutine function exactly
+    when the method it overrides is."""
+    children = {"type": "array", "items": {"$ref": "#/$defs/Construct"}}
+    plain = lambda self, indent, out: indent          # noqa: E731
+    async def ending(self): return True
+
+    placing = block("Placing", children)
+    placing.emit = plain                              # type: ignore[method-assign]
+    refused(placing, "overrides `emit`")
+    runs_an_ending = block("Runs", children)
+    runs_an_ending._eval_ending_opr = ending          # type: ignore[method-assign]
+    refused(runs_an_ending, "one of `_eval_ending_opr` and `emit_ending` without the other")
+    writes_an_ending = block("Writes", children)
+    writes_an_ending.emit_ending = plain              # type: ignore[method-assign]
+    refused(writes_an_ending, "one of `_eval_ending_opr` and `emit_ending` without the other")
+    both = block("Both", children)
+    both._eval_ending_opr, both.emit_ending = ending, plain   # type: ignore[method-assign]
+    plugin.TAT_node(both)
+
+    async def can_emit(self): return True             # would answer a coroutine object, which is true
+    async def emit(self, indent, out): return indent
+    async def invalidated(self, operation): ...
+    refused(leaf("Eager", ["eager"], can_emit=can_emit), "`can_emit` is a coroutine")
+    refused(leaf("Awaited", ["awaited"], emit=emit), "`emit` is a coroutine")
+    refused(leaf("Hooked", ["hooked"], on_invalidated=invalidated), "`on_invalidated` is a coroutine")
+    refused(leaf("Lazy", ["lazy"], _eval_opr=lambda self: True), "`_eval_opr` is not a coroutine")
+    plugin.TAT_node(leaf("Emits", ["emits"], emit=plain, can_emit=lambda self: True))
+
+    # the rule reads the class's whole ancestry: a method inherited from a
+    # mixin overrides the framework's as one in the class's own body does
+    class Eager_Mixin:
+        async def can_emit(self): return True
+    class Lazy_Mixin:
+        def _eval_opr(self): return True
+    def inheriting(name, mixin, **body):
+        return type(name, (mixin, Persisted, M.Leaf), {
+            "construct_schema": leaf_schema([name.lower()]), "argument_schema": Empty,
+            "__module__": __name__, **body})
+    refused(inheriting("Inherits_Eager", Eager_Mixin, _eval_opr=Thm._eval_opr),
+            "`can_emit` is a coroutine")
+    refused(inheriting("Inherits_Lazy", Lazy_Mixin), "`_eval_opr` is not a coroutine")
 
 
 def test_a_node_is_equal_to_and_hashed_as_itself_alone():
@@ -615,6 +662,49 @@ def test_the_table_holds_the_listed_packages_classes_only(two_packages, monkeypa
     assert list(plugin.load(["fake_tat_pkg", "other_tat_pkg"]).kinds) == ["section", "fake", "other"]
     assert list(plugin.load(["other_tat_pkg", "fake_tat_pkg"]).kinds) == ["section", "fake", "other"]
     assert list(plugin.load([]).kinds) == ["section"]
+
+
+def test_a_compile_hook_is_checked_and_registered_at_import_and_returned_by_load(tmp_path, monkeypatch):
+    """PLUGIN_SYSTEM §1, §5: a module-level function under
+    `@TAT_compile_hook` — a plain function of one positional argument, not
+    a coroutine — joins `compile_hooks` in registration order when its
+    module is imported; `load` returns those the listed packages define,
+    and sweeps the hooks of a module that is gone."""
+    def hook_module(*names):
+        return ("from isabelle_theory_agent import plugin\n"
+                + "".join(f"@plugin.TAT_compile_hook\ndef {n}(forest): return None\n" for n in names))
+    pkg = tmp_path / "hooked_tat_pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("from . import hooks\n" + hook_module("tidy"))
+    (pkg / "hooks.py").write_text(hook_module("first", "second"))
+    (tmp_path / "other_hooks_pkg.py").write_text(hook_module("elsewhere"))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for module in ("hooked_tat_pkg", "hooked_tat_pkg.hooks", "other_hooks_pkg"):
+        monkeypatch.delitem(sys.modules, module, raising=False)
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
+
+    loaded = plugin.load(["other_hooks_pkg", "hooked_tat_pkg"])
+    names = lambda hooks: [h.__name__ for h in hooks]         # noqa: E731
+    assert names(plugin.compile_hooks) == ["elsewhere", "first", "second", "tidy"]   # as imported
+    assert names(loaded.compile_hooks) == ["elsewhere", "first", "second", "tidy"]
+    assert names(plugin.load(["hooked_tat_pkg"]).compile_hooks) == ["first", "second", "tidy"]
+    assert plugin.load([]).compile_hooks == () and len(plugin.compile_hooks) == 4    # nothing twice
+    monkeypatch.delitem(sys.modules, "other_hooks_pkg")                 # the module is gone
+    assert names(plugin.load(["hooked_tat_pkg"]).compile_hooks) == ["first", "second", "tidy"]
+    assert names(plugin.compile_hooks) == ["first", "second", "tidy"]
+
+    async def awaited(forest): ...
+    def yielding(forest): yield
+    async def yielding_awaited(forest): yield
+    def two(forest, more): ...
+    def keyword(*, forest): ...
+    for hook, reason in ((awaited, "not a coroutine"), (yielding, "not a generator"),
+                         (yielding_awaited, "not a generator"), (two, "one positional argument"),
+                         (keyword, "one positional argument"), (print, "a plain function")):
+        with pytest.raises(CannotLoadPlugin, match=reason) as e:
+            plugin.TAT_compile_hook(hook)
+        assert isinstance(e.value, TAT_StartupError)
+    assert names(plugin.compile_hooks) == ["first", "second", "tidy"]    # a refused hook registers nothing
 
 
 def test_a_package_that_fails_its_checks_fails_the_load(tmp_path, monkeypatch):

@@ -20,13 +20,13 @@ import importlib
 import inspect
 import re
 import sys
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
 from typing import (
-    Any, NamedTuple, NotRequired, Required, Union, get_args, get_origin, get_type_hints,
-    is_typeddict)
+    Any, NamedTuple, NotRequired, Required, TypeAlias, Union, get_args, get_origin,
+    get_type_hints, is_typeddict)
 
 import jsoncomment
 import jsonschema
@@ -35,8 +35,8 @@ from . import model
 from .exceptions import (
     InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
     UnexpectedField)
-from .model import (JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, StdBlock, Unchained_Node,
-                    is_valid_name)
+from .model import (Forest, JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, StdBlock,
+                    Unchained_Node, is_valid_name)
 from .store import CONSTRUCT_FRAMEWORK_FIELDS, FRAMEWORK_FIELDS
 
 
@@ -72,14 +72,48 @@ def TAT_node(cls: type[Node]) -> type[Node]:
     return cls
 
 
+# A compile hook (COMPILATION.md §5): a function of the forest root, which
+# a compile runs after it has written its files.
+Compile_Hook: TypeAlias = Callable[[Forest], None]
+
+# The process-wide registry of compile hooks, in registration order
+# (PLUGIN_SYSTEM §1), each once; like `registry`, it holds a hook exactly
+# while the module defining it is in `sys.modules`.
+compile_hooks: dict[Compile_Hook, None] = {}
+
+
+def TAT_compile_hook(hook: Compile_Hook) -> Compile_Hook:
+    """Function decorator: check the hook (PLUGIN_SYSTEM §5) — a plain
+    function of one positional argument, neither a coroutine nor a
+    generator, either of which a call would make and never run — and
+    register it."""
+    def refuse(reason: str) -> CannotLoadPlugin:
+        return CannotLoadPlugin(getattr(hook, "__module__", None),
+                                getattr(hook, "__name__", repr(hook)), reason)
+    if not inspect.isfunction(hook):
+        raise refuse("a compile hook is a plain function")
+    if inspect.iscoroutinefunction(hook):
+        raise refuse("a compile hook is not a coroutine; a compile is synchronous")
+    if inspect.isgeneratorfunction(hook) or inspect.isasyncgenfunction(hook):
+        raise refuse("a compile hook is not a generator")
+    parameters = list(inspect.signature(hook).parameters.values())
+    if len(parameters) != 1 or parameters[0].kind not in (
+            inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+        raise refuse("a compile hook takes one positional argument, the forest root")
+    compile_hooks[hook] = None
+    return hook
+
+
 @dataclass(frozen=True)
 class Loaded:
-    """What `load` hands the conversation: its kind table — what `edit`
-    dispatches on and `Forest` rebuilds nodes with — and the `edit` tool's
-    schema with its `$defs` filled in from the table's classes (PLUGIN_SYSTEM
-    §4)."""
+    """What `load` hands the conversation, or the compile: its kind table —
+    what `edit` dispatches on and `Forest` rebuilds nodes with — the `edit`
+    tool's schema with its `$defs` filled in from the table's classes
+    (PLUGIN_SYSTEM §4), and the compile hooks the listed packages define,
+    in registration order."""
     kinds: dict[str, type[Node]]
     edit_schema: JSON_Schema
+    compile_hooks: tuple[Compile_Hook, ...] = ()
 
 
 def load(python_packages: list[str]) -> Loaded:
@@ -92,6 +126,8 @@ def load(python_packages: list[str]) -> Loaded:
     # what it registered before it failed goes with it
     for cls in [c for c in registry if c.__module__ not in sys.modules]:
         del registry[cls]
+    for hook in [h for h in compile_hooks if h.__module__ not in sys.modules]:
+        del compile_hooks[hook]
     for cls in model.FRAMEWORK_NODE_CLASSES:
         if cls not in registry:
             TAT_node(cls)
@@ -104,11 +140,15 @@ def load(python_packages: list[str]) -> Loaded:
             raise CannotLoadPlugin(package, None, f"{type(e).__name__}: {e}") from e
     classes = [cls for cls in registry
                if cls in model.FRAMEWORK_NODE_CLASSES or _defined_in(cls, python_packages)]
-    return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes))
+    return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes),
+                  tuple(h for h in compile_hooks if _defined_in(h, python_packages)))
 
 
-def _defined_in(cls: type, packages: list[str]) -> bool:
-    return any(cls.__module__ == p or cls.__module__.startswith(p + ".") for p in packages)
+def _defined_in(defined: type | Compile_Hook, packages: list[str]) -> bool:
+    """Whether a class or a hook belongs to one of `packages`: its module
+    is the package or lies under it."""
+    module = defined.__module__
+    return any(module == p or module.startswith(p + ".") for p in packages)
 
 
 def edit_schema(classes: list[type[Node]]) -> JSON_Schema:
@@ -203,9 +243,15 @@ def _check_class(cls: type[Node]) -> list[str]:
     # nodes live in sets, and in lists compared with `==` (PRINT.md §2, `Forest.id_of`)
     if cls.__hash__ is not object.__hash__ or cls.__eq__ is not object.__eq__:
         raise _refuse(cls, "defines `__eq__` or `__hash__`; a node is equal to, and hashed as, itself alone")
-    for method in ("print_fields", "mark"):          # rendering is synchronous (PRINT.md)
-        if inspect.iscoroutinefunction(getattr(cls, method)):
-            raise _refuse(cls, f"`{method}` is a coroutine; rendering is synchronous")
+    if issubclass(cls, StdBlock):
+        if _defined_by(cls, "emit") is not StdBlock:
+            # the children are the framework's to place (COMPILATION.md §3)
+            raise _refuse(cls, "overrides `emit`; `emit_beginning` and `emit_ending` are the"
+                               " override points")
+        if (_defined_by(cls, "_eval_ending_opr") is StdBlock) != (_defined_by(cls, "emit_ending") is StdBlock):
+            raise _refuse(cls, "overrides one of `_eval_ending_opr` and `emit_ending` without the"
+                               " other; both say whether the class has an ending command")
+    _check_coroutines(cls)
     for method in ("gen", "to_store", "from_store"):
         if _defined_by(cls, method) is Node:
             raise _refuse(cls, f"does not override `{method}`")
@@ -227,14 +273,42 @@ def _check_class(cls: type[Node]) -> list[str]:
     return own_kinds
 
 
+def _check_coroutines(cls: type[Node]) -> None:
+    """An override is a coroutine function exactly when the method it
+    overrides is (PLUGIN_SYSTEM §5): rendering, emission and the event
+    hooks are synchronous, the evaluation hooks and `gen` are coroutines.
+    An `async def can_emit` would answer with a coroutine object, which
+    is true."""
+    mro = cls.__mro__
+    for i, c in enumerate(mro):
+        for name, own in c.__dict__.items():
+            overridden = next((b.__dict__[name] for b in mro[i + 1:] if name in b.__dict__), None)
+            f, g = _function(own), _function(overridden)
+            if f is None or g is None:
+                continue
+            if inspect.iscoroutinefunction(f) and not inspect.iscoroutinefunction(g):
+                raise _refuse(cls, f"`{name}` is a coroutine; the method it overrides is not")
+            if inspect.iscoroutinefunction(g) and not inspect.iscoroutinefunction(f):
+                raise _refuse(cls, f"`{name}` is not a coroutine; the method it overrides is")
+
+
+def _function(attribute: Any) -> Any:
+    """The function behind a class attribute — a plain function, or a
+    classmethod's or a staticmethod's — or None for anything else."""
+    if isinstance(attribute, (classmethod, staticmethod)):
+        attribute = attribute.__func__
+    return attribute if inspect.isfunction(attribute) else None
+
+
 def _defined_by(cls: type, name: str) -> type:
     """The class in `cls`'s MRO whose body defines `name` — read off the
-    class dicts, since a classmethod binds afresh on every access.  The
-    override checks compare it with `Node`: a framework class between
-    `Node` and the plugin's (`Leaf`, `StdBlock`, `Unchained_Node`) must not
-    define these methods itself, or the check goes blind for its
-    subclasses — the one exception, `NonLeaf_Node`'s `_children_to_print`,
-    is named in its check."""
+    class dicts, since a classmethod binds afresh on every access.  Each
+    override check compares it with the framework class that defines the
+    method: `Node` for most; `NonLeaf_Node` too for `_children_to_print`;
+    `StdBlock` for `emit`, `_eval_ending_opr` and `emit_ending`; `Leaf`,
+    `StdBlock` and `Unchained_Node` for `_own_statuses`.  A framework class
+    a check does not name must not define that method itself, or the check
+    goes blind for its subclasses."""
     return next(c for c in cls.__mro__ if name in c.__dict__)
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -128,7 +129,7 @@ class Taken:
 @dataclass(frozen=True)
 class Reserved:
     """No loaded theory bears it, but the Isabelle session layout declares
-    the name global."""
+    the name global, or Isabelle refuses it as a file or theory name."""
 
 @dataclass(frozen=True)
 class Free:
@@ -153,8 +154,53 @@ async def check_new_theory_short_name(conversation: Conversation, name: str) -> 
                 f"the ML callback TAT.check_new_theory_short_name answered {answer!r}")
 
 
-async def is_known_session(conversation: Conversation, name: str) -> bool:
-    """Whether the Isabelle session layout knows a session of the name: the
-    Isabelle half of `parent_session`'s check (MODULE_STRUCTURE §2.3).  The
-    forest half, and the rejection, live in `Session`'s gen."""
-    return await call(conversation, "TAT.is_known_session", name)
+# The answers of the session check (MODULE_STRUCTURE §2.3): the first defect
+# Isabelle finds, or none.
+
+@dataclass(frozen=True)
+class Session_Ok:
+    """Isabelle finds nothing to refuse."""
+
+@dataclass(frozen=True)
+class Name_Reserved:
+    """Isabelle reserves the name as a file or session name."""
+
+@dataclass(frozen=True)
+class Name_Known:
+    """The Isabelle session layout knows a session of the name."""
+
+@dataclass(frozen=True)
+class Option_Refused:
+    """Isabelle does not know the option, or its value is of the wrong
+    type: its place among the options, and Isabelle's message."""
+    index: int
+    message: str
+
+@dataclass(frozen=True)
+class Parent_Unknown:
+    """The Isabelle session layout knows no session of the parent's name."""
+
+Session_Answer: TypeAlias = Session_Ok | Name_Reserved | Name_Known | Option_Refused | Parent_Unknown
+
+
+async def check_session(conversation: Conversation, name: str, parent_session: str | None,
+                        options: Sequence[tuple[str, str]]) -> Session_Answer:
+    """`Session.gen`'s one question to Isabelle (MODULE_STRUCTURE §2.3):
+    the first defect of the name, the options — each a name and a value —
+    and the parent; `parent_session` None when the forest settled it and
+    Isabelle is not to be asked.  The forest half, and every rejection,
+    live in `Session`'s gen."""
+    match await call(conversation, "TAT.check_session",
+                     (name, parent_session, [list(option) for option in options])):
+        case ["ok"]:
+            return Session_Ok()
+        case ["name_reserved"]:
+            return Name_Reserved()
+        case ["name_known"]:
+            return Name_Known()
+        case ["option", str(index), str(message)]:
+            return Option_Refused(int(index), message)
+        case ["parent_unknown"]:
+            return Parent_Unknown()
+        case answer:
+            raise TAT_IsabelleError(f"the ML callback TAT.check_session answered {answer!r}")

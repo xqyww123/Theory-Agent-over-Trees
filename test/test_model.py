@@ -128,6 +128,9 @@ class T(M.Leaf):                    # a leaf whose operation succeeds unless tol
         TABLE.values[self.resulting_state().name] = f"after {self.name}" + run_tag(self.runs)
         return READY
     def on_invalidated(self, operation): self.consumed = NOT_RUN
+    def emit(self, indent, out):
+        out.write(M.INDENT * indent + f"text ‹{self.name}›\n")
+        return indent
     def __repr__(self): return self.name
 
 
@@ -174,6 +177,12 @@ class Block(M.StdBlock):
     def on_invalidated(self, operation):
         if operation == "beginning": self.consumed_begin = NOT_RUN
         else: self.consumed_end = NOT_RUN
+    def emit_beginning(self, indent, out):
+        out.write(M.INDENT * indent + f"section ‹{self.name}›\n")
+        return indent
+    def emit_ending(self, indent, out):               # the fake has an ending command
+        out.write(M.INDENT * indent + f"text ‹end of {self.name}›\n")
+        return indent
     def __repr__(self): return self.name
 
 
@@ -873,12 +882,40 @@ def test_the_loader_places_the_node_whatever_from_store_passed():
     assert f2.id_of(a) == "block_B.t_a"
 
 
+def test_a_block_threads_the_indent_through_what_it_emits():
+    """COMPILATION.md §3: a block's children get the indent `emit_beginning`
+    returns, each sibling the one the sibling before it returned, and
+    `emit_ending` the block's own; the block returns what `emit_ending`
+    returns."""
+    import io
+    class Deepening(T):
+        def emit(self, indent, out):
+            return super().emit(indent, out) + 5
+    class Stepped(Block):
+        def emit_beginning(self, indent, out):
+            return super().emit_beginning(indent, out) + 1
+        def emit_ending(self, indent, out):
+            return super().emit_ending(indent, out) + 3
+    kinds = {"t": Deepening, "block": Stepped}
+    f = OneTreeForest(CONN, kinds=kinds)
+    (blk,) = run(locked(f, edit.insert(f, 0, [{"kind": "block", "name": "B", "children": [
+        {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]}], kinds)))
+    out = io.StringIO()
+    assert blk.emit(2, out) == 5
+    assert out.getvalue() == (M.INDENT * 2 + "section ‹B›\n"
+                              + M.INDENT * 3 + "text ‹a›\n"
+                              + "\n"
+                              + M.INDENT * 8 + "text ‹b›\n"
+                              + M.INDENT * 2 + "text ‹end of B›\n")
+
+
 class Bare(M.Leaf):                 # a class that wrote neither persistence method
     argument_schema = T_RawAST
     @classmethod
     async def gen(cls, config, raw):
         n = cls(config.parent, config.state); n.name = raw["name"]; return n
     async def _eval_opr(self): return READY
+    def emit(self, indent, out): return indent
 
 class WriteOnly(Bare):              # ... and one that wrote only to_store
     def to_store(self, rows): rows.put("name", self.name)
