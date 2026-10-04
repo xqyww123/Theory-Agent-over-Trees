@@ -1495,6 +1495,75 @@ caught at once: the rebuild script assigned zsh's read-only variable
 which was restored by hand from the backup — a shell script around a
 build restores in a `trap` or avoids shell-reserved names.
 
+**The review of Batch 3's code** (owner, 2026-10-04: 「跑一轮小评审」;
+`review/LOGGING_BATCH3_REVIEW.md`, Workflow `wf_8ef84f09-ade`: three
+challengers capped at four findings each, a fresh defender per finding,
+one judge, Opus, xhigh, 21 minutes): **not accepted**. The production
+code of `hook.py` and `guard.py` is correct; commit `cdb776c` and the
+four assertions drew no finding. Ten findings, six defects, five of them
+in `test/test_scripts.py` — a check the design requires can be deleted
+with every test green: the path must be absolute (`run` did not start
+the scripts in the agent directory, where the client starts them); the
+agent directory made canonical (the temporary directory holds no
+symbolic link); the pid check (the dead holder's lock named a port
+nothing listens on); the lock's format (written by hand, not through
+`toplevel._held`); the proxy ignored (the shell's `no_proxy` exempts
+127.0.0.1) — and one of shape in `guard.py`: `main`'s failure handler
+repeats the dispatch, its worktree branch calling the failed function
+again, and the worktree line of the own-failure test fails nothing. One
+question for the owner: CLIENT_HOOKS §1 names `urllib`; `http.client`
+reads no proxy variable and follows no redirect, so the hook's two
+promises would hold by construction. Nothing is changed before the owner
+agrees to the fixes.
+
+The owner (2026-10-04): the fixes need no item-by-item discussion —
+「如果需要跟我讨论请给我具体问题，否则请 run Opus agents 来 review」; on
+the library, 「问题不大，可以接受。建议用性能好的那个」. Measured: under
+`-I`, `import http.client` costs about 11 ms and `import urllib.request`
+about 17 ms (the whole process 35 ms against 41 ms, a bare interpreter
+21 ms), and the hook runs at every TAT tool call; so `hook.py` posts with
+`http.client.HTTPConnection`, CLIENT_HOOKS §1's sentence names
+`http.client`, and what goes over the wire is unchanged. The fixes, as
+the judge ruled them:
+
+- `test_scripts.run` starts every script in the agent directory, where
+  the client starts it, and the relative-path case is `a.md`.
+- The fixture's working directory is reached through a symbolic link, so
+  every case runs on a linked path.
+- `guard.main` answers each failure beside the step it covers — a payload
+  whose hook cannot be told, the write's judgment, the launch's — and the
+  worktree's answer, which reads nothing, stands outside every handler;
+  the answers are unchanged. The own-failure test's worktree line, which
+  failed nothing (a worktree reads no `tool_input`), is replaced by the
+  one failure a worktree creation can have: a standard error that cannot
+  be written — still a failure, never exit 0 or 2. A departure from the
+  plan's step-9 test list, which named the old line.
+- The hook's tests take the lock through `toplevel._held` itself and
+  walk its states: absent; held, no port yet; a port nothing accepts on;
+  cleared; left by a holder that died (a child process that `os._exit`s
+  inside `_held`) with a live stub server on its port — the hook fails
+  and the stub received nothing, which pins the pid check.
+- The proxy case empties `no_proxy`/`NO_PROXY`: a proxy named, no host
+  exempted.
+
+Mutation checks, on copies of the scripts swapped in through a pytest
+plugin: without `isabs`; without the agent directory's `realpath`; the
+worktree inside a handler that falls back to the write's refusal; without
+the pid check; with a library that reads proxies; without the status
+check; `_held` writing another format — each fails at least one case;
+unmutated, 11 pass, also with `NO_PROXY=127.0.0.1` inherited.
+
+**Verified** (`review/LOGGING_BATCH3_FIXES_VERIFICATION.md`, Workflow
+`wf_dc399a14-c99`, five verifiers and a judge, Opus, xhigh, 11 minutes):
+**accepted**, no send-back. The verifiers' own checks: the old and the
+new guard answer alike over 978 payload and stream combinations; the
+request on the wire is unchanged but for urllib's `User-Agent` and
+`Connection: close` headers, which TAT's server reads neither; a mutant
+for every ruled check fails. Known and accepted: an answer of 301, 302 or
+303 from whatever listens on the lock's port is now "TAT is not
+running", exit 1, where urllib followed it — TAT's server sends none;
+the hook's run takes about 55 ms where it took 86 ms.
+
 Steps 9 and 12 committed 2026-10-04 as `ba5f999` (「提交」), [682d5e]
 told. Steps 10, 11 and 13 wait: 10 for [682d5e]'s step 1, 11 for its
 step 2, 13 for both sides.
@@ -1540,6 +1609,24 @@ owner, no code yet). What touches this work, and the answers given:
 - It tells this session when A1–A3 are in the tree; then the author's
   three waiting tests: a move writes no `walk_started`; funnels-4's test;
   tests-2's second half.
+- A1–A3 (and A4–A6) in the tree, 2026-10-04, uncommitted. The author's
+  waiting assertions, four with funnels-7 (d), written against it inside
+  three existing test functions and green: test_model's
+  `test_b_a_stop_strict_then_ignore` — the second strict walk past the
+  same stop writes `walk_started` and `walk_ended` alone (funnels-4;
+  with the setters' guard `_unchanged` made never to hold, in memory,
+  the test fails), and the strict walk after the `ignore_error` one
+  writes T2, the section's ending, T3 and T4 each as `{operation, ran:
+  false, status: not_evaluated}`, no messages, no duration (funnels-7
+  (d)); test_forest_walk's
+  `test_evaluate_to_inside_an_import_invalidates_its_importers_whole` —
+  the walk's `operation` records are A's ending and B's and C's
+  beginnings and endings, from the nodes, each written by no run
+  (tests-2); test_edit's `test_move_between_parents` — moving an
+  evaluated node writes `operation` records and no walk record (funnels-2
+  (iii)). They are in that session's uncommitted files and go into its
+  Phase A commit, named there as the author's. The `slots_released` pin
+  is its `test_model.py::test_slots_released_counts_each_deleted_name_once`.
 
 **`ending` is always `error`** (owner, 2026-10-04: 「连接断开的日志级别要从
 info 改成 error」, said to the compilation session, which relayed it; put

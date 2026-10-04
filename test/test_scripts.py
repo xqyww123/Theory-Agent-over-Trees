@@ -2,7 +2,8 @@
 §5), run on piped payloads with no client: `guard.py`'s write, launch and
 worktree answers and the answers of its own failures; `hook.py` against a
 stub server answering `/hook` and against no server, through every state
-of `tat.lock`.  The sentences are the documents' fenced lines.
+`toplevel._held` leaves `tat.lock` in.  The sentences are the documents'
+fenced lines.
 Run: python -m pytest test/test_scripts.py
 """
 
@@ -21,6 +22,7 @@ import pytest
 import isabelle_theory_agent
 from baselines import DOCS, fenced_blocks
 from harness import free_port
+from isabelle_theory_agent.toplevel import _held
 
 PACKAGE = Path(isabelle_theory_agent.__file__).parent
 [[OUTSIDE, CLIENTS_FILES], [WORKTREES]] = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "5.")
@@ -37,24 +39,33 @@ def deny(reason: str) -> dict:
 @pytest.fixture
 def working_directory(tmp_path) -> Path:
     """`.tat/` holding the two scripts, and the agent directory beside it,
-    as `configure` leaves them."""
-    (tmp_path / ".tat").mkdir()
+    as `configure` leaves them; reached through a symbolic link, as a
+    user's working directory may be."""
+    real = tmp_path / "real"
+    (real / ".tat").mkdir(parents=True)
     for script in ("hook.py", "guard.py"):
-        shutil.copy(PACKAGE / script, tmp_path / ".tat" / script)
-    (tmp_path / "TAT.agents").mkdir()
-    return tmp_path
+        shutil.copy(PACKAGE / script, real / ".tat" / script)
+    (real / "TAT.agents").mkdir()
+    (tmp_path / "link").symlink_to(real)
+    return tmp_path / "link"
 
 
-def run(working_directory: Path, script: str, payload: bytes, **env: str) -> subprocess.CompletedProcess[bytes]:
-    """The script as the client runs it: the interpreter in isolated mode,
-    the payload on its standard input."""
+def run(working_directory: Path, script: str, payload: bytes, env: dict[str, str] | None = None,
+        stderr: int = subprocess.PIPE) -> subprocess.CompletedProcess[bytes]:
+    """The script as the client runs it: in the agent directory, the
+    interpreter in isolated mode, the payload on its standard input."""
     return subprocess.run([sys.executable, "-I", str(working_directory / ".tat" / script)],
-                          input=payload, capture_output=True, env={**os.environ, **env}, timeout=30)
+                          input=payload, stdout=subprocess.PIPE, stderr=stderr,
+                          env={**os.environ, **(env or {})}, cwd=working_directory / "TAT.agents",
+                          timeout=30)
 
 
 def pre_tool_use(tool: str, tool_input) -> bytes:
     return json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool,
                        "tool_input": tool_input}).encode()
+
+
+WORKTREE_CREATE = json.dumps({"hook_event_name": "WorktreeCreate", "name": "w"}).encode()
 
 
 def guard(working_directory: Path, payload: bytes) -> tuple[dict | None, bytes, int]:
@@ -81,7 +92,7 @@ def test_a_write_is_allowed_inside_the_agent_directory_and_refused_outside(worki
         assert guard(working_directory, pre_tool_use(tool, {key: str(agents / "new" / "deep" / "b")})) == (
             ALLOW, b"", 0), tool
     for path in (str(agents), str(agents / ".." / "ROOT"), str(agents / "away" / "x"),
-                 "TAT.agents/a.md", str(working_directory / "TAT.sqlite"), "/etc/passwd"):
+                 "a.md", str(working_directory / "TAT.sqlite"), "/etc/passwd"):
         assert guard(working_directory, pre_tool_use("Write", {"file_path": path})) == (
             deny(outside), b"", 0), path
 
@@ -106,8 +117,7 @@ def test_a_launch_with_worktree_isolation_is_refused_and_any_other_left_undecide
 
 
 def test_a_worktree_creation_fails_with_the_sentence(working_directory):
-    payload = json.dumps({"hook_event_name": "WorktreeCreate", "name": "w"}).encode()
-    assert guard(working_directory, payload) == (None, (WORKTREES + "\n").encode(), 1)
+    assert guard(working_directory, WORKTREE_CREATE) == (None, (WORKTREES + "\n").encode(), 1)
 
 
 def test_a_hook_the_guard_does_not_serve_gets_no_decision(working_directory):
@@ -116,14 +126,20 @@ def test_a_hook_the_guard_does_not_serve_gets_no_decision(working_directory):
 
 def test_the_guards_own_failure_answers_as_the_hook_needs(working_directory):
     """A malformed `tool_input`, or no JSON at all: a write refused, a
-    worktree refused, a launch left undecided with exit 1 — never exit 2."""
+    launch left undecided with exit 1; a worktree creation whose sentence
+    cannot be written still fails — never exit 2."""
     agents = working_directory / "TAT.agents"
     outside = OUTSIDE.replace("<agent directory>", str(agents.resolve()))
     assert guard(working_directory, pre_tool_use("Write", [1])) == (deny(outside), b"", 0)
     assert guard(working_directory, pre_tool_use("Agent", [1])) == (None, b"", 1)
-    worktree = json.dumps({"hook_event_name": "WorktreeCreate", "tool_input": [1]}).encode()
-    assert guard(working_directory, worktree) == (None, (WORKTREES + "\n").encode(), 1)
     assert guard(working_directory, b"not json") == (deny(outside), b"", 0)
+    reader, writer = os.pipe()
+    os.close(reader)                                  # a standard error nobody reads
+    try:
+        r = run(working_directory, "guard.py", WORKTREE_CREATE, stderr=writer)
+    finally:
+        os.close(writer)
+    assert r.stdout == b"" and r.returncode not in (0, 2)
 
 
 # --- hook.py (CLIENT_HOOKS §1) -------------------------------------------------
@@ -165,45 +181,63 @@ def stub_server(status: int, body: bytes):
         thread.join(10)
 
 
-def lock(working_directory: Path, pid: int, port: int) -> None:
-    (working_directory / "tat.lock").write_text(f"{pid}\n{port}\n")
+# A holder that dies holding the lock, its port announced: `os._exit` skips
+# `_held`'s release as a crash does, and the kernel drops the `flock`.
+DIES_HOLDING = """
+import os, sys
+from pathlib import Path
+from isabelle_theory_agent.toplevel import _held
+with _held(Path(sys.argv[1])) as announce:
+    announce(int(sys.argv[2]))
+    os._exit(0)
+"""
 
 
 def hook(working_directory: Path, payload: bytes, **env: str) -> tuple[bytes, bytes, int]:
-    r = run(working_directory, "hook.py", payload, **env)
+    r = run(working_directory, "hook.py", payload, env)
     return r.stdout, r.stderr, r.returncode
 
 
 def test_the_hook_posts_its_payload_and_prints_a_200_answers_body(working_directory):
-    """The payload byte for byte as JSON to `/hook` at the lock's port, the
-    answer's body unchanged; an empty body is an empty answer; the address
-    itself whatever proxy the environment names."""
+    """The payload byte for byte as JSON to `/hook` at the port the lock's
+    holder announced, the answer's body unchanged; an empty body is an
+    empty answer; the address itself whatever proxy the environment names."""
     payload = b'{"hook_event_name": "Stop", "session_id": "s", "note": "\xe2\x80\xa6"}'
     body = b'{"decision": "block", "reason": "\xe2\x80\xa6"}'
-    with stub_server(200, body) as (port, requests):
-        lock(working_directory, os.getpid(), port)
+    with stub_server(200, body) as (port, requests), _held(working_directory) as announce:
+        announce(port)
         assert hook(working_directory, payload) == (body, b"", 0)
         assert requests == [("/hook", "application/json", payload)]
+        # a proxy named, no host exempted
         assert hook(working_directory, payload, http_proxy="http://127.0.0.1:1",
-                    HTTP_PROXY="http://127.0.0.1:1") == (body, b"", 0)
-    with stub_server(200, b"") as (port, _):
-        lock(working_directory, os.getpid(), port)
+                    HTTP_PROXY="http://127.0.0.1:1", no_proxy="", NO_PROXY="") == (body, b"", 0)
+    with stub_server(200, b"") as (port, _), _held(working_directory) as announce:
+        announce(port)
         assert hook(working_directory, payload) == (b"", b"", 0)
 
 
 @pytest.mark.parametrize("status", [503, 500, 204])
 def test_any_answer_but_200_is_tat_not_running(working_directory, status):
-    with stub_server(status, b"ignored") as (port, _):
-        lock(working_directory, os.getpid(), port)
+    with stub_server(status, b"ignored") as (port, _), _held(working_directory) as announce:
+        announce(port)
         assert hook(working_directory, b"{}") == (b"", (NOT_RUNNING + "\n").encode(), 1)
 
 
 def test_the_hook_fails_readably_without_a_running_conversation(working_directory):
-    """The lock absent; cleared; the port not yet written; a dead holder's;
-    a port nothing accepts on (`toplevel._held`'s states): exit 1, the
-    sentence, nothing on stdout."""
-    dead = subprocess.run(["sh", "-c", "echo $$"], capture_output=True, text=True).stdout.strip()
-    for contents in (None, "", f"{os.getpid()}\n", f"{dead}\n8191\n", f"{os.getpid()}\n{free_port()}\n"):
-        if contents is not None:
-            (working_directory / "tat.lock").write_text(contents)
-        assert hook(working_directory, b"{}") == (b"", (NOT_RUNNING + "\n").encode(), 1), contents
+    """`toplevel._held`'s states: the lock absent; held, the port not yet
+    written; a port nothing accepts on; cleared on release; left by a
+    holder that died, another server on its port — exit 1, the sentence,
+    nothing on stdout, nothing posted."""
+    def fails():
+        assert hook(working_directory, b"{}") == (b"", (NOT_RUNNING + "\n").encode(), 1)
+    fails()
+    with _held(working_directory) as announce:
+        fails()
+        announce(free_port())
+        fails()
+    fails()
+    with stub_server(200, b"{}") as (port, requests):
+        subprocess.run([sys.executable, "-c", DIES_HOLDING, str(working_directory), str(port)],
+                       check=True, timeout=30)
+        fails()
+        assert requests == []

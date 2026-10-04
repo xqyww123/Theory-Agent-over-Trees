@@ -74,26 +74,25 @@ def worktree_refused() -> int:
 def main() -> int:
     agent_directory = os.path.realpath(
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "TAT.agents"))
-    hook = None
+    refused = deny(outside(agent_directory))
     try:
         payload = json.load(sys.stdin)
         hook = hook_of(payload)
-        if hook == "worktree":
-            return worktree_refused()
-        if hook == "write":
+    except Exception:           # a payload whose hook cannot be told is refused as a write
+        return answered(refused)
+    if hook == "worktree":      # reads nothing, so has no failure to answer
+        return worktree_refused()
+    if hook == "write":
+        try:
             return answered(write_judged(agent_directory, payload["tool_input"]))
-        if hook == "launch":
+        except Exception:
+            return answered(refused)
+    if hook == "launch":
+        try:
             return answered(launch_judged(payload["tool_input"]))
-        return 0
-    except Exception:
-        # as the hook needs: a worktree refused, a launch left undecided
-        # (exit 1, which no client reads as a block), a write — or a payload
-        # whose hook cannot be told — refused
-        if hook == "worktree":
-            return worktree_refused()
-        if hook == "launch":
+        except Exception:       # undecided: exit 1, which no client reads as a block
             return 1
-        return answered(deny(outside(agent_directory)))
+    return 0
 
 
 if __name__ == "__main__":

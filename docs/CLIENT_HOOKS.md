@@ -64,7 +64,7 @@ the first line when it takes the lock, its port on the second once the
 server listens, both cleared on release (MODULE_STRUCTURE §4.6) — so no
 file carries a port and nothing depends on the hook's current directory.
 It reads the two lines, checks the pid is alive, posts its standard input
-to `http://127.0.0.1:<port>/hook` with `urllib`, connecting to the
+to `http://127.0.0.1:<port>/hook` with `http.client`, connecting to the
 address directly whatever proxy the environment names, prints the body
 of a 200 answer, and exits 1 on everything else. It fails the same way
 for an absent lock file, an emptied one, the moment before the port is
