@@ -245,10 +245,13 @@ Not exception classes — evaluation failure lives outside the hierarchy
 The order constraint's stop (ARCHITECTURE §3.3), a tree importing a forest
 tree placed after it, or itself — composed by the tool from the forest's
 answer (`Forest._order_violation`, MODULE_STRUCTURE §4.1): the tree's id
-and the offending item, `S.C` as the agent wrote it in `imports`:
+and the offending item, `S.C` as the agent wrote it in `imports`; the
+second line when the item names the tree itself, which no move can put
+after it (approved 2026-10-05):
 
 ```
 Since `theory_B` imports `S.C`, you cannot put it before `S.C`. Move it later.
+`theory_B` imports itself. Remove `S.B` from its imports.
 ```
 
 `Loader.fetch` (ML side), an import found nowhere — no forest tree, no

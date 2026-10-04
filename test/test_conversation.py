@@ -24,10 +24,10 @@ from isabelle_theory_agent.isabelle_driver import call
 from isabelle_theory_agent.model import NOT_EVALUATED, Isar_State_Slot
 from test_model import CANNOT_EVALUATE, READY
 
-# RENDER_BASELINES §3's two fenced lines, in order; the second is the
+# RENDER_BASELINES §3's three fenced lines, in order; the third is the
 # loader's refusal, asserted verbatim for `TAT_Nowhere.Nope` and derived for
-# every other name.  A third line, or a missing one, fails here.
-_, NOT_FOUND = fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")
+# every other name.  A fourth line, or a missing one, fails here.
+_, _, NOT_FOUND = fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")
 assert NOT_FOUND.count("`TAT_Nowhere.Nope`") == 1, NOT_FOUND
 
 

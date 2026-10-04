@@ -918,7 +918,9 @@ edge" in the sections touched becomes "import dependency" (ARCHITECTURE
 - The rendering of the order constraint's sentence from
   `_order_violation`: TOOL_SCHEMAS.md §4, with the `evaluate_to` tool.
 - RENDER_BASELINES §3's sentence reads oddly for a self-import, where the
-  tree and the item coincide; it stands unless the owner wants a variant.
+  tree and the item coincide; the owner approved a variant on 2026-10-05
+  (RENDER_BASELINES §3's second line), rendered with the first by the
+  `evaluate_to` tool.
 - The AFP Isabelle session `CoreC++`, and its theory of the same name,
   cannot be imported: `+` is outside §1 item 13's grammar.
 

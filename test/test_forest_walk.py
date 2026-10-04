@@ -239,6 +239,14 @@ def test_a_self_import_is_a_stop():
     assert r.stopped_at is a and RUNS == [] and f._order_violation(a) == "A"
     not_evaluated(a)
     inv(f)
+    # the sentence's variant for an item naming the tree itself, on the
+    # document's own example: RENDER_BASELINES §3's second line verbatim
+    f = forest(session("S", theory("B", "S.B")))
+    (b,) = f.sub_nodes[0].sub_nodes
+    item = f._order_violation(b)
+    assert item == "S.B" and f._resolved_imports(b) == [b]   # what tells the renderer to use the variant
+    composed = f"`{f.id_of(b)}` imports itself. Remove `{item}` from its imports."
+    assert composed == fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")[1]
 
 
 # --- the stop crossing an import dependency ----------------------------------
