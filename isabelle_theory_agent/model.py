@@ -212,11 +212,10 @@ class Evaluation:
 
 @dataclass(frozen=True)
 class Evaluating:
-    """Where an evaluating walk is: run what is `not_evaluated`.
-    `rewritten`: the state at this position was written by an operation
-    that ran in this walk, so whatever stands here runs again even if
-    `Ready` or an obstacle — its input changed under it."""
-    rewritten: bool = False
+    """Where an evaluating walk is: before the destination, running what
+    is `not_evaluated`.  A written operation is never rerun: whatever
+    stands after one that ran is `not_evaluated` already, since every
+    invalidation runs forward to the tree's end (ARCHITECTURE §3.4)."""
 
 
 @dataclass(frozen=True)
@@ -683,24 +682,23 @@ class Node(ABC):
         it and of its subtree written `not_evaluated` through the setters,
         which release, store and log onto `ev`.  Runs and awaits nothing."""
 
-    def _mode_after(self, ev: Evaluation, stop: Node | None, ran: bool) -> Evaluating | None:
+    def _mode_after(self, ev: Evaluation, stop: Node | None) -> Evaluating | None:
         """The mode after a node the walk reached: None at the destination
-        and at a stop — nothing more runs in the tree; otherwise `ran`
-        tells the successor whether its input was just rewritten.  The
-        other answer of None is a nesting node's whose beginning failed
-        with the destination under it (`StdBlock._evaluate`)."""
+        and at a stop — nothing more runs in the tree; otherwise
+        `Evaluating`.  The other answer of None is a nesting node's whose
+        beginning failed with the destination under it
+        (`StdBlock._evaluate`)."""
         if self is ev.destination or stop is not None:
             return None
-        return Evaluating(rewritten=ran)
+        return Evaluating()
 
-    def _reached(self, ev: Evaluation, ran: bool) -> EvaluationResult:
+    def _reached(self, ev: Evaluation) -> EvaluationResult:
         """The walk reached the node, its last operation settled: the node
         joins `ev.passed`, and is the walk's stop when that operation is
-        not `Ready` and `ignore_error` is unset.  `ran`: whether the
-        operation wrote its result in this walk."""
+        not `Ready` and `ignore_error` is unset."""
         ev.passed.append(self)
         stop = self if not isinstance(self._resulting_status(), Ready) and not ev.ignore_error else None
-        return EvaluationResult(stop, self._mode_after(ev, stop, ran))
+        return EvaluationResult(stop, self._mode_after(ev, stop))
 
     async def evaluate_to(self, ignore_error: bool) -> EvaluationResult:
         """The `evaluate_to` tool's entry: run up to and including this
@@ -754,15 +752,12 @@ class Leaf(Node):
         `resulting_state()`, which `ignore_error` will run from."""
 
     async def _evaluate(self, ev, mode):
-        # Not rerun: a Ready operation, or an obstacle — unless the input
-        # under it was rewritten this walk.
-        ran = mode.rewritten or not _wrote(self._status)
-        if ran:
+        if not _wrote(self._status):              # a Ready operation, or an obstacle, is not rerun
             status, duration = await _timed(self._eval_opr())
             if isinstance(status, CannotEvaluate):
                 await self.state.copy_to(self.resulting_state())
             self._set_status(ev, status, duration)
-        return self._reached(ev, ran)
+        return self._reached(ev)
 
 
 class NonLeaf_Node(Node):
@@ -1003,8 +998,7 @@ class StdBlock(NonLeaf_Node):
         return indent
 
     async def _evaluate(self, ev, mode):
-        began = mode.rewritten or self.evaluation_status_beginning is NOT_EVALUATED   # an obstacle is not rerun
-        if began:
+        if self.evaluation_status_beginning is NOT_EVALUATED:          # an obstacle is not rerun
             status, duration = await _timed(self._eval_beginning_opr())
             self._set_beginning(ev, status, duration)
         if isinstance(self.evaluation_status_beginning, CannotEvaluate):   # the children have no context
@@ -1013,24 +1007,21 @@ class StdBlock(NonLeaf_Node):
             if ev.destination is not None and ev.destination._is_under(self):
                 # the tree's walk ends here: a stop to this call alone (ARCHITECTURE §3.3)
                 return EvaluationResult(None if ev.ignore_error else self, None)
-            # The input stands as the result — copied again when the input
-            # was rewritten; a standing copy is left alone.
-            copied = mode.rewritten or not isinstance(self.evaluation_status_ending, Ready)
-            if copied:
+            # The input stands as the result; a standing copy is left alone.
+            if not isinstance(self.evaluation_status_ending, Ready):
                 await self.state.copy_to(self.resulting_state())
                 self._set_ending(ev, READY_CLEAN, None)
-            return self._reached(ev, copied)
+            return self._reached(ev)
 
-        r = await self._evaluate_children(ev, Evaluating(rewritten=began))
+        r = await self._evaluate_children(ev, mode)
         if r.mode is None:                        # the destination or a stop lies under: nothing more runs
             return r
-        ended = r.mode.rewritten or not _wrote(self.evaluation_status_ending)
-        if ended:
+        if not _wrote(self.evaluation_status_ending):
             status, duration = await _timed(self._eval_ending_opr())
             if isinstance(status, CannotEvaluate):
                 await self._state_before_ending.copy_to(self.resulting_state())
             self._set_ending(ev, status, duration)
-        return self._reached(ev, ended)
+        return self._reached(ev)
 
 
 class Unchained_Node(NonLeaf_Node):

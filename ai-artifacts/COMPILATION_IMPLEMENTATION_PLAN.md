@@ -697,8 +697,10 @@ known failures (`ai-artifacts/review_phase_b/known_failures.txt`).
 Ruled on 2026-10-05: the lines `TAT.finished` carries on `2` stay on
 the standard output, as Isabelle's `Console_Progress` prints an error;
 the delta after Phase A's review needs no further review; the version
-floor of `isabelle-rpc` in Isa-Mini is the release agent's. Still to
-do: the usage text of `isabelle TAT_compile`; his "批准提交".
+floor of `isabelle-rpc` in Isa-Mini is the release agent's; the usage
+text of `isabelle TAT_compile` approved as drafted; the parent
+repository's submodule pointer left alone. Phase B is committed as
+`ee9e4f5` (2026-10-05).
 
 The shapes B2 was written to:
 
@@ -928,7 +930,12 @@ As A8. The documents' status lines; CR gains the record.
    either flag, a restart, the importer rule — and found each closed.
    The plan keeps `rewritten` as MS §4.1 lists it; removing it is a
    simplification to decide after A7's invariant has run over the
-   suite.
+   suite. Removed on 2026-10-05 with the owner's approval ("批准删除
+   rewritten"), the invariant having held through Phase B's suite:
+   `Evaluating` carries nothing, `_mode_after` and `_reached` take no
+   `ran`, each operation runs exactly when it is unwritten; MS §4.1's
+   code block and "The recursion", and AR §3.3's rerun sentence, say so.
+   §3's code shapes above keep the flag as a record of Phase A.
 
 ## 6. How this plan was checked
 

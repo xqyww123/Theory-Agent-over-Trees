@@ -766,9 +766,7 @@ class Evaluation:                    # one walk: made by `Forest._run` for the w
                                      # stored whole at each tree's end and when the walk ends
     def release(self, slot)          # deleted together when the Evaluation is flushed
 
-class Evaluating: rewritten: bool           # before the destination: run what is not_evaluated;
-                                            # rewritten: the state here was written this walk,
-                                            # so even a Ready node or an obstacle runs again
+class Evaluating                            # before the destination: run what is not_evaluated
 
 @dataclass(frozen=True)
 class EvaluationResult:
@@ -787,8 +785,9 @@ def _invalidate_from(self, position: Location, ev: Evaluation) -> None   # Fores
 
 `Leaf`, `StdBlock` and `Forest` each write `_evaluate`; `StdBlock`'s runs
 the beginning, the children, then the ending, and nothing is skipped up
-to the destination: a `Ready` operation is not rerun unless the walk
-rewrote the state before it (`Evaluating.rewritten`), but every node up
+to the destination: a written operation is not rerun — what stands after
+one that ran is `not_evaluated` already, every invalidation running
+forward to the tree's end (ARCHITECTURE §3.4) — but every node up
 to the destination, or up to the first stop when `ignore_error` is
 unset, or, whatever the flag, up to a nesting node above the
 destination whose beginning failed, is visited. `Forest`'s handles each tree of the
@@ -803,9 +802,9 @@ each tree's end and `blocking` waits on every tree's passed nodes; a tree
 reaching the second case has every resolved import earlier in tree order
 and already handled, so its statuses are current. The mode changes in
 `_mode_after`, which answers `None` at the destination and at a stop
-when `ignore_error` is unset, and otherwise `Evaluating` with
-`rewritten` set when the node ran, and at a nesting node whose beginning
-failed, which answers `None` when the destination lies under it (below).
+when `ignore_error` is unset, and otherwise `Evaluating`, and at a
+nesting node whose beginning failed, which answers `None` when the
+destination lies under it (below).
 An evaluating walk's destination is a node, reached at its ending;
 there, as at a stop when `ignore_error` is unset, `_evaluate` returns,
 and `_handle_tree` hands what follows to `_invalidate_from` (below).

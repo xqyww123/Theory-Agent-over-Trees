@@ -310,7 +310,7 @@ it in the tree is `not_evaluated`.
 
 A **nesting node whose beginning command failed** leaves its children no context
 to run in. Its beginning is `cannot_evaluate` and, like any obstacle, is not
-rerun until it is edited or a walk rewrites the state before it (§3.5);
+rerun until it is edited (§3.5);
 its ending is `ready` once a walk has gone on after the block (§3.2);
 every node under it is
 `not_evaluated`, and none of them runs while the ancestor stays as it is.
@@ -430,9 +430,8 @@ reached: the recursion of §3.5 skips what is evaluated and runs what is not.
 
 `evaluate_to(destination, ignore_error, checks)` (MCP_SPECIFICATION §4)
 runs every `not_evaluated` node up to and including the destination, in
-tree order, and every node whose input state the walk itself rewrote — a
-`cannot_evaluate` obstacle is not rerun otherwise, and one that is a stop
-reports itself again (§3.3) — and invalidates everything after the
+tree order — a `cannot_evaluate` obstacle is not rerun, and one that is a
+stop reports itself again (§3.3) — and invalidates everything after the
 destination in its tree, or, in a tree whose walk stops, after the stop
 — after the destination still when the stop is a nesting node above it
 whose beginning failed (§3.3, §3.4). It is one recursion,
@@ -449,8 +448,7 @@ never interleave:
   has no theory value, is a stop instead (§3.3). A `Session` as destination
   stands for all the trees under it, and the root for every tree: the
   forest schedules each of them, to its `end`, through the same graph.
-- A **nesting node** runs its beginning command if it is not evaluated, or if
-  the walk rewrote the state before it. If that
+- A **nesting node** runs its beginning command if it is not evaluated. If that
   command succeeded, now or earlier, it calls its children in order up to
   the one that contains the destination, what follows being invalidated
   past the destination (§3.4);
@@ -472,11 +470,10 @@ tree's walk ends, and everything after that node to the tree's end is
 invalidated — after the destination, when the walk ended at such a
 nesting node (§3.4).
 Nothing is skipped on the way:
-a `ready` operation is not rerun unless the state before it was rewritten
-in this walk — then it runs again, and the rerun writes `ready` over
-`ready` in one step, never passing through `not_evaluated` (§3.6) — and a
-nesting node whose ending is `ready` is still entered, since an obstacle
-passed under `ignore_error` may sit inside it.
+a written operation is not rerun — whatever stands after one that ran is
+`not_evaluated` already, since every invalidation runs forward to the
+tree's end (§3.4) — and a nesting node whose ending is `ready` is still
+entered, since an obstacle passed under `ignore_error` may sit inside it.
 
 An edit's invalidation evaluates nothing. It has a position — a parent
 and an index among its children — reached before whatever stands there:
