@@ -89,6 +89,19 @@ def test_on_a_working_directory_only_the_absent_hook_files_are_written(tmp_path)
     assert (wd / ".cursor" / "hooks.json").read_text() == "mine\n"
 
 
+def test_a_path_with_a_bracket_is_refused_by_both_tools(tmp_path):
+    """MODULE_STRUCTURE §5: both clients read `[` and `]` as pattern syntax
+    in the entries that hide the working directory from the agents, so
+    neither tool takes such a path — before anything is made or read."""
+    for name in ("a[1]", "b]"):
+        wd = tmp_path / name
+        sentence = f"*** {wd} contains [ or ], which TAT cannot use in a working directory path"
+        for tool in (tat_new, tat_mcp):
+            r = tool(str(wd))
+            assert r.returncode == 2 and r.stdout == "" and r.stderr.strip() == sentence, (tool, r)
+        assert not wd.exists()
+
+
 def test_a_session_under_the_working_directory_is_refused(tmp_path):
     """MODULE_STRUCTURE §5 step 3: the Isabelle session layout is checked
     before anything is built or started.  The session's folder need not

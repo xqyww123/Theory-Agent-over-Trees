@@ -40,9 +40,17 @@ object TAT {
   }
 
   /* absolute: the path travels to the Python side, which may be a process
-     started elsewhere (ARCHITECTURE §9) */
+     started elsewhere (ARCHITECTURE §9); no `[` or `]`, which both clients
+     read as pattern syntax in the entries that hide the directory from the
+     agents (CLIENT_HOOKS.md §5) */
 
-  def working_directory(arg: String): Path = Path.explode(arg).absolute
+  def working_directory(arg: String): Path = {
+    val dir = Path.explode(arg).absolute
+    if (dir.implode.exists(c => c == '[' || c == ']')) {
+      error(dir.implode + " contains [ or ], which TAT cannot use in a working directory path")
+    }
+    dir
+  }
 
 
 

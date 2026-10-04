@@ -1415,15 +1415,26 @@ author's step 7 becomes a review of that code against LOGGING §4. Batch
 into `start`); steps 9–11 sit on it; `hook.py` is CLIENT_HOOKS §1 and
 nothing beyond. Step 13 and [682d5e]'s smoke run are one live run, after
 both sides are in, with both plans' measurements taken in it.
+The order after its plan's review (2026-10-03): step 9 now; step 10
+after its step 1 (`-c`, the subclasses, the `configure` call point);
+step 11 after its step 2 (the announcement, `agent_of_call`,
+`ClientRefused`); LIP's steps 7 and 11 and its division paragraph
+brought in line. Its one refusing method on `TAT_Server` writes
+`client_refused` and enters the ending with the `ClientRefused`; the
+sandbox check calls it.
 [682d5e] also adds `ClientRefused(TAT_StartupError)` with its `line`,
 `stopped()`'s branch answering it and RENDER_BASELINES §4's fourth and
 sixth lines (its two refusals: `clientInfo`, Claude Code's missing
-transcript); step 11 adds the sandbox check, the fifth line and the
-`client_refused` record on that class. Announced by [682d5e] for its
-steps: `TAT_Server` loses `on_compaction` (`/on-compaction` and
-`mcp.on_compaction` go with `POST /hook`; the server is built in
-`served()` from the client's subclass; `configure(working_directory)` a
-base method called before the port is bound, empty until step 10);
+transcript); step 11 adds the sandbox check with the fifth line, calling
+that method, which writes the `client_refused` record. Announced by
+[682d5e] for its steps: `TAT_Server` loses `on_compaction` —
+`/on-compaction`, `mcp.on_compaction` and
+`test_on_compaction_answers_the_briefing_in_the_clients_shape` go in its
+step 4, with the per-agent seen set, not with `POST /hook` (its step 2),
+since until then the old path is what clears the one set; the server is
+built in `served()` from the client's subclass; `configure(
+working_directory)` a base method called before the port is bound,
+empty until step 10;
 `Tool.run` takes the calling `Agent`; `Ending.end` cancels the
 construction jobs and drops the evaluation jobs in its synchronous
 stretch — told to keep `_entered.set()` unconditional and `forest` None
@@ -1431,3 +1442,58 @@ before the start built it. The SDK runs each message in a task of its
 own (`Server.run`, mcp 1.26.0: `tg.start_soon(self._handle_message, …)`),
 confirmed by [682d5e], so the context variables set in the handler reach
 no other request.
+
+## Batch 3 (from 2026-10-03, after `df271ca`)
+
+The owner asked whether the send-backs' delta needs a review of its own;
+the author's answer: no — four small production spots and the tests, each
+verified with mutation checks by a verifier of its own; the next review
+is Batch 3's, which may look at this delta too.
+
+**Step 9, `hook.py` and `guard.py`** — written 2026-10-03. The author's
+shapes:
+
+- Both scripts are modules of the package (MODULE_STRUCTURE §4's listing),
+  standard library only, run as `'<python>' -I '<wd>/.tat/<script>'`;
+  each finds the working directory as the parent of its own directory.
+- `hook.py`: `tat.lock`'s first two lines (pid, port — `toplevel._held`'s
+  format: a cleared or half-written file has fewer), `os.kill(pid, 0)` for
+  the holder's life, `urllib.request` with `ProxyHandler({})` so the
+  address itself is connected whatever proxy the environment names, the
+  payload posted byte for byte with `Content-Type: application/json`, a
+  200 answer's body written to stdout unchanged (an empty body is an
+  empty answer); any other status, and every exception, is exit 1 with
+  CLIENT_HOOKS §1's line on stderr.
+- `guard.py`: the probe `tat_guard5.py` without its probe-only parts;
+  `hook_of(payload)` names the hook served — `write`, `launch`,
+  `worktree` or none — and is read again by the failure branch, which
+  answers as that hook needs (a write refused with the first sentence, a
+  worktree refused with the sentence and exit 1, a launch left undecided
+  with exit 1, a payload whose hook cannot be told refused as a write);
+  `tool_input` is taken strictly (`payload["tool_input"]`), so a
+  malformed one is a failure of the guard's own.
+- `test/test_scripts.py`: the scripts copied into a temporary `.tat/`
+  beside a `TAT.agents/` and run through `subprocess` as the client runs
+  them; the sentences read from CLIENT_HOOKS §1 and §5's fenced lines;
+  a stub `HTTPServer` answering `/hook` with a given status and body,
+  keeping the requests (path, content type, payload); the lock's five
+  states as test_launcher listed them; a proxy named in the environment
+  ignored. 11 cases pass.
+
+**Step 12, the launcher's bracket refusal** — written 2026-10-03. The
+check sits in `TAT.working_directory(arg)`, which both tools call right
+after `Getopts`, so it comes before every other check and a bracket path
+that does not exist is refused as such by `TAT_mcp` too (MODULE_STRUCTURE
+§5 lists the refusals as alternatives, not in an order); the sentence is
+the design's, through `error`, exit 2. `lib/tat.jar` rebuilt with
+`isabelle scala_build` (no `isabelle TAT_mcp` running; `etc/build.props`'s
+`no_build` line removed and restored). test_launcher: the new case
+passes for both tools and both bracket characters; the 3 known failures
+(the old hook files, [682d5e]'s to retire) stay. A slip of the author's,
+caught at once: the rebuild script assigned zsh's read-only variable
+`status` after the build and aborted before restoring `build.props`,
+which was restored by hand from the backup — a shell script around a
+build restores in a `trap` or avoids shell-reserved names.
+
+Steps 10, 11 and 13 wait: 10 for [682d5e]'s step 1, 11 for its step 2,
+13 for both sides.

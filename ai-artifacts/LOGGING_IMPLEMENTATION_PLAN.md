@@ -23,10 +23,15 @@ subclasses, each naming the `clientInfo.name` it expects (`claude-code`,
 `codex-mcp-client`); `POST /hook` in place of `/on-compaction` and the
 `CLIENTS` table; `agent_of_call`, `event_of_hook`; the `Agent` objects,
 mailboxes and seen sets; the stop and interruption rules; the
-`clientInfo` check; retiring `TAT_new`'s old hook files and their tests —
-on the ending object and `conversation.log` of Batch 1, after steps 1–2
-and the compilation code are on `main`. Steps 10–11 here sit on its
-subclasses. Code starts after this session's context is compacted.
+`clientInfo` check; retiring `TAT_new`'s old hook files and their tests;
+step 7's `fork_job` work, which this session reviews; `ClientRefused`
+with its `line`, `stopped()`'s branch for it and the one refusing method
+that writes `client_refused` — on the ending object and
+`conversation.log` of Batch 1. The order (2026-10-03): step 9 now; step
+10 after that session's step 1 (`-c`, the two subclasses, the
+`configure` call point); step 11 after its step 2 (the announcement,
+`agent_of_call`, `ClientRefused`); step 13 is one live run with its
+smoke run.
 
 *(author)* The `Log`'s shape: `Log(directory, logger)`; one attribute
 per category, one typed method per event, mirroring the files —
@@ -125,13 +130,13 @@ per category, one typed method per event, mirroring the files —
    e) orelse Exn.is_interrupt e`, local to it) and by `fork_job`;
    `TAT_Common_Nodes` and the test plugin `Test_TAT_Framework.thy` drop
    `mk_callback`.
-7. **`fork_job`** — waits for the evaluation-job implementation (the jobs
-   session's), as the `job` events do. Then: the report carries `failure`
+7. **`fork_job`** — the jobs session's whole: the report carries `failure`
    on the wire as `["ok"]`, `["messages", [...]]` or `["bug", <message>]`
    (MODULE_STRUCTURE §2.4); the Python `job_finished` raises
    `TAT_InternalError` on `["bug", …]` before the process-wide job lookup
    (CONSTRUCT_INTERACTION §3.3); `job_forked`, `job_ended`,
-   `report_undelivered` records into the log captured at the fork.
+   `report_undelivered` records into the log captured at the fork. This
+   session's step: the review of that code against LOGGING §4.
 8. **`TAT.log_directory`**: the callback stores the directory's absolute
    path and sends the protocol message of the same name; `toplevel`'s
    layer 1 calls it through `isabelle_driver.call` right after the
@@ -156,7 +161,8 @@ per category, one typed method per event, mirroring the files —
 
 ## Batch 3 — `configure`, `hook.py`, `guard.py`
 
-Steps 10 and 11 wait for the jobs session's `TAT_Server` subclasses.
+Step 10 waits for the jobs session's `TAT_Server` subclasses (its step
+1), step 11 for its `ClientRefused` and refusing method (its step 2).
 
 9. **The scripts** `hook.py` and `guard.py` in the package, copied into
    `.tat/` by `configure`; `guard.py` from
@@ -186,16 +192,16 @@ Steps 10 and 11 wait for the jobs session's `TAT_Server` subclasses.
     path with a space and a `'` in it (a working directory cannot hold
     `'`); the TOML with and without the resolver line; the resolver rule
     on a fake layout; the `configured` record.
-11. **The Codex sandbox check and `ClientRefused`** (EXCEPTIONS §3,
-    RENDER_BASELINES §4, MODULE_STRUCTURE §4.6): the capability declared
-    in `initialize`; a call whose `_meta` lacks `codex/sandbox-state-meta`
-    or whose policy is not the profile's — recognised by its `deny` entry
-    on the working directory — refuses the session; `stopped()` choosing
-    the line by the rule.
+11. **The Codex sandbox check** (CLIENT_HOOKS §5, CONSTRUCT_INTERACTION
+    §8, RENDER_BASELINES §4): the capability declared in `initialize`; a
+    call whose `_meta` lacks `codex/sandbox-state-meta` or whose policy is
+    not the profile's — recognised by its `deny` entry on the working
+    directory — refuses the session through the jobs session's one
+    refusing method, with the fifth line (`ClientRefused`, `stopped()`'s
+    branch and the `client_refused` record are that session's).
     *Test:* `test_mcp_server.py`: such a call ends the conversation, the
     `client_refused` record carries its `_meta`, and every call in flight
-    is answered the fifth line; a later session with a lower version the
-    sixth.
+    is answered the fifth line.
 12. **`TAT_new` and `TAT_mcp`** refuse a path with `[` or `]` (Scala),
     then `isabelle scala_build`.
     *Test:* `test_launcher.py`: the refusal's sentence and exit code.

@@ -994,16 +994,16 @@ with `import_sessions`.
 ## 14. The code, after the freeze
 
 The owner lifted the freeze on 2026-10-03 ("建议在 compact 后开工"), the
-design having passed reader 10. The work, in order, all on the frozen
-step-1 code as it stands (`isabelle_theory_agent/model.py`, `edit.py`,
-`store.py`, `isabelle_driver.py`, `plugin.py`, `test/`), on top of the
-logging session's uncommitted steps (its step 2 landed: `toplevel.py`,
-`mcp_server.py`'s `Ending`, `Conversation(connection, working_directory,
-log, ending)`, model.py's imports; its step 3, `isabelle_driver.call`
-with the `round_trip` record and every caller of `call` in model.py, in
-progress — message that session before touching model.py's callers of
-`call`, and never edit `toplevel.py`, `mcp_server.py` or `Conversation`'s
-constructor):
+design having passed reader 10, then held the start the same day until
+the logging session's Python-side batch was in and he approves again
+("在我批准前你不准开工。要等待另一个 agent 工作完成"); that batch is in
+and committed (steps 1–4, `2e8f6e7` and `d9472b3`; its Isabelle-side
+batch uncommitted), and as of this writing nothing of items 1–7 is in
+the working tree — the code is the frozen step-1 code under those
+commits. The work, in order, on `isabelle_theory_agent/model.py`,
+`edit.py`, `store.py`, `isabelle_driver.py`, `plugin.py` and `test/` as
+they stand (never `toplevel.py`, `mcp_server.py`, `log.py` or
+`Conversation`'s constructor, the logging session's):
 
 1. The walk (ruling 3 of §10, rulings simplicity-1/-2/-3 of §13, reader
    8's ruling): `Seeking`, `Invalidating`, `Blocked`, `EvaluationMode`,
@@ -1015,8 +1015,10 @@ constructor):
    child, answers `None` when the destination lies under it (itself as
    `stopped_at` when `ignore_error` is unset), otherwise copies its
    input to its ending and carries on; one `Evaluation` per walk
-   (`starter`, `checks`, `passed`, `dropped` as the construct session's
-   design adds them; `stored` and the released slots emptied at each
+   (`checks`, logged by `walk_started`, and `passed`, which the walk
+   fills — a leaf when reached, a nesting node at its ending; `starter`
+   and `dropped` are the jobs code's, added with `Agent` and the job
+   drop that fill them; `stored` and the released slots emptied at each
    tree's end); `_handle_tree`'s one `_invalidate_from` call with the
    position after `stopped_at` — after the destination when the stop is
    a nesting node above it — or after the destination when it lies in
@@ -1024,14 +1026,27 @@ constructor):
    its next tree; the two plain functions `_invalidate(ev)` (Leaf,
    StdBlock, Unchained_Node) and `Forest._invalidate_from(position, ev)`
    with the setter's guard; `Theory._set_ending`'s cascade on the
-   stored field.
+   stored field; `Forest._run` the evaluating walk's alone, writing
+   `walk_started` (a required destination) and `walk_ended` (the walk's
+   own deletion count, from `flush`), an edit's `_invalidate_from`
+   writing only `operation` records (the logging review's funnels-2);
+   `stopped` written once, in `_handle_tree`; every record naming nodes
+   by `Forest.full_id`; `Theory._eval_beginning_opr` making
+   `<working directory>/<Session name>/` before every run of the
+   header, through the compile's folder function (below).
 2. The setters (§10 rulings 1, 4–7; §13 status-1, simplicity-4): plain
    methods writing both fields; the guard "stored already
-   `not_evaluated` → nothing"; release on written→unwritten; the stored
-   check cleared when the stored status leaves `Ready`; seen-set keys
-   discarded; `ev.stored.add`; `on_invalidated` and `_on_context_change`
-   through `_completed`; the evaluation job dropped; the `evaluation`
-   log record through the logging session's `log.py`.
+   `not_evaluated` → nothing" at the top of each of the three, before
+   `_stored` (funnels-4); release on written→unwritten, the node's
+   `owned_slots` released with the operation's resulting state (below);
+   the seen-set keys discarded through `Conversation.forget(key)`, added
+   in its minimal form (one set) for the jobs code to reimplement over
+   the agents; `ev.stored.add`; `on_invalidated` through `_completed`;
+   the `evaluation` log record through `log.py`. Left to the jobs code
+   (the construct session's, with `_check_outcome`, `Agent` and the
+   jobs): the stored check's clearing when the stored status leaves
+   `Ready`, `_on_context_change` through `_completed`, the evaluation
+   job's drop — three lines in the same setters.
 3. The edit's commit (§10 simplicity-4; §13 status-2, recursion-1): one
    transaction at the end of the synchronous block, before the round
    trips (`theory_delete` of the vanished names returned by the plain
@@ -1040,15 +1055,28 @@ constructor):
    still in the forest a completed hook fired on, the rows of a deleted
    subtree deleted, an amend deleting nothing; `_store_node` refuses a
    node whose parent chain does not reach the forest; `move` keeps its
-   two `_invalidate_from` calls; `_carry_forward`'s release branch goes.
-4. The store (§10 code-1, status-5): `FRAMEWORK_FIELDS` split from the
-   loader's check; a malformed `last_evaluation_statuses` row →
-   `TAT_StartupError`; `Theory.from_store` reads a missing
+   two `_invalidate_from` calls; `_carry_forward`'s release branch goes;
+   the four "store transaction + `committed` record" blocks become one
+   context manager named from "the edit's one store transaction"
+   (elegance-8); a deleted or amended-away node's `owned_slots` released
+   with its `state`.
+4. The store (§10 code-1, status-5): the reserved stored rows (`kind`,
+   `children`, `last_evaluation_statuses`; the jobs code adds its own)
+   split from the construct's two framework fields (`kind`, `children`)
+   that plugin.py checks against; a malformed `last_evaluation_statuses`
+   row → `TAT_StartupError`; `Theory.from_store` reads a missing
    `import_sessions` as the empty list; `import_sessions` committed with
-   the step.
-5. `IsaTerm` (§10 code-4-move): moves from `isabelle_driver.py` into
-   `Isabelle_RPC_Host.unicode` (contrib/Isabelle_RPC), AoA importing it
-   from there.
+   the step; the loader minting a node's `owned_slots` beside its
+   `state`, as `edit._construct_element` does.
+5. `IsaTerm` (§10 code-4-move): one class in `Isabelle_RPC_Host.unicode`
+   (contrib/Isabelle_RPC), TAT and AoA both importing it from there.
+   Which class it is awaits the owner, asked on 2026-10-03: TAT's
+   (`isabelle_driver.IsaTerm`; THEOREM §2: `str()` refused, equality on
+   `ascii`), or AoA's (`contrib/Isa-Mini/IsaMini/AoA/model.py`, the one
+   the owner's approval of 2026-09-30 names — DOC_SYNC_LIST "Outside
+   this repository": `unicode.py` receives it unchanged), which keeps
+   both properties and adds `to_unicode`, `to_ascii`, `__len__`,
+   `__lt__` and equality with a `str`. Until then this item waits.
 6. `Forest._run` (§10 status-1): whatever escapes `_eval_opr`,
    `_eval_beginning_opr`, `_eval_ending_opr` → `TAT_InternalError`.
 7. Tests: the six `evaluate=False` callers through a test helper (lock,
@@ -1058,13 +1086,46 @@ constructor):
    `test_the_root_has_no_position`; `assert_store_mirrors` comparing
    `_status_to_store` forms; `test/invariants.py`'s `CannotEvaluate`
    clause; the new tests of §13 (a cross-tree `move`; a repeated
-   `_invalidate_from` storing nothing; `_on_context_change` raising
-   `InvalidField` under an edit; an amend and a delete under hooks that
-   record a field; a destination under a failed beginning reported as
-   stopped at that node); `pyright isabelle_theory_agent`; the full
-   suite; `test/test_conversation.py` against the real Isabelle (the
-   REPL server only, never `isabelle build`).
+   `_invalidate_from` storing nothing; an amend and a delete under hooks
+   that record a field; a destination under a failed beginning reported
+   as stopped at that node; `_on_context_change` raising `InvalidField`
+   under an edit is the jobs code's, with the hook); the logging
+   session's tests of 2026-10-03 kept passing (the two-importer
+   `stopped` records, the per-tree `slots_released` sum, the amend's
+   `committed` record, the `store.transaction` assertions on the edit
+   path); `pyright isabelle_theory_agent`; the full suite;
+   `test/test_conversation.py` against the real Isabelle (the REPL
+   server only, never `isabelle build`).
 8. A code review against the documents (challengers → merge → one
    fresh defender per merged finding → judge; Opus 5.5, xhigh), then
    the owner's "批准提交" before any commit; `git push origin main` only
    on request.
+
+Two rules of the construct session's AoA path (2026-10-03, the forked
+session [7f92f0]; ai-artifacts/review/DOC_SYNC_LIST.md entry 23) are
+folded into items 1–4 above, as MODULE_STRUCTURE §4.1 "States" and its
+`Theory` bullet state them. `owned_slots`: a class attribute, a tuple of
+slot names, empty on `Node`, `('goal_state',)` on `Theorem`; the
+framework mints one `Isar_State_Slot` per name wherever it mints the
+node's `state` — construction and load — and sets it as the node's
+attribute of that name; only the class's evaluation callback writes
+them; every setter taking an operation from written to unwritten
+releases them with that operation's resulting state, never on a
+rewrite; a deleted or amended-away node's go into the released set with
+its `state`. The `Session` folder: before every run of `Theory`'s
+beginning, the framework makes `<working directory>/<Session name>/`
+if absent, through the function the compile uses (COMPILATION §4);
+what the beginning does when that function refuses — a symbolic link
+or a file at the path — awaits the owner's ruling (the construct
+session's proposal: the beginning fails with the refusal's sentence as
+its message); until it comes, the refusal is raised as the compile
+raises it.
+
+After item 8 the compile round: `compile.py`, `Node.can_emit`, `emit`,
+`emit_beginning`, `emit_ending`, the compile hooks' framework side and
+the ML/Scala side of `TAT_compile` (COMPILATION §3, §5) — `Theorem`'s
+own `can_emit`/`emit` and its package's proof-store hook being the
+construct session's. The `evaluate_to` tool (mcp.py, `tools/
+evaluate_to.jsonc`, `checks`) and `Theory`'s `description` field are
+in the construct session's plan unless the owner assigns them
+otherwise.
