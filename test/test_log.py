@@ -67,7 +67,6 @@ def test_every_event_method_writes_one_record_into_its_category(log):
     its category's name the file, its fields the record's `data`; `ts` in
     the documented form; no agent and no call outside any context."""
     assert list(log.directory.iterdir()) == []
-    assert TABLES["conversation"]["ending"] == "info or error"     # the one method with a body
     for category, table in TABLES.items():
         attribute = getattr(log, category)
         assert set(public_methods(attribute)) == set(table), category
@@ -138,26 +137,22 @@ def test_agent_and_call_come_from_the_context_variables(log):
     assert "agent" not in stand_ins.records("store")[-1]
 
 
-def test_ending_takes_the_exception_and_the_level(log, caplog):
-    """Its class, `message`, the traceback (§4); `error` is mirrored to the
-    logger, `info` is not."""
+def test_ending_takes_the_exception(log, caplog):
+    """Its class, `message`, the traceback, at the table's level (§4) — the
+    connection going like any other end — and so mirrored to the logger."""
     try:
         raise ConnectionResetError("peer closed")
     except ConnectionResetError as gone:
-        log.conversation.ending(gone, level="info")
-    try:
-        raise RuntimeError("a bug")
-    except RuntimeError as bug:
         with caplog.at_level(logging.WARNING, logger=stand_ins.LOGGER):
-            log.conversation.ending(bug, level="error")
-    gone_record, bug_record = stand_ins.records("conversation")
-    assert gone_record["level"] == "info"
-    assert gone_record["data"]["class"] == "ConnectionResetError"
-    assert gone_record["data"]["message"] == "ConnectionResetError: peer closed"
-    assert "Traceback (most recent call last)" in gone_record["data"]["traceback"]
-    assert bug_record["level"] == "error"
-    assert "raise RuntimeError" in bug_record["data"]["traceback"]
-    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [(logging.ERROR, "RuntimeError: a bug")]
+            log.conversation.ending(gone)
+    record = only("conversation")
+    assert record["level"] == TABLES["conversation"]["ending"] == "error"
+    assert record["data"]["class"] == "ConnectionResetError"
+    assert record["data"]["message"] == "ConnectionResetError: peer closed"
+    assert "Traceback (most recent call last)" in record["data"]["traceback"]
+    assert "raise ConnectionResetError" in record["data"]["traceback"]
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.ERROR, "ConnectionResetError: peer closed")]
 
 
 def test_ending_survives_an_exception_whose_str_fails_and_names_a_bare_one(log, caplog):
@@ -166,8 +161,8 @@ def test_ending_survives_an_exception_whose_str_fails_and_names_a_bare_one(log, 
         def __str__(self):
             raise RuntimeError("no words")
     with caplog.at_level(logging.WARNING, logger=stand_ins.LOGGER):
-        log.conversation.ending(Unspeakable(), level="error")
-        log.conversation.ending(AssertionError(), level="error")
+        log.conversation.ending(Unspeakable())
+        log.conversation.ending(AssertionError())
     unspeakable, bare = (r["data"]["message"] for r in stand_ins.records("conversation"))
     # the one-line form names a class outside the builtins by its module
     assert unspeakable == f"{__name__}.{Unspeakable.__qualname__}: <exception str() failed>"

@@ -268,20 +268,23 @@ still waiting, and every tool call that arrives meanwhile — one line per reaso
 server gives, and never an exception's own text:
 
 ```
-TAT has stopped: an internal error; this call did not complete.
-TAT has stopped: the sessions could not be saved; this call did not complete.
-TAT has stopped: Isabelle is gone; this call did not complete.
-TAT has stopped: Claude Code saves no transcript; this call did not complete.
-TAT has stopped: Codex's sandbox is not the one TAT configured; this call did not complete.
-TAT has stopped: a client TAT does not serve connected; this call did not complete.
+TAT has stopped: an internal error; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
+TAT has stopped: the sessions could not be saved; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
+TAT has stopped: Isabelle is gone; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
+TAT has stopped: Claude Code saves no transcript; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
+TAT has stopped: Codex's sandbox is not the one TAT configured; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
+TAT has stopped: a client TAT does not serve connected; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
+TAT has stopped: it cannot use its working directory; this is a critical error, and this call did not complete. Stop now and call TAT no more. If another agent started you, tell it to stop as well; otherwise tell the user that TAT has stopped.
 ```
 
 The line is chosen by what ended the conversation (MODULE_STRUCTURE
 §4.6): the second for a `TAT_DisasterError`, the third for the
-connection gone, the last three for a `ClientRefused` (EXCEPTIONS.md
+connection gone, the fourth to sixth for a `ClientRefused` (EXCEPTIONS.md
 §3), each of which carries its line — the sixth is the client's version
-or name failing the check in a later MCP session — and the first for
-everything else.
+or name failing the check in a later MCP session — the seventh for the
+`TAT_StartupError` of a `Session`'s folder that cannot be made when a
+theory begins (MODULE_STRUCTURE §4.1), and the first for everything
+else.
 
 A tool call whose body completed — before the ending reached it, or after
 ignoring its cancellation — is answered what it did (MODULE_STRUCTURE

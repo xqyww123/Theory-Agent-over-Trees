@@ -79,7 +79,7 @@ per category, one typed method per event, mirroring the files —
    `plugins_loaded`, `ending`, `ended` appear in that order; a
    `TAT_StartupError` at the store writes `ending` and `ended` (the
    duration alone); a conversation ended by the connection going writes `ending`
-   at level `info`; a fresh working directory starts.
+   at level `error`, like every other end; a fresh working directory starts.
 3. **`isabelle_driver`** (MODULE_STRUCTURE §4.3). The private function of
    a connection; `call(conversation, name, args)` = that function plus the
    record, written from the trip's done-callback where `_dropped` runs

@@ -98,17 +98,22 @@ def connection_went(ended_by: BaseException) -> bool:
     return isinstance(ended_by, (ConnectionError, asyncio.CancelledError))
 
 
+def stopped_for(reason: str) -> str:
+    """The form every line of RENDER_BASELINES §4 has, for one reason."""
+    return (f"TAT has stopped: {reason}; this is a critical error, and this call did not complete. "
+            "Stop now and call TAT no more. If another agent started you, tell it to stop as well; "
+            "otherwise tell the user that TAT has stopped.")
+
+
 def stopped(ended_by: BaseException) -> str:
     """The one answer while the conversation is ending (RENDER_BASELINES
     §4), by what ended it: a `TAT_DisasterError`; the connection gone; else
     a bug."""
     if isinstance(ended_by, TAT_DisasterError):
-        reason = "the sessions could not be saved"
-    elif connection_went(ended_by):
-        reason = "Isabelle is gone"
-    else:
-        reason = "an internal error"
-    return f"TAT has stopped: {reason}; this call did not complete."
+        return stopped_for("the sessions could not be saved")
+    if connection_went(ended_by):
+        return stopped_for("Isabelle is gone")
+    return stopped_for("an internal error")
 
 
 T = TypeVar("T")
@@ -164,8 +169,7 @@ class Ending:
             return
         self._ended_by = ended_by
         self._since = time.monotonic()
-        self.log.conversation.ending(
-            ended_by, level="info" if connection_went(ended_by) else "error")
+        self.log.conversation.ending(ended_by)
         for task in self._tasks:
             task.cancel()
         self._entered.set()

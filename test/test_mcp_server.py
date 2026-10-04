@@ -22,17 +22,18 @@ from isabelle_theory_agent import toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.mcp_server import (
-    CLIENTS, HOST, ON_COMPACTION, TAT_Server, Tool, stopped, unknown_client)
+    CLIENTS, HOST, ON_COMPACTION, TAT_Server, Tool, stopped, stopped_for, unknown_client)
 from test_toplevel import Recorder, cancelled_by_the_host
 
 
 def no_briefing() -> str:
     return ""
 
-# The six server lines, in document order; a seventh, a missing one or a
+# The seven server lines, in document order; an eighth, a missing one or a
 # reordering fails here, an edited one fails the assertions below.
-INTERNAL, UNSAVED, GONE, NO_TRANSCRIPT, NOT_SANDBOXED, NOT_CONNECTED = fenced_lines(
-    DOCS / "RENDER_BASELINES.md", "4.")
+SERVER_LINES = fenced_lines(DOCS / "RENDER_BASELINES.md", "4.")
+(INTERNAL, UNSAVED, GONE, NO_TRANSCRIPT, NOT_SANDBOXED, NOT_CONNECTED,
+ NO_WORKING_DIRECTORY) = SERVER_LINES
 
 SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
 STRICT_SCHEMA = {"type": "object", "properties": {"field": {"type": "string"}},
@@ -294,6 +295,10 @@ def test_the_stopped_line_names_the_reason():
     assert stopped(ConnectionResetError()) == GONE
     assert stopped(asyncio.CancelledError()) == GONE
     assert stopped(RuntimeError()) == INTERNAL
+    # one form for every reason, those no branch chooses yet included
+    for line in SERVER_LINES:
+        reason = line.removeprefix("TAT has stopped: ").split(";")[0]
+        assert stopped_for(reason) == line
 
 
 @pytest.mark.parametrize("tool, ended_type, line", [

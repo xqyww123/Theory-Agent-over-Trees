@@ -1495,5 +1495,94 @@ caught at once: the rebuild script assigned zsh's read-only variable
 which was restored by hand from the backup — a shell script around a
 build restores in a `trap` or avoids shell-reserved names.
 
-Steps 10, 11 and 13 wait: 10 for [682d5e]'s step 1, 11 for its step 2,
-13 for both sides.
+Steps 9 and 12 committed 2026-10-04 as `ba5f999` (「提交」), [682d5e]
+told. Steps 10, 11 and 13 wait: 10 for [682d5e]'s step 1, 11 for its
+step 2, 13 for both sides.
+
+The sessions' refs changed with a restart of the machine (2026-10-04):
+the jobs session, [682d5e] in this record, is now listed as [9ffa3c]
+(it confirmed); the compilation session, [9779f8], as [ebfd21]; this
+session, [9904c0], as [b341d7]. A ref is the listing's, not the
+session's: after a restart, `ListAgents` before any message.
+
+**The compilation session's plan** (2026-10-04, its message;
+`ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md`, start approved by the
+owner, no code yet). What touches this work, and the answers given:
+
+- After its step A1 `walk_started` carries `checks` (`"no"` until the
+  jobs code passes another value) and an edit writes no
+  `walk_started`/`walk_ended`; it changes
+  `test_blocked_by_a_failed_header`'s expected data and rewrites the
+  childless block's amend case (the one `state_delete`'s three names; no
+  `walk_started`). Asked to keep, in the same change, the pin on how
+  `slots_released` is counted — that case is the only test failing under
+  the old per-`release()` counting. It carries the pin (its plan's A7,
+  case 9) in two forms: a direct case on `Evaluation` (one slot released
+  twice, one flush, the `state_delete` naming it once, `releases == 1`)
+  and a walk over a tree holding a nesting node with an owned slot
+  (`owned_slots`), invalidated whole after a strict stop before it,
+  `walk_ended.slots_released == len(names)`. The scenario the author had
+  proposed was wrong, corrected by that session: a childless block
+  invalidated whole by a walk releases two different slots; the amend's
+  double release came from `old._states_inside()` and
+  `old._state_after_beginning()` naming one slot, which only an edit
+  does.
+- elegance-8 lands as one function, `_store_transaction(...)` in edit.py,
+  not the context manager the ruling named: what each entry stores is
+  data, so the block has no body; it runs the edit's one store
+  transaction and then writes `committed`. Agreed, a departure from the
+  ruling's letter that keeps its point — no entry can commit without the
+  record.
+- Its step A5 changes log.py's `IsaTerm` import line: the shared class
+  is AoA's, moved unchanged into Isabelle_RPC (the owner, 2026-10-04, as
+  that session reports); `from_isabelle` and `from_agent` keep their
+  names, so test_log's `IsaTerm` case stands.
+- It tells this session when A1–A3 are in the tree; then the author's
+  three waiting tests: a move writes no `walk_started`; funnels-4's test;
+  tests-2's second half.
+
+**`ending` is always `error`** (owner, 2026-10-04: 「连接断开的日志级别要从
+info 改成 error」, said to the compilation session, which relayed it; put
+to the owner here with the exact edit and confirmed, 「批准」): the
+connection between the Python process and the Isabelle process going is
+a critical crash. LOGGING §4's row is level `error`, its "`info` when the
+connection went" clause gone; `log.conversation.ending(ended_by)` has no
+`level` parameter; `Ending.end` no choice; `connection_went` stays for
+`stopped()`'s line (so the step-2 note above, that the record's level
+and the line come from the one test, now holds of the line alone).
+Known and accepted: every conversation that ends by Isabelle stopping —
+the normal way — ends its log with an `error` record, and, by LOGGING
+§5's mirroring, puts one ERROR line into the RPC host's log
+(`ConnectionResetError: peer closed connection`, or
+`asyncio.exceptions.CancelledError` when the host's cancellation enters
+the ending). Tests: test_log's `ending` case reads the level from §4's
+table; test_toplevel's host-cancellation case expects `error`.
+
+**The ending's answer** (owner, 2026-10-04: approved to the compilation
+session, 「好的批准」, relayed, then confirmed here on the exact text,
+「文本如上，照此改」). One form for every reason:
+
+    TAT has stopped: <reason>; this is a critical error, and this call
+    did not complete. Stop now and call TAT no more. If another agent
+    started you, tell it to stop as well; otherwise tell the user that
+    TAT has stopped.
+
+(one line in the document), and seven reasons — the six of RENDER_BASELINES
+§4 in their order and a seventh, `it cannot use its working directory`,
+for the `TAT_StartupError` of a `Session`'s folder that cannot be made
+when a theory begins. Landed in one change, since test_mcp_server unpacks
+the block's lines at import: RENDER_BASELINES §4's fenced block and its
+paragraph ("the fourth to sixth for a `ClientRefused`", the seventh's
+rule); `mcp_server.stopped_for(reason)`, the one place the form is
+written, with `stopped(ended_by)` choosing among the three reasons it
+has branches for; test_mcp_server's unpack of seven lines and an
+assertion that every line of the block is `stopped_for` of its reason.
+The seventh line has no branch until the compilation session's step B5,
+as the fourth to sixth have none until the jobs session's
+`ClientRefused`; both add reasons through `stopped_for`, never a second
+copy of the sentence. `stopped` is thus edited by three sessions, each
+telling the others first. The jobs session took it into its step 2: its
+refusing method builds a `ClientRefused`'s `line` as
+`stopped_for(<reason>)`, its branch returns `ended_by.line`, and it
+calls `log.conversation.ending(ended_by)` with no level.
+

@@ -156,12 +156,11 @@ class _Conversation(_Category):
     @_event("error")
     def client_refused(self, *, name: str, version: str, message: str, _meta: Any = None) -> None: ...
 
-    def ending(self, ended_by: BaseException, *, level: Literal["info", "error"]) -> None:
-        """What ended the conversation: `info` when the connection went,
-        `error` otherwise (§4).  `message` is Python's one-line form of the
-        exception, class first, which the standard library renders even
-        when the exception's own `str` fails."""
-        self._log._write(self.category, "ending", level, {
+    def ending(self, ended_by: BaseException) -> None:
+        """What ended the conversation (§4).  `message` is Python's one-line
+        form of the exception, class first, which the standard library
+        renders even when the exception's own `str` fails."""
+        self._log._write(self.category, "ending", "error", {
             "class": type(ended_by).__name__,
             "message": "".join(traceback.format_exception_only(ended_by)).rstrip("\n"),
             "traceback": "".join(traceback.format_exception(ended_by))})

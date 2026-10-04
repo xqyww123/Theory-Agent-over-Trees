@@ -106,12 +106,12 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         assert log_directories(tmp_path) == [log_directory]
 
         # the connection gone: the RPC host cancels the call, which ends by
-        # raising the cancellation; the pid goes with the lock; `ending` at
-        # `info`, then `ended` once the unwinding is over
+        # raising the cancellation; the pid goes with the lock; `ending`,
+        # then `ended` once the unwinding is over
         await cancelled_by_the_host(first)
         assert (tmp_path / "tat.lock").read_bytes() == b""
         ending, ended = stand_ins.records("conversation", log_directory)[4:]
-        assert (ending["event"], ending["level"]) == ("ending", "info")
+        assert (ending["event"], ending["level"]) == ("ending", "error")
         assert ending["data"]["class"] == "CancelledError"
         assert ended["event"] == "ended" and list(ended["data"]) == ["duration"]
 
