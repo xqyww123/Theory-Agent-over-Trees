@@ -10,9 +10,13 @@ A `Theorem` states a fact and never proves it in the tree (ARCHITECTURE
 §2.1): every evaluation admits it with `sorry`; its construction job,
 the proof construction, finds a proof, which its evaluation job, the
 proof check, replays in the current context, and which the emitted
-theory carries as `by aoa`. It is a `Leaf`, delivered in
-`theorem_node.py` with its two job classes `Proof_Job` and `Proof_Check`
-(MODULE_STRUCTURE §4.5). Its agent-facing wording lives here: the
+theory carries as `by aoa`. It is a `Leaf`, the first node class of the
+plugin `Isabelle_Std`: its Python half, with its two job classes
+`Proof_Job` and `Proof_Check`, is `isabelle_theory_agent/std/theorem.py`,
+its ML half `Isabelle_Std/ML/TAT_Theorem.ML`, loaded by the plugin's
+theory `TAT_Isabelle_Std`, which imports AoA's. A working directory has
+it when it was made with `isabelle TAT_new -P
+TAT_Isabelle_Std.TAT_Isabelle_Std`. Its agent-facing wording lives here: the
 `description` texts of its construct schema (§3), the sentences its
 `gen` and its jobs render, and the words on its line — pinned by the
 baseline tests the way SESSION_AND_THEORY.md's are.
@@ -227,7 +231,12 @@ lemma rev_length:
   written as `sorry`. A build of the file finds the proof in the
   theory's proof store, `<short name>.proof-store` beside the file,
   where the construction's AoA call recorded it (§7), and replays it
-  without searching.
+  without searching. The `aoa` method is defined in
+  `Minilang_AoA.Minilang_AoA`, which the plugin has the theory import:
+  it is added to the header of every theory that imports no theory of
+  the forest, at evaluation and at emission alike, and reaches the
+  others through their imports; the agent writes no such import, and
+  the `imports` line it reads shows only its own.
 - The whole text in the `\<name>` form (`IsaTerm.ascii`, §2); the file
   reads as Unicode in jEdit all the same.
 
@@ -261,7 +270,9 @@ the same four steps as a hand-written `theory_init … exit_global`, and
 inside a future `Context` or `Locale` the statement is checked in that
 context, as ARCHITECTURE §2 promises. An interrupt and a `Bug` are
 re-raised; any other error is the statement's: no state is written into
-either slot, the callback answers the messages, and `_eval_opr` returns
+either slot, the callback empties `goal_state` — a rerun of a `ready`
+node rewrites its status and releases nothing, so the earlier run's
+goal would stand there otherwise —, answers the messages, and `_eval_opr` returns
 `CannotEvaluate` with them — the node is an obstacle. Otherwise the callback answers what the
 run reported beside its success and, for the fact's name, each
 variable's and each premise's, whether `Thy_Header.print_name` would
@@ -299,9 +310,12 @@ and the budget are what Isabelle's configuration gives AoA
 report brings the product: the method text and its two times in the
 store's standard-machine form, which `hammer_or_AoA` is extended to
 return beside the text. How many runs are inside their AoA call at once
-is bounded by an Isabelle environment variable, unbounded when it is
-unset (its name: DOC_SYNC_LIST); a run waiting for its turn is
-`RUNNING`. AoA's Python half, the remote procedure `IsaMini.AoA`, is
+is bounded by the Isabelle environment variable
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, unbounded when it is unset or
+empty; a value that is not a positive integer refuses the start, with
+`TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a positive
+integer, but it is <value>`. A run waiting for its turn is `RUNNING`,
+and shows as any running one, `proving`. AoA's Python half, the remote procedure `IsaMini.AoA`, is
 served by TAT's own process (to verify at implementation), so a
 question the search asks reaches the job through the process's job
 table (CONSTRUCT_INTERACTION §3.3); the questions themselves — AoA's

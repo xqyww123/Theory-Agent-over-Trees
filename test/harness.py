@@ -299,10 +299,12 @@ class Harness:
     async def launch_TAT(self, arg: list[Any], connection: Connection) -> NoReturn:
         """What the ML side calls under the product's wire name: one
         conversation per request, `TAT.reset` first, until the suite is over."""
-        packages, launcher_directory, port = arg          # the wire delivers a list
+        # the wire delivers a list; the child is started without -c, so the
+        # default client arrives
+        packages, launcher_directory, port, client, max_concurrent_construction_jobs = arg
         assert packages == PACKAGES, packages
-        assert (launcher_directory, port) == (str(self.launcher_directory), self.port), \
-            (launcher_directory, port)
+        assert (launcher_directory, port, client) == \
+            (str(self.launcher_directory), self.port, "claude-code"), (launcher_directory, port, client)
         self.launched.set_result(None)
         try:
             while True:
@@ -312,8 +314,9 @@ class Harness:
                 self.last_taken = request
                 try:
                     await isabelle_driver.reset(connection)
-                    async with toplevel.served(packages, str(request.working_directory), port,
-                                               connection) as (forest, loaded, server):
+                    async with toplevel.served(packages, str(request.working_directory), port, client,
+                                               max_concurrent_construction_jobs, connection
+                                               ) as (forest, loaded, server):
                         self.serving = (request, forest.conversation.ending)
                         request.handed_over.set_result(Handle(
                             self, request, forest=forest, kinds=loaded.kinds, url=server.url,

@@ -109,6 +109,18 @@ def test_a_path_with_a_bracket_is_refused_by_every_tool(tmp_path):
         assert not wd.exists()
 
 
+def test_a_client_the_launcher_does_not_know_is_refused(tmp_path):
+    """MODULE_STRUCTURE §5: `-c` takes `claude-code` and `codex`; any other
+    name is refused in one sentence before anything is built or started,
+    and a known one passes on to the directory's checks."""
+    r = tat_mcp("-c", "emacs", str(tmp_path))
+    assert r.returncode == 2 and r.stdout == "", r
+    assert r.stderr.strip() == "*** TAT knows no client emacs"
+    r = tat_mcp("-c", "codex", str(tmp_path))
+    assert r.returncode == 2 and r.stdout == "", r
+    assert r.stderr.strip() == f"*** {tmp_path} holds no TAT.sqlite; run isabelle TAT_new first"
+
+
 @pytest.mark.parametrize("tool", [tat_mcp, tat_compile])
 def test_a_session_under_the_working_directory_is_refused(tmp_path, tool):
     """MODULE_STRUCTURE §5 step 3, which the two tools share: the Isabelle

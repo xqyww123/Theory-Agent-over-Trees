@@ -62,7 +62,7 @@ inherits and whose identity it takes (MCP_SPECIFICATION §3.1); any further
 constructs follow it.
 
 `auto_construct` is there only when a loaded class names a construction
-job class, like the construct tools (§5). It is the value the automatic
+job class, like `construct` (§5). It is the value the automatic
 construction (CONSTRUCT_INTERACTION §3.2) of every node the call adds
 takes, where the node has a construction job — an amend's replacement
 included, which does not inherit the replaced node's.
@@ -247,7 +247,11 @@ nodes' automatic construction takes, and leaving it out means off.
 {construction titles, singular} or all {evaluation titles, plural} have
 finished, or a message arrives. Returns at once when nothing is running.
 To ensure all jobs have finished, call it repeatedly.` — the `or all …`
-part absent when no evaluation job class is loaded.
+part absent when no evaluation job class is loaded. With no
+construction job class loaded: `Wait until all {evaluation titles,
+plural} have finished, or a message arrives. Returns at once when
+nothing is running. To ensure all jobs have finished, call it
+repeatedly.`
 
 ```jsonc
 {
@@ -277,7 +281,8 @@ asked you`.
 
 `answer` is declared a bare object, the one such property the grammar of
 MODULE_STRUCTURE §4.4 admits; at call time the pending question's own
-schema takes its place, and the call is checked against that. The four
-construct tools exist only when a loaded class names a construction job
-class. What each returns, and on what a failed one renders, is
+schema takes its place, and the call is checked against that.
+`construct`, `cancel_construct` and `answer` exist only when a loaded
+class names a construction job class, `check_construct` when one names
+a job class of either kind. What each returns, and on what a failed one renders, is
 CONSTRUCT_INTERACTION §5.

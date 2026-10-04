@@ -168,6 +168,13 @@ changes it re-evaluates the tree like any other amend. `Theory` writes its
 text through `emit_beginning` — that block, then the header, each line
 ending in a newline — and `emit_ending`, the `end` (COMPILATION.md §3).
 
+The header `Theory` runs and the header it emits are one text, built by
+one function: the `theory` line, the agent's `imports`, and — on a theory
+none of whose imports resolves to a theory of the forest — the imports
+the loaded plugins declare (PLUGIN_SYSTEM §1), which every other theory
+receives through the forest theories it imports. The agent writes none
+of them, and `recall` shows the agent's items alone (§4).
+
 The qualified name is `<Session name>.<name>`, computed, never stored; the
 tree's file path, `<Session name>/<name>.thy` relative to the working
 directory, is `file_path()`, which gives both the `master_dir` the header
@@ -247,5 +254,5 @@ imports: Main HOL-Library.Multiset
 `options` and `description` are left out when empty; `options` is one
 line in the ROOT's own spelling; `description` is a block, one indent
 deeper, since it may run to several lines, the same form for both
-classes; `imports` is one line, the items separated by spaces as in the
-header.
+classes; `imports` is one line, the items the agent wrote, separated by
+spaces, without the imports the plugins declare (§2).

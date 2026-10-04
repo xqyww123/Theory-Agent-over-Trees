@@ -417,9 +417,13 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 
   val default_port = 8191
 
+  // the agent clients TAT serves, as -c names them (CONSTRUCT_INTERACTION §8)
+  val clients: List[String] = List("claude-code", "codex")
+
   val tat_mcp_tool: Isabelle_Tool =
     Isabelle_Tool("TAT_mcp", "start a TAT conversation", Scala_Project.here,
       { args =>
+        var client = clients.head
         val dirs = new mutable.ListBuffer[Path]
         var logic = Isabelle_System.default_logic()
         var options = Options.init()
@@ -429,6 +433,8 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
 
   Options are:
+    -c CLIENT    the agent client that will connect: """ + clients.mkString(" or ") + """
+                 (default: """ + clients.head + """)
     -l BASE      the base heap (default: ISABELLE_LOGIC=""" + quote(logic) + """)
     -p PORT      the port of the MCP server (default: """ + default_port + """)
     -d DIR       as Isabelle's -d: a further directory whose ROOT declares
@@ -438,16 +444,21 @@ Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
   Start a TAT conversation on WORKING_DIRECTORY, providing the MCP service
   at http://127.0.0.1:PORT/mcp.
 """,
+          "c:" -> (arg => client = arg),
           "d:" -> (arg => dirs += Path.explode(arg)),
           "l:" -> (arg => logic = arg),
           "o:" -> (arg => options = options + arg),
           "p:" -> (arg => port = Value.Int.parse(arg)))
 
         val dir = working_directory_argument(getopts, args)
+        // after the options, not in -c's handler: Getopts appends a line of
+        // its own to an error raised there, and the refusal is one sentence
+        if (!clients.contains(client)) error("TAT knows no client " + client)
 
         val progress = new Console_Progress()
         val (rc, messages) =
-          launch(progress, dir, logic, dirs.toList, options, "TAT.start", List(port.toString))
+          launch(progress, dir, logic, dirs.toList, options, "TAT.start",
+            List(port.toString, client))
         messages.foreach(progress.echo_error_message(_))
         if (rc != Process_Result.RC.ok) sys.exit(rc)
       })

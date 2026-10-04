@@ -94,10 +94,11 @@ A node class names its job classes in two class attributes, each
 `None` by default: `construction_job_class` and `evaluation_job_class`.
 The framework builds the construction job (`cls(node)`) when it builds
 the node, and `job(self) -> Construction_Job | None` returns it; the
-evaluation jobs are built as §3.3 says. The four construct tools and
-`edit`'s `auto_construct` exist only when a loaded class names a
-construction job class, and `checks` (§5) only when one names an
-evaluation job class.
+evaluation jobs are built as §3.3 says. `construct`,
+`cancel_construct`, `answer` and `edit`'s `auto_construct` exist only
+when a loaded class names a construction job class, `checks` (§5) only
+when one names an evaluation job class, and `check_construct` when one
+names a job class of either kind.
 
 **The outcome.** The construction job's `outcome` is `NOT_STARTED`,
 `RUNNING`, `SUCCEEDED(product)` or `FAILED(message)`. `start` sets
@@ -436,7 +437,7 @@ shown to everyone.
 | --- | --- | --- |
 | `construct` | `node_ids`, `auto_construct` | completed at start: `Start the construction jobs of nodes, such as {construction titles}.` — the titles plural, distinct, alphabetical, joined with commas and `and`; with `Theorem` alone `Start the construction jobs of nodes, such as proof constructions.` |
 | `cancel_construct` | `node_ids`, `auto_construct` | `Cancel the running construction jobs of nodes.` |
-| `check_construct` | `wait_seconds` | completed at start: `Wait until any {construction titles} or all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` — each slot's titles distinct, alphabetical, the first slot's singular, the second's plural, joined with commas and `or` before the last; the `or all …` part absent when no evaluation job class is loaded; with `Theorem` alone `Wait until any proof construction or all proof checks have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` |
+| `check_construct` | `wait_seconds` | completed at start: `Wait until any {construction titles} or all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` — each slot's titles distinct, alphabetical, the first slot's singular, the second's plural, joined with commas and `or` before the last; the `or all …` part absent when no evaluation job class is loaded; with no construction job class loaded `Wait until all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.`; with `Theorem` alone `Wait until any proof construction or all proof checks have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` |
 | `answer` | `node_id`, `answer` | `Answer the question a construction job asked you` |
 
 Argument descriptions: `node_ids`, a list of ids, required: `The ids of
@@ -980,7 +981,8 @@ the `goal_state` slot the evaluation fills, one call of AoA's
 `hammer_or_AoA` forked through `fork_job`, the proof store read and
 written on AoA's own path, the product returned with its times —, the
 driver and the budget from Isabelle's configuration, the bound on
-concurrent runs from an Isabelle environment variable, the function AoA
+concurrent runs from the Isabelle environment variable
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, the function AoA
 exports for the replay of one record, and emission keeping `by aoa`.
 
 Still the round's: the question kinds — AoA's `request` tool, which

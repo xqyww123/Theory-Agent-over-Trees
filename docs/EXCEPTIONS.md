@@ -49,7 +49,9 @@ report carries it to Python, which raises it as a `TAT_InternalError`
 `TAT_StartupError` is the third kind: TAT cannot run in this
 environment — the working directory's database was written by another
 schema version or is not a database, a node class package cannot be
-loaded (PLUGIN_SYSTEM §1, §5), another conversation or a compile holds
+loaded (PLUGIN_SYSTEM §1, §5), the Isabelle environment variable
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` is set to anything but a positive
+integer (MODULE_STRUCTURE §4.6), another conversation or a compile holds
 the working directory (ARCHITECTURE §9), its lock file cannot be opened,
 its log directory cannot be made (LOGGING.md §2), a `Session`'s folder
 path under it holds something that is not a directory — a compile

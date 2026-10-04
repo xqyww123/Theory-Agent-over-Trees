@@ -708,7 +708,11 @@ verbatim, `X` standing for a full node id.
   --no-session-persistence.` The line the agents' calls are answered
   during that ending, a fourth beside RENDER_BASELINES §4's three
   (approved 2026-10-01): `TAT has stopped: Claude Code saves no
-  transcript; this call did not complete.` *(author)* What the Claude
+  transcript; this call did not complete.` (On 2026-10-04 the owner
+  gave every line of RENDER_BASELINES §4 a new frame around its
+  reason, as the compilation session reports; the reason's words,
+  `Claude Code saves no transcript`, stand, and the line is read from
+  that section.) *(author)* What the Claude
   Code subclass keeps per agent: the `transcript_path` of its last
   announcement, how far it has read the agent's transcript, and the
   boundaries recorded from it — recorded boundaries rather than a count,
@@ -1240,6 +1244,87 @@ verbatim, `X` standing for a full node id.
   changed context is `_on_context_change`'s, not its. No shipped class
   overrides it. MODULE_STRUCTURE §4.1's event table is to say what it
   is for.
+- `run_commands` after `Theory`'s `end` leaves it (2026-10-04, 「赞同。
+  但需要明确注释"尽量别用 run_commands"」): `run_commands`, `run_span` and
+  `command_record` leave `TAT_Framework` and move into the test
+  plugin's `TAT_Test_Lib` as test code, under a comment saying to avoid
+  `run_commands` wherever possible; the framework's signature gains the
+  two output-buffer functions `run_span` calls. No product code runs
+  Isar text. This replaces the entry of 2026-09-30 in that one part:
+  the "two tests" it meant to rewrite are the test plugin's callbacks
+  `TAT_test.run` and `TAT_test.run_parallel`, through which
+  `test_conversation.py` runs Isar text in seventeen places.
+- `Theorem` before its jobs exist (2026-10-04, 「赞同」): no conversation
+  loads `Theorem` until `Proof_Job` and `Proof_Check` are built; until
+  then its ML registration names no Python package, and only its own
+  tests' conversations list the package. So a `Theorem` without a job
+  class — a line with no proof slot, a theory of `sorry` theorems
+  reading `complete` — never reaches an agent. This replaces the entry
+  of 2026-10-02 that `Theorem` is loaded with no job class and its
+  proofs written `sorry`.
+- `Theorem` is a plugin of its own (2026-10-04, 「Theorem 会是一个单独的
+  pluin，放在这个 plugin 的单独的 major thy file」): its ML — the
+  callbacks `TAT.Theorem.evaluate`, `construct` and `check` — lives in
+  the plugin's own major theory, which imports AoA's; it leaves
+  `TAT_Common_Nodes`, and TAT's own theory keeps importing
+  `Isabelle_RPC` alone.
+- The plugin is `Isabelle_Std` (2026-10-04, 「建议把此 plugin 扩展为
+  Isabelle std 然后未来会加上 section, text, locale, datatype, typedef
+  等等 Isabelle 标准命令」, then 「批准以上设计。批准名字」): one plugin for
+  the node classes of Isabelle's standard commands, `Theorem` its
+  first. Its directory `Isabelle_Std/` in TAT's repository is an
+  Isabelle component of its own, with its own `ROOT` — session
+  `TAT_Isabelle_Std = Minilang_AoA + sessions Theory_Agent_over_Trees`
+  — which TAT's top-level `ROOT` does not name, since Isabelle refuses
+  the whole session structure over a `ROOT` whose parent session is
+  unknown, and TAT must work where Isa-Mini is absent. Its major theory
+  `TAT_Isabelle_Std` imports
+  `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and
+  `Minilang_AoA.Minilang_AoA` and loads one ML file per node class from
+  `Isabelle_Std/ML/` (`TAT_Theorem.ML`, `structure TAT_Theorem`). Its
+  Python half is the subpackage `isabelle_theory_agent.std`, one module
+  per class (`theorem.py`; `statement.py` for `STATEMENT_DEFS`), which
+  replaces `builtins.py` and `theorem_node.py`. `TAT_Common_Nodes`
+  keeps `operation` and `Theory`. A working directory takes the plugin
+  by `isabelle TAT_new -P TAT_Isabelle_Std.TAT_Isabelle_Std`, written
+  explicitly (「TAT_new 显式写 -P」), and is launched on the base heap
+  `Minilang_AoA`; the plugin's tests run in a harness run of their own
+  on that heap.
+- The import `by aoa` needs is the plugin's to write, not the agent's
+  (2026-10-04, 「aoa 的 import 由 Isabelle_Std 写不好吗？」, then
+  「思路是赞同的。但反对对每个 theory 都加，应该分析 theories' dependent
+  graph 只对头部的几个加，剩下的就自然会被加上」, 「赞同 Theory 两处都
+  加上」, 「赞同对所有 theory 生效，不看里面有没有 Theorem」): a plugin
+  declares theories that the conversation's theories import besides
+  what the agent wrote — `Isabelle_Std` declares
+  `Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined. The
+  framework's `Theory` adds them to its header both when it runs the
+  header in the conversation and when it emits the `.thy`, after the
+  agent's own imports, and only on a theory none of whose imports
+  resolves to a theory of the forest: every other theory receives them
+  through the forest theories it imports. Whether the theory holds a
+  `Theorem` plays no part. *(author)* The declaration is made at
+  import in the plugin's Python package, registered as a compile hook
+  is; evaluation and emission write the header through one function,
+  so the two cannot differ. `recall`'s `imports` line shows what the
+  agent wrote and not the added import (「赞同不显示」). MODULE_STRUCTURE §1, §3, §4,
+  §4.5, PLUGIN_SYSTEM §1–§2, SESSION_AND_THEORY §2, THEOREM.md's
+  opening and §7, ARCHITECTURE §2.2 and OPEN_QUESTIONS §1, §3 are
+  brought in line once that is settled.
+- The tool `evaluate_to` and `Theory`'s `description` field are the
+  jobs session's to build (2026-10-04, 「好」).
+- `check_construct` exists when a loaded class names a job class of
+  either kind (2026-10-04, 「赞同补上」); `construct`,
+  `cancel_construct`, `answer` and `edit`'s `auto_construct` still
+  exist only with a construction job class, `checks` only with an
+  evaluation job class. Before, a conversation whose classes named
+  evaluation jobs alone had no `check_construct`, while `checks`'
+  description, the background line and the stop rule's instructions
+  all send the agent to it. With no construction job class loaded its
+  description is `Wait until all {evaluation titles} have finished, or
+  a message arrives. Returns at once when nothing is running. To ensure
+  all jobs have finished, call it repeatedly.` — the titles as in the
+  full form.
 - MCP's `readOnlyHint`: delivering the caller's messages is no change
   (the owner, 2026-10-01: 「它只是发送了 construct 的消息而已」), so a tool
   is read-only when it changes no node and no job — `recall` and, from
@@ -1437,11 +1522,20 @@ CONSTRUCT_INTERACTION §10, OPEN_QUESTIONS §2, ARCHITECTURE §2.1, §3.1,
   proof check replays the stored product on the same goal instead of
   rebuilding it from the statement — the two now work on one goal by
   construction. The author's shapes, told to the owner: the slot is
-  `goal_state`; further slots are a class-level declaration the
-  framework mints with `state`, releases with the operation's resulting
-  state in every setter taking an operation from written to unwritten,
-  deletes with the node and reassigns empty on load, so no class can
-  forget one; the invariant that `goal_state` holds a state exactly
+  `goal_state`; a further slot is the class's own to mint and to
+  delete, as `Theory` does for the slot it owns — the class mints it
+  where the node is built, in `gen` and `from_store`, and appends it in
+  `_states_inside()` — and the framework does the one thing a class
+  cannot, the release on invalidation: `Node._slots_written_by(operation)`,
+  empty by default, names the further slots an operation writes, and
+  each setter taking the operation from written to unwritten releases
+  them with its resulting state, never on a rewrite (the owner's ruling
+  of 2026-10-04 in the compilation session, as that session reports,
+  「赞同甲」, on his question whether the framework must do this at all;
+  it replaces the class attribute `owned_slots`, which the framework
+  minted). A rerun that takes a `ready` leaf to `cannot_evaluate` is a
+  rewrite and releases nothing, so `TAT.Theorem.evaluate` clears
+  `goal_state` itself when it fails; the invariant that `goal_state` holds a state exactly
   while the node's instant status is `ready`, which keeps a loaded
   forest — `not_evaluated` throughout — from starting a construction on
   an empty slot.
@@ -1481,12 +1575,28 @@ CONSTRUCT_INTERACTION §10, OPEN_QUESTIONS §2, ARCHITECTURE §2.1, §3.1,
   无限制，但允许用户限制，通过 isabelle 环境变量」). The author's shape: the
   bound is the framework's, around the run wrapper's `await
   self._run()`, so a waiting run is `RUNNING` and a cancellation while it
-  waits detaches it like any other. Pending the owner: the variable's
-  name and the sentence for a value that is not a positive integer; how
-  a waiting run shows, if not as `proving`.
-- Pending the owner too: what happens when the `Session`'s folder cannot
-  be made before the theory begins — a symbolic link or a file at its
-  path, the cases the compile refuses (COMPILATION.md §4).
+  waits detaches it like any other. Decided on 2026-10-04: the
+  variable is `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` (the owner's
+  name); unset or empty means no bound; a value that is not a positive
+  integer refuses the start, with `TAT requires
+  TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a positive integer, but it
+  is <value>` (「批准」); a run waiting for its turn shows as a running
+  one, `proving`, with no word of its own (「赞同和运行中的一样显示
+  proving，不加新词」). *(author)* The refusal is a `TAT_StartupError`
+  raised where the conversation starts, which the launcher prints
+  before exiting 2: the Isabelle side reads the variable and hands its
+  text to `launch_TAT` with the client's name.
+- When the `Session`'s folder cannot be made before the theory begins —
+  a symbolic link or a file at its path, the cases the compile refuses
+  — the conversation ends: the beginning raises `TAT_StartupError`.
+  Decided by the owner on 2026-10-04 in the compilation session, as
+  that session reports: the working directory is TAT's alone to
+  manage, a structure changed from outside is reason enough to refuse
+  service, and an agent shown the failure could not repair it. The
+  proposal that the beginning fail with the refusal's sentence is
+  withdrawn. Written by that session into MODULE_STRUCTURE §4.1's
+  `Theory` bullet and EXCEPTIONS §1; the launcher's sentences are its
+  to propose, the code its step B5.
 - Verified the same day, so that the drive path rests on measured
   facts: AoA is entered from ML, `hammer_or_AoA` → `raw_AoA` → the
   remote procedure `IsaMini.AoA` (contrib/Isa-Mini/IsaMini/AoA/toplevel.py:191),

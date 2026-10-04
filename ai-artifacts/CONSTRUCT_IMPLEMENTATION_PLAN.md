@@ -1,7 +1,8 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Nothing of it is implemented.
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Step 1 is in the tree since
+2026-10-05 (review/DOC_SYNC_LIST.md entry 32); the rest is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -14,9 +15,12 @@ docs/RENDER_BASELINES.md, **TS** = docs/TOOL_SCHEMAS.md, **TH** =
 docs/node_classes/THEOREM.md, **ST** =
 docs/node_classes/SESSION_AND_THEORY.md, **LIP** =
 ai-artifacts/LOGGING_IMPLEMENTATION_PLAN.md, **LD** =
-ai-artifacts/LOGGING_DECISIONS.md, **CR** =
-ai-artifacts/COMPILATION_REVIEW.md, **DSL** =
-ai-artifacts/review/DOC_SYNC_LIST.md.
+ai-artifacts/LOGGING_DECISIONS.md, **CP** =
+ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md, **DSL** =
+ai-artifacts/review/DOC_SYNC_LIST.md. CP has two phases, and the names
+are its own: Phase A, its steps A1 to A8, rewrites the walk, the
+setters, the edit's commit and the store; Phase B, its steps B1 to B8,
+is compilation itself.
 
 Conventions. Every agent-facing sentence is read from the documents by
 the baseline tests (`test/baselines.py`), never typed into a test. A
@@ -31,31 +35,36 @@ the documents leave one open.
 
 ## 1. What the steps stand on
 
-| what | whose | state on 2026-10-03 |
+| what | whose | state on 2026-10-04 |
 | --- | --- | --- |
 | the log, the ending object, `isabelle_driver.call`, the tool boundary's records, the Isabelle side's log, `register_callback` taking the callback record (LIP steps 1–6, 8) | the logging session | in, committed (bd48a93, 2e8f6e7, d9472b3, df271ca) |
-| the walk, the setters, the edit's commit block, the store's rows, `owned_slots`, the `Session`'s folder made before a theory begins, `IsaTerm` in `Isabelle_RPC_Host.unicode` (CR §14 items 1–7) | the compilation session | not started: the owner holds its start until he approves again (CR §14's opening) |
-| `compile.py`, `Node.can_emit` and `emit`, the compile hooks' framework side, `isabelle TAT_compile` (COMPILATION.md §3, §5) | the compilation session | after CR §14's item 8 (CR §14's last paragraph) |
-| `hook.py`, `guard.py` (LIP step 9); `configure` (LIP step 10); the Codex sandbox check (LIP step 11); the launcher refusing a path with `[` or `]` (LIP step 12) | the logging session | steps 9 and 12 in the tree, uncommitted — step 12 in `tat.scala`, `lib/tat.jar` and `test_launcher.py`, which steps 1 and 4 here edit after it; step 10 waits for step 1 here, step 11 for step 2 |
+| Phase A: the walk, the setters with `_slots_written_by`, the edit's commit block, the store's rows, `IsaTerm` in `Isabelle_RPC_Host.unicode` (CP §3) | the compilation session | approved to start; nothing in the tree |
+| Phase B: `compile.py`, `Node.can_emit` and `emit`, the compile hooks' framework side, `isabelle TAT_compile`, the `Session`'s folder made before a theory begins (CP §4) | the compilation session | after Phase A |
+| `hook.py`, `guard.py` (LIP step 9); `configure` (LIP step 10); the Codex sandbox check (LIP step 11); the launcher refusing a path with `[` or `]` (LIP step 12) | the logging session | steps 9 and 12 in, committed (ba5f999) — step 12 in `tat.scala`, `lib/tat.jar` and `test_launcher.py`, which steps 1 and 4 here edit on top of it; step 10 waits for step 1 here, step 11 for step 2 |
 
-**Steps 1 to 3 before CR §14, steps 4 to 17 after.** Steps 1 to 3
-share no file with CR §14 and need nothing of it. Every other step
-edits a file CR §14 rewrites — `model.py`, `edit.py`, `store.py`,
-`plugin.py`, `isabelle_driver.py` — or `mcp.py`, which its change to
-`Evaluation` reaches, or needs what it builds, and starts only when CR
-§14 is in the tree: the two sessions never edit one file at the same
-time. The owner's word of 2026-10-03 (DSL entry 15) and the recorded
-division (DSL entry 16; LD, K1) put all of this plan after the
-compilation code; taking steps 1 to 3 out of that rule, because LIP
-steps 10 and 11 wait for them, is the owner's to allow (§4, point 1).
+**Every step after Phase B.** Two sessions never edit one file at the
+same time. Phase A, committed on 2026-10-04 (dfefca1), rewrote
+`model.py`, `edit.py`, `store.py`, `plugin.py`, `isabelle_driver.py`
+and `mcp.py`; Phase B edits `model.py`, `plugin.py`, `toplevel.py`,
+`exceptions.py`, the two ML files, `ML/TAT_Boot.ML`, `tat.scala`, the
+jar, `test/harness.py` and the test plugin's theory (CP §2). Steps 1 to
+3 were to run beside Phase A and be in before Phase B's ML and Scala
+steps; the owner had not allowed their start when the compilation
+session reached those steps, so it took the files, and Phase B was
+committed first (ee9e4f5). The owner allowed the start on 2026-10-05,
+and step 1 is in. Steps 1 and 3 build on what its B1, B2 and B7 leave
+in `TAT.start`'s path and in `TAT_Common_Nodes`. Of this plan, steps 4 to 13 need
+nothing of Phase B but its files; step 15 needs its folder (B5), and
+step 16 its emission contract, `compile.py` and the hooks (B3, B4, B6).
 
-**What the compilation session's code leaves to this plan** (CR §14,
-items 1, 2, 4 and 7): `Evaluation`'s `starter` and `dropped`; in the
-setters, the stored check's clearing, `_on_context_change` and the
-evaluation job's drop; the jobs' reserved rows; `Conversation.forget`
-over the agents' sets, which that code writes over the one set the
-conversation holds today; the test of an `_on_context_change` that
-raises under an edit.
+**What Phase A leaves to this plan** (CP §2): `Evaluation`'s `starter`
+and `dropped`; in the setters, the stored check's clearing,
+`_on_context_change` and the evaluation job's drop; `cancel(ids)` at
+each flush; `Node.evaluate_to`'s `agent` and `checks`;
+`check_outcome()` and `_unfinished()`; the jobs' reserved rows;
+`Conversation.forget` over the agents' sets, which that code writes
+over the one set the conversation holds today; the test of an
+`_on_context_change` that raises under an edit.
 
 **The division with the logging session** (LD, its entries of
 2026-10-03): this plan builds the client machinery of CI §4, §7 and §8
@@ -82,7 +91,10 @@ hook's empty answer before step 11 holds nobody wrongly.
 ## 2. The tests that fail today
 
 Measured on 2026-10-03: of the cases that need no Isabelle, 307 pass
-and 18 fail, each because a document is ahead of the code.
+and 18 fail, each because a document is ahead of the code. Measured
+again on 2026-10-05 with step 1 in, the whole suite: 399 pass and 17
+fail — the 18 less `test_the_field_checks`, which Phase B's B2 made
+pass.
 
 | case | waits for |
 | --- | --- |
@@ -97,11 +109,10 @@ and 18 fail, each because a document is ahead of the code.
 | `test_mcp`: `test_a_malformed_call_is_refused_on_its_own_shape_with_no_opening_line` | step 11 (`auto_construct` in `it takes …`) |
 | `test_mcp`: `test_the_success_lines_of_render_baselines_section_6` | step 11 and step 12 (RB §6's three blocks) |
 | `test_descriptions`: `test_descriptions_are_the_documents_fenced_lines` | step 13 |
-| `test_session_theory`: `test_the_field_checks` | the compilation session (CR §10, "The 13 failing tests") |
 
 ## 3. The steps
 
-### Steps 1 to 3: before CR §14
+### Steps 1 to 3: need only what is in
 
 ### Step 1. `-c`: the client's name from the command line to the server
 
@@ -119,17 +130,25 @@ the version its facts were measured on (MS §4.6; CI §8); *(author)*
 their class names are `Claude_Code_Server` and `Codex_Server`.
 *(author)* `configure(working_directory)` is a method the base
 declares and `served()` calls before the port is bound (MS §4.6, the
-third layer); its body is LIP step 10's.
+third layer); its body is LIP step 10's. With the name travels the
+bound on concurrent construction jobs (CONSTRUCT_DECISIONS.md §15):
+`start` reads the Isabelle environment variable
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` and hands its text to
+`launch_TAT`, which takes unset or empty as no bound and refuses any
+other value that is not a positive integer with a `TAT_StartupError`
+carrying the approved sentence; step 8 uses the value.
 
 Files: `src/scala/tat.scala`, `lib/tat.jar`, `ML/TAT_Boot.ML` (its
 header), `ML/TAT_Framework.ML` (`TAT.start`, `start'`, `start`),
 `toplevel.py`, `mcp_server.py`, `test/harness.py` (its `launch_TAT`
-takes the fourth argument), `test/Test_TAT_Framework.thy` (its two
+takes the two new arguments), `test/Test_TAT_Framework.thy` (its two
 calls of `start'`).
 
 Tests. `test_launcher.py`: `-c x` is refused with MS §5's sentence and
 exit 2. `test_toplevel.py`: the `start` record carries the name; each
-name selects its subclass.
+name selects its subclass; `0`, `-1` and `abc` as the bound are each
+refused with the sentence read from CONSTRUCT_DECISIONS.md §15 until
+MS states it, and `3` and the empty text are taken.
 
 Done when: `isabelle TAT_mcp -c codex` serves through the Codex
 subclass.
@@ -169,7 +188,10 @@ Build.
   One method of the server refuses a client: it writes
   `conversation.client_refused` and enters the ending with the
   `ClientRefused`; every refusal, the sandbox check's included, goes
-  through it. The record `client_connected`.
+  through it. A refusal's line is built from its reason by
+  `mcp_server.stopped_for`, the one place the ending's sentence is
+  written, and `stopped()`, whose branches the three sessions tell each
+  other before editing, returns it. The record `client_connected`.
 - The harness's client. `test/harness.py`'s `client()` states a
   `clientInfo` — `claude-code`, the measured version — and announces
   each call to `/hook` before sending it with the matching `_meta`;
@@ -198,17 +220,18 @@ on the subclasses.
 
 ### Step 3. `Theory`'s `end` built in ML
 
-Needs: what is in; the owner's answer to §4, point 2.
+Needs: what is in.
 
-Build (EVALUATOR_DESIGN.md §1; MS §2.4; MS §3, the `Theory` row): the
-ML-built `Toplevel.exit` transition; `run_commands`, `run_span` and
-`command_record` leave `TAT_Framework`. The step is written for the
-answer §4's point 2 proposes: the three move into the test plugin's
+Build (EVALUATOR_DESIGN.md §1; MS §2.4; MS §3, the `Theory` row;
+CONSTRUCT_DECISIONS.md §11, the entry of 2026-10-04): the ML-built
+`Toplevel.exit` transition; `run_commands`, `run_span` and
+`command_record` leave `TAT_Framework` and move into the test plugin's
 `TAT_Test_Lib`, whose callbacks `TAT_test.run` and
 `TAT_test.run_parallel` are how `test_conversation.py` runs Isar text
-in seventeen places, and the framework's signature gains the two
-functions of its output buffers that `run_span` calls,
-`Output_Routing.new_buffer` and `take_buffer`.
+in seventeen places, under a comment saying to avoid `run_commands`
+wherever possible; the framework's signature gains the two functions of
+its output buffers that `run_span` calls, `Output_Routing.new_buffer`
+and `take_buffer`.
 
 Files: `ML/TAT_Framework.ML`, `ML/TAT_Common_Nodes.ML`,
 `test/Test_TAT_Framework.thy`.
@@ -220,11 +243,11 @@ Done when: nothing under `ML/` or `isabelle_theory_agent/` names
 `run_commands`; §5's corrections to MS and EVALUATOR_DESIGN.md are
 made.
 
-### Steps 4 to 17: after CR §14
+### Steps 4 to 17: need Phase A's code
 
 ### Step 4. Rendering for an agent
 
-Needs: CR §14; step 2.
+Needs: Phase A; step 2.
 
 Build.
 - The seen set per agent (MS §4.1; PRINT.md §4; CI §6): `Agent.seen`,
@@ -298,8 +321,9 @@ Done when: CI §8's compaction paragraphs hold against these files.
 
 ### Step 6. The evaluation jobs' wire
 
-Needs: step 2, which creates `jobs.py`. It needs nothing of CR §14, and
-waits for it only because it adds a function to `isabelle_driver.py`.
+Needs: step 2, which creates `jobs.py`. It needs nothing of Phase A,
+and waits for it only because it adds a function to
+`isabelle_driver.py`.
 
 Build (MS §2.4, `fork_job`; MS §2.5's environment; MS §2.6, step 3; CI
 §3.3, "The work" and the first half of "The report"; LOGGING.md §4,
@@ -391,8 +415,8 @@ Build, in `jobs.py` unless a file is named.
   `message_dropped`; the run's wrapper sets `log.current_agent` to the
   owner (CI §3.2).
 - The bound on concurrent runs, around the wrapper's `await
-  self._run()` (CONSTRUCT_DECISIONS.md §15): built when the owner has
-  named its variable (§4, point 4).
+  self._run()` (CONSTRUCT_DECISIONS.md §15), from the value step 1
+  carries; a run waiting for its turn is `RUNNING`.
 
 Files: `jobs.py`, `model.py`, `edit.py`, `store.py`, `plugin.py`,
 `exceptions.py`, `mcp_server.py` (`Ending.end`).
@@ -407,7 +431,7 @@ the earlier run's task; each cancel reason and its notification; the
 question's round trip, a question asked instead, `BadAnswer`, the
 withdrawals; what delivery drops; `_on_context_change` on a rerun, and
 one that raises a `TAT_Error` under an edit ending the conversation
-(CR §14, item 7); the
+(CP §2); the
 carry on an amend, with a settlement between `gen` and the commit; the
 rows across a reload, `RUNNING` read back as `NOT_STARTED`; each step's
 own transaction; the ending's cancel making no round trip.
@@ -487,10 +511,12 @@ Needs: step 10.
 
 Build.
 - `construct`, `cancel_construct`, `check_construct`, `answer` (CI §5;
-  TS §5), their four `.jsonc` files, present only when a construction
-  job class is loaded, the two descriptions completed at start,
-  `check_construct` read-only (MCP_SPECIFICATION.md §5), its state
-  lines the trailer.
+  TS §5), their four `.jsonc` files; the first two and `answer`
+  present only when a construction job class is loaded,
+  `check_construct` when a job class of either kind is (CI §3.1); the
+  two descriptions completed at start, `check_construct`'s in its
+  three forms; `check_construct` read-only (MCP_SPECIFICATION.md §5),
+  its state lines the trailer.
 - `edit`'s `auto_construct` (TS §1), written on each new node's job
   after `gen` (MS §4.2, step 1).
 - The stop rule and the interruption judgement on `/hook` (CI §7; CH
@@ -552,42 +578,62 @@ Done when: ARCHITECTURE.md §3.6 and CI §3.3 hold in these tests.
 
 ### Step 13. `Theory`'s `description`
 
-Needs: CR §14; step 4.
+Needs: Phase A; Phase B's `Theory.emit_beginning` (B3); step 4.
 
 Build (ST §2, §4): the field, its schema line, the store, what it
-prints.
+prints; its `text ‹…›` block written by `Theory.emit_beginning` before
+the header, with ST §2's replacement of the cartouche characters.
 
 Files: `model.py`.
 
 Tests: `test_descriptions.py`; `test_session_theory.py`; `test_print.py`
-against ST §4's lines.
+against ST §4's lines; a compile of a theory with a `description`, one
+holding `‹` and `\<close>`, and of one without.
 
 Done when: the case §2 gives to this step passes.
 
 ### Step 14. `Theorem`: the statement
 
-Needs: step 3; step 8 (`carry_job_from`); the compilation session's
-`owned_slots` and `IsaTerm` in `Isabelle_RPC_Host.unicode`; the
-owner's answer to §4, point 5.
+Needs: step 3; step 8 (`carry_job_from`); Phase A's
+`Node._slots_written_by` and `IsaTerm` in `Isabelle_RPC_Host.unicode`;
+Phase B's
+`Theory.emit_beginning` writing the header through `Theory.header()`
+(B3).
 
 Build. `Theorem` as TH §1 to §4, §6's evaluation, §8's table and §9:
 `STATEMENT_DEFS`, `gen` with its checks and its call of
 `carry_job_from`, `is_identifier` beside `IsaTerm` in
 `Isabelle_RPC_Host.unicode` (DSL, "Outside this repository", item 1),
 `TAT.Theorem.evaluate` with its two transitions and the `goal_state`
-slot (MS §3), `reserved_names`, `print_fields`, the mark's statement
+slot (MS §3) — the class mints the slot in `gen` and `from_store`,
+appends it in `_states_inside()` and names it in `_slots_written_by`,
+and the callback clears it when a rerun of a `ready` node fails
+(CONSTRUCT_DECISIONS.md §15) —, `reserved_names`, `print_fields`, the mark's statement
 slot (TH §7, "The mark"). The call of `carry_job_from` carries nothing
-until step 15 names the job class. *(author)* The class's Python half
-is loaded as a plugin's is, by the package its ML registration names
-(MS §2.5), `isabelle_theory_agent.theorem_node`. Whether a conversation
-loads the class before step 15 is §4, point 3; the step is written for
-the answer proposed there: the registration names no package until
-step 15, and `test_theorem.py`'s conversations list the package
-themselves.
+until step 15 names the job class. The class is the first of the
+plugin `Isabelle_Std` (CONSTRUCT_DECISIONS.md §11, the entries of
+2026-10-04), which this step creates: its directory with `etc/settings`
+and `ROOT`, its major theory, `ML/TAT_Theorem.ML`, and the Python
+subpackage `isabelle_theory_agent.std`, which the theory's registration
+names. No conversation loads the class before step 15: the
+registration names no package until then, and `test_theorem.py`'s
+conversations list the package themselves. The plugin's cases run in a
+harness run of their own, launched with `-l Minilang_AoA`. The step
+also builds the imports a plugin declares (CONSTRUCT_DECISIONS.md §11):
+the declaration in `plugin.py`, kept and returned by `load` as the
+compile hooks are; `Theory`'s header, the one function its evaluation
+and its emission both write the header through, adding them on a
+theory none of whose imports resolves to a theory of the forest;
+`Isabelle_Std` declaring `Minilang_AoA.Minilang_AoA`. Measured in this
+step: whether that import changes how a statement's terms parse.
 
-Files: `theorem_node.py`, `ML/TAT_Common_Nodes.ML` or the theory §4's
-point 5 names, `contrib/Isabelle_RPC/Isabelle_RPC_Host/unicode.py`,
-`test/harness.py` (a conversation's packages).
+Files: `Isabelle_Std/` (`etc/settings`, `ROOT`, `TAT_Isabelle_Std.thy`,
+`ML/TAT_Theorem.ML`), `isabelle_theory_agent/std/` (`__init__.py`,
+`statement.py`, `theorem.py`; the empty `builtins.py` and
+`theorem_node.py` go), `ML/TAT_Common_Nodes.ML` (its empty sections for
+`Theorem`, `Define` and `Section` go),
+`contrib/Isabelle_RPC/Isabelle_RPC_Host/unicode.py`, `test/harness.py`
+and `test/conftest.py` (a conversation's packages; the second run).
 
 Tests. New `test/test_theorem.py`: the schema and the descriptions of
 TH §2, §3; `gen`'s refusals from TH §4's fenced lines and RB §2; a
@@ -600,9 +646,8 @@ each statement admitted.
 
 ### Step 15. `Proof_Job` and `Proof_Check`
 
-Needs: steps 9 to 14; the owner's rulings of §4, points 4 and 5; the
-`Session`'s folder made before a theory begins (the compilation
-session's).
+Needs: steps 9 to 14; the
+`Session`'s folder made before a theory begins (Phase B, B5).
 
 Build (TH §7 whole, §6's last paragraph, §8's examples; CI §10's first
 paragraph; CONSTRUCT_DECISIONS.md §15): the two job classes named on
@@ -611,7 +656,8 @@ paragraph; CONSTRUCT_DECISIONS.md §15): the two job classes named on
 to return the times; `TAT.Theorem.check` through the function Isa-Mini
 exports for the replay of one record; the mark's proof slot.
 
-Files: `theorem_node.py`; the theory that holds `Theorem`'s ML;
+Files: `isabelle_theory_agent/std/theorem.py`;
+`Isabelle_Std/ML/TAT_Theorem.ML`;
 `contrib/Isa-Mini/Agent/agent_server.ML` and `proof_store_AoA.ML` (TH
 §7 names both); `test/harness.py` (its check of the package list a
 conversation is launched with).
@@ -632,14 +678,14 @@ constructed again in one conversation.
 
 ### Step 16. `Theorem`'s emission; the proof-store compile hook
 
-Needs: step 15; `compile.py` with `Node.can_emit` and `emit`; where
-the `aoa` method lives, so that an emitted theory imports it
-(OPEN_QUESTIONS.md §3; §4, point 5).
+Needs: step 15; Phase B's emission contract, `compile.py` and compile
+hooks (B3, B4, B6); step 14's declared import, by which an emitted
+theory has the `aoa` method.
 
 Build (TH §5; COMPILATION.md §3; COMPILATION.md §5, "Compile hooks"):
 `Theorem.emit`, `sorry` or `by aoa`; the hook the package registers.
 
-Files: `theorem_node.py`.
+Files: `isabelle_theory_agent/std/theorem.py`.
 
 Tests, in `test_theorem.py`: a compile of a forest with a proven, an
 unchecked and an unproven theorem writes TH §5's text; the hook removes
@@ -676,80 +722,44 @@ firing as specified, on both clients.
 
 ## 4. For the owner
 
-1. **The order between the sessions.** The owner's word of 2026-10-03
-   put this session's implementation after the compilation system and
-   the logging system (DSL entry 15). CR §14 has not started, and steps
-   4 to 17 wait for it. Steps 1 to 3 share no file with it and could
-   run before it, which lets the logging session finish its steps 10
-   and 11; the price is §1's two intervals in which a real client is
-   served wrongly — TAT calls refused under `-p` between LIP step 10
-   and step 2, compactions clearing no seen set between step 2 and
-   step 5. The alternative is to hold steps 1 to 3, and with them LIP
-   steps 10 and 11, until CR §14 is in.
-2. **The text runner after `end` leaves it.** Decided on 2026-09-30
-   (DSL, "MODULE_STRUCTURE.md", item 1; MS §2.4): once `Theory`'s
-   `end` is built in ML, `run_commands` and `run_span` go, and "those
-   two tests" are rewritten against `end_theory`. The two are not
-   tests but the test plugin's callbacks `TAT_test.run` and
-   `TAT_test.run_parallel`, through which `test_conversation.py` runs
-   Isar text in seventeen places — definitions, lemmas with their
-   proofs, ML that prints — for its cases on the theory table, import
-   resolution and output isolation. Proposed: the runner moves into the
-   test plugin as test code, the framework exporting the two
-   output-buffer functions it calls, and no product code runs text.
-   The alternative is to rewrite the seventeen probes, each on
-   transitions built in ML.
-3. **`Theorem` before its jobs exist.** The owner ruled that `Theorem`
-   names no job class until its jobs are built, its proofs written
-   `sorry`. TH §7's mark reads its proof slot from the construction
-   job, and CI §3.1's table makes a node without one finished: in that
-   state a theorem's line has no specified proof slot, and a theory of
-   `sorry` theorems reads `complete`. Proposed: no conversation loads
-   `Theorem` until step 15, so the state never reaches an agent, and
-   step 14 can be committed on its own. The alternative is a ruling on
-   the line and on the theory's mark for that state.
-4. **Three rulings the AoA drive path still needs**
-   (CONSTRUCT_DECISIONS.md §15, "Pending the owner"): the environment
-   variable's name and the sentence for a value that is not a positive
-   integer, which the bound of step 8 waits for; how a run waiting for
-   its turn shows; what `Theory`'s beginning does when its `Session`'s
-   folder cannot be made — the compilation session's code raises the
-   compile's refusal until the ruling gives the beginning its own
-   failure (CR §14's closing paragraphs).
-5. **Where `Theorem`'s ML lives.** MS §3 puts its three callbacks in
-   `TAT_Common_Nodes`. `TAT.Theorem.construct` calls AoA's
-   `hammer_or_AoA`, so the theory that holds it imports AoA's, while
-   TAT's theory imports `Isabelle_RPC` alone and its session's parent
-   is `Isabelle_RPC`. On the answer depend the file step 14 writes
-   `TAT.Theorem.evaluate` into, the base heap a launch needs and how
-   long the harness takes to start. Where the `aoa` method lives, and
-   so what an emitted theory imports for `by aoa`, is the neighbouring
-   question (OPEN_QUESTIONS.md §3), which step 16 waits for.
-6. **A class with an evaluation job and no construction job.** CI §3.1
-   then offers `checks` without the four construct tools, yet `checks`'
-   description, the background line's first sentence and every
-   instruction of the stop rule tell the agent to call
-   `check_construct`. `Theorem` and the test plugin's class name both
-   kinds, so no step meets the case; the design needs a ruling before
-   a class of that shape exists.
-7. **Two pieces no plan was assigned,** taken here unless the owner
-   says otherwise: the tool `evaluate_to` (step 12) and `Theory`'s
-   `description` (step 13). The compilation session has no objection
-   (CR §14's last paragraph).
-8. **Which `IsaTerm` is shared.** The record of 2026-09-30 (DSL,
-   "Outside this repository") has `Isabelle_RPC_Host/unicode.py`
-   receive AoA's class unchanged and AoA import it from there; TAT's
-   own class differs from it (TH §2). CR §14 item 5 states both and
-   waits for the owner's choice, which the compilation session has
-   asked for; step 14 waits with it.
+1. **The word to start** was given on 2026-10-05 (「开工」), after Phase
+   B's commit; the steps run in the plan's order, 1 to 17, and step 1
+   is in (DSL entry 32). The logging session's steps 10 and 11 wait
+   for steps 1 and 2. §1's two intervals in which a real client is
+   served wrongly remain: between LIP step 10 and step 2, and between
+   step 2 and step 5. Two shapes of step 1 are the author's, told to
+   the owner here: the bound's text is checked before the lock, so a
+   bad value leaves no log; the plugin's declared import is a
+   module-level call `TAT_import(<theory name>)` (PLUGIN_SYSTEM §1).
+
+Decided on 2026-10-04 and no longer open (CONSTRUCT_DECISIONS.md §11,
+§15): the plugin `Isabelle_Std` with its structure and names; the
+import it declares, which `Theory` adds to the header of every theory
+that imports no theory of the forest and which `recall` does not show;
+the bound's variable and its refusal; a waiting run shown as running;
+`check_construct` existing when a job class of either kind is loaded,
+which step 11 builds with its second description.
+The tool `evaluate_to` (step 12) and `Theory`'s `description` (step 13)
+are this plan's, by the owner's word of 2026-10-04. The shared
+`IsaTerm` is no longer open: as the compilation session
+reports, the owner chose on 2026-10-04 one class for AoA and TAT, AoA's
+moved unchanged into `Isabelle_RPC_Host.unicode` (CP §5, point 1; its
+step A5); step 14 adds `is_identifier` beside it.
 
 ## 5. Corrections to the documents, made when the step lands
+
+The decisions of 2026-10-04 are written into CI §3.1, §5 and §10, TS
+§1 and §5, MCP_SPECIFICATION.md §1, TH's opening, §5 and §7,
+OPEN_QUESTIONS.md, EVALUATOR_DESIGN.md §5, MS §1, §2.6, §3, §4, §4.5
+and §4.6, and ARCHITECTURE.md §2.2; on 2026-10-05, with step 1, the
+declared imports in PLUGIN_SYSTEM.md §1 and ST §2 and §4, and the
+bound's refusal among the `TAT_StartupError`s of EXCEPTIONS.md §1.
 
 - Step 3: MS §2.4's bullet on `run_commands`, the phrase "no
   `run_commands`" in MS §3's `Theorem` row, and EVALUATOR_DESIGN.md
   §1's and §6's mentions of it describe a function that is gone from
   the framework; MS §2.5's signature gains the two output-buffer
-  functions if §4's point 2 is answered as proposed. MS is told to the
+  functions `run_span` calls. MS is told to the
   compilation session first.
 - Step 8: CI §3.1 and ARCHITECTURE.md §4.1 call the `job` row "a tag
   and an optional string", while CI §3.1 makes the product a

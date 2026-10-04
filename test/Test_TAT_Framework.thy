@@ -186,7 +186,7 @@ let
         ret_schema = MessagePackBinIO.Pack.packUnit, function = I, timeout = NONE})
   val thy' = \<^theory> |> reg "TAT_test.dup" |> reg "TAT_test.dup"
 in
-  case Exn.capture_body (fn () => TAT_Framework.start' "never_called" [thy'] "" 0) of
+  case Exn.capture_body (fn () => TAT_Framework.start' "never_called" [thy'] "" 0 "") of
     Exn.Exn (ERROR msg) =>
       if String.isSubstring "Callback registered twice" msg then ()
       else raise Fail ("wrong rejection: " ^ msg)
@@ -201,7 +201,7 @@ ML \<open>
 let
   val orig = ! Multithreading.parallel_proofs
   val _ = Multithreading.parallel_proofs := 3
-  val outcome = Exn.capture_body (fn () => TAT_Framework.start' "never_called" [\<^theory>] "" 0)
+  val outcome = Exn.capture_body (fn () => TAT_Framework.start' "never_called" [\<^theory>] "" 0 "")
   val _ = Multithreading.parallel_proofs := orig
 in
   case outcome of

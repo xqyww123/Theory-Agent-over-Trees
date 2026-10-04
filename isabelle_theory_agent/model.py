@@ -1163,15 +1163,17 @@ class Conversation:
     """What one conversation, or one compile, is given and the forest does
     not store (ARCHITECTURE §1, §9; MODULE_STRUCTURE §4.1): the connection
     to the Isabelle side, the working directory (ARCHITECTURE §4), the log
-    (LOGGING.md) and the ending object (MODULE_STRUCTURE §4.6); and, until
-    the agents hold their own, the seen set (PRINT.md §4) — what a class has
-    shown the agent once, under keys of the class's choosing; cleared whole
-    when the agent's context is replaced.  A node reaches it through
-    `forest().conversation`."""
+    (LOGGING.md) and the ending object (MODULE_STRUCTURE §4.6); the bound
+    on the construction jobs running at once, None for none
+    (node_classes/THEOREM.md §7); and, until the agents hold their own, the
+    seen set (PRINT.md §4) — what a class has shown the agent once, under
+    keys of the class's choosing; cleared whole when the agent's context is
+    replaced.  A node reaches it through `forest().conversation`."""
     connection: Connection
     working_directory: Path
     log: Log
     ending: Ending
+    max_concurrent_construction_jobs: int | None = None
     seen: set[Any] = field(default_factory=set)
 
     def forget(self, key: Any) -> None:

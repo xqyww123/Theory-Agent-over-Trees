@@ -54,6 +54,20 @@ is in `sys.modules`; the sweep at the start of `load` clears both
 registries of entries whose module is gone, and `load` returns the hooks
 the listed packages define beside the kind table.
 
+A package may also declare imports: theories that the conversation's
+theories import besides what the agent wrote, `Isabelle_Std` declaring
+`Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined
+(node_classes/THEOREM.md §5). The declaration is a module-level call
+`TAT_import(<theory name>)`, the name in the `imports` field's qualified
+shape (node_classes/SESSION_AND_THEORY.md §2), registered at import as a
+compile hook is, into a registry of its own, swept the same way, and
+returned by `load` for the listed packages beside the hooks. The
+framework's `Theory` adds the declared imports to the header it runs and
+to the header it emits, through one function, after the agent's own
+imports, and only on a theory none of whose imports resolves to a theory
+of the forest: every other theory receives them through the forest
+theories it imports. `recall` shows the agent's imports alone.
+
 A package that fails to import — a syntax error, a registration check
 below — fails the conversation start: a plugin's bug is never skipped
 quietly. The failed import takes the failing module out of `sys.modules`,

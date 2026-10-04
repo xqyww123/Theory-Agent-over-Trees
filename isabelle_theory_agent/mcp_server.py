@@ -1,7 +1,8 @@
 """The Streamable HTTP MCP server (MODULE_STRUCTURE §4.6): the endpoint
 `http://127.0.0.1:<port>/mcp`, the path `/on-compaction` the agent
 clients' hooks call (CLIENT_HOOKS.md); the tool boundary of EXCEPTIONS.md
-§1; the conversation's ending, `Ending`.
+§1; the conversation's ending, `Ending`; one subclass of the server per
+agent client (CONSTRUCT_INTERACTION §8).
 
 TAT's own transport code, on the Python `mcp` SDK's low-level server and
 session manager and on uvicorn.  Two lessons from AoA's server
@@ -19,7 +20,8 @@ import time
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, NamedTuple, NoReturn, TypeVar
+from pathlib import Path
+from typing import Any, ClassVar, NamedTuple, NoReturn, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
@@ -200,7 +202,12 @@ class TAT_Server:
     starts the session manager and listens, and on leaving stops; `serve`
     runs the conversation until its ending and raises what ended it.  The
     ending is `ending`'s, given; the server keeps no ending state of its
-    own."""
+    own.  One subclass per agent client (CONSTRUCT_INTERACTION §8), each
+    stating the `clientInfo.name` its client's MCP sessions open with and
+    the client's version its facts were measured on."""
+
+    client_name: ClassVar[str]
+    measured_version: ClassVar[str]
 
     def __init__(self, ending: Ending, port: int, tools: list[Tool],
                  on_compaction: Callable[[], str]):
@@ -240,6 +247,11 @@ class TAT_Server:
         config.load()
         self._uvicorn = uvicorn.Server(config)
         self._uvicorn.lifespan = config.lifespan_class(config)   # `serve` would set it; nothing else does
+
+    def configure(self, working_directory: Path) -> None:
+        """The client's files, written whole into the agent directory, and
+        the scripts its hooks run into `.tat/` (CLIENT_HOOKS.md); called
+        before the port is bound (MODULE_STRUCTURE §4.6)."""
 
     async def __aenter__(self) -> TAT_Server:
         self._socket = _bind(self._port)
@@ -432,6 +444,21 @@ class TAT_Server:
         except Exception as bug:
             self.ending.end(bug)
         return None
+
+
+class Claude_Code_Server(TAT_Server):
+    client_name = "claude-code"
+    measured_version = "2.1.286"
+
+
+class Codex_Server(TAT_Server):
+    client_name = "codex-mcp-client"
+    measured_version = "0.156.1"
+
+
+# The subclass for each name `isabelle TAT_mcp -c` takes; the launcher
+# refuses any other (MODULE_STRUCTURE §5).
+SERVERS: dict[str, type[TAT_Server]] = {"claude-code": Claude_Code_Server, "codex": Codex_Server}
 
 
 class Result(NamedTuple):

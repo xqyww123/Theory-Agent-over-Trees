@@ -8,7 +8,8 @@ Nothing here is settled. Ordered by what it blocks.
 
 `Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
 and `Locale` are unspecified. `Context` and `Locale` also need their two
-omissibility flags (MCP_SPECIFICATION §2.1).
+omissibility flags (MCP_SPECIFICATION §2.1). Each will be a node class of
+the plugin `Isabelle_Std`, beside `Theorem` (node_classes/THEOREM.md).
 
 ## 2. The AoA round
 
@@ -21,7 +22,8 @@ job calls AoA's `hammer_or_AoA` on it through the class's callback, the
 proof store read and written on AoA's own path, the product and its
 times returned; the check replays the product on the same goal; the
 driver and the budget are Isabelle's configuration; the bound on
-concurrent runs is an Isabelle environment variable; emission keeps
+concurrent runs is the Isabelle environment variable
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`; emission keeps
 `by aoa`. What remains of the round: the kinds of question the search
 asks — AoA's `request` tool, which today lets the AoA agent add subgoals
 in AoA's own global environment, reports instead to the TAT agent that
@@ -37,12 +39,7 @@ method text AoA writes to its proof store with its times (THEOREM.md
 §1); the proof check replays it under limits derived from those times
 (THEOREM.md §7).
 
-## 3. Where the `aoa` proof method lives
-
-If it is defined in a theory, that theory must be in the base heap, and it is a
-real import of every tree that uses it.
-
-## 4. Whether to check completeness against Isabelle's own record
+## 3. Whether to check completeness against Isabelle's own record
 
 `sorry` leaves a `skip_proof` oracle on the theorem, and
 `Thm_Deps.has_skip_proof`
@@ -55,7 +52,7 @@ Isabelle there whether any theorem carries the oracle is an account of
 completeness independent of TAT's own, and the two disagreeing would mean
 TAT has a bug.
 
-## 5. Two loose ends in `Define`
+## 4. Two loose ends in `Define`
 
 Small enough to be forgotten, big enough to bite.
 

@@ -25,7 +25,7 @@ from baselines import DOCS, fenced_blocks
 from harness import free_port
 from isabelle_theory_agent import edit, plugin, toplevel
 from isabelle_theory_agent.exceptions import TAT_DisasterError, TAT_StartupError
-from isabelle_theory_agent.mcp_server import HOST
+from isabelle_theory_agent.mcp_server import HOST, Claude_Code_Server, Codex_Server
 
 DIRECTORY_NAME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{6}Z$")
 
@@ -52,12 +52,12 @@ def run(scenario):
     asyncio.run(asyncio.wait_for(scenario(), 30))
 
 
-async def launch(directory, port):
+async def launch(directory, port, client="claude-code", max_concurrent_construction_jobs=""):
     """A conversation started and serving: its task and recorder — or what
     refused it, raised."""
     connection = Recorder()
     task = asyncio.create_task(cast(Any, toplevel.launch_TAT(
-        ([], str(directory), port), cast(Any, connection))))
+        ([], str(directory), port, client, max_concurrent_construction_jobs), cast(Any, connection))))
     served = asyncio.create_task(connection.served.wait())
     await asyncio.wait({task, served}, return_when=asyncio.FIRST_COMPLETED)
     if task.done():
@@ -95,7 +95,8 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         assert [r["event"] for r in records] == ["start", "store_opened", "plugins_loaded", "serving"]
         start, store_opened, plugins_loaded, serving = (r["data"] for r in records)
         assert start == {"version": start["version"], "pid": os.getpid(),
-                         "working_directory": str(tmp_path), "python_packages": [], "port": port}
+                         "working_directory": str(tmp_path), "python_packages": [], "port": port,
+                         "client": "claude-code"}
         assert store_opened == {"schema_version": 1, "nodes": 0}
         assert plugins_loaded["kinds"]["session"] == "isabelle_theory_agent.model"
         assert serving == {"url": f"http://{HOST}:{port}/mcp"}
@@ -130,6 +131,33 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         again, _ = await launch(tmp_path, port)
         assert len(log_directories(tmp_path)) == 2
         await cancelled_by_the_host(again)
+    run(scenario)
+
+
+def test_the_client_selects_the_server_and_the_bound_is_read(tmp_path):
+    """MODULE_STRUCTURE §4.6: the client's name selects the `TAT_Server`
+    subclass and is recorded in `start`; `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`
+    is taken empty, as no bound, or as a positive integer, and any other
+    text refuses the start before the directory is touched."""
+    async def scenario():
+        for client, server_class, text, bound in (("claude-code", Claude_Code_Server, "", None),
+                                                  ("codex", Codex_Server, "3", 3)):
+            directory = tmp_path / client
+            directory.mkdir()
+            async with toplevel.served([], str(directory), free_port(), client, text,
+                                       cast(Any, Recorder())) as (forest, _, server):
+                assert type(server) is server_class
+                assert forest.conversation.max_concurrent_construction_jobs == bound
+                [log_directory] = log_directories(directory)
+                assert stand_ins.records("conversation", log_directory)[0]["data"]["client"] == client
+        directory = tmp_path / "refused"
+        directory.mkdir()
+        for text in ("0", "-1", "abc", "3.0", " 3", "+3"):
+            with pytest.raises(TAT_StartupError) as refused:
+                await launch(directory, free_port(), max_concurrent_construction_jobs=text)
+            assert str(refused.value) == ("TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a "
+                                          f"positive integer, but it is {text}")
+        assert list(directory.iterdir()) == []
     run(scenario)
 
 

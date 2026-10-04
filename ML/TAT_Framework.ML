@@ -65,12 +65,12 @@ sig
                                             callback, logging every run (§2.5)*)
 
   (*** Conversation (§2.6) ***)
-  val start' : string -> theory list -> string -> int -> unit
+  val start' : string -> theory list -> string -> int -> string -> unit
                       (*the Python procedure that is the conversation, called once
                         its package is loaded; the theories whose ancestries name
                         the node classes; the working directory; the port to serve
-                        on*)
-  val start : theory list -> string -> int -> unit
+                        on; the agent client's name*)
+  val start : theory list -> string -> int -> string -> unit
                       (*start' "launch_TAT"*)
   val compile : theory list -> string -> bool * string list
                       (*the same theories and working directory, through the Python
@@ -822,9 +822,12 @@ fun call_python command arg =
    Remote_Procedure_Calling.call_command command arg
      handle Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => error message)
 
-fun start' procedure theories working_directory port =
+fun start' procedure theories working_directory port client =
   let
     val _ = Loader.check_parallel_proofs ()
+    (*the bound on the construction jobs running at once, as text: empty when
+      unset, which the Python side takes as no bound (§4.6)*)
+    val max_concurrent_construction_jobs = getenv "TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS"
     val slots = Slots.create ()
     val theory_table = Theories.create ()
     (*This unpacker must not raise: mk_callback advances the input stream only
@@ -845,10 +848,15 @@ fun start' procedure theories working_directory port =
               of [] => ()
                | names => error ("Callback registered twice: " ^ commas_quote names))
     val _ = Output_Routing.install ()
-    val conversation : (string list * string * int, unit) Remote_Procedure_Calling.command =
-      {name = procedure, arg_schema = packTuple3 (packList packString, packString, packInt),
+    val conversation
+          : (string list * string * int * string * string, unit) Remote_Procedure_Calling.command =
+      {name = procedure,
+       arg_schema = packTuple5 (packList packString, packString, packInt, packString, packString),
        ret_schema = unpackUnit, callback = callbacks, timeout = NONE}
-  in call_python conversation (packages, working_directory, port) end
+  in
+    call_python conversation
+      (packages, working_directory, port, client, max_concurrent_construction_jobs)
+  end
 
 (*The compile's command carries the framework's TAT.log_directory and no
   class's callback: nothing a compile does can run anything in Isabelle
@@ -904,13 +912,13 @@ fun define_entry name (entry : string list -> string list * (theory list -> int 
         finished (Exn.capture_body (Future.interruptible_task body))))
     end)
 
-(*TAT.start: the working directory, the port, then the plugins' theory
-  names; 0 when the conversation ended by start returning*)
+(*TAT.start: the working directory, the port, the client's name, then the
+  plugins' theory names; 0 when the conversation ended by start returning*)
 val _ =
   define_entry "TAT.start"
-    (fn working_directory :: port :: plugins =>
+    (fn working_directory :: port :: client :: plugins =>
           (plugins, fn theories =>
-            (start theories working_directory (Value.parse_int port); (0, [])))
+            (start theories working_directory (Value.parse_int port) client; (0, [])))
       | _ => raise Match)
 
 (*TAT.compile: the working directory, then the plugins' theory names; the

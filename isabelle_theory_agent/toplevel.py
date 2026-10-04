@@ -26,7 +26,7 @@ from . import isabelle_driver, mcp, plugin
 from .compile import compile, report_lines
 from .exceptions import TAT_StartupError
 from .log import Log, now
-from .mcp_server import Ending, TAT_Server
+from .mcp_server import SERVERS, Ending, TAT_Server
 from .model import Conversation, Forest
 from .store import SCHEMA_VERSION, Forest_Store
 
@@ -93,26 +93,42 @@ def _log_directory(working_directory: Path) -> Path:
     return directory
 
 
+def _max_concurrent_construction_jobs(text: str) -> int | None:
+    """The bound on the construction jobs running at once, from the text of
+    `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` as the Isabelle side read it
+    (MODULE_STRUCTURE §4.6): empty is no bound, and any other text that is
+    not a positive integer refuses the start."""
+    if text == "":
+        return None
+    if not (text.isascii() and text.isdecimal()) or int(text) == 0:
+        raise TAT_StartupError("TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a positive "
+                               f"integer, but it is {text}")
+    return int(text)
+
+
 @asynccontextmanager
 async def conversation(python_packages: list[str], working_directory: str, connection: Connection,
-                       port: int | None = None, read_only: bool = False
+                       port: int | None = None, client: str | None = None,
+                       max_concurrent_construction_jobs: int | None = None, read_only: bool = False
                        ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, Announce]]:
     """The first two layers of the start (MODULE_STRUCTURE §4.6), which a
     conversation and a compile share, torn down in reverse when the block
     ends: the lock; the log directory and the `Log`; the ending object,
     which whatever escapes from here on enters; the `Conversation`; then
     the store — `read_only` for a compile — the plugins and the `Forest`.
-    `port` is a conversation's, recorded in `start`; a compile has none.
-    Yields the `Forest`, the loaded plugins and the lock's `announce` for
-    the third layer."""
+    `port`, `client` and the bound are a conversation's, the first two
+    recorded in `start`; a compile has none.  Yields the `Forest`, the
+    loaded plugins and the lock's `announce` for the third layer."""
     directory = Path(working_directory)
     with _held(directory) as announce:
         log = Log(_log_directory(directory), connection.server.logger)
         async with Ending(log) as ending:
-            conv = Conversation(connection, directory, log, ending)
+            conv = Conversation(connection, directory, log, ending,
+                                max_concurrent_construction_jobs=max_concurrent_construction_jobs)
             log.conversation.start(
                 version=version("isabelle_theory_agent"), pid=os.getpid(),
-                working_directory=str(directory), python_packages=python_packages, port=port)
+                working_directory=str(directory), python_packages=python_packages, port=port,
+                client=client)
             await isabelle_driver.log_directory(conv, log.directory)
             with Forest_Store(directory / DATABASE, log, read_only=read_only) as store:
                 log.conversation.store_opened(schema_version=SCHEMA_VERSION, nodes=len(store.nodes()))
@@ -125,26 +141,34 @@ async def conversation(python_packages: list[str], working_directory: str, conne
 
 
 @asynccontextmanager
-async def served(python_packages: list[str], working_directory: str, port: int,
-                 connection: Connection) -> AsyncGenerator[tuple[Forest, plugin.Loaded, TAT_Server]]:
-    """All three layers: a conversation whose server listens, the port
-    announced in the lock; whoever holds the block serves it."""
-    async with conversation(python_packages, working_directory, connection, port
+async def served(python_packages: list[str], working_directory: str, port: int, client: str,
+                 max_concurrent_construction_jobs: str, connection: Connection
+                 ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, TAT_Server]]:
+    """All three layers: a conversation whose server — the `TAT_Server`
+    subclass `client` names — writes the client's files, then listens, the
+    port announced in the lock; whoever holds the block serves it.  The
+    bound's text is checked first, before anything is touched."""
+    bound = _max_concurrent_construction_jobs(max_concurrent_construction_jobs)
+    async with conversation(python_packages, working_directory, connection, port, client, bound
                             ) as (forest, loaded, announce):
-        async with TAT_Server(forest.conversation.ending, port, mcp.tools(forest, loaded),
-                              mcp.on_compaction(forest)) as server:
+        server = SERVERS[client](forest.conversation.ending, port, mcp.tools(forest, loaded),
+                                 mcp.on_compaction(forest))
+        server.configure(forest.conversation.working_directory)
+        async with server:
             announce(port)                  # listening: the hooks may call
             forest.conversation.log.conversation.serving(url=server.url)
             yield forest, loaded, server
 
 
 @isabelle_remote_procedure("launch_TAT")
-async def launch_TAT(arg: tuple[list[str], str, int], connection: Connection) -> NoReturn:
+async def launch_TAT(arg: tuple[list[str], str, int, str, str], connection: Connection) -> NoReturn:
     """`arg` as `TAT_Framework.start'` packs it: the packages the node class
-    theories registered, the working directory, the port (MODULE_STRUCTURE
+    theories registered, the working directory, the port, the client's name
+    and the text of `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` (MODULE_STRUCTURE
     §2.6).  The conversation, served until its ending."""
-    python_packages, working_directory, port = arg
-    async with served(python_packages, working_directory, port, connection) as (_, _, server):
+    python_packages, working_directory, port, client, max_concurrent_construction_jobs = arg
+    async with served(python_packages, working_directory, port, client,
+                      max_concurrent_construction_jobs, connection) as (_, _, server):
         # a line nothing depends on, and the launcher does not echo (§5)
         await connection.writeln(f"TAT is serving on {server.url}")
         await server.serve()

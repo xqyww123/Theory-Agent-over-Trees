@@ -19,8 +19,10 @@ TAT runs as its own Model Context Protocol (MCP) server, named TAT.
 | `check_construct` | Wait for the agent's jobs or its messages |
 | `answer` | `Answer the question a construction job asked you` |
 
-The four construct tools (CONSTRUCT_INTERACTION §5) exist only when a
-loaded node class names a construction job class. `construct` and
+Of the four construct tools (CONSTRUCT_INTERACTION §5), `construct`,
+`cancel_construct` and `answer` exist only when a loaded node class
+names a construction job class, and `check_construct` when one names a
+job class of either kind. `construct` and
 `cancel_construct` take a list of node ids, a non-leaf node standing for
 every node under it, and no class arguments; they act on the nodes that
 have a construction job, skip those they cannot act on, and are refused

@@ -477,8 +477,8 @@ def test_a_task_unwinding_after_the_ending_still_reads_the_store(tmp_path):
             raise
 
     async def scenario():
-        async with toplevel.served([], str(tmp_path), free_port(), cast(Any, Recorder())
-                                   ) as (forest, _, server):
+        async with toplevel.served([], str(tmp_path), free_port(), "claude-code", "",
+                                   cast(Any, Recorder())) as (forest, _, server):
             forest.conversation.ending.spawn(reader(forest))
             serve = asyncio.create_task(server.serve())
             await asyncio.sleep(0)                    # the reader and `serve` waiting

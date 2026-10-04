@@ -164,10 +164,12 @@ handler runs `REPL.disable_output ()`, so its `output` field is always empty.
 `.thy` (`REPL.ML:472-485`, `:521-528`). TAT is the compiler; two writers is one
 too many.
 
-## 5. Open
+## 5. The `aoa` proof method
 
-Where the `aoa` proof method lives — OPEN_QUESTIONS §3. §2 holds only if its
-theory is in the base heap.
+The `aoa` proof method is defined in `Minilang_AoA.Minilang_AoA`. §2
+holds only if that theory is in the base heap, so a working directory
+that uses the plugin `Isabelle_Std` is launched on the base heap
+`Minilang_AoA` (node_classes/THEOREM.md).
 
 ## 6. Loading a library theory that is not in the base heap
 
