@@ -92,13 +92,18 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # the Isabelle side told the directory, absolute, right after `start`
         assert connection.calls == [("TAT.log_directory", str(log_directory.absolute()))]
         records = stand_ins.records("conversation", log_directory)
-        assert [r["event"] for r in records] == ["start", "store_opened", "plugins_loaded", "serving"]
-        start, store_opened, plugins_loaded, serving = (r["data"] for r in records)
+        assert [r["event"] for r in records] == [
+            "start", "store_opened", "plugins_loaded", "configured", "serving"]
+        start, store_opened, plugins_loaded, configured, serving = (r["data"] for r in records)
         assert start == {"version": start["version"], "pid": os.getpid(),
                          "working_directory": str(tmp_path), "python_packages": [], "port": port,
                          "client": "claude-code"}
         assert store_opened == {"schema_version": 1, "nodes": 0}
         assert plugins_loaded["kinds"]["session"] == "isabelle_theory_agent.model"
+        # the client's files and the scripts, written before the port is bound
+        assert configured == {"files": ["TAT.agents/.mcp.json", "TAT.agents/.claude/settings.json",
+                                        ".tat/hook.py", ".tat/guard.py"]}
+        assert (tmp_path / "TAT.agents" / ".mcp.json").is_file() and (tmp_path / ".tat" / "hook.py").is_file()
         assert serving == {"url": f"http://{HOST}:{port}/mcp"}
 
         # a second conversation on the directory, and a compile, are refused
@@ -121,7 +126,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # then `ended` once the unwinding is over
         await cancelled_by_the_host(first)
         assert (tmp_path / "tat.lock").read_bytes() == b""
-        ending, ended = stand_ins.records("conversation", log_directory)[4:]
+        ending, ended = stand_ins.records("conversation", log_directory)[5:]
         assert (ending["event"], ending["level"]) == ("ending", "error")
         assert ending["data"]["class"] == "CancelledError"
         assert ended["event"] == "ended" and list(ended["data"]) == ["duration"]

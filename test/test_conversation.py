@@ -121,7 +121,11 @@ async def test_a_fresh_conversation_holds_nothing(conversation):
     # the start recorded, the round trip just made recorded with its result
     assert conversation.log.directory.parent == conversation.working_directory / ".tat" / "log"
     assert stand_ins.events("conversation", conversation.log.directory) == [
-        "start", "store_opened", "plugins_loaded", "serving"]
+        "start", "store_opened", "plugins_loaded", "configured", "serving"]
+    # the client's files and the scripts, written before the server listened
+    # (CLIENT_HOOKS.md): the agent directory beside `.tat/`
+    assert (conversation.working_directory / "TAT.agents" / ".mcp.json").is_file()
+    assert (conversation.working_directory / ".tat" / "hook.py").is_file()
     told, trip = stand_ins.records("round_trip", conversation.log.directory)
     assert told["data"]["name"] == "TAT.log_directory" and "result" not in told["data"]
     assert trip["data"] == {"name": "TAT.state_exists", "arguments": "nobody", "result": False,

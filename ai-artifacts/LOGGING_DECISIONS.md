@@ -1627,6 +1627,103 @@ owner, no code yet). What touches this work, and the answers given:
   (iii)). They are in that session's uncommitted files and go into its
   Phase A commit, named there as the author's. The `slots_released` pin
   is its `test_model.py::test_slots_released_counts_each_deleted_name_once`.
+- After Phase A's own review (its message, 2026-10-04): the `operation`
+  record is written in `Node._written(ev, index, old, duration)`, the
+  setters' shared tail, before `on_invalidated` — `_stored`, named in
+  step 4 above, is gone; `Forest._run(destination, ignore_error,
+  checks="no")` makes the walk's `Evaluation` itself. The records are
+  unchanged. Its review mutation-checked the author's four assertions
+  and found them pinning, and added two cases on these funnels: a loaded
+  node's invalidation writes `slots_released == 0` and no `state_delete`;
+  a two-tree walk makes one store transaction per tree.
+- Phase A committed 2026-10-04 as `dfefca1`, the author's four
+  assertions in it and named as such; with `cb886e7` under it the suite
+  without Isabelle is 330 pass, the 15 known document-drift failures.
+  Every test the code review of steps 1–4 left with the author is now
+  written. Before its step B5 touches `mcp_server.stopped` for the
+  seventh reason, that session tells this one — told and agreed
+  2026-10-04: one branch, `CannotUseWorkingDirectory` (a
+  `TAT_StartupError` of `model`), through `stopped_for`; no branch of
+  `stopped` may test the base class, since `ClientRefused` is another
+  subclass.
+- The order changed (the jobs session's message, 2026-10-04): the owner
+  has not yet let its steps 1 to 3 start, and the compilation session's
+  Phase B now edits the ML files, tat.scala, the jar, toplevel.py,
+  exceptions.py, harness.py and Test_TAT_Framework.thy; so the jobs
+  session's step 1 and step 2 start after Phase B, when those files are
+  free and the owner allows. Steps 10 and 11 here wait for them as
+  before, so now behind Phase B as well. The owner (2026-10-04): 「建议等
+  compilation 那个工作进行到不能再继续，你再考虑继续。请耐心等待」 — this
+  session writes nothing ahead meanwhile (not the parts of step 10 that
+  need no subclass, not the move of the test stand-ins) and waits for the
+  compilation session's notice.
+- Phase B committed 2026-10-05 as `ee9e4f5`. In this session's files it
+  carries only what was told: `stopped`'s branch for
+  `CannotUseWorkingDirectory` and its assertion; `stand_ins.conversation`
+  on a per-case working directory; harness's exit 2 and the group
+  helpers. `_held`'s format unchanged; test_scripts, test_log,
+  test_mcp_server, test_toplevel: 61 pass, the one known failure. The
+  jobs session's steps 1 and 2 may now start on the owner's word; steps
+  10 and 11 here follow them.
+- The jobs session's step 1 began 2026-10-05 on the owner's word (`-c`,
+  the two `TAT_Server` subclasses, `configure` as the base's method, the
+  bound variable), editing tat.scala, the jar, the ML boot and framework,
+  toplevel.py, mcp_server.py, harness.py, Test_TAT_Framework.thy,
+  test_launcher.py, test_toplevel.py; not `Ending`, `stopped`,
+  `stopped_for`. This session touches none of those files until it says
+  step 1 is in; asked of it: `configure` empty on the base, called in
+  `served()` before the port is bound; the client name into `start`'s
+  `client`; the jar rebuilt only with no `isabelle TAT_mcp` running;
+  `tat.lock`'s format kept.
+
+**Step 10, `configure`** — written 2026-10-05 on the jobs session's step 1
+(in the tree, uncommitted: `TAT_Server.configure(working_directory)`
+declared empty on the base and called by `served()` before the port is
+bound; `Claude_Code_Server`, `Codex_Server`, `SERVERS`). The author's
+shapes:
+
+- The base's `configure` does what both clients share: the agent
+  directory `TAT.agents/` made when absent; the client's files, which
+  `self._client_files(working_directory)` gives as name-within-the-agent-
+  directory → text, written whole; both scripts copied from the package
+  into `.tat/` for either client (MODULE_STRUCTURE §5: "the two scripts"),
+  nothing else there touched; the `configured` record, whose `files` are
+  the paths written, relative to the working directory, in that order
+  (`TAT.agents/.mcp.json`, `TAT.agents/.claude/settings.json`,
+  `.tat/hook.py`, `.tat/guard.py` for Claude Code).
+- Each subclass's `_client_files` builds its files as Python values and
+  encodes them once: JSON through `json.dumps` (`_json`, indent 2); the
+  TOML as a template whose values go through `toml_string` — the TOML
+  basic string with `"` and `\` escaped and every control character and
+  DEL as `\uXXXX`. One base helper, `_hook(working_directory, script,
+  matcher=None)`, builds every hook entry, the command
+  `shlex.quote(sys.executable) -I shlex.quote(<wd>/.tat/<script>)`, the
+  timeout `HOOK_TIMEOUT` = 10.
+- `resolver_entry(resolv_conf)`: the real path when outside `MINIMAL`
+  (CLIENT_HOOKS §5's eight directories), else None; the Codex subclass
+  calls it on `RESOLV_CONF` (`/etc/resolv.conf`), a module constant the
+  test replaces with a fake layout.
+- Tests (test_mcp_server, "configure"): the written files parse and equal
+  CLIENT_HOOKS §2's and §3's fenced blocks with the placeholders filled,
+  a hook command compared as its `shlex` tokens so that an interpreter
+  path with a space and a `'` compares as the shell reads it — and the
+  written command checked literally once, `shlex.quote`'s spelling; the
+  TOML with and without the resolver line (a fake `resolv.conf` linking
+  outside, or to `/etc/hosts`); the scripts equal the package's, a stale
+  script overwritten, the user's file and the log left in `.tat/`; the
+  `configured` record; a second `configure` leaves an agent's file in the
+  agent directory; `resolver_entry` on a fake layout; `toml_string`
+  round-tripping through `tomllib`. CLIENT_HOOKS §4's "exact project-level
+  file names … confirmed at implementation" is step 13's.
+- The record `configured` now sits between `plugins_loaded` and `serving`
+  in every conversation's log; the expectations in test_toplevel (two
+  spots) and test_conversation (`test_a_fresh_conversation_holds_nothing`,
+  which also checks `.mcp.json` and `.tat/hook.py` exist) follow. The jobs
+  session's step 1 committed by itself as `b3ab4ec`; the fast suite with
+  step 10 on it: 369 pass, 14 known document-drift failures; the
+  Isabelle-backed suite: 35 pass, the 3 known test_launcher failures (the
+  old hook files, the jobs session's to retire). pyright: mcp_server.py,
+  test_mcp_server.py, test_toplevel.py at 0.
 
 **`ending` is always `error`** (owner, 2026-10-04: 「连接断开的日志级别要从
 info 改成 error」, said to the compilation session, which relayed it; put

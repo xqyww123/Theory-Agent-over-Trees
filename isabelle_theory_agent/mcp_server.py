@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shlex
+import shutil
 import socket
+import sys
 import time
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
@@ -40,6 +44,33 @@ from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 HOST = "127.0.0.1"
 PATH = "/mcp"
 ON_COMPACTION = "/on-compaction"
+
+AGENTS = "TAT.agents"                   # the agent directory (ARCHITECTURE §1)
+SCRIPTS = ".tat"                        # where the hooks' scripts go (CLIENT_HOOKS.md §1)
+HOOK_TIMEOUT = 10                       # seconds a client gives a hook
+RESOLV_CONF = "/etc/resolv.conf"
+# the system directories Codex's `:minimal` reads (CLIENT_HOOKS.md §5)
+MINIMAL = ("/bin", "/sbin", "/usr", "/etc", "/lib", "/lib64", "/nix/store", "/run/current-system/sw")
+
+
+def toml_string(value: str) -> str:
+    """The TOML basic string for `value` (TOML 1.0): `"` and `\\` escaped,
+    every control character and DEL as `\\uXXXX`."""
+    def escaped(c: str) -> str:
+        if c in '"\\':
+            return "\\" + c
+        return f"\\u{ord(c):04X}" if ord(c) < 0x20 or ord(c) == 0x7F else c
+    return '"' + "".join(map(escaped, value)) + '"'
+
+
+def resolver_entry(resolv_conf: str) -> str | None:
+    """The real path of the resolver's file when it lies outside the
+    `:minimal` directories — the one read entry Codex's profile adds, never
+    the symbolic link — else None (CLIENT_HOOKS.md §5)."""
+    real = os.path.realpath(resolv_conf)
+    if any(real == root or real.startswith(root + os.sep) for root in MINIMAL):
+        return None
+    return real
 
 
 def _hook_specific_output(briefing: str) -> Any:
@@ -252,6 +283,31 @@ class TAT_Server:
         """The client's files, written whole into the agent directory, and
         the scripts its hooks run into `.tat/` (CLIENT_HOOKS.md); called
         before the port is bound (MODULE_STRUCTURE §4.6)."""
+        agents = working_directory / AGENTS
+        agents.mkdir(exist_ok=True)
+        written: list[str] = []
+        for name, text in self._client_files(working_directory).items():
+            (agents / name).parent.mkdir(parents=True, exist_ok=True)
+            (agents / name).write_text(text)
+            written.append(f"{AGENTS}/{name}")
+        for script in ("hook.py", "guard.py"):
+            shutil.copy(Path(__file__).parent / script, working_directory / SCRIPTS / script)
+            written.append(f"{SCRIPTS}/{script}")
+        self.ending.log.conversation.configured(files=written)
+
+    def _client_files(self, working_directory: Path) -> dict[str, str]:
+        """The client's files, by name within the agent directory, each the
+        text its format's one encoder gives (MODULE_STRUCTURE §4.6)."""
+        raise NotImplementedError
+
+    def _hook(self, working_directory: Path, script: str, matcher: str | None = None) -> dict[str, Any]:
+        """One hook entry as both clients take it: the script run under the
+        interpreter TAT's Python side runs under, each path quoted."""
+        command = (f"{shlex.quote(sys.executable)} -I "
+                   f"{shlex.quote(str(working_directory / SCRIPTS / script))}")
+        entry: dict[str, Any] = {} if matcher is None else {"matcher": matcher}
+        entry["hooks"] = [{"type": "command", "timeout": HOOK_TIMEOUT, "command": command}]
+        return entry
 
     async def __aenter__(self) -> TAT_Server:
         self._socket = _bind(self._port)
@@ -450,10 +506,74 @@ class Claude_Code_Server(TAT_Server):
     client_name = "claude-code"
     measured_version = "2.1.286"
 
+    def _client_files(self, working_directory: Path) -> dict[str, str]:
+        """CLIENT_HOOKS.md §2: the server entry; the environment, the
+        permissions and sandbox settings of §5, and the hooks."""
+        def hook(script: str, matcher: str | None = None) -> dict[str, Any]:
+            return self._hook(working_directory, script, matcher)
+        settings = {
+            "env": {"CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "0",
+                    "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "0", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1"},
+            "permissions": {"allow": ["Bash"], "deny": ["EnterWorktree"],
+                            "blockReadsOutsideWorkingDirectories": True},
+            "sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
+                        "network": {"allowAllUnixSockets": True, "allowedDomains": ["*"]},
+                        "filesystem": {"denyRead": [str(working_directory), "/run"]}},
+            "hooks": {
+                "PreToolUse": [hook("hook.py", "mcp__TAT__.*"), hook("hook.py", "TaskStop"),
+                               hook("guard.py", "Write|Edit|NotebookEdit|MultiEdit"),
+                               hook("guard.py", "Agent|Task")],
+                "Stop": [hook("hook.py")],
+                "SubagentStop": [hook("hook.py")],
+                "PostCompact": [hook("hook.py")],
+                "WorktreeCreate": [hook("guard.py")]}}
+        return {".mcp.json": _json({"mcpServers": {"TAT": {"type": "http", "url": self.url,
+                                                           "timeout": 43_200_000}}}),
+                ".claude/settings.json": _json(settings)}
+
 
 class Codex_Server(TAT_Server):
     client_name = "codex-mcp-client"
     measured_version = "0.156.1"
+
+    def _client_files(self, working_directory: Path) -> dict[str, str]:
+        """CLIENT_HOOKS.md §3: the configuration with the permission profile
+        of §5 and the server entry; the hooks."""
+        resolver = resolver_entry(RESOLV_CONF)
+        config = [
+            "check_for_update_on_startup = false",
+            'default_permissions = "tat-agent"',
+            "",
+            "[features]",
+            "multi_agent_v2 = true",
+            "",
+            "[permissions.tat-agent.filesystem]",
+            '":minimal" = "read"',
+            f'{toml_string(str(working_directory))} = "deny"',
+            *([f'{toml_string(resolver)} = "read"'] if resolver is not None else []),
+            "",
+            '[permissions.tat-agent.filesystem.":workspace_roots"]',
+            '"." = "write"',
+            "",
+            "[permissions.tat-agent.network]",
+            "enabled = true",
+            "",
+            "[mcp_servers.TAT]",
+            f"url = {toml_string(self.url)}",
+            "tool_timeout_sec = 43200",
+            'default_tools_approval_mode = "approve"',
+            ""]
+        hook = self._hook(working_directory, "hook.py")
+        hooks = {"hooks": {
+            "PreToolUse": [self._hook(working_directory, "hook.py", "mcp__TAT__.*"),
+                           self._hook(working_directory, "hook.py", "collaborationinterrupt_agent")],
+            "Stop": [hook], "SubagentStop": [hook], "SessionStart": [hook],
+            "PreCompact": [hook], "PostCompact": [hook]}}
+        return {".codex/config.toml": "\n".join(config), ".codex/hooks.json": _json(hooks)}
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, indent=2) + "\n"
 
 
 # The subclass for each name `isabelle TAT_mcp -c` takes; the launcher

@@ -5,8 +5,13 @@ HTTP client.  Run: python -m pytest test/test_mcp_server.py
 """
 
 import asyncio
+import json
+import shlex
+import sys
+import tomllib
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -16,13 +21,14 @@ from mcp import types
 from mcp.shared.exceptions import McpError
 
 import stand_ins
-from baselines import DOCS, fenced_lines
+from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import client, free_port, text_of
-from isabelle_theory_agent import toplevel
+from isabelle_theory_agent import mcp_server, toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.mcp_server import (
-    CLIENTS, HOST, ON_COMPACTION, TAT_Server, Tool, stopped, stopped_for, unknown_client)
+    AGENTS, CLIENTS, HOST, ON_COMPACTION, SCRIPTS, Claude_Code_Server, Codex_Server, TAT_Server,
+    Tool, resolver_entry, stopped, stopped_for, toml_string, unknown_client)
 from isabelle_theory_agent.model import CannotUseWorkingDirectory
 from test_toplevel import Recorder, cancelled_by_the_host
 
@@ -727,3 +733,132 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
                 assert (await session.list_tools()).tools == []
         assert reached_the_window
     run(scenario)
+
+
+# --- configure (CLIENT_HOOKS §2, §3, §5) -----------------------------------------
+
+PACKAGE = Path(mcp_server.__file__).parent
+RESOLVER = "<the real path of /etc/resolv.conf, when outside :minimal>"
+
+
+def filled(text: str, placeholders: dict[str, str]) -> str:
+    for placeholder, value in placeholders.items():
+        text = text.replace(placeholder, value)
+    return text
+
+
+def as_the_shell_reads_it(value: Any, placeholders: dict[str, str]) -> Any:
+    """A hook file's JSON value with its placeholders filled — a `command`
+    as its `shlex` tokens, each filled, so that a quoted path compares as
+    the shell reads it, however it was quoted."""
+    if isinstance(value, dict):
+        return {key: ([filled(token, placeholders) for token in shlex.split(item)] if key == "command"
+                      else as_the_shell_reads_it(item, placeholders)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [as_the_shell_reads_it(item, placeholders) for item in value]
+    return filled(value, placeholders) if isinstance(value, str) else value
+
+
+def documented_json(block: list[str], placeholders: dict[str, str]) -> Any:
+    return as_the_shell_reads_it(json.loads("\n".join(block)), placeholders)
+
+
+def written_json(path: Path) -> Any:
+    return as_the_shell_reads_it(json.loads(path.read_text()), {})
+
+
+def configured(server_class: type[TAT_Server], tmp_path: Path) -> tuple[TAT_Server, Path]:
+    """`configure` as `served()` reaches it: `.tat/` holds the log already
+    (and here a file of the user's and a stale script), the agent
+    directory does not exist yet."""
+    working_directory = tmp_path / "work dir"
+    (working_directory / SCRIPTS / "log").mkdir(parents=True)
+    (working_directory / SCRIPTS / "mine").write_text("the user's")
+    (working_directory / SCRIPTS / "hook.py").write_text("stale")
+    server = server_class(stand_ins.ending(), free_port(), [], no_briefing)
+    server.configure(working_directory)
+    return server, working_directory
+
+
+def test_configure_writes_claude_codes_files_and_the_scripts(tmp_path, monkeypatch):
+    """The two files of CLIENT_HOOKS §2 as the document shows them, the
+    placeholders filled — the interpreter's path with a space and a quote
+    in it, the working directory's with a space; the two scripts copied
+    into `.tat/`, where nothing else is touched; the `configured` record."""
+    monkeypatch.setattr(sys, "executable", "/opt/my python's/bin/python3")
+    server, working_directory = configured(Claude_Code_Server, tmp_path)
+    agents = working_directory / AGENTS
+    placeholders = {"<port>": str(server._port), "<python>": sys.executable,
+                    "<working directory>": str(working_directory)}
+    mcp_json, settings = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "2.")
+    assert written_json(agents / ".mcp.json") == documented_json(mcp_json, placeholders)
+    assert written_json(agents / ".claude" / "settings.json") == documented_json(settings, placeholders)
+    # the command as written: the quoting is `shlex.quote`'s
+    [command] = {hook["command"] for group in json.loads((agents / ".claude" / "settings.json").read_text())
+                 ["hooks"].values() for entry in group for hook in entry["hooks"] if "guard" in hook["command"]}
+    assert command == f"'/opt/my python'\"'\"'s/bin/python3' -I '{working_directory / SCRIPTS / 'guard.py'}'"
+    for script in ("hook.py", "guard.py"):
+        assert (working_directory / SCRIPTS / script).read_bytes() == (PACKAGE / script).read_bytes()
+    assert sorted(p.name for p in (working_directory / SCRIPTS).iterdir()) == ["guard.py", "hook.py", "log", "mine"]
+    assert (working_directory / SCRIPTS / "mine").read_text() == "the user's"
+    [record] = stand_ins.records("conversation")
+    assert record["event"] == "configured" and record["data"] == {"files": [
+        f"{AGENTS}/.mcp.json", f"{AGENTS}/.claude/settings.json", f"{SCRIPTS}/hook.py", f"{SCRIPTS}/guard.py"]}
+    # a later launch rewrites the files and leaves the agents' own alone
+    (agents / "notes.md").write_text("an agent's")
+    server.configure(working_directory)
+    assert (agents / "notes.md").read_text() == "an agent's"
+    assert written_json(agents / ".mcp.json") == documented_json(mcp_json, placeholders)
+
+
+@pytest.mark.parametrize("resolver_outside_minimal", [True, False])
+def test_configure_writes_codexs_files(tmp_path, monkeypatch, resolver_outside_minimal):
+    """The two files of CLIENT_HOOKS §3 as the document shows them; the
+    profile's read entry for the resolver's real path when that lies
+    outside `:minimal`, no such line otherwise (§5)."""
+    resolv_conf = tmp_path / "etc" / "resolv.conf"
+    resolv_conf.parent.mkdir()
+    if resolver_outside_minimal:
+        target = tmp_path / "run" / "systemd" / "resolve" / "stub-resolv.conf"
+        target.parent.mkdir(parents=True)
+        target.write_text("nameserver 127.0.0.53\n")
+    else:
+        target = Path("/etc/hosts")
+    resolv_conf.symlink_to(target)
+    monkeypatch.setattr(mcp_server, "RESOLV_CONF", str(resolv_conf))
+    server, working_directory = configured(Codex_Server, tmp_path)
+    codex = working_directory / AGENTS / ".codex"
+    placeholders = {"<port>": str(server._port), "<python>": sys.executable,
+                    "<working directory>": str(working_directory), RESOLVER: str(target.resolve())}
+    config, hooks = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "3.")
+    expected = [line for line in config if resolver_outside_minimal or RESOLVER not in line]
+    assert tomllib.loads((codex / "config.toml").read_text()) == tomllib.loads(
+        filled("\n".join(expected), placeholders))
+    assert written_json(codex / "hooks.json") == documented_json(hooks, placeholders)
+    [record] = stand_ins.records("conversation")
+    assert record["data"]["files"][:2] == [f"{AGENTS}/.codex/config.toml", f"{AGENTS}/.codex/hooks.json"]
+
+
+def test_the_resolvers_entry_is_its_real_path_outside_minimal(tmp_path):
+    """The real path, never the link; none for a file under a `:minimal`
+    directory, the link's target or the file itself."""
+    outside = tmp_path / "stub-resolv.conf"
+    outside.write_text("")
+    link = tmp_path / "resolv.conf"
+    link.symlink_to(outside)
+    assert resolver_entry(str(link)) == str(outside.resolve())
+    assert resolver_entry(str(outside)) == str(outside.resolve())
+    into_etc = tmp_path / "into_etc"
+    into_etc.symlink_to("/etc/hosts")
+    assert resolver_entry(str(into_etc)) is None
+    assert resolver_entry("/usr/bin/env") is None
+
+
+def test_a_toml_string_escapes_what_toml_cannot_hold_raw():
+    """`"`, `\\`, every control character and DEL (TOML 1.0); what is
+    written reads back as the value."""
+    value = 'a "quoted" \\ path\twith\nnewline, \x01 and \x7f, and ü'
+    string = toml_string(value)
+    assert all(ord(c) >= 0x20 and ord(c) != 0x7F for c in string)
+    assert string == '"a \\"quoted\\" \\\\ path\\u0009with\\u000Anewline, \\u0001 and \\u007F, and ü"'
+    assert tomllib.loads(f"k = {string}")["k"] == value

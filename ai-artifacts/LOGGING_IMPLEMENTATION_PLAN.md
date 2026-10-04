@@ -31,7 +31,9 @@ that writes `client_refused` — on the ending object and
 10 after that session's step 1 (`-c`, the two subclasses, the
 `configure` call point); step 11 after its step 2 (the announcement,
 `agent_of_call`, `ClientRefused`); step 13 is one live run with its
-smoke run.
+smoke run. That session's steps 1 and 2 themselves start after the
+compilation session's Phase B, which edits the same ML, Scala and
+start-up files.
 
 *(author)* The `Log`'s shape: `Log(directory, logger)`; one attribute
 per category, one typed method per event, mirroring the files —
