@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 
+from isabelle_theory_agent.jobs import Agent
 from isabelle_theory_agent.log import Log
 from isabelle_theory_agent.mcp_server import Ending
 from isabelle_theory_agent.model import Conversation
@@ -41,6 +42,12 @@ def conversation(conn) -> Conversation:
     """A `Conversation` for a case that runs without Isabelle."""
     the_log = log()
     return Conversation(conn, working_directory(), the_log, Ending(the_log))
+
+
+def agent(conversation: Conversation, identity: str = "main", main: bool = True) -> Agent:
+    """The conversation's agent of that identity, created as the server
+    would create it: the main conversation unless the case says otherwise."""
+    return conversation.agents.setdefault(identity, Agent(identity, main))
 
 
 def records(category: str, log_directory: Path | None = None) -> list[dict]:

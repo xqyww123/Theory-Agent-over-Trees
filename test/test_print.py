@@ -108,8 +108,14 @@ def section(parent, name, beginning: M.EvaluationStatus = READY,
     return enter(parent, s, "section")
 
 
-def render(forest, node, mode) -> list[str]:
-    return forest.render(node, mode).splitlines()
+def agent(forest):
+    """The forest's main agent, whom a rendering is for unless a case says
+    otherwise, and whose seen set the cases read."""
+    return stand_ins.agent(forest.conversation)
+
+
+def render(forest, node, mode, to=None) -> list[str]:
+    return forest.render(node, mode, agent(forest) if to is None else to).splitlines()
 
 
 def focus(*nodes, depth=0):
@@ -226,7 +232,8 @@ def test_the_field_lines_of_session_and_theory_section_4():
                                  {"name": "document", "value": "false"}],
                 description="Sorting, verified.")
     theory(a, "X", imports=("Main", "HOL-Library.Multiset"))
-    assert render(f, f, RECALL)[1:] == lines[:4] + ["- theory_X (not evaluated)", "  " + lines[4]]
+    assert render(f, f, RECALL)[1:] == lines[:2] + ["- theory_X (not evaluated)", "  " + lines[4]]
+    assert render(f, a, RECALL)[1:5] == ["  " + line for line in lines[:4]]   # depth 0: the description too
     bare = new_forest()
     session(bare, "B")
     assert render(bare, bare, RECALL) == ["session_B (success)", "parent_session: HOL"]
@@ -259,30 +266,71 @@ def deep_forest():
     return f, a, x, s, p
 
 
-def test_briefing_is_every_line_to_the_bottom_with_the_briefing_fields():
+def test_the_briefing_is_every_line_to_the_bottom_with_no_field():
     f, *_ = deep_forest()
     assert render(f, f, BRIEFING) == [
         "session_A",
-        "parent_session: HOL",
         "- theory_X (not evaluated)",
-        "  imports: Main HOL-Library.Multiset",
         "  - section_S",
         "    - lemma_P",
     ]
 
 
+def test_the_briefing_calls_no_print_fields():
+    """PRINT.md §2's table: `Briefing` calls `print_fields` on no class; the
+    same class writes under `Recall`."""
+    f, a, x, s, p = deep_forest()
+    calls = []
+
+    class Loud(Lemma):
+        def print_fields(self, indent, out, mode, depth):
+            calls.append((type(mode).__name__, depth))
+            out.write(M.INDENT * indent + "field: value\n")
+    loud = Loud(s, slot()); loud.name = "Q"; loud._status = NOT_EVALUATED
+    enter(s, loud, "lemma")
+    assert render(f, f, BRIEFING)[-1] == "    - lemma_Q (not evaluated)" and calls == []
+    assert render(f, s, RECALL)[-2:] == ["  - lemma_Q (not evaluated)", "    field: value"]
+    assert calls == [("Recall", 1)]
+
+
+def test_what_session_and_theory_print_section_4_mode_by_mode():
+    """SESSION_AND_THEORY §4's table, row by row, through `print_fields`
+    itself: fields under `Recall` alone, thinning with the depth."""
+    f, a, x, s, p = deep_forest()
+
+    def fields(node, mode, depth):
+        out = io.StringIO()
+        node.print_fields(0, out, mode, depth)
+        return out.getvalue().splitlines()
+    session = ["parent_session: HOL", "options: quick_and_dirty = true"]
+    description = ["description:", "  Sorting,", "  verified."]
+    for mode in (OUT_FOCUS, focus(p), focus(a), focus(x)):   # Out_Focus; on the path; a focus
+        assert fields(a, mode, 0) == [] and fields(x, mode, 1) == []
+    assert [fields(a, RECALL, d) for d in range(4)] == [session + description, session, [], []]
+    assert [fields(x, RECALL, d) for d in range(4)] == [["imports: Main HOL-Library.Multiset"]] * 3 + [[]]
+
+
 def test_recall_descends_three_levels_with_the_fields_thinning_out():
     f, a, x, s, p = deep_forest()
-    assert render(f, f, RECALL) == [                   # the root: sessions detailed, theories short
+    assert render(f, f, RECALL) == [                   # the root: the session at depth 1, the theory at 2
         "session_A",
         "parent_session: HOL",
         "options: quick_and_dirty = true",
-        "description:",
-        "  Sorting,",
-        "  verified.",
         "- theory_X (not evaluated)",
         "  imports: Main HOL-Library.Multiset",
         "  - section_S",                               # depth 3: a line, nothing under it
+    ]
+    assert render(f, a, RECALL) == [                   # the session at depth 0: its description too,
+        "- session_A",                                 # and the dash, not reached from the root
+        "  parent_session: HOL",
+        "  options: quick_and_dirty = true",
+        "  description:",
+        "    Sorting,",
+        "    verified.",
+        "  - theory_X (not evaluated)",
+        "    imports: Main HOL-Library.Multiset",
+        "    - section_S",
+        "      - lemma_P",
     ]
     assert render(f, x, RECALL) == [                   # the theory: itself and its children detailed
         "- theory_X (not evaluated)",
@@ -290,7 +338,6 @@ def test_recall_descends_three_levels_with_the_fields_thinning_out():
         "  - section_S",
         "    - lemma_P",
     ]
-    assert render(f, a, RECALL)[0] == "- session_A"    # not reached from the root: the dash stays
 
 
 def test_the_quickview_expands_the_path_to_the_focus_only():
@@ -307,17 +354,16 @@ def test_the_quickview_expands_the_path_to_the_focus_only():
     ]
     assert render(f, f, focus(x)) == [
         "session_A",
-        "- theory_X (not evaluated)",
-        "  imports: Main HOL-Library.Multiset",        # the focus writes its fields
+        "- theory_X (not evaluated)",                  # the focus: no field either (PRINT.md §3)
         "  - section_S",
         "- theory_Y (not evaluated)",
     ]
     with pytest.raises(TAT_InternalError, match="a focus outside the rendered node"):
-        f.render(y, focus(s))                          # a bug in the caller
+        render(f, y, focus(s))                         # a bug in the caller
     with pytest.raises(TAT_InternalError, match="a focus under another focus"):
-        f.render(f, focus(x, s))
+        render(f, f, focus(x, s))
     with pytest.raises(TAT_InternalError, match="a Relative_Focus with no focus"):
-        f.render(f, focus())
+        render(f, f, focus())
 
 
 def test_the_depth_is_how_far_under_a_focus_every_node_is_detailed():
@@ -329,7 +375,6 @@ def test_the_depth_is_how_far_under_a_focus_every_node_is_detailed():
     y = theory(a, "Y")
     subtree = [
         "- theory_X (not evaluated)",
-        "  imports: Main HOL-Library.Multiset",
         "  - section_S",
         "    - lemma_P",
         "  - section_T",
@@ -339,13 +384,11 @@ def test_the_depth_is_how_far_under_a_focus_every_node_is_detailed():
     assert render(f, f, focus(x, depth=2)) == render(f, f, focus(x, depth=-1)) \
         == ["session_A", *subtree, "- theory_Y (not evaluated)"]
     assert render(f, f, focus(x, depth=0)) == [
-        "session_A", *subtree[:3], "  - section_T", "- theory_Y (not evaluated)"]
+        "session_A", *subtree[:2], "  - section_T", "- theory_Y (not evaluated)"]
     assert render(f, f, focus(s, t, depth=-1)) == [   # several focuses: siblings, an edit's batch
-        "session_A", "- theory_X (not evaluated)", *subtree[2:], "- theory_Y (not evaluated)"]
+        "session_A", *subtree, "- theory_Y (not evaluated)"]
     assert render(f, f, focus(f)) == ["session_A"]     # the root as the focus: a deleted session's parent
-    assert render(f, f, focus(f, depth=-1)) == [
-        "session_A", "parent_session: HOL", "options: quick_and_dirty = true", "description:",
-        "  Sorting,", "  verified.", *subtree, "- theory_Y (not evaluated)", "  imports: Main"]
+    assert render(f, f, focus(f, depth=-1)) == ["session_A", *subtree, "- theory_Y (not evaluated)"]
 
 
 def test_detailed_is_a_focus_and_recall_above_the_grandchildren():
@@ -368,12 +411,12 @@ def test_a_theory_prints_its_error_once_per_run_in_a_quickview_and_whole_in_reca
     f, a, x = failing_theory()
     block = ["  Error:", "    header broke"]
     first = render(f, f, focus(x))
-    assert first[-2:] == block and (x.identity, "beginning") in f.conversation.seen
-    assert render(f, f, focus(x))[-1] == "  imports: Main"   # seen: not again
+    assert first[-2:] == block and (x.identity, "beginning") in agent(f).seen
+    assert render(f, f, focus(x)) == ["session_A", "- theory_X (failed)"]   # seen: not again
     assert render(f, x, RECALL)[-2:] == block                         # whole under recall
     assert render(f, x, RECALL)[-2:] == block                         # every time
     assert "Error:" not in "".join(render(f, f, BRIEFING))
-    f.conversation.seen.clear()                                       # the context replaced
+    agent(f).seen.clear()                                             # the context replaced
     assert render(f, f, focus(x))[-2:] == block
 
 
@@ -381,7 +424,7 @@ def test_a_recall_that_writes_an_error_whole_records_it():
     """RECALL.md §2: the quickview after a `recall` does not repeat it."""
     f, a, x = failing_theory()
     assert render(f, x, RECALL)[-2:] == ["  Error:", "    header broke"]
-    assert render(f, f, focus(x))[-1] == "  imports: Main"
+    assert render(f, f, focus(x)) == ["session_A", "- theory_X (failed)"]
 
 
 def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
@@ -394,19 +437,29 @@ def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
     block = ["  Error:", "    header broke"]
     beside = render(f, f, focus(y))       # x in Out_Focus
     assert beside[1:5] == ["- theory_X (failed)", *block, "- theory_Y (not evaluated)"]
-    f.conversation.seen.clear()
+    agent(f).seen.clear()
     on_the_path = render(f, f, focus(p))   # x with a non-empty path
     assert on_the_path[1:5] == ["- theory_X (failed)", *block, "  - lemma_P (not evaluated)"]
     assert "Error:" not in "".join(render(f, f, focus(p)))   # once per run
 
 
-def test_the_briefing_closure_clears_the_seen_set_and_renders_the_root():
-    from isabelle_theory_agent import mcp
+def test_a_message_shown_to_one_agent_is_shown_again_to_another_and_forget_reaches_both():
+    """PRINT.md §4: the seen set is the agent's; `Conversation.forget`
+    removes a key from every agent's; every key a rendering adds is the
+    record `agent.seen` (LOGGING.md §4)."""
     f, a, x = failing_theory()
-    render(f, f, focus(x))
-    assert f.conversation.seen
-    answer = mcp.on_compaction(f)()
-    assert not f.conversation.seen and answer == f.render(f, BRIEFING)
+    other = stand_ins.agent(f.conversation, "a9f3c2d1e4b5", main=False)
+    block = ["  Error:", "    header broke"]
+    key = (x.identity, "beginning")
+    assert render(f, f, focus(x))[-2:] == block
+    assert render(f, f, focus(x), to=other)[-2:] == block
+    assert key in agent(f).seen and key in other.seen
+    assert "Error:" not in "".join(render(f, f, focus(x)) + render(f, f, focus(x), to=other))
+    f.conversation.forget(key)
+    assert key not in agent(f).seen and key not in other.seen
+    assert render(f, f, focus(x))[-2:] == block
+    assert [r["data"]["key"] for r in stand_ins.records("agent") if r["event"] == "seen"] \
+        == [list(key)] * 3
 
 
 def rerun(x, operation):
@@ -429,7 +482,7 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     x.evaluation_status_beginning = READY
     x.evaluation_status_ending = failing("end broke")
     render(f, f, focus(x))
-    assert (x.identity, "ending") in f.conversation.seen
+    assert (x.identity, "ending") in agent(f).seen
     inside = []
 
     async def fails_the_same_way(conversation, name, arg):
@@ -438,20 +491,20 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "ending")
     assert inside == [["  Error:", "    end broke"]]   # the previous run's, still standing
-    assert (x.identity, "ending") not in f.conversation.seen
+    assert (x.identity, "ending") not in agent(f).seen
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    end broke"]
 
 
 def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     f, a, x = failing_theory()
     render(f, f, focus(x))
-    assert (x.identity, "beginning") in f.conversation.seen
+    assert (x.identity, "beginning") in agent(f).seen
 
     async def fails_the_same_way(conversation, name, arg):
         return (["header broke"], [])                 # `TAT.Theory.begin`: the messages, no session
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "beginning")
-    assert (x.identity, "beginning") not in f.conversation.seen
+    assert (x.identity, "beginning") not in agent(f).seen
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke"]
 
 
@@ -469,7 +522,7 @@ def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypa
         return (["header broke anew"], [])            # `TAT.Theory.begin`: the messages, no session
     monkeypatch.setattr(isabelle_driver, "call", fails_anew)
     rerun(x, "beginning")
-    assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke"]]
+    assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke"]]   # a recall: depth 0
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke anew"]
 
 
@@ -511,10 +564,12 @@ def test_the_index_lives_as_long_as_the_rendering_and_changes_no_id():
     peek = Peek(s, slot()); peek.name = "R"; peek._status = NOT_EVALUATED
     enter(s, peek, "lemma")
     without[peek] = f.id_of(peek)
-    f.render(f, BRIEFING)
+    render(f, f, focus(peek))
     assert seen_index["index"] is not None and seen_index["ids"] == without
-    assert f._index is None
+    assert f._index is None and f._agent is None
     assert without[p] == "theory_X.lemma_P" and without[q] == "lemma_Q"
+    with pytest.raises(TAT_InternalError, match="outside a rendering"):
+        f.agent
 
     class Broken(Lemma):
         def print_fields(self, indent, out, mode, depth):
@@ -522,5 +577,5 @@ def test_the_index_lives_as_long_as_the_rendering_and_changes_no_id():
     broken = Broken(s, slot()); broken.name = "Z"; broken._status = NOT_EVALUATED
     enter(s, broken, "lemma")
     with pytest.raises(RuntimeError):
-        f.render(f, BRIEFING)
-    assert f._index is None                            # dropped on the way out too
+        render(f, f, focus(broken))
+    assert f._index is None and f._agent is None       # dropped on the way out too

@@ -1,11 +1,10 @@
 """The tools of MCP_SPECIFICATION §1 (MODULE_STRUCTURE §4.6): `tools`
-builds what the server advertises and runs for one conversation, and
-`on_compaction` what `/on-compaction` does for it.
+builds what the server advertises and runs for one conversation.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,7 @@ import jsoncomment
 from . import edit
 from .exceptions import (
     HoldsNoChildren, MoveBesideItself, ProtectedNode, TAT_Error, TAT_InternalError)
+from .jobs import Agent
 from .mcp_server import Body, Tool
 from .model import BRIEFING, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus
 from .plugin import Loaded, check_call, validate_call_schema
@@ -36,10 +36,11 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
     the quickview, names the refused operation on a `TAT_Error` the change
     raises (EXCEPTIONS.md §4), and answers the `Done` line over the
     quickview (PRINT.md §5).  And `recall` (RECALL.md), which renders the
-    node in `Recall` under no lock.  Every call is checked against its
-    tool's schema before the entry runs (`_tool`)."""
+    node in `Recall`, or the briefing when no node is named, under no lock.
+    Every rendering is for the calling agent; every call is checked
+    against its tool's schema before the entry runs (`_tool`)."""
 
-    async def run_edit(arguments: dict[str, Any]) -> str:
+    async def run_edit(agent: Agent, arguments: dict[str, Any]) -> str:
         action, target_id = arguments["action"], arguments["target_id"]
         constructs = arguments["constructs"]
         async with forest.lock:
@@ -52,9 +53,9 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                 else:
                     raise TAT_InternalError(f"unknown action {action!r}")
             stopped = await _evaluate(forest, nodes[-1]) if arguments["evaluate"] else None
-            return _done(forest, what, stopped, nodes, -1)
+            return _done(forest, agent, what, stopped, nodes, -1)
 
-    async def run_move(arguments: dict[str, Any]) -> str:
+    async def run_move(agent: Agent, arguments: dict[str, Any]) -> str:
         source_id, location = arguments["source_id"], arguments["location"]
         position, node_id = location["position"], location["node_id"]
         where = f"{source_id} {position} {node_id}"   # the target phrase (TOOL_SCHEMAS.md §4)
@@ -64,19 +65,20 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                 parent, index = _location(forest, position, node_id, moving=node)
                 await edit.move(node, parent, index)
             stopped = await _evaluate(forest, node) if arguments["evaluate"] else None
-            return _done(forest, what, stopped, [node], -1)
+            return _done(forest, agent, what, stopped, [node], -1)
 
-    async def run_delete(arguments: dict[str, Any]) -> str:
+    async def run_delete(agent: Agent, arguments: dict[str, Any]) -> str:
         node_id = arguments["node_id"]
         async with forest.lock:
             with _operation("delete", node_id) as what:
                 parent = await edit.delete(_resolve(forest, node_id))
-            return _done(forest, what, None, [parent], 0)
+            return _done(forest, agent, what, None, [parent], 0)
 
-    async def run_recall(arguments: dict[str, Any]) -> str:
+    async def run_recall(agent: Agent, arguments: dict[str, Any]) -> str:
+        if "node_id" not in arguments:
+            return forest.render(forest, BRIEFING, agent)
         # `Forest.resolve`, not `_resolve`: a read may name the root
-        node = forest.resolve(arguments["node_id"]) if "node_id" in arguments else forest
-        return forest.render(node, RECALL)
+        return forest.render(forest.resolve(arguments["node_id"]), RECALL, agent)
 
     return [_tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit,
                   read_only=False),
@@ -85,8 +87,8 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             _tool("delete", "Delete an Isabelle theory construct", _schema("delete"), run_delete,
                   read_only=False),
             _tool("recall", "Read an Isabelle theory construct with what is under it, briefer the"
-                  " deeper; read a construct itself to see it in full.", _schema("recall"),
-                  run_recall, read_only=True)]
+                  " deeper, or an outline of everything.", _schema("recall"), run_recall,
+                  read_only=True)]
 
 
 def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:
@@ -97,9 +99,9 @@ def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only
     `edit`'s are `edit.py`'s to check, element by element."""
     validate_call_schema(schema, name)
 
-    async def checked(arguments: dict[str, Any]) -> str:
+    async def checked(agent: Agent, arguments: dict[str, Any]) -> str:
         check_call(schema, name, arguments)
-        return await run(arguments)
+        return await run(agent, arguments)
     return Tool(name, description, schema, checked, read_only)
 
 
@@ -156,21 +158,13 @@ async def _evaluate(forest: Forest, destination: Node) -> Node | None:
     return (await forest._run(destination, False)).stopped_at
 
 
-def _done(forest: Forest, what: str, stopped: Node | None, nodes: list[Node], depth: int) -> str:
+def _done(forest: Forest, agent: Agent, what: str, stopped: Node | None, nodes: list[Node],
+          depth: int) -> str:
     """A successful call's result (TOOL_SCHEMAS.md §4): the `Done` line,
     naming the stop when evaluation did not reach its destination, over
-    the quickview (PRINT.md §5)."""
+    the quickview for the caller (PRINT.md §5)."""
     assert forest.lock.locked(), "a call's answer is rendered under the forest lock"
     line = f"Done: {what}"
     if stopped is not None:
         line += f"; evaluation stopped at {forest.id_of(stopped)}"
-    return f"{line}.\n" + forest.render(forest, Relative_Focus(frozenset(nodes), depth))
-
-
-def on_compaction(forest: Forest) -> Callable[[], str]:
-    """The agent's context was replaced (PRINT.md §4, §5): forget what it
-    was shown, and give its client the briefing."""
-    def briefing() -> str:
-        forest.conversation.seen.clear()
-        return forest.render(forest, BRIEFING)
-    return briefing
+    return f"{line}.\n" + forest.render(forest, Relative_Focus(frozenset(nodes), depth), agent)

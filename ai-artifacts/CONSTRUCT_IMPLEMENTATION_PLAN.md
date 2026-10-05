@@ -1,9 +1,9 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 and 2 are in the tree
-since 2026-10-05 (review/DOC_SYNC_LIST.md entries 32, 33); the rest is not
-implemented.
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 4 are committed since
+2026-10-05, with the review of steps 1 and 2 applied (review/DOC_SYNC_LIST.md
+entries 32–36); the rest is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -95,15 +95,14 @@ Measured on 2026-10-03: of the cases that need no Isabelle, 307 pass
 and 18 fail, each because a document is ahead of the code. Measured
 again on 2026-10-05 with step 1 in, the whole suite: 399 pass and 17
 fail — the 18 less `test_the_field_checks`, which Phase B's B2 made
-pass; with step 2 in, 418 pass and the same 17 fail.
+pass; with step 2 in, 418 pass and the same 17 fail; with step 4 in, 434
+pass and 13 fail.
 
 | case | waits for |
 | --- | --- |
-| `test_launcher`: `test_a_fresh_directory_gets_the_database_the_script_and_the_hook_files`, `test_the_script_fails_readably_without_a_running_conversation`, `test_the_script_reaches_a_serving_conversation` | step 4, which removes them with the files they test |
-| `test_mcp_server`: `test_on_compaction_answers_the_briefing_in_the_clients_shape` | step 4, which removes it with the path |
-| `test_mcp`: `test_the_four_tools_their_descriptions_and_schemas_as_the_documents_state_them` | step 4 (`recall`'s description); it grows with steps 11 and 12 |
-| `test_print`: `test_the_root_forms_of_print_md_section_6` | step 4 (no field under a focus) and step 8 (`complete`) |
-| `test_print`: `test_the_recall_of_recall_md_section_2`, `test_the_quickview_of_print_md_section_7` | step 4 (the fields by mode), step 8 (the marks) and step 10 (the tags) |
+| `test_mcp`: `test_the_four_tools_their_descriptions_and_schemas_as_the_documents_state_them` | step 11 (`auto_construct` in `edit`'s schema); it grows with step 12 |
+| `test_print`: `test_the_root_forms_of_print_md_section_6` | step 8 (`complete`) |
+| `test_print`: `test_the_recall_of_recall_md_section_2`, `test_the_quickview_of_print_md_section_7` | step 8 (the marks) and step 10 (the tags) |
 | `test_print`: `test_the_lines_of_render_baselines_section_5` | step 8 (the marks) and step 10 (the tags; the unpacking of RB §5) |
 | `test_exceptions`: `test_construct_not_supported`, `test_unknown_kind`, `test_invalid_field`, `test_unexpected_field` | step 8 (the last three pin sentences RB §2 no longer has) |
 | `test_exceptions`: `test_every_baseline_is_covered` | step 8 (the construct errors; RB §2's lines the module has no case for), step 11 (`auto_construct` in `it takes …`), step 14 (the fact name's line) and the compilation session's `ReservedSessionName` lines |

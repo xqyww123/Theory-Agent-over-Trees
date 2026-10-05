@@ -152,7 +152,7 @@ async def served(python_packages: list[str], working_directory: str, port: int, 
     async with conversation(python_packages, working_directory, connection, port, client, bound
                             ) as (forest, loaded, announce):
         server = SERVERS[client](forest.conversation.ending, port, mcp.tools(forest, loaded),
-                                 mcp.on_compaction(forest))
+                                 forest.conversation.agents)
         server.configure(forest.conversation.working_directory)
         async with server:
             announce(port)                  # listening: the hooks may call

@@ -28,14 +28,10 @@ from isabelle_theory_agent import mcp_server, toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.mcp_server import (
-    AGENTS, CLIENTS, DOT_TAT, HOST, ON_COMPACTION, Claude_Code_Server, Codex_Server, TAT_Server,
-    Tool, resolver_entry, stopped, stopped_for, toml_string, unknown_client)
+    AGENTS, DOT_TAT, HOST, Claude_Code_Server, Codex_Server, TAT_Server, Tool, resolver_entry,
+    stopped, stopped_for, toml_string)
 from isabelle_theory_agent.model import CannotUseWorkingDirectory
 from test_toplevel import Recorder, cancelled_by_the_host
-
-
-def no_briefing() -> str:
-    return ""
 
 # The seven server lines, in document order; an eighth, a missing one or a
 # reordering fails here, an edited one fails the assertions below.
@@ -65,25 +61,25 @@ class Bodies:
     def began(self, name: str) -> asyncio.Event:
         return self._began.setdefault(name, asyncio.Event())
 
-    async def echo(self, arguments):
+    async def echo(self, agent, arguments):
         return "echo " + arguments["text"]
 
-    async def strict(self, arguments):                # its schema requires `field`
+    async def strict(self, agent, arguments):         # its schema requires `field`
         return "got " + repr(sorted(arguments))
 
-    async def slow(self, arguments):
+    async def slow(self, agent, arguments):
         self.began("slow").set()
         await self.release.wait()
         self.finished.add("slow")
         return "slow done"
 
-    async def slow_bug(self, arguments):              # a bug after the client gave up
+    async def slow_bug(self, agent, arguments):       # a bug after the client gave up
         self.began("slow_bug").set()
         await self.release.wait()
         self.finished.add("slow_bug")
         raise RuntimeError("late-bug")
 
-    async def stubborn(self, arguments):              # completes after ignoring the ending's cancellation
+    async def stubborn(self, agent, arguments):       # completes after ignoring the ending's cancellation
         self.began("stubborn").set()
         try:
             await self.release.wait()
@@ -92,25 +88,25 @@ class Bodies:
         self.finished.add("stubborn")
         return "stubborn done"
 
-    async def refused(self, arguments):
+    async def refused(self, agent, arguments):
         raise NodeNotFound("theory_X", [])
 
-    async def bug(self, arguments):
+    async def bug(self, agent, arguments):
         raise RuntimeError("tat-bug")
 
-    async def disaster(self, arguments):
+    async def disaster(self, agent, arguments):
         raise TAT_DisasterError("disk full")
 
-    async def wire_dead(self, arguments):
+    async def wire_dead(self, agent, arguments):
         raise ConnectionResetError("peer closed connection")
 
-    async def escapes(self, arguments):               # lets a cancellation escape
+    async def escapes(self, agent, arguments):        # lets a cancellation escape
         raise asyncio.CancelledError()
 
-    async def not_text(self, arguments):              # the boundary's own failure
+    async def not_text(self, agent, arguments):       # the boundary's own failure
         return {"not": "text"}                        # type: ignore[return-value]
 
-    def plain(self, arguments):                       # a malformed tool: not a coroutine
+    def plain(self, agent, arguments):                # a malformed tool: not a coroutine
         return "plain"
 
     def tools(self) -> list[Tool]:
@@ -121,14 +117,14 @@ class Bodies:
 
 
 @asynccontextmanager
-async def serving(port: int, tools: list[Tool], on_compaction=no_briefing,
+async def serving(port: int, tools: list[Tool],
                   server_class: type[TAT_Server] = Claude_Code_Server):
-    """A server listening and serving in a task, on an ending object of its
-    own — Claude Code's by default, the client the harness's `client()`
-    is; yields the server and the serving task, which raises what ended
-    the conversation (`ended`)."""
+    """A server listening and serving in a task, on an ending object and an
+    agents dict of its own — Claude Code's by default, the client the
+    harness's `client()` is; yields the server and the serving task, which
+    raises what ended the conversation (`ended`)."""
     async with stand_ins.ending() as ending, \
-            server_class(ending, port, tools, on_compaction) as server:
+            server_class(ending, port, tools, {}) as server:
         serve = asyncio.create_task(server.serve())
         try:
             yield server, serve
@@ -146,7 +142,7 @@ async def launched(tools: list[Tool], block: Callable[[TAT_Server], Awaitable[An
     of their own, running `block` inside them — the task the RPC host
     cancels; returned once the server listens."""
     ending = stand_ins.ending()
-    server = Claude_Code_Server(ending, free_port(), tools, no_briefing)
+    server = Claude_Code_Server(ending, free_port(), tools, {})
     listening = asyncio.Event()
 
     async def launch_TAT():
@@ -591,83 +587,9 @@ def test_the_endpoint_answers_as_soon_as_it_listens():
     request between the two is answered normally."""
     async def scenario():
         port = free_port()
-        async with stand_ins.ending() as ending, Claude_Code_Server(ending, port, [], no_briefing) as server, \
+        async with stand_ins.ending() as ending, Claude_Code_Server(ending, port, [], {}) as server, \
                 client(server.url) as session:
             assert (await session.list_tools()).tools == []
-    run(scenario)
-
-
-def test_on_compaction_answers_the_briefing_in_the_clients_shape():
-    """CLIENT_HOOKS.md's table, and MODULE_STRUCTURE §4.6's refusals: an
-    unknown client before the closure runs, the transport check as for
-    `/mcp` without the content type, only POST."""
-    briefing = "session_A\n- theory_X (not evaluated)\n"
-    calls = []
-
-    def on_compaction():
-        calls.append(1)
-        return briefing
-
-    async def scenario():
-        port = free_port()
-        async with serving(port, [], on_compaction) as (server, _), httpx.AsyncClient() as http:
-            url = f"http://{HOST}:{port}{ON_COMPACTION}"
-            for name in ("claude-code", "codex", "gemini-cli"):
-                r = await http.post(url, params={"client": name})
-                assert r.status_code == 200 and r.json() == {"hookSpecificOutput": {
-                    "hookEventName": "SessionStart", "additionalContext": briefing}}
-            r = await http.post(url, params={"client": "cursor"})
-            assert r.status_code == 200 and r.json() == {"additional_context": briefing}
-            for params in ({"client": "opencode"}, {}):
-                r = await http.post(url, params=params)
-                assert r.status_code == 200 and r.text == briefing
-                assert r.headers["content-type"].startswith("text/plain")
-            assert len(calls) == 6 and set(CLIENTS) == {
-                "claude-code", "codex", "gemini-cli", "cursor", "opencode"}
-            r = await http.post(url, params={"client": "emacs"})
-            [refusal] = fenced_lines(DOCS / "CLIENT_HOOKS.md", "An unknown client")
-            assert r.status_code == 400 and r.text == unknown_client("emacs") == refusal
-            assert len(calls) == 6                                 # refused before the closure
-            assert (await http.get(url)).status_code == 405
-            other_host = await http.post(url, headers={"Host": f"localhost:{port}"})
-            assert other_host.status_code == 421
-            other_origin = await http.post(url, headers={"Origin": "http://evil.example"})
-            assert other_origin.status_code == 403
-            assert len(calls) == 6
-    run(scenario)
-
-
-def test_a_briefing_that_raises_ends_the_conversation_with_an_empty_500():
-    def broken():
-        raise RuntimeError("render-bug")
-
-    async def scenario():
-        port = free_port()
-        async with serving(port, [], broken) as (server, serve), httpx.AsyncClient() as http:
-            r = await http.post(f"http://{HOST}:{port}{ON_COMPACTION}", params={"client": "codex"})
-            assert r.status_code == 500 and r.content == b""
-            assert isinstance(await ended(serve), RuntimeError)
-    run(scenario)
-
-
-def test_on_compaction_answers_an_empty_503_while_the_conversation_is_ending():
-    """The ending touches no forest: a hook arriving while the server
-    still accepts gets nothing to brief, and the closure is not run."""
-    calls = []
-
-    def on_compaction():
-        calls.append(1)
-        return ""
-
-    async def scenario():
-        port = free_port()
-        async with serving(port, [], on_compaction) as (server, serve), httpx.AsyncClient() as http:
-            accepting = hold_accepting(server)
-            server.ending.end(RuntimeError("ended"))
-            r = await http.post(f"http://{HOST}:{port}{ON_COMPACTION}", params={"client": "codex"})
-            assert r.status_code == 503 and r.content == b"" and calls == []
-            accepting.set()
-            assert isinstance(await ended(serve), RuntimeError)
     run(scenario)
 
 
@@ -694,7 +616,7 @@ def test_a_port_that_cannot_be_bound_is_a_startup_error():
         port = free_port()
         async with serving(port, []):
             with pytest.raises(TAT_StartupError, match=f"TAT cannot serve on {HOST}:{port}: "):
-                async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing):
+                async with stand_ins.ending() as ending, TAT_Server(ending, port, [], {}):
                     pass
     run(scenario)
 
@@ -722,7 +644,7 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             raise
 
     async def enter(port):                            # a task of its own takes the cancellation
-        async with stand_ins.ending() as ending, TAT_Server(ending, port, [], no_briefing):
+        async with stand_ins.ending() as ending, TAT_Server(ending, port, [], {}):
             pass
 
     async def scenario():
@@ -733,7 +655,7 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
                 await asyncio.create_task(enter(port))
             monkeypatch.setattr(uvicorn.Server, "startup", real_startup)
             async with stand_ins.ending() as ending, \
-                    Claude_Code_Server(ending, port, [], no_briefing) as again, client(again.url) as session:
+                    Claude_Code_Server(ending, port, [], {}) as again, client(again.url) as session:
                 assert (await session.list_tools()).tools == []
         assert reached_the_window
     run(scenario)
@@ -788,7 +710,7 @@ def configured(server_class: type[TAT_Server], working_directory: Path, monkeypa
     """`configure` under an interpreter whose path holds a space and both
     quotes."""
     monkeypatch.setattr(sys, "executable", '/opt/my "python\'s"/bin/python3')
-    server = server_class(stand_ins.ending(), free_port(), [], no_briefing)
+    server = server_class(stand_ins.ending(), free_port(), [], {})
     server.configure(working_directory)
     return server
 

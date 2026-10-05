@@ -722,10 +722,12 @@ the same `Evaluation` (the invalidation functions, below).
 `Conversation` is what one conversation, or one compile, is given and
 the forest does not store — this list and no other: the connection to the
 Isabelle side, the working directory (ARCHITECTURE §4), the log
-(LOGGING.md §2), the ending object (§4.6) and the bound on the
+(LOGGING.md §2), the ending object (§4.6), the bound on the
 construction jobs running at once, None for none (node_classes/THEOREM.md
-§7; a compile has none). A node reaches it through
-`forest().conversation` (PLUGIN_SYSTEM §2).
+§7; a compile has none), and the agents of the client process by the
+identity the client gives them (CONSTRUCT_INTERACTION §4), which the
+server creates and whose seen sets `forget` reaches (§4.1). A node
+reaches it through `forest().conversation` (PLUGIN_SYSTEM §2).
 
 An evaluation hook runs the class's own ML callback (§2.5) itself, through
 `isabelle_driver.call` (§4.3) — once per hook: `_eval_opr` once,

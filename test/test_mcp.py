@@ -21,6 +21,7 @@ from baselines import DOCS, fenced_blocks, fenced_lines, stated
 from test_model import T, add, slot
 
 from isabelle_theory_agent import mcp, plugin
+from isabelle_theory_agent.jobs import Agent
 from isabelle_theory_agent.exceptions import (
     AmbiguousId, HoldsNoChildren, InvalidField, MissingField, MoveBesideItself,
     MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError, TAT_Error, TAT_InternalError,
@@ -56,8 +57,13 @@ def build():
     return f, thy, sec, a, b, c, tools
 
 
+def agent() -> Agent:
+    """The caller, fresh for every call: no case here reads a seen set."""
+    return Agent("main", True)
+
+
 def call(tool, **arguments) -> list[str]:
-    return asyncio.run(tool.run(arguments)).splitlines()
+    return asyncio.run(tool.run(agent(), arguments)).splitlines()
 
 
 _E = typing.TypeVar("_E", bound=TAT_Error)
@@ -67,7 +73,7 @@ def refused(tool, cls: type[_E], **arguments) -> tuple[_E, list[str]]:
     """A refusal: the exception, to assert by its class and fields, and
     the lines it renders — the first the entry's own (RENDER_BASELINES §1)."""
     with pytest.raises(cls) as e:
-        asyncio.run(tool.run(arguments))
+        asyncio.run(tool.run(agent(), arguments))
     return e.value, str(e.value).splitlines()
 
 
@@ -368,18 +374,20 @@ def test_delete_shows_the_old_parent_with_what_is_left():
 
 # --- recall -------------------------------------------------------------------
 
-def test_recall_renders_the_node_in_recall_and_the_sessions_without_an_id():
-    """RECALL.md §3: the lines are the framework's at `Recall`'s depths —
-    `t_x`, four levels down, is what tells `Recall` from the briefing and
-    from a whole-subtree quickview; `Sessions` reads what no id reads; a
-    read takes no lock (MCP_SPECIFICATION §5)."""
+def test_recall_renders_the_node_in_recall_and_the_briefing_without_an_id():
+    """RECALL.md §2, §3: with an id the lines are the framework's at
+    `Recall`'s depths — `t_x`, four levels down, is what tells `Recall`
+    from the briefing, which goes to the bottom; `Sessions` as the id
+    renders the root in `Recall`; a read takes no lock (MCP_SPECIFICATION
+    §5)."""
     f, thy, sec, *_, tools = build()
     inner = add(sec, Block(sec, slot(), "Inner", slot()))
     add(inner, T(inner, slot(), "x"))
     sessions = ["block_Theory (not evaluated)", "- block_Section (not evaluated)",
                 "  - t_a (not evaluated)", "  - t_b (not evaluated)",
                 "  - block_Inner (not evaluated)", "- t_c (not evaluated)"]
-    assert call(tools["recall"]) == sessions
+    briefing = [*sessions[:5], "    - t_x (not evaluated)", sessions[5]]
+    assert call(tools["recall"]) == briefing
     assert call(tools["recall"], node_id="Sessions") == sessions
     assert call(tools["recall"], node_id="block_Section") == [
         "- block_Section (not evaluated)", "  - t_a (not evaluated)", "  - t_b (not evaluated)",
@@ -387,8 +395,8 @@ def test_recall_renders_the_node_in_recall_and_the_sessions_without_an_id():
 
     async def under_the_lock():
         async with f.lock:
-            return await asyncio.wait_for(tools["recall"].run({}), timeout=1)
-    assert asyncio.run(under_the_lock()).splitlines() == sessions
+            return await asyncio.wait_for(tools["recall"].run(agent(), {}), timeout=1)
+    assert asyncio.run(under_the_lock()).splitlines() == briefing
 
 
 def test_recall_refusals_render_the_cause_alone():

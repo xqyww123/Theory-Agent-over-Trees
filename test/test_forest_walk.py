@@ -580,7 +580,7 @@ def test_amending_a_tree_invalidates_its_importers():
         not_evaluated(b2, d, e)                                  # the importers, and theirs
         assert st(a) == (READY, READY) and st(c) == (READY, READY)
         assert tm.TABLE.theory_deletes == []
-        f.render(f, BRIEFING)
+        f.render(f, BRIEFING, stand_ins.agent(f.conversation))
         inv(f)
     # an amend of the obstacle itself: the importers, blocked by the
     # replaced node, run on the next call
@@ -591,7 +591,7 @@ def test_amending_a_tree_invalidates_its_importers():
     assert mark(a) == "failed" and st(b) == NE and st(c) == NE
     (a2,) = run(locked(f, edit.amend(a, [theory("A")], KINDS)))
     not_evaluated(a2, b, c)
-    f.render(f, BRIEFING)
+    f.render(f, BRIEFING, stand_ins.agent(f.conversation))
     inv(f)
     run(c.evaluate_to(False))
     assert f.is_finished()
@@ -609,7 +609,7 @@ def test_amending_a_tree_invalidates_its_importers():
     inv(f)
     (b3,) = run(locked(f, edit.amend(b2, [theory("B", "A")], KINDS)))
     not_evaluated(b3, c)
-    f.render(f, BRIEFING)
+    f.render(f, BRIEFING, stand_ins.agent(f.conversation))
     inv(f)
 
 
@@ -622,7 +622,7 @@ def test_deleting_the_head_of_a_blocked_chain():
     run(locked(f, edit.delete(a)))
     not_evaluated(b, c, d)
     assert tm.TABLE.theory_deletes == [("S.A",)]
-    f.render(f, BRIEFING)
+    f.render(f, BRIEFING, stand_ins.agent(f.conversation))
     inv(f)
 
 

@@ -35,6 +35,7 @@ from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
 
 if TYPE_CHECKING:
+    from .jobs import Agent, Key
     from .mcp_server import Ending
 
 
@@ -534,33 +535,34 @@ class Node(ABC):
     # may say more in `mark`.
 
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
-        """The line at `indent`, then `print_fields` and the children one
-        level deeper (PRINT.md §2).  The root's only child, reached from the
-        root, writes its line without the dash and its body at the same
-        indent (§6)."""
+        """The line at `indent`, then `print_fields` — never in the briefing
+        — and the children one level deeper (PRINT.md §2).  The root's only
+        child, reached from the root, writes its line without the dash and
+        its body at the same indent (§6)."""
         forest = self.forest()
         mark = self.mark(mode, depth)
         line = forest.id_of(self) + (f" ({mark})" if mark else "")
         alone = self.parent is forest and len(forest.sub_nodes) == 1 and depth >= 1
         out.write(INDENT * indent + ("" if alone else "- ") + line + "\n")
         below = indent if alone else indent + 1
-        self.print_fields(below, out, mode, depth)
+        if mode is not BRIEFING:
+            self.print_fields(below, out, mode, depth)
         self._print_messages(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
 
     def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
-        """The class's: its fields, one per line at `indent`, chosen by mode
-        and depth (PRINT.md §3).  Nothing by default."""
+        """The class's: its fields, one per line at `indent`, under `Recall`
+        alone, chosen by depth (PRINT.md §3).  Nothing by default."""
 
     def _print_messages(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The framework's (PRINT.md §3): each own operation's messages, the
         block headed `Error:` under a `CannotEvaluate` and `Notice:` under
         a `Ready` — whole under `recall` below depth 2, once per run
-        elsewhere (the seen set, §4), never in the briefing."""
+        elsewhere (the agent's seen set, §4), never in the briefing."""
         if mode is BRIEFING:
             return
-        seen = self.forest().conversation.seen
+        seen = self.forest().agent.seen
         whole = mode is RECALL and depth < 2
         for operation, status in zip(self._operation_names(), self._own_statuses()):
             if isinstance(status, NotEvaluated) or not status.messages:
@@ -1156,21 +1158,22 @@ class Conversation:
     to the Isabelle side, the working directory (ARCHITECTURE §4), the log
     (LOGGING.md) and the ending object (MODULE_STRUCTURE §4.6); the bound
     on the construction jobs running at once, None for none
-    (node_classes/THEOREM.md §7); and, until the agents hold their own, the
-    seen set (PRINT.md §4) — what a class has shown the agent once, under
-    keys of the class's choosing; cleared whole when the agent's context is
-    replaced.  A node reaches it through `forest().conversation`."""
+    (node_classes/THEOREM.md §7); and the agents of the client process, by
+    the identity the client gives them (CONSTRUCT_INTERACTION §4) — the
+    server creates them, the seen sets are theirs (PRINT.md §4).  A node
+    reaches it through `forest().conversation`."""
     connection: Connection
     working_directory: Path
     log: Log
     ending: Ending
     max_concurrent_construction_jobs: int | None = None
-    seen: set[Any] = field(default_factory=set)
+    agents: dict[str, Agent] = field(default_factory=dict)
 
-    def forget(self, key: Any) -> None:
-        """Remove a key from the seen set: the status setter's, at every
-        write of the operation the key names (COMPILATION.md §4)."""
-        self.seen.discard(key)
+    def forget(self, key: Key) -> None:
+        """Remove a key from every agent's seen set: the status setter's, at
+        every write of the operation the key names (COMPILATION.md §4)."""
+        for agent in self.agents.values():
+            agent.seen.discard(key)
 
 
 # The empty forest's one line under `Sessions:` (PRINT.md §6), approved wording.
@@ -1198,6 +1201,7 @@ class Forest(Unchained_Node):
     store: Forest_Store                        # the working directory's database (the plan's §2)
     _index: dict[Id_Component, list[Node]] | None   # id component -> its bearers, while `render` runs
     _above: frozenset[Node] | None             # the nodes above a focus, while `render` runs in Relative_Focus
+    _agent: Agent | None                       # the agent the rendering is for, while `render` runs
 
     ROOT_IDENTITY: ClassVar[Identity] = 0      # `next_identity` starts at 1
 
@@ -1215,6 +1219,7 @@ class Forest(Unchained_Node):
         self.lock = asyncio.Lock()
         self._index = None
         self._above = None
+        self._agent = None
         try:
             if store.nodes():
                 seen = {self.identity}
@@ -1459,12 +1464,23 @@ class Forest(Unchained_Node):
 
     # --- rendering (PRINT.md §5, §6)
 
-    def render(self, node: Node, mode: PrintMode) -> str:
-        """Every rendering's entry (MODULE_STRUCTURE §4.1).  The index that
-        makes every printed id linear in the forest lives exactly as long
-        as this call, which is synchronous: a move could change a short
-        form.  So does `_above`, what `Relative_Focus`'s path is made of:
-        every focus must lie under `node` and under no other focus."""
+    @property
+    def agent(self) -> Agent:
+        """The agent the running rendering is for (PRINT.md §4), whose seen
+        set `mark` and `print_fields` read; reading it outside a rendering
+        is a bug."""
+        if self._agent is None:
+            raise TAT_InternalError("the agent is read outside a rendering")
+        return self._agent
+
+    def render(self, node: Node, mode: PrintMode, agent: Agent) -> str:
+        """Every rendering's entry (MODULE_STRUCTURE §4.1), for `agent`.  The
+        index that makes every printed id linear in the forest lives
+        exactly as long as this call, which is synchronous: a move could
+        change a short form.  So do `_above`, what `Relative_Focus`'s path
+        is made of — every focus must lie under `node` and under no other
+        focus — and the agent.  Every key the rendering adds to the agent's
+        seen set is recorded (LOGGING.md §4)."""
         if self._index is not None:
             raise TAT_InternalError("a rendering started inside a rendering")
         out = io.StringIO()
@@ -1486,11 +1502,14 @@ class Forest(Unchained_Node):
                 if any(a in mode.nodes for a in ancestors):
                     raise TAT_InternalError("a focus under another focus")
                 above.update(ancestors)
-        self._index, self._above = index, frozenset(above)
+        self._index, self._above, self._agent = index, frozenset(above), agent
+        seen_before = set(agent.seen)
         try:
             node.print(0, out, mode, 0)
         finally:
-            self._index = self._above = None
+            self._index = self._above = self._agent = None
+        for key in agent.seen - seen_before:
+            self.conversation.log.agent.seen(key=key)
         return out.getvalue()
 
     def print(self, indent, out, mode, depth):
@@ -1987,17 +2006,17 @@ class Session(Unchained_Node):
                    rows.get("options"), rows.get("description"))
 
     def print_fields(self, indent, out, mode, depth):
-        """SESSION_AND_THEORY §4: `parent_session` in the briefing and when
-        detailed; `options` and `description`, when there are any, when
-        detailed."""
-        if mode is BRIEFING or self.detailed(mode, depth):
-            out.write(INDENT * indent + f"parent_session: {self.parent_session}\n")
-        if self.detailed(mode, depth):
-            if self.options:
-                out.write(INDENT * indent + "options: "
-                          + ", ".join(f"{o['name']} = {o['value']}" for o in self.options) + "\n")
-            if self.description:
-                print_error(indent, out, self.description, "description:")
+        """SESSION_AND_THEORY §4: under `Recall`, `parent_session` and
+        `options` at depths 0 and 1, `description` at depth 0; `options`
+        and `description` when there are any."""
+        if mode is not RECALL or depth > 1:
+            return
+        out.write(INDENT * indent + f"parent_session: {self.parent_session}\n")
+        if self.options:
+            out.write(INDENT * indent + "options: "
+                      + ", ".join(f"{o['name']} = {o['value']}" for o in self.options) + "\n")
+        if depth == 0 and self.description:
+            print_error(indent, out, self.description, "description:")
 
     async def _evaluate(self, ev, mode):
         raise TAT_InternalError(
@@ -2156,10 +2175,9 @@ class Theory(StdBlock):
                 importer._invalidate(ev)
 
     def print_fields(self, indent, out, mode, depth):
-        """SESSION_AND_THEORY §4: `imports` in the briefing, when detailed
-        and at `recall`'s depth 2.  The operations' messages are the
-        framework's (PRINT.md §3)."""
-        if mode is BRIEFING or self.detailed(mode, depth) or (mode is RECALL and depth == 2):
+        """SESSION_AND_THEORY §4: under `Recall`, `imports` to depth 2.  The
+        operations' messages are the framework's (PRINT.md §3)."""
+        if mode is RECALL and depth <= 2:
             out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the

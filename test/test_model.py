@@ -509,19 +509,21 @@ def test_on_invalidated_sees_both_fields_written():
                     ("B", "ending", [NE, NE], (NE, NE))]
 
 
-def test_a_status_write_forgets_the_operations_seen_key():
+def test_a_status_write_forgets_the_operations_seen_key_for_every_agent():
     """`Conversation.forget` (PRINT.md §4): every write of an operation's
-    status removes the seen set's key for its messages; an operation the
-    guard leaves unwritten keeps its key."""
+    status removes the seen set's key for its messages from every agent's
+    set; an operation the guard leaves unwritten keeps its key."""
     f, thy, sec, t1, t2, t3, t4 = build()
-    seen = f.conversation.seen
+    agents = [stand_ins.agent(f.conversation), stand_ins.agent(f.conversation, "a9f3", main=False)]
     kept = {(sec.identity, "ending"), (t3.identity, None)}
-    seen.update(kept | {(thy.identity, "beginning"), (sec.identity, "beginning"), (t1.identity, None)})
+    for agent in agents:
+        agent.seen.update(kept | {(thy.identity, "beginning"), (sec.identity, "beginning"),
+                                  (t1.identity, None)})
     run(t1.evaluate_to(False))         # writes both beginnings and T1; what follows is unwritten already
-    assert seen == kept
+    assert [agent.seen for agent in agents] == [kept, kept]
     f.conversation.forget((t3.identity, None))
     f.conversation.forget((t3.identity, None))        # a key not there is no error
-    assert seen == {(sec.identity, "ending")}
+    assert [agent.seen for agent in agents] == [{(sec.identity, "ending")}] * 2
 
 
 class Owning(T):

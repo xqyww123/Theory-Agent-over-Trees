@@ -1,6 +1,6 @@
 """The Streamable HTTP MCP server (MODULE_STRUCTURE §4.6): the endpoint
-`http://127.0.0.1:<port>/mcp`, the path `/hook` the conversation's hooks
-post to (CLIENT_HOOKS.md) and the path `/on-compaction`; the tool
+`http://127.0.0.1:<port>/mcp` and the path `/hook` the conversation's
+hooks post to (CLIENT_HOOKS.md); the tool
 boundary of EXCEPTIONS.md §1; the conversation's ending, `Ending`; one
 subclass of the server per agent client (CONSTRUCT_INTERACTION §8),
 which names the calling agent and judges the hooks.
@@ -28,7 +28,6 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple, NoReturn, TypeVar
-from urllib.parse import parse_qs
 
 import anyio
 import anyio.lowlevel
@@ -52,7 +51,6 @@ from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 HOST = "127.0.0.1"
 PATH = "/mcp"
 HOOK = "/hook"
-ON_COMPACTION = "/on-compaction"
 SERVER_NAME = "TAT"                     # the client's name for TAT's server entry (CONSTRUCT_INTERACTION §8)
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"   # a TAT tool's name as the client sees it
 
@@ -152,50 +150,16 @@ def _extra(meta: types.RequestParams.Meta | None) -> dict[str, Any]:
     return (meta.model_extra if meta is not None else None) or {}
 
 
-def _hook_specific_output(briefing: str) -> Any:
-    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": briefing}}
-
-
-def _additional_context(briefing: str) -> Any:
-    return {"additional_context": briefing}
-
-
-# The clients whose hooks call `/on-compaction`, each with the shape it
-# takes the briefing in — a JSON body, or None for the text alone
-# (CLIENT_HOOKS.md); the order is the refusal line's.
-CLIENTS: dict[str, Callable[[str], Any] | None] = {
-    "claude-code": _hook_specific_output,
-    "codex": _hook_specific_output,
-    "gemini-cli": _hook_specific_output,
-    "cursor": _additional_context,
-    "opencode": None,
-}
-
-
-def unknown_client(client: str) -> str:
-    known = list(CLIENTS)
-    return f"TAT does not know the client `{client}`; it knows {', '.join(known[:-1])} and {known[-1]}"
-
-
-def envelope(client: str | None, briefing: str) -> tuple[bytes, str]:
-    """The answer's body and content type for the client, the text alone
-    for none (CLIENT_HOOKS.md)."""
-    shape = CLIENTS[client] if client is not None else None
-    if shape is None:
-        return briefing.encode(), "text/plain; charset=utf-8"
-    return json.dumps(shape(briefing)).encode(), "application/json"
-
-
-Body = Callable[[dict[str, Any]], Coroutine[Any, Any, str]]
+Body = Callable[[Agent, dict[str, Any]], Coroutine[Any, Any, str]]
 
 
 @dataclass(frozen=True)
 class Tool:
     """One tool as the server advertises and runs it (`mcp.py` builds
-    them): `run` takes the call's arguments and returns the result's text,
-    or raises — a `TAT_Error` for the agent, anything else ending the
-    conversation; `read_only` is advertised as MCP's `readOnlyHint`
-    (MCP_SPECIFICATION §5)."""
+    them): `run` takes the calling agent and the call's arguments and
+    returns the result's text, or raises — a `TAT_Error` for the agent,
+    anything else ending the conversation; `read_only` is advertised as
+    MCP's `readOnlyHint` (MCP_SPECIFICATION §5)."""
     name: str
     description: str
     input_schema: JSON_Schema
@@ -364,9 +328,10 @@ class TAT_Server:
     `clientInfo.name` its client's MCP sessions open with, the client's
     version its facts were measured on, the `_meta` key under which a call
     carries the id its announcement named, and what the announcement is
-    answered; each names the agent of a call its own way.  The server keeps
-    the client's agents, by the identity the client gives them, and the
-    calls announced and not yet sent."""
+    answered; each names the agent of a call its own way.  The server
+    creates the client's agents into `agents`, the conversation's, by the
+    identity the client gives them, and keeps the calls announced and not
+    yet sent."""
 
     name: ClassVar[str]
     client_name: ClassVar[str]
@@ -375,18 +340,13 @@ class TAT_Server:
     announcement_answer: ClassVar[Any]
     experimental: ClassVar[dict[str, dict[str, Any]]] = {}     # declared in `initialize`
 
-    def __init__(self, ending: Ending, port: int, tools: list[Tool],
-                 on_compaction: Callable[[], str]):
-        """`on_compaction` is what `/on-compaction` does — the seen set
-        cleared, the briefing returned (`mcp.py`); anything it raises ends
-        the conversation, as a tool body's would."""
+    def __init__(self, ending: Ending, port: int, tools: list[Tool], agents: dict[str, Agent]):
         self.ending = ending
         self._port = port
         self._tools = {tool.name: tool for tool in tools}
-        self._on_compaction = on_compaction
         self.url = f"http://{HOST}:{port}{PATH}"
 
-        self.agents: dict[str, Agent] = {}
+        self.agents = agents
         # tool_use_id -> the agent the announcement named, or None where the
         # call names it; an entry whose call never comes stays, small and unique
         self._announced: dict[str, Agent | None] = {}
@@ -403,8 +363,8 @@ class TAT_Server:
         app.list_tools()(self._list_tools)
         app.call_tool(validate_input=False)(self._call_tool)
         # the SDK checks Host and Origin only when told what to accept;
-        # the spelling is the printed URL's, and `/on-compaction` checks
-        # with the same settings, so the two paths cannot drift
+        # the spelling is the printed URL's, and `/hook` checks with the
+        # same settings, so the two paths cannot drift
         authority = f"{HOST}:{port}"
         security = TransportSecuritySettings(
             allowed_hosts=[authority], allowed_origins=["http://" + authority])
@@ -642,9 +602,6 @@ class TAT_Server:
         if scope["path"] == HOOK:
             await self._counted(self._hook_request(scope, receive, send))
             return
-        if scope["path"] == ON_COMPACTION:
-            await self._counted(self._compaction(scope, receive, send))
-            return
         if scope["path"] != PATH:
             await _answer(send, 404, b"", "text/plain")
             return
@@ -732,30 +689,6 @@ class TAT_Server:
         self._announced[event.tool_use_id] = self._announcing_agent(event)
         return "announcement", self.announcement_answer
 
-    async def _compaction(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        """`POST /on-compaction?client=<name>` (MODULE_STRUCTURE §4.6): an
-        unknown client refused before anything is touched; an empty 503
-        while the conversation is ending, which touches no forest; then
-        the closure once, its answer in the client's shape — or, if it
-        raises, the conversation's ending and an empty 500, so the hook
-        reports a failure and nothing half-rendered reaches the agent."""
-        if await self._post(scope, receive, send) is None:
-            return
-        client = parse_qs(scope["query_string"].decode()).get("client", [None])[0]
-        if client is not None and client not in CLIENTS:
-            await _answer(send, 400, unknown_client(client).encode(), "text/plain; charset=utf-8")
-            return
-        if self.ending.entered:             # nothing left to brief
-            await _answer(send, 503, b"", "text/plain")
-            return
-        try:
-            briefing = self._on_compaction()
-        except Exception as bug:
-            self.ending.end(bug)
-            await _answer(send, 500, b"", "text/plain")
-            return
-        await _answer(send, 200, *envelope(client, briefing))
-
     # --- the tool boundary (EXCEPTIONS.md §1) ----------------------------
 
     async def _list_tools(self) -> list[types.Tool]:
@@ -801,7 +734,7 @@ class TAT_Server:
             # `asyncio.wait` never cancels what it waits on.  The agent's
             # working-call count holds for exactly as long (CONSTRUCT_INTERACTION §4).
             with agent.working():
-                body = self.ending.spawn(_run(tool, arguments))
+                body = self.ending.spawn(_run(tool, agent, arguments))
                 with anyio.CancelScope(shield=True):
                     await asyncio.wait({body})
                 result = self._result_of(name, body)
@@ -980,8 +913,8 @@ class Result(NamedTuple):
     class_: str | None
 
 
-async def _run(tool: Tool, arguments: dict[str, Any]) -> str:
-    text = await tool.run(arguments)        # a malformed tool fails as its body fails
+async def _run(tool: Tool, agent: Agent, arguments: dict[str, Any]) -> str:
+    text = await tool.run(agent, arguments)     # a malformed tool fails as its body fails
     if not isinstance(text, str):
         raise TAT_InternalError(
             f"the body of `{tool.name}` returned a {type(text).__name__}, not a text")

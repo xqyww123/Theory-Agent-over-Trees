@@ -722,10 +722,12 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
 
 async def test_recall_through_the_wire(conversation):
     """RECALL.md §3 through the MCP client: a call with no arguments at
-    all reads the sessions — the lone session at depth 1, its theories at
-    depth 2, where a failed header's message shows once per run and the
-    `edit`'s quickview has shown it; a `recall` of the failed theory, at
-    depth 0, shows the block whole (PRINT.md §3, §4, §6)."""
+    all reads the briefing — every node one line, no field, no message;
+    `Sessions` as the id reads the root in `Recall` — the lone session at
+    depth 1, its theories at depth 2, where a failed header's message
+    shows once per run and the `edit`'s quickview has shown it; a `recall`
+    of the failed theory, at depth 0, shows the block whole (PRINT.md §3,
+    §4, §6)."""
     async with conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
@@ -734,7 +736,11 @@ async def test_recall_through_the_wire(conversation):
                                          theory("TAT_RECALL_B", "TAT_Nowhere.Nope")]}]})
         text = text_of(result)
         assert not result.isError and text.count("Error:") == 1, text
-        sessions = await session.call_tool("recall")
+        briefing = await session.call_tool("recall")
+        assert not briefing.isError and text_of(briefing).splitlines() == [
+            "session_TAT_RECALL", "- theory_TAT_RECALL_A (success)",
+            "- theory_TAT_RECALL_B (failed)"], text_of(briefing)
+        sessions = await session.call_tool("recall", {"node_id": "Sessions"})
         assert not sessions.isError and text_of(sessions).splitlines() == [
             "session_TAT_RECALL", "parent_session: HOL",
             "- theory_TAT_RECALL_A (success)", "  imports: Main",
