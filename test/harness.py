@@ -7,15 +7,19 @@ fresh conversation per case through `TAT.reset`.  `conftest.py` builds one
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import shutil
 import signal
 import socket
 import subprocess
+import tempfile
 import traceback
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -40,24 +44,56 @@ TERMINATION = 10.0                      # a child that outlived SIGINT: after SI
 CLIENT_INFO = types.Implementation(name=Claude_Code_Server.client_name,
                                    version=Claude_Code_Server.measured_version)
 SESSION_ID = "6c1f0e4a-2b7d-4f3e-9a58-0d2c7b1e8f90"            # invented, as the payloads' other ids
-TRANSCRIPT_PATH = f"/home/agent/.claude/projects/-work-TAT-agents/{SESSION_ID}.jsonl"   # named, not read
+TRANSCRIPT_PATH = f"/home/agent/.claude/projects/-work-TAT-agents/{SESSION_ID}.jsonl"   # named; no file there
 MAX_CONCURRENT_CONSTRUCTION_JOBS = "7"  # the child's environment; `launch_TAT` sees the text arrive
 
 
 def claude_code(tool: str, tool_use_id: str, agent_id: str | None = None,
-                tool_input: dict[str, Any] | None = None) -> dict[str, Any]:
+                tool_input: dict[str, Any] | None = None,
+                transcript_path: str = TRANSCRIPT_PATH) -> dict[str, Any]:
     """Claude Code's `PreToolUse` on a TAT tool, in the measured shape
     (ai-artifacts/AGENT_CLIENTS_MEASURED.md) with invented ids: a
     subagent's carries `agent_id`, the main conversation's does not
-    (CLIENT_HOOKS.md §2)."""
+    (CLIENT_HOOKS.md §2).  `transcript_path` is the main conversation's
+    transcript, which the server reads (`transcript()` writes one)."""
     payload: dict[str, Any] = {
-        "session_id": SESSION_ID, "transcript_path": TRANSCRIPT_PATH, "cwd": "/work/TAT.agents",
+        "session_id": SESSION_ID, "transcript_path": transcript_path, "cwd": "/work/TAT.agents",
         "permission_mode": "default", "hook_event_name": "PreToolUse",
         "tool_name": TOOL_PREFIX + tool, "tool_input": tool_input or {}, "tool_use_id": tool_use_id,
         "mcp_server": {"name": SERVER_NAME, "source": "dynamic"}}
     if agent_id is not None:
         payload |= {"agent_id": agent_id, "agent_type": "general-purpose"}
     return payload
+
+
+def transcript_line(type_: str, **fields: Any) -> str:
+    """One line of a Claude Code transcript, in the measured shape: a record
+    with its own `uuid` and `timestamp`."""
+    record = {"type": type_, "uuid": str(uuid.uuid4()),
+              "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+              .replace("+00:00", "Z"), **fields}
+    return json.dumps(record) + "\n"
+
+
+def compact_boundary(**fields: Any) -> str:
+    """The one line a compaction appends to the compacting agent's transcript
+    (CLIENT_HOOKS.md §2, AGENT_CLIENTS_MEASURED.md)."""
+    return transcript_line("system", subtype="compact_boundary", **fields)
+
+
+@contextmanager
+def transcript() -> Generator[Path]:
+    """A session directory holding the main conversation's transcript, as
+    Claude Code has written it before the first announcement
+    (AGENT_CLIENTS_MEASURED.md); yields the transcript's path, and removes
+    the directory afterwards."""
+    directory = Path(tempfile.mkdtemp(prefix="TAT-transcript-"))
+    try:
+        path = directory / f"{SESSION_ID}.jsonl"
+        path.write_text(transcript_line("user"))
+        yield path
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def free_port() -> int:
@@ -117,22 +153,24 @@ async def post_hook(url: str, payload: Any) -> httpx.Response:
 class Announcing_Session(ClientSession):
     """An `mcp` client session that announces each tool call to `/hook`
     the way Claude Code's main conversation does — a `PreToolUse` payload
-    in the measured shape, with an invented `tool_use_id` — and then sends
-    the call with the matching `_meta` (CONSTRUCT_INTERACTION §8).  The
-    announcement is answered the grant; one the ending answers 503 does
-    not stop the call, as it does not stop an interactive client whose
-    user allows it: the call is sent, and the ending answers it
-    (RENDER_BASELINES §4)."""
+    in the measured shape, with an invented `tool_use_id` and the path of
+    the transcript it keeps — and then sends the call with the matching
+    `_meta` (CONSTRUCT_INTERACTION §8).  The announcement is answered the
+    grant; one the ending answers 503 does not stop the call, as it does
+    not stop an interactive client whose user allows it: the call is sent,
+    and the ending answers it (RENDER_BASELINES §4)."""
 
-    def __init__(self, read: Any, write: Any, url: str, **kwargs: Any):
+    def __init__(self, read: Any, write: Any, url: str, transcript_path: Path, **kwargs: Any):
         super().__init__(read, write, **kwargs)
         self._hook_url = hook_url(url)
+        self._transcript_path = str(transcript_path)
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None,
                         read_timeout_seconds: Any = None, progress_callback: Any = None, *,
                         meta: dict[str, Any] | None = None) -> types.CallToolResult:
         tool_use_id = "toolu_" + uuid.uuid4().hex
-        answer = await post_hook(self._hook_url, claude_code(name, tool_use_id, tool_input=arguments))
+        answer = await post_hook(self._hook_url, claude_code(name, tool_use_id, tool_input=arguments,
+                                                             transcript_path=self._transcript_path))
         if answer.status_code == 200:
             assert answer.json() == Claude_Code_Server.announcement_answer, answer.text
         else:
@@ -145,11 +183,13 @@ class Announcing_Session(ClientSession):
 async def client(url: str, client_info: types.Implementation = CLIENT_INFO
                  ) -> AsyncGenerator[ClientSession]:
     """An initialised `mcp` client session on the endpoint, stating
-    `client_info` and announcing its calls."""
-    async with streamable_http_client(url) as (read, write, _):
-        async with Announcing_Session(read, write, url, client_info=client_info) as session:
-            await session.initialize()
-            yield session
+    `client_info` and announcing its calls, with a transcript of its own."""
+    with transcript() as transcript_path:
+        async with streamable_http_client(url) as (read, write, _):
+            async with Announcing_Session(read, write, url, transcript_path,
+                                          client_info=client_info) as session:
+                await session.initialize()
+                yield session
 
 
 def text_of(result) -> str:

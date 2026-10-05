@@ -215,7 +215,7 @@ class _Agent(_Category):
 
     @_event("info")
     def compaction(self, *, learned_from: Literal["compact_boundary", "transcript_path_changed",
-                                                  "session_start", "post_compact"],
+                                                  "session_start", "pre_compact", "post_compact"],
                    seen_cleared: int, **facts: Any) -> None: ...
 
     @_event("debug")

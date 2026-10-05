@@ -1,14 +1,20 @@
 """`POST /hook` and the agents (CONSTRUCT_INTERACTION §4, §8; MODULE_STRUCTURE
 §4.6): the announcement that names a call's agent, the unannounced call,
 the two clients' agents, the working-call count, the path while the
-conversation is ending and on a bug, the `clientInfo` check and Codex's
-sandbox check.  The payloads are written in the shapes
-AGENT_CLIENTS_MEASURED.md records, with invented ids (the Claude Code
-builder is the harness's).  Run: python -m pytest test/test_hooks.py
+conversation is ending and on a bug, the `clientInfo` check, Codex's
+sandbox check, and the compaction events — Codex's three hooks, and
+Claude Code's transcripts read at each announcement with the two checks
+(CLIENT_HOOKS.md §2, §3).  The payloads and the transcript lines are
+written in the shapes AGENT_CLIENTS_MEASURED.md records, with invented
+ids (the Claude Code builders are the harness's).
+Run: python -m pytest test/test_hooks.py
 """
 
 import asyncio
+from collections.abc import Generator
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,13 +23,16 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 
 import stand_ins
-from harness import CLIENT_INFO, claude_code, client, free_port, hook_url, post_hook, text_of
+from harness import (
+    CLIENT_INFO, claude_code, client, compact_boundary, free_port, hook_url, post_hook, text_of,
+    transcript, transcript_line)
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.mcp_server import (
-    AGENTS, SANDBOX_STATE, TOOL_PREFIX, Claude_Code_Server, ClientRefused, Codex_Server,
+    AGENTS, POST_COMPACT_WITHOUT_BOUNDARY, SANDBOX_STATE, SAVES_NO_TRANSCRIPT, TOOL_PREFIX,
+    Claude_Code_Server, ClientRefused, Codex_Server, boundary_before_announcement,
     sandbox_is_the_profile)
 from test_mcp_server import (
-    INTERNAL, NOT_CONNECTED, NOT_SANDBOXED, Bodies, ended, hold_accepting, run, serving)
+    INTERNAL, NO_TRANSCRIPT, NOT_CONNECTED, NOT_SANDBOXED, Bodies, ended, hold_accepting, run, serving)
 
 CC_SUBAGENT = "a9f3c2d1e4b5"
 CX_SESSION = "019a7c3e-5b2d-7f41-8e6a-3c9d1b0f2a47"
@@ -35,6 +44,29 @@ UNANNOUNCED = ("This call was not announced by the client's hooks, so TAT cannot
                "is calling.")
 SECOND_ANNOUNCEMENT = ("TAT received a second announcement of the call {id} before that call arrived; "
                        "the client's hooks cannot be trusted.")
+
+
+@pytest.fixture
+def transcript_path() -> Generator[str]:
+    """The main conversation's transcript, written before its first
+    announcement as Claude Code writes it; its session directory is where a
+    subagent's file goes (`subagent_file`)."""
+    with transcript() as path:
+        yield str(path)
+
+
+def subagent_file(transcript_path: str, agent_id: str, *below: str) -> Path:
+    """A subagent's transcript under the session directory (CLIENT_HOOKS.md
+    §2): `subagents/<below...>/agent-<id>.jsonl`, with one line."""
+    path = Path(transcript_path).with_suffix("") / "subagents" / Path(*below) / f"agent-{agent_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(transcript_line("user"))
+    return path
+
+
+def append(path, text: str) -> None:
+    with open(path, "a") as file:
+        file.write(text)
 
 
 def codex(tool: str, call_id: str, agent_id: str | None = None) -> dict:
@@ -86,7 +118,7 @@ def answers() -> list[tuple]:
             if r["event"] == "answer"]
 
 
-def test_an_announced_call_is_served_and_its_records_name_the_call_and_the_agent():
+def test_an_announced_call_is_served_and_its_records_name_the_call_and_the_agent(transcript_path):
     """CONSTRUCT_INTERACTION §8; LOGGING.md §3: the announcement is answered
     the grant and creates the agent; the call it named is served; the
     records of the hook request, of the agent's creation and of the call
@@ -96,7 +128,7 @@ def test_an_announced_call_is_served_and_its_records_name_the_call_and_the_agent
         bodies = Bodies()
         async with serving(free_port(), bodies.tools()) as (server, serve), \
                 plain_client(server.url) as session:
-            payload = claude_code("echo", "toolu_01")
+            payload = claude_code("echo", "toolu_01", transcript_path=transcript_path)
             r = await post_hook(hook_url(server.url), payload)
             assert r.status_code == 200 and r.json() == Claude_Code_Server.announcement_answer
             result = await session.call_tool("echo", {"text": "hi"},
@@ -109,9 +141,13 @@ def test_an_announced_call_is_served_and_its_records_name_the_call_and_the_agent
             assert request["data"] == {"payload": payload}
             assert {k: answer["data"][k] for k in ("judged", "status", "body")} == {
                 "judged": "announcement", "status": 200, "body": Claude_Code_Server.announcement_answer}
-            [created] = stand_ins.records("agent")
+            created, read = stand_ins.records("agent")
             assert (created["event"], created["agent"], created["call"], created["data"]) == (
                 "created", "main", "toolu_01", {"identity": "main", "main": True, "first": "hook"})
+            assert (read["event"], read["level"], read["agent"], read["call"]) == (
+                "transcript_read", "debug", "main", "toolu_01")
+            assert read["data"] == {"file": transcript_path, "offset": 0, "lines": 1, "boundaries": [],
+                                    "bytes": Path(transcript_path).stat().st_size}
             [connected] = stand_ins.records("conversation")
             assert (connected["event"], connected["data"]) == (
                 "client_connected", {"name": "claude-code", "version": "2.1.286"})
@@ -122,7 +158,7 @@ def test_an_announced_call_is_served_and_its_records_name_the_call_and_the_agent
 @pytest.mark.parametrize("meta", [None, {"claudecode/toolUseId": "toolu_unknown"},
                                   {"claudecode/toolUseId": "toolu_00"}],
                          ids=["no id", "an id no announcement named", "an id already spent"])
-def test_an_unannounced_call_ends_the_conversation(meta):
+def test_an_unannounced_call_ends_the_conversation(meta, transcript_path):
     """CONSTRUCT_INTERACTION §8: TAT never guesses, an agent at hand or
     not — a call carrying no id, one no announcement named, or one whose
     announcement a first call has spent, ends the conversation with a
@@ -134,7 +170,7 @@ def test_an_unannounced_call_ends_the_conversation(meta):
         async with serving(free_port(), bodies.tools()) as (server, serve), \
                 plain_client(server.url) as session:
             url = hook_url(server.url)
-            await post_hook(url, claude_code("echo", "toolu_00"))
+            await post_hook(url, claude_code("echo", "toolu_00", transcript_path=transcript_path))
             served = await session.call_tool("echo", {"text": "first"}, meta={"claudecode/toolUseId": "toolu_00"})
             assert text_of(served) == "echo first"
             result = await session.call_tool("echo", {"text": "hi"}, meta=meta)
@@ -152,7 +188,7 @@ def test_an_unannounced_call_ends_the_conversation(meta):
     run(scenario)
 
 
-def test_a_second_announcement_of_a_pending_call_is_a_bug_of_the_path():
+def test_a_second_announcement_of_a_pending_call_is_a_bug_of_the_path(transcript_path):
     """CONSTRUCT_DECISIONS §10: the ids are unique by the clients' measured
     behaviour, so a `tool_use_id` announced again before its call arrived
     breaks TAT's premise about the hooks — the conversation ends with the
@@ -161,8 +197,9 @@ def test_a_second_announcement_of_a_pending_call_is_a_bug_of_the_path():
     async def scenario():
         async with serving(free_port(), []) as (server, serve):
             url = hook_url(server.url)
-            assert (await post_hook(url, claude_code("echo", "toolu_05"))).status_code == 200
-            r = await post_hook(url, claude_code("echo", "toolu_05"))
+            payload = claude_code("echo", "toolu_05", transcript_path=transcript_path)
+            assert (await post_hook(url, payload)).status_code == 200
+            r = await post_hook(url, payload)
             assert r.status_code == 500 and r.content == b""
             exn = await ended(serve)
             assert isinstance(exn, TAT_InternalError)
@@ -174,11 +211,11 @@ def test_a_second_announcement_of_a_pending_call_is_a_bug_of_the_path():
 @pytest.mark.parametrize("server_class, payload, meta, main_identity, subagent, created", [
     (Claude_Code_Server, claude_code, lambda call_id, thread, wd: {"claudecode/toolUseId": call_id},
      "main", CC_SUBAGENT, [("main", True, "hook"), (CC_SUBAGENT, False, "hook")]),
-    (Codex_Server, codex, codex_meta,
-     CX_SESSION, CX_SUBAGENT, [(CX_SUBAGENT, False, "call"), (CX_SESSION, True, "call")])],
+    (Codex_Server, lambda tool, call_id, agent_id=None, transcript_path=None: codex(tool, call_id, agent_id),
+     codex_meta, CX_SESSION, CX_SUBAGENT, [(CX_SUBAGENT, False, "call"), (CX_SESSION, True, "call")])],
     ids=["claude-code", "codex"])
 def test_the_main_conversation_and_a_subagent_are_two_agents_on_each_client(
-        tmp_path, server_class, payload, meta, main_identity, subagent, created):
+        tmp_path, transcript_path, server_class, payload, meta, main_identity, subagent, created):
     """CONSTRUCT_INTERACTION §4, §8; CLIENT_HOOKS.md §2, §3.  On Claude Code
     the announcement names the agent — `agent_id`, or `main` — and
     creates it; on Codex the announcement names the call alone, and the
@@ -189,12 +226,14 @@ def test_the_main_conversation_and_a_subagent_are_two_agents_on_each_client(
     nothing, and its calls carry the sandbox policy (§5)."""
     async def scenario():
         bodies = Bodies()
+        subagent_file(transcript_path, CC_SUBAGENT)
         async with serving(free_port(), bodies.tools(), server_class=server_class) as (server, serve), \
                 plain_client(server.url, info(server_class)) as session:
             server.configure(tmp_path)
             url = hook_url(server.url)
-            for r in (await post_hook(url, payload("echo", "id-main")),
-                      await post_hook(url, payload("echo", "id-sub", agent_id=subagent))):
+            for r in (await post_hook(url, payload("echo", "id-main", transcript_path=transcript_path)),
+                      await post_hook(url, payload("echo", "id-sub", agent_id=subagent,
+                                                   transcript_path=transcript_path))):
                 assert r.status_code == 200
                 if server_class.announcement_answer is None:
                     assert r.content == b"" and r.headers["content-type"].startswith("text/plain")
@@ -213,7 +252,7 @@ def test_the_main_conversation_and_a_subagent_are_two_agents_on_each_client(
                 ("call", subagent, "id-sub"), ("result", subagent, "id-sub"),
                 ("call", main_identity, "id-main"), ("result", main_identity, "id-main")]
             assert [(r["data"]["identity"], r["data"]["main"], r["data"]["first"])
-                    for r in stand_ins.records("agent")] == created
+                    for r in stand_ins.records("agent") if r["event"] == "created"] == created
     run(scenario)
 
 
@@ -335,7 +374,7 @@ def test_the_client_info_check(server_class, name, version, served):
     run(scenario)
 
 
-def test_the_check_is_per_session_and_a_refused_session_alone_is_served_no_tool():
+def test_the_check_is_per_session_and_a_refused_session_alone_is_served_no_tool(transcript_path):
     """CONSTRUCT_INTERACTION §8: every MCP session is checked at its first
     request, `tools/list` or `tools/call`; a session that passed lists the
     tools even while the conversation ends for a session that failed, which
@@ -347,7 +386,8 @@ def test_the_check_is_per_session_and_a_refused_session_alone_is_served_no_tool(
             lower = types.Implementation(name="claude-code", version="2.1.0")
             async with plain_client(server.url) as first, plain_client(server.url) as second:
                 assert len((await first.list_tools()).tools) == len(bodies.tools())
-                await post_hook(hook_url(server.url), claude_code("echo", "toolu_06"))
+                await post_hook(hook_url(server.url),
+                                claude_code("echo", "toolu_06", transcript_path=transcript_path))
                 result = await first.call_tool("echo", {"text": "a"}, meta={"claudecode/toolUseId": "toolu_06"})
                 assert text_of(result) == "echo a"
                 assert len((await second.list_tools()).tools) == len(bodies.tools())
@@ -451,4 +491,245 @@ def test_the_codex_sandbox_check(tmp_path, policy):
         async with serving(free_port(), []) as (server, _), streamable_http_client(server.url) as (r, w, _), \
                 ClientSession(r, w, client_info=CLIENT_INFO) as session:
             assert not (await session.initialize()).capabilities.experimental
+    run(scenario)
+
+
+# --- the compaction events (CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2, §3) ------
+
+def compactions() -> list[tuple]:
+    """Each `agent.compaction` record's agent and data."""
+    return [(r["agent"], r["data"]) for r in stand_ins.records("agent") if r["event"] == "compaction"]
+
+
+def check_failures() -> list[dict]:
+    return [r for r in stand_ins.records("agent") if r["event"] == "check_failed"]
+
+
+async def announce(url: str, tool_use_id: str, transcript_path: str, agent_id: str | None = None) -> None:
+    """A Claude Code announcement, answered the grant."""
+    r = await post_hook(url, claude_code("echo", tool_use_id, agent_id, transcript_path=transcript_path))
+    assert r.status_code == 200 and r.json() == Claude_Code_Server.announcement_answer, r.text
+
+
+def test_a_compaction_boundary_clears_the_compacting_agents_set_at_its_next_announcement(transcript_path):
+    """CLIENT_HOOKS.md §2; PRINT.md §4: a `compact_boundary` line TAT has not
+    recorded, read at the agent's next announcement, clears that agent's
+    seen set and no other's, with the `compaction` record; a recorded
+    boundary is not counted again; a last line without its newline waits
+    until it is complete; a workflow agent's file is found under
+    `subagents/workflows/<run>/`."""
+    async def scenario():
+        file = subagent_file(transcript_path, CC_SUBAGENT, "workflows", "wf_01")
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            await announce(url, "toolu_m1", transcript_path)
+            await announce(url, "toolu_s1", transcript_path, CC_SUBAGENT)
+            main, sub = server.agents["main"], server.agents[CC_SUBAGENT]
+            main.seen.add((1, None))
+            sub.seen.add((2, "beginning"))
+            append(file, compact_boundary())
+            await announce(url, "toolu_s2", transcript_path, CC_SUBAGENT)
+            assert sub.seen == set() and main.seen == {(1, None)}
+            [(agent, data)] = compactions()
+            assert agent == CC_SUBAGENT and data == {
+                "learned_from": "compact_boundary", "seen_cleared": 1, "uuid": data["uuid"]}
+            sub.seen.add((3, None))
+            await announce(url, "toolu_s3", transcript_path, CC_SUBAGENT)   # the boundary is recorded
+            assert sub.seen == {(3, None)} and len(compactions()) == 1
+            append(file, transcript_line("assistant").rstrip("\n"))          # a line not yet complete
+            await announce(url, "toolu_s4", transcript_path, CC_SUBAGENT)
+            assert sub.seen == {(3, None)} and len(compactions()) == 1
+            append(file, "\n" + compact_boundary())
+            await announce(url, "toolu_s5", transcript_path, CC_SUBAGENT)
+            assert sub.seen == set() and len(compactions()) == 2 and not serve.done()
+            reads = [r["data"] for r in stand_ins.records("agent")
+                     if r["event"] == "transcript_read" and r["data"]["file"] == str(file)]
+            assert [(r["lines"], len(r["boundaries"])) for r in reads] == [
+                (1, 0), (1, 1), (0, 0), (0, 0), (2, 1)]
+            assert [r["offset"] for r in reads] == [0, *(r["offset"] + r["bytes"] for r in reads[:3]),
+                                                   reads[3]["offset"]]   # the incomplete line was not consumed
+    run(scenario)
+
+
+def test_a_changed_transcript_path_is_a_compaction_and_the_new_file_is_read_from_its_start(transcript_path):
+    """CLIENT_HOOKS.md §2: `/clear` and `/resume` give the conversation a
+    new transcript; the announcement carrying it clears the agent's set,
+    and the new file is read from its first line, a boundary there being a
+    compaction of its own."""
+    async def scenario():
+        with transcript() as new_path:
+            await changed_path(new_path)
+
+    async def changed_path(new_path):
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            main = server.agents["main"]
+            main.seen.add((1, None))
+            append(new_path, compact_boundary())
+            await announce(url, "toolu_2", str(new_path))
+            assert main.seen == set() and not serve.done()
+            [(_, changed), (_, boundary)] = compactions()
+            assert changed == {"learned_from": "transcript_path_changed", "seen_cleared": 1,
+                               "previous": transcript_path, "current": str(new_path)}
+            assert boundary == {"learned_from": "compact_boundary", "seen_cleared": 0, "uuid": boundary["uuid"]}
+            reads = [r["data"] for r in stand_ins.records("agent") if r["event"] == "transcript_read"]
+            assert [(r["file"], r["offset"], r["lines"]) for r in reads] == [
+                (transcript_path, 0, 1), (str(new_path), 0, 2)]
+    run(scenario)
+
+
+@pytest.mark.parametrize("agent_id", [None, CC_SUBAGENT], ids=["the main conversation", "a subagent"])
+def test_an_agent_without_a_transcript_cannot_be_served(transcript_path, agent_id):
+    """CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2: an agent whose transcript
+    TAT does not find at an announcement — the main conversation's file,
+    or a subagent's under the session directory — ends the conversation
+    with the `ClientRefused` the launcher prints and `client_refused`;
+    every call is answered the fourth line of RENDER_BASELINES §4."""
+    async def scenario():
+        bodies = Bodies()
+        missing = "/nowhere/" + Path(transcript_path).name if agent_id is None else transcript_path
+        async with serving(free_port(), bodies.tools()) as (server, serve):
+            accepting = hold_accepting(server)
+            async with plain_client(server.url) as session:
+                await session.list_tools()
+                r = await post_hook(hook_url(server.url), claude_code("echo", "toolu_1", agent_id,
+                                                                      transcript_path=missing))
+                assert r.status_code == 200 and r.json() == Claude_Code_Server.announcement_answer
+                result = await session.call_tool("echo", {"text": "a"}, meta={"claudecode/toolUseId": "toolu_1"})
+                assert (text_of(result), result.isError) == (NO_TRANSCRIPT, True)
+                accepting.set()
+                exn = await ended(serve)
+                assert isinstance(exn, ClientRefused) and str(exn) == SAVES_NO_TRANSCRIPT
+                assert exn.line == NO_TRANSCRIPT
+                [refused] = [r for r in stand_ins.records("conversation") if r["event"] == "client_refused"]
+                assert refused["data"] == {"name": CLIENT_INFO.name, "version": CLIENT_INFO.version,
+                                           "message": SAVES_NO_TRANSCRIPT}
+                assert compactions() == []
+    run(scenario)
+
+
+def test_a_boundary_older_than_the_previous_announcement_fails_the_first_check(transcript_path):
+    """CONSTRUCT_INTERACTION §8, the first check: a boundary whose own
+    timestamp precedes the agent's previous served announcement means TAT
+    rendered a result into a context that was then replaced unseen; the
+    conversation ends with the check's message, `check_failed` is
+    recorded, and no set is cleared."""
+    async def scenario():
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            main = server.agents["main"]
+            main.seen.add((1, None))
+            earlier = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+            append(transcript_path, compact_boundary(timestamp=earlier))
+            await announce(url, "toolu_2", transcript_path)
+            exn = await ended(serve)
+            assert isinstance(exn, TAT_InternalError) and str(exn) == boundary_before_announcement("main")
+            assert main.seen == {(1, None)} and compactions() == []
+            [failed] = check_failures()
+            assert (failed["level"], failed["agent"], failed["call"]) == ("error", "main", "toolu_2")
+            assert failed["data"] == {"check": "boundary_before_previous_announcement",
+                                      "message": str(exn), "uuid": failed["data"]["uuid"],
+                                      "timestamp": failed["data"]["timestamp"],
+                                      "previous_announcement": failed["data"]["previous_announcement"]}
+            assert datetime.fromisoformat(failed["data"]["timestamp"]) == datetime.fromisoformat(earlier)
+            assert failed["data"]["previous_announcement"] > failed["data"]["timestamp"]
+    run(scenario)
+
+
+def test_a_post_compact_without_a_boundary_within_the_wait_fails_the_second_check(transcript_path, monkeypatch):
+    """CONSTRUCT_INTERACTION §8, the second check: a `PostCompact` is
+    answered nothing and counted — within the wait a boundary TAT has not
+    seen must appear in some transcript of the session directories it
+    knows, else the conversation ends with the check's message and
+    `check_failed`, no set cleared; one that appears in time passes, and
+    counts for its agent at the next announcement.  Before TAT knows a
+    session directory there is nothing to check against."""
+    monkeypatch.setattr(Claude_Code_Server, "boundary_wait", 0.4)
+    monkeypatch.setattr(Claude_Code_Server, "boundary_poll", 0.05)
+    post_compact = {"session_id": "6c1f0e4a-2b7d-4f3e-9a58-0d2c7b1e8f90", "transcript_path": transcript_path,
+                    "cwd": "/work/TAT.agents", "hook_event_name": "PostCompact", "trigger": "auto",
+                    "compact_summary": "The conversation so far..."}
+
+    async def scenario():
+        async with serving(free_port(), []) as (server, serve):          # fails
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            main = server.agents["main"]
+            main.seen.add((1, None))
+            r = await post_hook(url, post_compact)
+            assert r.status_code == 200 and r.content == b""
+            exn = await ended(serve)
+            assert isinstance(exn, TAT_InternalError) and str(exn) == POST_COMPACT_WITHOUT_BOUNDARY
+            assert main.seen == {(1, None)} and compactions() == []
+            [failed] = check_failures()
+            assert failed["data"] == {"check": "post_compact_without_boundary", "message": str(exn),
+                                      "waited": 0.4}
+            assert answers()[-1] == ("compaction", 200)
+        async with serving(free_port(), []) as (server, serve):          # passes
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            assert (await post_hook(url, post_compact)).status_code == 200
+            await asyncio.sleep(0.1)
+            append(transcript_path, compact_boundary())
+            await asyncio.sleep(0.6)
+            assert not serve.done() and len(check_failures()) == 1       # the first block's alone
+            await announce(url, "toolu_2", transcript_path)
+            assert [d["learned_from"] for _, d in compactions()] == ["compact_boundary"]
+        async with serving(free_port(), []) as (server, serve):          # nothing known yet
+            assert (await post_hook(hook_url(server.url), post_compact)).status_code == 200
+            await asyncio.sleep(0.6)
+            assert not serve.done() and len(check_failures()) == 1
+    run(scenario)
+
+
+def test_codex_compaction_hooks_clear_the_named_threads_set_and_are_answered_nothing(tmp_path):
+    """CLIENT_HOOKS.md §3: `PreCompact` and `PostCompact` clear the set of the
+    thread `agent_id` names, the main conversation's when there is none;
+    a `SessionStart` of any source clears the main conversation's; a
+    thread TAT has not met has nothing to clear and is not created; every
+    answer is empty."""
+    def hook(name: str, agent_id: str | None = None, **fields) -> dict:
+        thread = agent_id or CX_SESSION
+        payload = {"session_id": CX_SESSION, "transcript_path": f"/home/agent/.codex/sessions/rollout-{thread}.jsonl",
+                   "cwd": "/work/TAT.agents", "hook_event_name": name, **fields}
+        return payload | ({"agent_id": agent_id, "agent_type": "default"} if agent_id else {})
+
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools(), server_class=Codex_Server) as (server, serve), \
+                plain_client(server.url, info(Codex_Server)) as session:
+            server.configure(tmp_path)
+            url = hook_url(server.url)
+            for call_id, thread in (("c1", CX_SESSION), ("c2", CX_SUBAGENT)):
+                await post_hook(url, codex("echo", call_id, None if thread == CX_SESSION else thread))
+                await session.call_tool("echo", {"text": "a"}, meta=codex_meta(call_id, thread, tmp_path))
+            main, sub = server.agents[CX_SESSION], server.agents[CX_SUBAGENT]
+            seen = {(1, None), (2, "ending")}
+            for payload, cleared, kept in (
+                    (hook("PreCompact", CX_SUBAGENT, trigger="auto"), sub, main),
+                    (hook("PostCompact", CX_SUBAGENT, compact_summary="..."), sub, main),
+                    (hook("PreCompact", trigger="manual"), main, sub),
+                    (hook("PostCompact", compact_summary="..."), main, sub),
+                    *((hook("SessionStart", source=source), main, sub)
+                      for source in ("startup", "resume", "clear", "compact", "fork"))):
+                cleared.seen.update(seen)
+                kept.seen.update(seen)
+                r = await post_hook(url, payload)
+                assert r.status_code == 200 and r.content == b"", payload
+                assert cleared.seen == set() and kept.seen == seen, payload
+            r = await post_hook(url, hook("PreCompact", "019a7c3e-0000-7a12-b4f0-6e1d2c3b4a59", trigger="auto"))
+            assert r.status_code == 200 and r.content == b"" and set(server.agents) == {CX_SESSION, CX_SUBAGENT}
+            assert not serve.done()
+            assert compactions() == [
+                (CX_SUBAGENT, {"learned_from": "pre_compact", "seen_cleared": 2}),
+                (CX_SUBAGENT, {"learned_from": "post_compact", "seen_cleared": 2}),
+                (CX_SESSION, {"learned_from": "pre_compact", "seen_cleared": 2}),
+                (CX_SESSION, {"learned_from": "post_compact", "seen_cleared": 2}),
+                *((CX_SESSION, {"learned_from": "session_start", "seen_cleared": 2, "source": source})
+                  for source in ("startup", "resume", "clear", "compact", "fork")),
+                ("019a7c3e-0000-7a12-b4f0-6e1d2c3b4a59", {"learned_from": "pre_compact", "seen_cleared": 0})]
+            assert [judged for judged, _ in answers()[2:]] == [
+                "compaction"] * 4 + ["session_start"] * 5 + ["compaction"]
     run(scenario)

@@ -1,9 +1,9 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 4 are committed since
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 5 are committed since
 2026-10-05, with the review of steps 1 and 2 applied (review/DOC_SYNC_LIST.md
-entries 32–36); the rest is not implemented.
+entries 32–37); the rest is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -96,7 +96,7 @@ and 18 fail, each because a document is ahead of the code. Measured
 again on 2026-10-05 with step 1 in, the whole suite: 399 pass and 17
 fail — the 18 less `test_the_field_checks`, which Phase B's B2 made
 pass; with step 2 in, 418 pass and the same 17 fail; with step 4 in, 434
-pass and 13 fail.
+pass and 13 fail; with step 5 in, 441 pass and the same 13 fail.
 
 | case | waits for |
 | --- | --- |

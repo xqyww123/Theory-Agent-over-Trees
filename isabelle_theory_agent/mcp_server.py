@@ -25,7 +25,8 @@ import time
 import weakref
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple, NoReturn, TypeVar
 
@@ -66,6 +67,28 @@ def second_announcement(tool_use_id: str) -> str:
     so a repeat breaks TAT's premise about the client's hooks."""
     return (f"TAT received a second announcement of the call {tool_use_id} before that call arrived; "
             "the client's hooks cannot be trusted.")
+
+
+# Claude Code's transcripts (CONSTRUCT_INTERACTION §8, CLIENT_HOOKS.md §2): the
+# refusal of an agent whose transcript TAT does not find, and the two checks'
+# messages, each the launcher prints.
+SAVES_NO_TRANSCRIPT = ("TAT cannot serve this client: Claude Code saves no transcript of the conversation. "
+                 "Start it without --no-session-persistence.")
+SAVES_NO_TRANSCRIPT_REASON = "Claude Code saves no transcript"       # RENDER_BASELINES §4's fourth line
+
+
+def boundary_before_announcement(identity: str) -> str:
+    return (f"TAT found a compaction of agent {identity} recorded after a result it had already "
+            "rendered for that agent; its reading of Claude Code's transcripts cannot be trusted.")
+
+
+POST_COMPACT_WITHOUT_BOUNDARY = (
+    "TAT received a PostCompact hook but found no compaction boundary in any transcript within "
+    "10 seconds; its reading of Claude Code's transcripts cannot be trusted.")
+
+# How TAT learned of a compaction: the `compaction` record's `learned_from` (LOGGING.md §4)
+Learned_From = Literal["compact_boundary", "transcript_path_changed", "session_start", "pre_compact",
+                       "post_compact"]
 
 AGENTS = "TAT.agents"                   # the agent directory (ARCHITECTURE §1)
 DOT_TAT = ".tat"                        # the logs and the hooks' scripts (LOGGING.md §2, CLIENT_HOOKS.md §1)
@@ -216,11 +239,37 @@ T = TypeVar("T")
 class Announcement:
     """A `PreToolUse` on a TAT tool (CONSTRUCT_INTERACTION §8), as the
     payload states it: the call's `tool_use_id`, the identity the payload
-    gives the announcing agent — None when it gives none — and whether that
-    is the main conversation."""
+    gives the announcing agent — None when it gives none — whether that is
+    the main conversation, and the payload's `transcript_path`."""
     tool_use_id: str
     identity: str | None
     main: bool
+    transcript_path: str | None
+
+
+@dataclass(frozen=True)
+class Compaction:
+    """A compaction hook (CLIENT_HOOKS.md §1's last three rows): the agent it
+    names, looked up and never created — None for one TAT has not met, or
+    where the client names none — how TAT learned of the compaction, and
+    the facts its record carries (LOGGING.md §4)."""
+    agent: Agent | None
+    learned_from: Learned_From
+    facts: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class _Transcript:
+    """What the Claude Code subclass keeps of one agent's transcript
+    (MODULE_STRUCTURE §4.6): the `transcript_path` of the agent's last
+    announcement, the agent's own file under it, how far that file is read
+    — past its last complete line — the `compact_boundary` lines recorded,
+    by `uuid`, and when the previous announcement was served."""
+    session: str
+    file: Path
+    offset: int = 0
+    boundaries: set[str] = field(default_factory=set)
+    announced: datetime | None = None
 
 
 def _field(payload: dict[str, Any], name: str) -> Any:
@@ -428,21 +477,56 @@ class TAT_Server:
         agent_id = payload.get("agent_id")
         return str(agent_id) if agent_id else self._main_identity(payload)
 
-    def event_of_hook(self, payload: dict[str, Any]) -> Announcement | None:
+    def event_of_hook(self, payload: dict[str, Any]) -> Announcement | Compaction | None:
         """The client's JSON as an event (CONSTRUCT_INTERACTION §8): a
-        `PreToolUse` on a TAT tool is the announcement of a call; every
-        other hook is consumed — None.  Reads the payload and changes
-        nothing; `_judge` acts on the event."""
-        if (payload.get("hook_event_name") != "PreToolUse"
-                or not str(payload.get("tool_name", "")).startswith(TOOL_PREFIX)):
+        `PreToolUse` on a TAT tool is the announcement of a call, a
+        compaction hook the subclass's `Compaction`; every other hook is
+        consumed — None.  Reads the payload and changes nothing; `_judge`
+        acts on the event."""
+        if payload.get("hook_event_name") != "PreToolUse":
+            return self._compaction_of_hook(payload)
+        if not str(payload.get("tool_name", "")).startswith(TOOL_PREFIX):
             return None
         return Announcement(str(_field(payload, "tool_use_id")), self._identity(payload),
-                            main=not payload.get("agent_id"))
+                            main=not payload.get("agent_id"),
+                            transcript_path=_text(payload.get("transcript_path")))
+
+    def _compaction_of_hook(self, payload: dict[str, Any]) -> Compaction | None:
+        """The compaction event a hook other than `PreToolUse` is on this
+        client, or None (CLIENT_HOOKS.md §1)."""
+        raise NotImplementedError
+
+    def _known(self, identity: str | None) -> Agent | None:
+        """The agent so named, if TAT has met it: a compaction hook looks an
+        agent up and never creates one (CONSTRUCT_INTERACTION §8)."""
+        return self.agents.get(identity) if identity is not None else None
 
     def _announcing_agent(self, event: Announcement) -> Agent | None:
         """The agent an announcement names, created at it when new; None on
         a client whose calls name their agent themselves."""
         raise NotImplementedError
+
+    def _compacted(self, event: Compaction) -> None:
+        """What a compaction hook does on this client (CLIENT_HOOKS.md §1):
+        the compaction event itself by default."""
+        self._compaction(event.agent, event.learned_from, **event.facts)
+
+    def _compaction(self, agent: Agent | None, learned_from: Learned_From, **facts: Any) -> None:
+        """One compaction event (CONSTRUCT_INTERACTION §8, PRINT.md §4): the
+        agent's seen set cleared, and nothing more — nothing to clear for an
+        agent TAT has not met; the `compaction` record."""
+        cleared = 0
+        if agent is not None:
+            cleared = len(agent.seen)
+            agent.seen.clear()
+        self.ending.log.agent.compaction(learned_from=learned_from, seen_cleared=cleared, **facts)
+
+    def _check_failed(self, check: str, message: str, **facts: Any) -> None:
+        """A compaction check failed (CONSTRUCT_INTERACTION §8): the
+        `check_failed` record, and the conversation ends as for an
+        unannounced call, the launcher printing `message`."""
+        self.ending.log.agent.check_failed(check=check, message=message, **facts)
+        self.ending.end(TAT_InternalError(message))
 
     def _agent(self, identity: str, main: bool, first: Literal["call", "hook"]) -> Agent:
         """The agent so named, created when its first call or hook reaches
@@ -679,11 +763,16 @@ class TAT_Server:
 
     def _judge(self, payload: dict[str, Any]) -> tuple[Judged, Any]:
         """What the hook is and what it is answered (CLIENT_HOOKS.md §1's
-        table): an announcement records the call for `agent_of_call`; one
-        of a call still announced and not arrived is a bug of the path."""
+        table): an announcement records the call for `agent_of_call` — one
+        of a call still announced and not arrived is a bug of the path; a
+        compaction hook does what the subclass says and is answered
+        nothing."""
         event = self.event_of_hook(payload)
         if event is None:
             return "ignored", None
+        if isinstance(event, Compaction):
+            self._compacted(event)
+            return ("session_start" if event.learned_from == "session_start" else "compaction"), None
         if event.tool_use_id in self._announced:
             raise TAT_InternalError(second_announcement(event.tool_use_id))
         self._announced[event.tool_use_id] = self._announcing_agent(event)
@@ -775,23 +864,157 @@ class TAT_Server:
 
 
 class Claude_Code_Server(TAT_Server):
+    """Claude Code names the agent in its announcement, and no compaction
+    hook of its names the agent that compacted: a compaction is detected at
+    the agent's next announcement, from the agent's own transcript
+    (CLIENT_HOOKS.md §2), the two checks of CONSTRUCT_INTERACTION §8
+    guarding that reading."""
     name = "claude-code"
     client_name = "claude-code"
     measured_version = "2.1.286"
     call_key = "claudecode/toolUseId"
     announcement_answer = ALLOW             # the grant, without which Claude Code refuses the call under -p
     main_identity = "main"                  # LOGGING.md §3
+    boundary_wait: ClassVar[float] = 10.0   # seconds a `PostCompact` has to show its boundary (the second check)
+    boundary_poll: ClassVar[float] = 0.25
+
+    def __init__(self, ending: Ending, port: int, tools: list[Tool], agents: dict[str, Agent]):
+        super().__init__(ending, port, tools, agents)
+        self._transcripts: dict[str, _Transcript] = {}      # by the agent's identity
+        self._session_files: set[Path] = set()              # every `transcript_path` announced
 
     def _main_identity(self, payload: dict[str, Any]) -> str:
         return self.main_identity
 
     def _announcing_agent(self, event: Announcement) -> Agent:
         """The announcement names the agent: `agent_id`, or the main
-        conversation (CLIENT_HOOKS.md §2)."""
-        return self._agent(event.identity or self.main_identity, event.main, first="hook")
+        conversation (CLIENT_HOOKS.md §2); its transcript is read here."""
+        agent = self._agent(event.identity or self.main_identity, event.main, first="hook")
+        self._read_transcript(agent, event)
+        return agent
 
     def agent_of_call(self, meta: types.RequestParams.Meta | None) -> Agent | None:
         return self._take_announcement(meta)[1]
+
+    def _compaction_of_hook(self, payload: dict[str, Any]) -> Compaction | None:
+        """`PostCompact` names no agent: counted against the boundaries
+        (CLIENT_HOOKS.md §2), nothing else read from it."""
+        return Compaction(None, "post_compact") if payload.get("hook_event_name") == "PostCompact" else None
+
+    def _compacted(self, event: Compaction) -> None:
+        """The second check (CONSTRUCT_INTERACTION §8): within `boundary_wait`
+        a boundary TAT has not seen must appear in a transcript of the
+        session directories it knows; waited in a task of the ending's.
+        Nothing to check against before the first announcement."""
+        if self._session_files:
+            self.ending.spawn(self._boundary_appears(self._boundaries_on_disk()))
+
+    # --- the transcripts (CLIENT_HOOKS.md §2) -------------------------------
+
+    def _read_transcript(self, agent: Agent, event: Announcement) -> None:
+        """At an announcement, the agent's transcript: a `transcript_path`
+        other than the previous announcement's is a compaction event and
+        the agent's file is found anew under it; the lines the file gained
+        are read, and each `compact_boundary` not yet recorded is a
+        compaction event — unless its timestamp precedes the previous
+        served announcement, the first check.  An agent whose file is not
+        found cannot be served."""
+        if event.transcript_path is None:
+            raise TAT_InternalError("the PreToolUse payload carries no transcript_path")
+        kept = self._transcripts.get(agent.identity)
+        if kept is None or kept.session != event.transcript_path:
+            file = self._agent_file(Path(event.transcript_path), agent)
+            if file is None:
+                self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
+                return
+            if kept is not None:
+                self._compaction(agent, "transcript_path_changed", previous=kept.session,
+                                 current=event.transcript_path)
+            kept = self._transcripts[agent.identity] = _Transcript(event.transcript_path, file)
+            self._session_files.add(Path(event.transcript_path))
+        try:
+            boundaries = self._gained(kept)
+        except OSError:                     # the file is gone from under the agent
+            self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
+            return
+        for uuid, timestamp in boundaries:
+            if uuid in kept.boundaries:
+                continue
+            kept.boundaries.add(uuid)
+            if kept.announced is not None and timestamp is not None and timestamp < kept.announced:
+                self._check_failed("boundary_before_previous_announcement",
+                                   boundary_before_announcement(agent.identity), uuid=uuid,
+                                   timestamp=timestamp.isoformat(),
+                                   previous_announcement=kept.announced.isoformat())
+                return
+            self._compaction(agent, "compact_boundary", uuid=uuid)
+        # to the millisecond, the transcript's own precision: a boundary written
+        # in the same millisecond does not precede the announcement
+        now = datetime.now(timezone.utc)
+        kept.announced = now.replace(microsecond=now.microsecond // 1000 * 1000)
+
+    @staticmethod
+    def _agent_file(transcript_path: Path, agent: Agent) -> Path | None:
+        """The agent's own file (CLIENT_HOOKS.md §2): the main conversation's
+        is `transcript_path`; a subagent's is `agent-<id>.jsonl` under
+        `<transcript_path minus .jsonl>/subagents/`, at any depth.  None
+        when there is no such file."""
+        if agent.main:
+            return transcript_path if transcript_path.is_file() else None
+        subagents = transcript_path.with_suffix("") / "subagents"
+        if not subagents.is_dir():
+            return None
+        return next(subagents.rglob(f"agent-{agent.identity}.jsonl"), None)
+
+    def _gained(self, kept: _Transcript) -> list[tuple[str, datetime | None]]:
+        """The complete lines the file gained since it was last read — a last
+        line without its newline waits — and the `compact_boundary` lines
+        among them, each by its `uuid` and `timestamp`; the record
+        `transcript_read`."""
+        with open(kept.file, "rb") as file:
+            file.seek(kept.offset)
+            data = file.read()
+        complete = data.rfind(b"\n") + 1
+        lines = data[:complete].split(b"\n")[:-1]
+        boundaries = [_boundary(record) for record in map(_record, lines)
+                      if record.get("type") == "system" and record.get("subtype") == "compact_boundary"]
+        self.ending.log.agent.transcript_read(file=str(kept.file), offset=kept.offset, bytes=len(data),
+                                              lines=len(lines), boundaries=[uuid for uuid, _ in boundaries])
+        kept.offset += complete
+        return boundaries
+
+    def _boundaries_on_disk(self) -> set[str]:
+        """Every `compact_boundary` uuid in every transcript of the session
+        directories TAT knows: each announced `transcript_path` and the
+        `.jsonl` files under its directory."""
+        found: set[str] = set()
+        for session in self._session_files:
+            directory = session.with_suffix("")
+            files = [session, *(directory.rglob("*.jsonl") if directory.is_dir() else ())]
+            for path in files:
+                try:
+                    with open(path, "rb") as file:
+                        for line in file:
+                            if b'"compact_boundary"' in line:
+                                record = _record(line)
+                                if record.get("subtype") == "compact_boundary":
+                                    found.add(_boundary(record)[0])
+                except OSError:
+                    continue
+        return found
+
+    async def _boundary_appears(self, before: set[str]) -> None:
+        """The second check's wait: a boundary not in `before` within
+        `boundary_wait`, else the check fails."""
+        deadline = time.monotonic() + self.boundary_wait
+        while True:
+            await asyncio.sleep(min(self.boundary_poll, max(deadline - time.monotonic(), 0)))
+            if self._boundaries_on_disk() - before:
+                return
+            if time.monotonic() >= deadline:
+                break
+        self._check_failed("post_compact_without_boundary", POST_COMPACT_WITHOUT_BOUNDARY,
+                           waited=self.boundary_wait)
 
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """CLIENT_HOOKS.md §2: the server entry; the environment, the
@@ -845,6 +1068,19 @@ class Codex_Server(TAT_Server):
             return None
         return self._agent(thread, main=thread == _text(_extra(meta).get("sessionId")), first="call")
 
+    def _compaction_of_hook(self, payload: dict[str, Any]) -> Compaction | None:
+        """`PreCompact` and `PostCompact` name the thread by `agent_id`, the
+        main conversation when there is none; a `SessionStart` of any source
+        is the main conversation's (CLIENT_HOOKS.md §3)."""
+        hook = payload.get("hook_event_name")
+        if hook in ("PreCompact", "PostCompact"):
+            return Compaction(self._known(self._identity(payload)),
+                              "pre_compact" if hook == "PreCompact" else "post_compact")
+        if hook == "SessionStart":
+            return Compaction(self._known(self._main_identity(payload)), "session_start",
+                              {"source": _text(payload.get("source"))})
+        return None
+
     def _check_sandbox(self, session: ServerSession, meta: types.RequestParams.Meta | None) -> None:
         """The policy in force comes with every call under `SANDBOX_STATE`; a
         call whose policy is not the profile TAT configured — one without
@@ -897,6 +1133,32 @@ class Codex_Server(TAT_Server):
 
 def _json(value: Any) -> str:
     return json.dumps(value, indent=2) + "\n"
+
+
+def _record(line: bytes) -> dict[str, Any]:
+    """One transcript line as the JSON object it holds; a line that is no
+    JSON object is nothing."""
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _boundary(record: dict[str, Any]) -> tuple[str, datetime | None]:
+    """A `compact_boundary` line's `uuid` and `timestamp` (CLIENT_HOOKS.md
+    §2); one without a `uuid` breaks TAT's premise about the client."""
+    uuid = record.get("uuid")
+    if not isinstance(uuid, str):
+        raise TAT_InternalError("a compact_boundary line carries no uuid")
+    timestamp = record.get("timestamp")
+    try:
+        when = datetime.fromisoformat(timestamp) if isinstance(timestamp, str) else None
+    except ValueError:
+        when = None
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return uuid, when
 
 
 # The subclass for each name `isabelle TAT_mcp -c` takes; the launcher
