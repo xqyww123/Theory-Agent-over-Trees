@@ -18,7 +18,7 @@ import tempfile
 import traceback
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
@@ -180,11 +180,16 @@ class Announcing_Session(ClientSession):
 
 
 @asynccontextmanager
-async def client(url: str, client_info: types.Implementation = CLIENT_INFO
-                 ) -> AsyncGenerator[ClientSession]:
+async def client(url: str, client_info: types.Implementation = CLIENT_INFO,
+                 transcript_path: Path | None = None) -> AsyncGenerator[ClientSession]:
     """An initialised `mcp` client session on the endpoint, stating
-    `client_info` and announcing its calls, with a transcript of its own."""
-    with transcript() as transcript_path:
+    `client_info` and announcing its calls as the main conversation whose
+    transcript is `transcript_path` — one of its own when none is given.
+    Two clients of one conversation share a transcript: another path would
+    read as `/clear` (CLIENT_HOOKS.md §2)."""
+    with ExitStack() as stack:
+        if transcript_path is None:
+            transcript_path = stack.enter_context(transcript())
         async with streamable_http_client(url) as (read, write, _):
             async with Announcing_Session(read, write, url, transcript_path,
                                           client_info=client_info) as session:
@@ -235,6 +240,8 @@ class Request:
         self.handed_over: asyncio.Future[Handle] = loop.create_future()
         self.ended: asyncio.Future[None] = loop.create_future()
         self.successor: Handle | None = None    # the handle `restart()` returned
+        self.transcripts = ExitStack()          # the conversation's one transcript, once a client asks
+        self.transcript_path: Path | None = None
 
 
 class Handle:
@@ -266,7 +273,12 @@ class Handle:
 
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[ClientSession]:
-        async with client(self.url) as session:
+        """A client of this conversation; every client of it announces under
+        the conversation's one transcript."""
+        _, request = self._live()
+        if request.transcript_path is None:
+            request.transcript_path = request.transcripts.enter_context(transcript())
+        async with client(self.url, transcript_path=request.transcript_path) as session:
             yield session
 
     async def restart(self) -> Handle:
@@ -436,6 +448,7 @@ class Harness:
                     pass
                 finally:                                    # no await here
                     self.serving = None
+                    request.transcripts.close()
                 request.ended.set_result(None)              # the Next path only
         except BaseException as cause:
             self.end_run(cause)

@@ -23,7 +23,7 @@ import socket
 import sys
 import time
 import weakref
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,7 +46,7 @@ from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
 from .jobs import Agent
-from .log import Judged, Log, current_agent, current_call
+from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
 HOST = "127.0.0.1"
@@ -73,7 +73,7 @@ def second_announcement(tool_use_id: str) -> str:
 # refusal of an agent whose transcript TAT does not find, and the two checks'
 # messages, each the launcher prints.
 SAVES_NO_TRANSCRIPT = ("TAT cannot serve this client: Claude Code saves no transcript of the conversation. "
-                 "Start it without --no-session-persistence.")
+                       "Start it without --no-session-persistence.")
 SAVES_NO_TRANSCRIPT_REASON = "Claude Code saves no transcript"       # RENDER_BASELINES §4's fourth line
 
 
@@ -82,13 +82,10 @@ def boundary_before_announcement(identity: str) -> str:
             "rendered for that agent; its reading of Claude Code's transcripts cannot be trusted.")
 
 
-POST_COMPACT_WITHOUT_BOUNDARY = (
-    "TAT received a PostCompact hook but found no compaction boundary in any transcript within "
-    "10 seconds; its reading of Claude Code's transcripts cannot be trusted.")
+def post_compact_without_boundary(wait: float) -> str:
+    return ("TAT received a PostCompact hook but found no compaction boundary in any transcript within "
+            f"{wait:g} seconds; its reading of Claude Code's transcripts cannot be trusted.")
 
-# How TAT learned of a compaction: the `compaction` record's `learned_from` (LOGGING.md §4)
-Learned_From = Literal["compact_boundary", "transcript_path_changed", "session_start", "pre_compact",
-                       "post_compact"]
 
 AGENTS = "TAT.agents"                   # the agent directory (ARCHITECTURE §1)
 DOT_TAT = ".tat"                        # the logs and the hooks' scripts (LOGGING.md §2, CLIENT_HOOKS.md §1)
@@ -264,12 +261,18 @@ class _Transcript:
     (MODULE_STRUCTURE §4.6): the `transcript_path` of the agent's last
     announcement, the agent's own file under it, how far that file is read
     — past its last complete line — the `compact_boundary` lines recorded,
-    by `uuid`, and when the previous announcement was served."""
+    by `uuid`, and when the previous announcement was served.  `inode` and
+    `tail`, the file's identity and the bytes just before `offset`, tell a
+    file cut short or replaced since; `read` is whether the file was read
+    before."""
     session: str
     file: Path
     offset: int = 0
     boundaries: set[str] = field(default_factory=set)
     announced: datetime | None = None
+    inode: int | None = None
+    tail: bytes = b""
+    read: bool = False
 
 
 def _field(payload: dict[str, Any], name: str) -> Any:
@@ -299,7 +302,8 @@ class Ending:
     as a context right after the `Log` and hands it to the `Conversation`
     and to the server.  It holds the `Log`, the `Forest` once that is
     built, and the tasks it cancels and `unwound` waits for: the tool
-    bodies the server runs through `spawn`, later a construction job's run.
+    bodies the server runs through `spawn`, a compaction check's wait,
+    later a construction job's run.
     Whichever door is reached first calls `end`, which enters the ending
     once; the server's exit drains (the calls answered, the tasks unwound);
     the context's exit enters it for an exception escaping the start and
@@ -776,6 +780,9 @@ class TAT_Server:
         if event.tool_use_id in self._announced:
             raise TAT_InternalError(second_announcement(event.tool_use_id))
         self._announced[event.tool_use_id] = self._announcing_agent(event)
+        # granted even when the announcement ended the conversation — its agent
+        # refused, a check failed: the call is then sent, and answered the
+        # ending's line (RENDER_BASELINES §4)
         return "announcement", self.announcement_answer
 
     # --- the tool boundary (EXCEPTIONS.md §1) ----------------------------
@@ -886,6 +893,11 @@ class Claude_Code_Server(TAT_Server):
     def _main_identity(self, payload: dict[str, Any]) -> str:
         return self.main_identity
 
+    def _identity(self, payload: dict[str, Any]) -> str | None:
+        """A `PostCompact` names nobody: no compaction hook of Claude Code's
+        says which agent compacted (CLIENT_HOOKS.md §2)."""
+        return None if payload.get("hook_event_name") == "PostCompact" else super()._identity(payload)
+
     def _announcing_agent(self, event: Announcement) -> Agent:
         """The announcement names the agent: `agent_id`, or the main
         conversation (CLIENT_HOOKS.md §2); its transcript is read here."""
@@ -917,31 +929,37 @@ class Claude_Code_Server(TAT_Server):
         the agent's file is found anew under it; the lines the file gained
         are read, and each `compact_boundary` not yet recorded is a
         compaction event — unless its timestamp precedes the previous
-        served announcement, the first check.  An agent whose file is not
-        found cannot be served."""
-        if event.transcript_path is None:
-            raise TAT_InternalError("the PreToolUse payload carries no transcript_path")
+        served announcement, the first check.  What a file holds when it
+        is first read is recorded and no event: nothing was shown under it
+        yet.  An agent whose file is not found, or cannot be read, cannot
+        be served."""
         kept = self._transcripts.get(agent.identity)
-        if kept is None or kept.session != event.transcript_path:
-            file = self._agent_file(Path(event.transcript_path), agent)
-            if file is None:
-                self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
-                return
-            if kept is not None:
-                self._compaction(agent, "transcript_path_changed", previous=kept.session,
-                                 current=event.transcript_path)
-            kept = self._transcripts[agent.identity] = _Transcript(event.transcript_path, file)
-            self._session_files.add(Path(event.transcript_path))
         try:
+            if kept is None or kept.session != event.transcript_path:
+                file = (None if event.transcript_path is None
+                        else self._agent_file(Path(event.transcript_path), agent))
+                if file is None or event.transcript_path is None:
+                    self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
+                    return
+                if kept is not None:
+                    self._compaction(agent, "transcript_path_changed", previous=kept.session,
+                                     current=event.transcript_path)
+                # the recorded uuids outlive the path: a return to an earlier one counts nothing twice
+                kept = self._transcripts[agent.identity] = _Transcript(
+                    event.transcript_path, file, boundaries=kept.boundaries if kept is not None else set())
+                self._session_files.add(Path(event.transcript_path))
+            first_read = not kept.read
             boundaries = self._gained(kept)
-        except OSError:                     # the file is gone from under the agent
+        except OSError:                     # no file, or one TAT cannot read
             self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
             return
         for uuid, timestamp in boundaries:
             if uuid in kept.boundaries:
                 continue
             kept.boundaries.add(uuid)
-            if kept.announced is not None and timestamp is not None and timestamp < kept.announced:
+            if first_read:
+                continue
+            if kept.announced is not None and timestamp < kept.announced:
                 self._check_failed("boundary_before_previous_announcement",
                                    boundary_before_announcement(agent.identity), uuid=uuid,
                                    timestamp=timestamp.isoformat(),
@@ -966,21 +984,28 @@ class Claude_Code_Server(TAT_Server):
             return None
         return next(subagents.rglob(f"agent-{agent.identity}.jsonl"), None)
 
-    def _gained(self, kept: _Transcript) -> list[tuple[str, datetime | None]]:
+    def _gained(self, kept: _Transcript) -> list[tuple[str, datetime]]:
         """The complete lines the file gained since it was last read — a last
         line without its newline waits — and the `compact_boundary` lines
-        among them, each by its `uuid` and `timestamp`; the record
-        `transcript_read`."""
+        among them; the record `transcript_read`.  A file cut short or
+        replaced since — another inode, shorter than what was read, or not
+        ending where the reading stopped — is read again from its first
+        line, the recorded uuids keeping every boundary from counting
+        twice."""
         with open(kept.file, "rb") as file:
+            inode = os.fstat(file.fileno()).st_ino
+            if kept.read and (inode != kept.inode or not _ends_with(file, kept.offset, kept.tail)):
+                kept.offset = 0
             file.seek(kept.offset)
             data = file.read()
         complete = data.rfind(b"\n") + 1
         lines = data[:complete].split(b"\n")[:-1]
-        boundaries = [_boundary(record) for record in map(_record, lines)
-                      if record.get("type") == "system" and record.get("subtype") == "compact_boundary"]
+        boundaries = _boundaries(lines)
         self.ending.log.agent.transcript_read(file=str(kept.file), offset=kept.offset, bytes=len(data),
                                               lines=len(lines), boundaries=[uuid for uuid, _ in boundaries])
-        kept.offset += complete
+        if complete:
+            kept.tail = data[:complete][-_TAIL:]
+        kept.offset, kept.inode, kept.read = kept.offset + complete, inode, True
         return boundaries
 
     def _boundaries_on_disk(self) -> set[str]:
@@ -990,31 +1015,34 @@ class Claude_Code_Server(TAT_Server):
         found: set[str] = set()
         for session in self._session_files:
             directory = session.with_suffix("")
-            files = [session, *(directory.rglob("*.jsonl") if directory.is_dir() else ())]
+            try:
+                files = [session, *(directory.rglob("*.jsonl") if directory.is_dir() else ())]
+            except OSError:
+                continue
             for path in files:
                 try:
                     with open(path, "rb") as file:
-                        for line in file:
-                            if b'"compact_boundary"' in line:
-                                record = _record(line)
-                                if record.get("subtype") == "compact_boundary":
-                                    found.add(_boundary(record)[0])
+                        found.update(uuid for uuid, _ in _boundaries(file))
                 except OSError:
                     continue
         return found
 
     async def _boundary_appears(self, before: set[str]) -> None:
         """The second check's wait: a boundary not in `before` within
-        `boundary_wait`, else the check fails."""
-        deadline = time.monotonic() + self.boundary_wait
-        while True:
-            await asyncio.sleep(min(self.boundary_poll, max(deadline - time.monotonic(), 0)))
-            if self._boundaries_on_disk() - before:
-                return
-            if time.monotonic() >= deadline:
-                break
-        self._check_failed("post_compact_without_boundary", POST_COMPACT_WITHOUT_BOUNDARY,
-                           waited=self.boundary_wait)
+        `boundary_wait`, else the check fails; whatever the wait raises ends
+        the conversation, as on the hook path."""
+        try:
+            deadline = time.monotonic() + self.boundary_wait
+            while True:
+                await asyncio.sleep(min(self.boundary_poll, max(deadline - time.monotonic(), 0)))
+                if self._boundaries_on_disk() - before:
+                    return
+                if time.monotonic() >= deadline:
+                    break
+            self._check_failed("post_compact_without_boundary",
+                               post_compact_without_boundary(self.boundary_wait), waited=self.boundary_wait)
+        except Exception as bug:
+            self.ending.end(bug)
 
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """CLIENT_HOOKS.md §2: the server entry; the environment, the
@@ -1145,20 +1173,37 @@ def _record(line: bytes) -> dict[str, Any]:
     return record if isinstance(record, dict) else {}
 
 
-def _boundary(record: dict[str, Any]) -> tuple[str, datetime | None]:
-    """A `compact_boundary` line's `uuid` and `timestamp` (CLIENT_HOOKS.md
-    §2); one without a `uuid` breaks TAT's premise about the client."""
-    uuid = record.get("uuid")
-    if not isinstance(uuid, str):
-        raise TAT_InternalError("a compact_boundary line carries no uuid")
-    timestamp = record.get("timestamp")
-    try:
-        when = datetime.fromisoformat(timestamp) if isinstance(timestamp, str) else None
-    except ValueError:
-        when = None
-    if when is not None and when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return uuid, when
+def _boundaries(lines: Iterable[bytes]) -> list[tuple[str, datetime]]:
+    """The `compact_boundary` lines among transcript lines (CLIENT_HOOKS.md
+    §2), each by its `uuid` and its `timestamp`; one that carries either
+    not breaks TAT's premise about the client.  The substring is tested
+    first: a long transcript is not parsed line by line."""
+    found: list[tuple[str, datetime]] = []
+    for line in lines:
+        if b'"compact_boundary"' not in line:
+            continue
+        record = _record(line)
+        if record.get("type") != "system" or record.get("subtype") != "compact_boundary":
+            continue
+        uuid, timestamp = record.get("uuid"), record.get("timestamp")
+        try:
+            if not isinstance(uuid, str) or not isinstance(timestamp, str):
+                raise ValueError
+            when = datetime.fromisoformat(timestamp)
+        except ValueError:
+            raise TAT_InternalError("a compact_boundary line carries no uuid or no timestamp") from None
+        found.append((uuid, when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)))
+    return found
+
+
+_TAIL = 256                             # the bytes before the offset by which a transcript is known again
+
+
+def _ends_with(file: Any, offset: int, tail: bytes) -> bool:
+    """Whether the open file still holds `tail` just before `offset`: false
+    for one cut short or rewritten since it was read to there."""
+    file.seek(max(offset - len(tail), 0))
+    return file.read(len(tail)) == tail
 
 
 # The subclass for each name `isabelle TAT_mcp -c` takes; the launcher

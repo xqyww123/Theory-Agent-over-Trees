@@ -99,7 +99,8 @@ again on 2026-10-05 with step 1 in, the whole suite: 399 pass and 17
 fail — the 18 less `test_the_field_checks`, which Phase B's B2 made
 pass; with step 2 in, 418 pass and the same 17 fail; with step 4 in, 434
 pass and 13 fail; with step 5 in, 441 pass and the same 13 fail; with
-step 6 in, 446 pass and the same 13 fail.
+step 6 in, 446 pass and the same 13 fail; with the first fixes of
+the review of steps 4 and 5, 453 pass and the same 13 fail.
 
 | case | waits for |
 | --- | --- |

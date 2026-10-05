@@ -20,6 +20,9 @@ import test_model as tm
 from baselines import DOCS, fenced_blocks, fenced_lines, stated
 from test_model import T, add, slot
 
+from Isabelle_RPC_Host.unicode import IsaTerm
+
+import isabelle_theory_agent.model as M
 from isabelle_theory_agent import mcp, plugin
 from isabelle_theory_agent.jobs import Agent
 from isabelle_theory_agent.exceptions import (
@@ -109,6 +112,37 @@ def test_the_four_tools_their_descriptions_and_schemas_as_the_documents_state_th
     broken = {**EDIT_SCHEMA, "properties": {**EDIT_SCHEMA["properties"], "extra": {"type": "null"}}}
     with pytest.raises(TAT_InternalError, match=r"edit\.extra: not of one JSON type"):
         mcp.tools(f, plugin.Loaded(KINDS, broken))
+
+
+def test_recall_s_description_and_schema_are_recall_md_s():
+    """RECALL.md §3, on its own: the case above stops at `edit`'s schema
+    until that tool's later arguments exist."""
+    *_, tools = build()
+    recall, _ = fenced_blocks(RECALL, "3.")
+    assert [tools["recall"].description] == stated(RECALL, "Tool description")
+    assert tools["recall"].input_schema == jsoncomment.JsonComment().loads("\n".join(recall))
+
+
+def test_a_tool_renders_for_the_agent_that_called_it():
+    """PRINT.md §4, §5: a tool's rendering is for the calling agent — the
+    message its quickview showed that agent is not in its next quickview,
+    and is in another agent's."""
+    class Loud(T):
+        async def _eval_opr(self):
+            return M.CannotEvaluate((IsaTerm.from_agent("it broke"),))
+
+    kinds = {**KINDS, "loud": Loud}
+    f = tm.OneTreeForest(tm.CONN, kinds=kinds)
+    add(f, Block(f, slot(), "Theory", slot()))
+    edit = {t.name: t for t in mcp.tools(f, plugin.Loaded(kinds, EDIT_SCHEMA))}["edit"]
+    one, other = Agent("main", True), Agent("a9f3c2d1e4b5", False)
+
+    def append(caller, construct, evaluate) -> str:
+        return asyncio.run(edit.run(caller, dict(action="append", target_id="block_Theory",
+                                                 constructs=[construct], evaluate=evaluate)))
+    assert "it broke" in append(one, {"kind": "loud", "name": "x"}, True)
+    assert "it broke" not in append(one, t("y"), False)        # shown to this agent already
+    assert "it broke" in append(other, t("z"), False)
 
 
 def test_the_success_lines_of_render_baselines_section_6():

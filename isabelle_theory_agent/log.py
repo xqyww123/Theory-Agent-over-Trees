@@ -203,6 +203,11 @@ class _Hook(_Category):
     def answer(self, *, judged: Judged | None, status: int, body: Any, duration: float) -> None: ...
 
 
+# How TAT learned of a compaction (§4, `agent.compaction`).
+Learned_From = Literal["compact_boundary", "transcript_path_changed", "session_start",
+                       "pre_compact", "post_compact"]
+
+
 class _Agent(_Category):
     category = "agent"
 
@@ -214,9 +219,7 @@ class _Agent(_Category):
                         boundaries: list[Any]) -> None: ...
 
     @_event("info")
-    def compaction(self, *, learned_from: Literal["compact_boundary", "transcript_path_changed",
-                                                  "session_start", "pre_compact", "post_compact"],
-                   seen_cleared: int, **facts: Any) -> None: ...
+    def compaction(self, *, learned_from: Learned_From, seen_cleared: int, **facts: Any) -> None: ...
 
     @_event("debug")
     def seen(self, *, key: Any) -> None: ...

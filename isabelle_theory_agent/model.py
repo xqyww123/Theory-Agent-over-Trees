@@ -1466,9 +1466,10 @@ class Forest(Unchained_Node):
 
     @property
     def agent(self) -> Agent:
-        """The agent the running rendering is for (PRINT.md §4), whose seen
-        set `mark` and `print_fields` read; reading it outside a rendering
-        is a bug."""
+        """The agent the running rendering is for (PRINT.md §4): the framework
+        reads its seen set for the operations' messages, and a class may in
+        its `mark` and `print_fields`; reading it outside a rendering is a
+        bug."""
         if self._agent is None:
             raise TAT_InternalError("the agent is read outside a rendering")
         return self._agent
@@ -1502,14 +1503,15 @@ class Forest(Unchained_Node):
                 if any(a in mode.nodes for a in ancestors):
                     raise TAT_InternalError("a focus under another focus")
                 above.update(ancestors)
-        self._index, self._above, self._agent = index, frozenset(above), agent
         seen_before = set(agent.seen)
+        self._index, self._above, self._agent = index, frozenset(above), agent
         try:
             node.print(0, out, mode, 0)
         finally:
             self._index = self._above = self._agent = None
-        for key in agent.seen - seen_before:
-            self.conversation.log.agent.seen(key=key)
+            # also what a rendering that raised had added; in a fixed order
+            for key in sorted(agent.seen - seen_before, key=lambda key: (key[0], key[1] or "")):
+                self.conversation.log.agent.seen(key=key)
         return out.getvalue()
 
     def print(self, indent, out, mode, depth):

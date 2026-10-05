@@ -196,7 +196,7 @@ Written by the Isabelle side: what the Python side cannot see.
 | `theory_loaded` | info | a library theory loaded from source: its name, the duration |
 | `job_forked` | info | an evaluation job's id |
 | `job_ended` | info | the id, the failure reported, the duration; whether it was cancelled |
-| `report_undelivered` | warning | the id, the failure, `message`: `The result of evaluation job <id> could not be reported to the Python side: <failure>` |
+| `report_undelivered` | warning | the id, the failure that went unreported, `message`: `The result of evaluation job <id> could not be reported to the Python side: <reason>` — the reason the report could not be delivered |
 | `reset` | info | the futures cancelled, the slots and theories cleared |
 | `bug` | error | a `TAT_Framework.Bug` that left a callback or an evaluation job's work: its message |
 
