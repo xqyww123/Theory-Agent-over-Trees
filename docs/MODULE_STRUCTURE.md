@@ -1361,9 +1361,10 @@ managers, the two procedures sharing the first two:
    and writes the client's files into it and the two scripts into `.tat/`
    (`configure`, CLIENT_HOOKS.md: the MCP entry, the settings, the hooks;
    the Codex subclass also looks up the real path of `/etc/resolv.conf`
-   for its profile); the server, a port that cannot be bound being a
-   `TAT_StartupError` too, `TAT cannot serve on 127.0.0.1:<port>:
-   <strerror>`; the port line of `tat.lock`; the line `TAT is serving on
+   for its profile), a file it cannot write being a `TAT_StartupError`,
+   `TAT cannot write <path>: <strerror>`; the server, a port that cannot
+   be bound being a `TAT_StartupError` too, `TAT cannot serve on
+   127.0.0.1:<port>: <strerror>`; the port line of `tat.lock`; the line `TAT is serving on
    http://127.0.0.1:<port>/mcp` printed to the Isabelle side, which
    nothing depends on and the launcher does not echo (§5); then serving
    until the conversation's ending (above), after which the layers exit in

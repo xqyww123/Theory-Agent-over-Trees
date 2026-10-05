@@ -19,7 +19,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import socket
 import sys
 import time
@@ -36,12 +35,14 @@ import anyio.lowlevel
 import uvicorn
 from mcp import types
 from mcp.server.lowlevel import Server
-from mcp.server.lowlevel.server import request_ctx
+from mcp.server.lowlevel.server import NotificationOptions, request_ctx
+from mcp.server.models import InitializationOptions
 from mcp.server.session import ServerSession
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from starlette.requests import Request
 
+from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .jobs import Agent
 from .log import Judged, Log, current_agent, current_call
@@ -59,11 +60,12 @@ UNANNOUNCED = ("This call was not announced by the client's hooks, so TAT cannot
                "is calling.")
 
 AGENTS = "TAT.agents"                   # the agent directory (ARCHITECTURE §1)
-SCRIPTS = ".tat"                        # where the hooks' scripts go (CLIENT_HOOKS.md §1)
+DOT_TAT = ".tat"                        # the logs and the hooks' scripts (LOGGING.md §2, CLIENT_HOOKS.md §1)
 HOOK_TIMEOUT = 10                       # seconds a client gives a hook
 RESOLV_CONF = "/etc/resolv.conf"
 # the system directories Codex's `:minimal` reads (CLIENT_HOOKS.md §5)
 MINIMAL = ("/bin", "/sbin", "/usr", "/etc", "/lib", "/lib64", "/nix/store", "/run/current-system/sw")
+SANDBOX_STATE = "codex/sandbox-state-meta"      # the capability, and the `_meta` key it brings (§5)
 
 
 def toml_string(value: str) -> str:
@@ -81,9 +83,58 @@ def resolver_entry(resolv_conf: str) -> str | None:
     `:minimal` directories — the one read entry Codex's profile adds, never
     the symbolic link — else None (CLIENT_HOOKS.md §5)."""
     real = os.path.realpath(resolv_conf)
-    if any(real == root or real.startswith(root + os.sep) for root in MINIMAL):
-        return None
-    return real
+    return None if any(Path(real).is_relative_to(root) for root in MINIMAL) else real
+
+
+def sandbox_is_the_profile(policy: Any, working_directory: Path) -> bool:
+    """Whether the sandbox policy a Codex call carries is the profile TAT
+    configured, recognised by its `deny` entry on the working directory
+    (CLIENT_HOOKS.md §5): another profile, a disabled sandbox, no policy or
+    one of another shape is not."""
+    try:
+        return any(entry["access"] == "deny" and entry["path"]["type"] == "path"
+                   and os.path.realpath(entry["path"]["path"]) == os.path.realpath(working_directory)
+                   for entry in policy["permissionProfile"]["file_system"]["entries"])
+    except (KeyError, TypeError):
+        return False
+
+
+def _replaced(directory: Path, name: str, text: str) -> None:
+    """`text` as the file `name` below `directory`, which is made when
+    absent; below it, whatever is not a directory and stands at the name or
+    at a directory on its way — a symbolic link included — is removed first,
+    never written through; a directory at the name stays, and the write
+    fails, as compile's does (COMPILATION.md §2)."""
+    directory.mkdir(exist_ok=True)
+    *folders, file = Path(name).parts
+    path = directory
+    for folder in folders:
+        path /= folder
+        if not _is_folder(path):
+            path.unlink(missing_ok=True)
+            path.mkdir()
+    (path / file).unlink(missing_ok=True)
+    _create(path / file, text)
+
+
+class _App(Server[Any, Any]):
+    """The SDK's server, declaring in its `initialize` result the
+    experimental capabilities the client subclass states (CLIENT_HOOKS.md §5)."""
+
+    def __init__(self, experimental: dict[str, dict[str, Any]]):
+        super().__init__("TAT")
+        self._experimental = experimental
+
+    def create_initialization_options(
+            self, notification_options: NotificationOptions | None = None,
+            experimental_capabilities: dict[str, dict[str, Any]] | None = None) -> InitializationOptions:
+        return super().create_initialization_options(
+            notification_options, {**self._experimental, **(experimental_capabilities or {})})
+
+
+def _dumped(meta: types.RequestParams.Meta | None) -> Any:
+    """A call's `_meta` as a record carries it; None when the call has none."""
+    return meta.model_dump(by_alias=True, exclude_none=True) if meta is not None else None
 
 
 def _hook_specific_output(briefing: str) -> Any:
@@ -298,6 +349,7 @@ class TAT_Server:
     measured_version: ClassVar[str]
     call_key: ClassVar[str]
     announcement_answer: ClassVar[Any]
+    experimental: ClassVar[dict[str, dict[str, Any]]] = {}     # declared in `initialize`
 
     def __init__(self, ending: Ending, port: int, tools: list[Tool],
                  on_compaction: Callable[[], str]):
@@ -313,12 +365,13 @@ class TAT_Server:
         self.agents: dict[str, Agent] = {}
         self._announced: dict[str, Agent] = {}      # tool_use_id -> the agent, until the call arrives
         self._checked: weakref.WeakSet[ServerSession] = weakref.WeakSet()  # the MCP sessions whose client passed
+        self._working_directory: Path | None = None  # `configure`'s: what the sandbox policy is checked against
 
         self._requests = 0                  # in flight, the standalone GET stream excepted
         self._idle = asyncio.Event()        # no request in flight
         self._idle.set()
 
-        app: Server[Any, Any] = Server("TAT")
+        app: Server[Any, Any] = _App(self.experimental)
         app.list_tools()(self._list_tools)
         app.call_tool(validate_input=False)(self._call_tool)
         # the SDK checks Host and Origin only when told what to accept;
@@ -345,18 +398,20 @@ class TAT_Server:
     def configure(self, working_directory: Path) -> None:
         """The client's files, written whole into the agent directory, and
         the scripts its hooks run into `.tat/` (CLIENT_HOOKS.md); called
-        before the port is bound (MODULE_STRUCTURE §4.6)."""
-        agents = working_directory / AGENTS
-        agents.mkdir(exist_ok=True)
-        written: list[str] = []
-        for name, text in self._client_files(working_directory).items():
-            (agents / name).parent.mkdir(parents=True, exist_ok=True)
-            (agents / name).write_text(text)
-            written.append(f"{AGENTS}/{name}")
-        for script in ("hook.py", "guard.py"):
-            shutil.copy(Path(__file__).parent / script, working_directory / SCRIPTS / script)
-            written.append(f"{SCRIPTS}/{script}")
-        self.ending.log.conversation.configured(files=written)
+        before the port is bound (MODULE_STRUCTURE §4.6).  Each file replaces
+        whatever stands at its name; one that cannot be written is a
+        `TAT_StartupError`."""
+        self._working_directory = working_directory
+        files = {(AGENTS, name): text for name, text in self._client_files(working_directory).items()}
+        files |= {(DOT_TAT, script): (Path(__file__).parent / script).read_text(encoding="utf-8")
+                  for script in ("hook.py", "guard.py")}
+        for (directory, name), text in files.items():
+            try:
+                _replaced(working_directory / directory, name, text)
+            except OSError as e:
+                raise TAT_StartupError(
+                    f"TAT cannot write {working_directory / directory / name}: {e.strerror}") from e
+        self.ending.log.conversation.configured(files=[f"{directory}/{name}" for directory, name in files])
 
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """The client's files, by name within the agent directory, each the
@@ -366,8 +421,7 @@ class TAT_Server:
     def _hook(self, working_directory: Path, script: str, matcher: str | None = None) -> dict[str, Any]:
         """One hook entry as both clients take it: the script run under the
         interpreter TAT's Python side runs under, each path quoted."""
-        command = (f"{shlex.quote(sys.executable)} -I "
-                   f"{shlex.quote(str(working_directory / SCRIPTS / script))}")
+        command = shlex.join([sys.executable, "-I", str(working_directory / DOT_TAT / script)])
         entry: dict[str, Any] = {} if matcher is None else {"matcher": matcher}
         entry["hooks"] = [{"type": "command", "timeout": HOOK_TIMEOUT, "command": command}]
         return entry
@@ -446,6 +500,11 @@ class TAT_Server:
         self.ending.log.conversation.client_refused(
             name=client.name, version=client.version, message=message, _meta=_meta)
         self.ending.end(ClientRefused(message, stopped_for(reason)))
+
+    def _check_sandbox(self, session: ServerSession, meta: types.RequestParams.Meta | None) -> None:
+        """At every tool call, the sandbox the client runs its agents in,
+        where the client tells it (CLIENT_HOOKS.md §5): Codex does, Claude
+        Code does not."""
 
     async def __aenter__(self) -> TAT_Server:
         self._socket = _bind(self._port)
@@ -656,13 +715,13 @@ class TAT_Server:
         log = self.ending.log.tool
         if not self.ending.entered:
             self._check_client(context.session)
+        if not self.ending.entered:
+            self._check_sandbox(context.session, context.meta)
         agent: Agent | None = None
         if not self.ending.entered:
             agent = self.agent_of_call(context.meta)
             if agent is None:
-                meta = (context.meta.model_dump(by_alias=True, exclude_none=True)
-                        if context.meta is not None else None)
-                log.unannounced(tool=name, _meta=meta, message=UNANNOUNCED)
+                log.unannounced(tool=name, _meta=_dumped(context.meta), message=UNANNOUNCED)
                 self.ending.end(TAT_InternalError(UNANNOUNCED))
             else:
                 current_agent.set(agent.identity)
@@ -765,9 +824,26 @@ class Codex_Server(TAT_Server):
     measured_version = "0.156.1"
     call_key = "callId"
     announcement_answer = None              # Codex rejects a bare `allow`; nothing is needed
+    experimental = {SANDBOX_STATE: {}}      # under which Codex sends the policy in force with every call
 
     def _main_identity(self, payload: dict[str, Any]) -> str:
         return str(_field(payload, "session_id"))   # the main conversation's own thread id
+
+    def _check_sandbox(self, session: ServerSession, meta: types.RequestParams.Meta | None) -> None:
+        """The policy in force comes with every call under `SANDBOX_STATE`; a
+        call whose policy is not the profile TAT configured — one without
+        the key included — refuses the session (CLIENT_HOOKS.md §5,
+        CONSTRUCT_INTERACTION §8)."""
+        if self._working_directory is None or session.client_params is None:
+            self.ending.end(TAT_InternalError("a call reached TAT before configure, or before initialize"))
+            return
+        extra = meta.model_extra if meta is not None else None
+        policy = extra.get(SANDBOX_STATE) if extra else None
+        if not sandbox_is_the_profile(policy, self._working_directory):
+            self._refuse(f"TAT refuses this Codex session: its sandbox is not the one TAT configured. "
+                         f"Start Codex in {self._working_directory / AGENTS} without a sandbox option.",
+                         "Codex's sandbox is not the one TAT configured",
+                         session.client_params.clientInfo, _meta=_dumped(meta))
 
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """CLIENT_HOOKS.md §3: the configuration with the permission profile

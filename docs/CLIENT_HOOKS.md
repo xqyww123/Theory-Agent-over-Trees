@@ -13,7 +13,10 @@ server subclass for that client writes the client's files whole into the
 agent directory, `<working directory>/TAT.agents/` (ARCHITECTURE §1),
 which it makes when absent, and the scripts the hooks run into
 `<working directory>/.tat/` — `configure`, MODULE_STRUCTURE §4.6 — and
-overwrites them at every launch, touching nothing else in `.tat/`: the
+overwrites them at every launch, replacing a symbolic link or a file an
+agent left at their names rather than writing through it, a directory
+there refused (MODULE_STRUCTURE §4.6), and touching nothing else in
+`.tat/`: the
 MCP server entry, the hooks below,
 and the client's settings, which also keep the agents inside the agent
 directory (§5). `isabelle TAT_new` writes none of them. The client is

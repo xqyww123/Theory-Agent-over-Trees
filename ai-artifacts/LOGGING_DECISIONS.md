@@ -1724,6 +1724,227 @@ shapes:
   Isabelle-backed suite: 35 pass, the 3 known test_launcher failures (the
   old hook files, the jobs session's to retire). pyright: mcp_server.py,
   test_mcp_server.py, test_toplevel.py at 0.
+- Committed 2026-10-05 as `55e9f20` (「提交」). The jobs session's step 2
+  began the same day: `ClientRefused(message, line)` in exceptions.py,
+  `jobs.py`'s `Agent`, test/test_hooks.py, the harness announcing its
+  calls to `/hook`; in mcp_server.py one branch first in `stopped`,
+  `isinstance(ended_by, ClientRefused)` → `ended_by.line`, and the one
+  refusing method `TAT_Server._refuse(message, reason, client,
+  _meta=None)`, which writes `client_refused` and enters the ending with
+  `ClientRefused(message, stopped_for(reason))` — step 11's sandbox check
+  calls it with `Codex's sandbox is not the one TAT configured`. This
+  session leaves mcp_server.py and test_mcp_server.py to it until step 2
+  is in. The author recommended to the owner a small review of step 10
+  now (its files configure the clients' sandboxes; the tests compare them
+  with the documents, so a mistake shared by both would pass), awaiting
+  the word; ordered (「请跑第 10 步的小评审」), Workflow `wf_14aadf89-f37`.
+- In log.py, by the jobs session (told after, three lines): the `Literal`
+  of `hook.answer`'s `judged` is the module-level alias `Judged`, used by
+  `answer` and imported by mcp_server.py for `_judge`'s return type and a
+  local. A departure from log-2's letter ("no alias names"), kept: the
+  ruling's reasons were a second meaning (`Edit_Operation`) and a coined
+  noun (`Stop_Reason`), and `Judged` is the field's own name; an inline
+  `Literal` would have to be written twice, in the event and in the
+  function that computes the value, which is the duplication the ruling
+  was against.
+- The jobs session's step 2 in the tree and tested (2026-10-05, awaiting
+  the owner's commit). What step 11 builds on: `TAT_Server._refuse(message,
+  reason, client, _meta=None)`, `client` a `types.Implementation` (name,
+  version); `_check_client(session)` once per `ServerSession` at
+  `tools/list` and `tools/call`; `_call_tool` reads `request_ctx.get()`
+  for the call's `meta` and `session`, so the sandbox policy is in
+  `context.meta` there; `ClientRefused(message, line)` defined in
+  mcp_server.py; `stopped`'s first branch returns its line. Step 11 starts
+  after step 2's commit, so the files' hunks stay apart.
+
+**The review of step 10** (`review/LOGGING_STEP10_REVIEW.md`, Workflow
+`wf_14aadf89-f37`, three challengers, a defender per finding, a judge;
+20 minutes): **not accepted**. Eleven findings, eight rulings for the
+author, one for the owner, two dismissed. The files written are right;
+the way they are written has a hole: `configure` writes through a
+symbolic link an agent left at one of TAT's names in the agent directory
+(`.claude`, `.mcp.json`, `.codex`), outside any sandbox — the same-client
+Codex route is closed (a defender measured Codex's sandbox mounting
+`.codex` read-only), the cross-client route is open (a Codex agent links
+`.claude` into the user's home; the next `-c claude-code` launch
+overwrites the user's own settings). Smaller: `shutil.copy` carries the
+package scripts' mode, so a read-only install fails the second launch;
+`configure` does not make `.tat/` itself although CLIENT_HOOKS §1 says it
+does, and `.tat` is spelled twice (`SCRIPTS` beside toplevel's `LOG`);
+the tests cannot see `toml_string` in use (the placeholders are filled
+before parsing), nor that a later launch rewrites the files, nor the
+resolver rule's separator; `_hook` should use `shlex.join`, the resolver
+rule `Path.is_relative_to`. The judge's shape for the first three: one
+function through which every file goes — the directory made when absent,
+whatever stands at TAT's name removed (a link included), the file
+created afresh through compile.py's existing `_create` (UTF-8, no mode).
+For the owner: whether a write `configure` cannot make is a
+`TAT_StartupError` with a sentence (EXCEPTIONS §1, MODULE_STRUCTURE §4.6;
+the judge recommends yes), and to confirm that `configure` replaces what
+stands at its own names rather than refusing. Nothing changed before the
+owner's word.
+The jobs session's step 2 committed 2026-10-05 as `7168bfc`; mcp_server.py
+and test_mcp_server.py are this session's again, for the review's fixes
+and step 11; its step 3 is in the ML files.
+
+The owner on the two questions (2026-10-05): 「怎样都可以，我没有意见」 on
+replacing what stands at TAT's names, 「可以算，也可以算灾难性错误，都可以」
+on the failed write — both left to the author. Chosen: replace (the
+judge's shape; refusing would need a sentence and would let one link a
+Codex agent left block every later Claude Code launch), with one
+sentence added to CLIENT_HOOKS's opening ("replacing whatever stands at
+their names — a symbolic link or a file an agent left — rather than
+writing through it"); a write `configure` cannot make is a
+`TAT_StartupError`, `TAT cannot write <path>: <strerror>` — the siblings'
+pattern, not a `TAT_DisasterError`, which is the store's — added to
+EXCEPTIONS §1's list and MODULE_STRUCTURE §4.6's third layer.
+
+**The fixes** (2026-10-05, uncommitted):
+
+- Every file `configure` writes goes through `_replaced(directory, name,
+  text)`: the directory made when absent; below it, whatever stands at a
+  folder on the way and is not one, and a file or a link at the file's
+  name, removed, never written through — a directory at the file's name
+  refused, as compile refuses one (COMPILATION §2); the file created afresh
+  through compile.py's `_create` (UTF-8, no mode carried) — imported as a
+  framework-internal member across files, which MODULE_STRUCTURE §4's
+  underscore rule allows (the compilation session's point: a public
+  `create` would be a new plugin-facing surface, which needs the owner's
+  wording). `shutil` goes. The agent directory and `.tat/` themselves are
+  never replaced (a user may link either; the log is under `.tat/`).
+- `.tat` spelled once: `DOT_TAT` in mcp_server.py, toplevel's `LOG` built
+  from it; `configure` makes `.tat/` itself, as CLIENT_HOOKS §1 says.
+- `_hook` builds the command with `shlex.join`; the resolver rule with
+  `Path.is_relative_to`.
+- Tests: `documented(block, placeholders, loads)` parses first and fills
+  after, keys included, so the TOML's escapes are compared (`written(path,
+  loads)` likewise); the shared `configured()` runs every case under an
+  interpreter path holding a space and both quotes and a working
+  directory holding a space and DEL (Isabelle's path syntax allows no `"`
+  or `\`), on a directory without `.tat/`; the Claude Code case seeds
+  `.tat/` with the log, a user's file and a stale script, and overwrites
+  `.mcp.json` with `{}` before the second `configure`; a new case plants
+  links at `.mcp.json`, `.claude`, `.codex` and below a real `.claude/`,
+  and a file where `.codex` goes, and asserts the targets untouched and
+  TAT's names real; a case with `TAT.agents` a file asserts the
+  `TAT_StartupError`'s sentence and no record; the resolver's fake target
+  holds `"` and `\`; `/etcetera/resolv.conf` pins the separator.
+
+**Step 11, the Codex sandbox check** — written 2026-10-05 on the jobs
+session's step 2. The author's shapes:
+
+- `_App(experimental)`, a two-method `Server` subclass whose
+  `create_initialization_options` adds the subclass's `experimental`
+  capabilities to the `initialize` result; `TAT_Server.experimental = {}`,
+  `Codex_Server.experimental = {SANDBOX_STATE: {}}` (`SANDBOX_STATE` =
+  `codex/sandbox-state-meta`, the capability and the `_meta` key).
+- `configure` records `self._working_directory`; `_check_sandbox(session,
+  meta)`, a no-op on the base and so on Claude Code, runs in `_call_tool`
+  right after `_check_client`; Codex's reads `meta.model_extra[
+  SANDBOX_STATE]` and refuses through the jobs session's `_refuse` with
+  CONSTRUCT_INTERACTION §8's sentence (the agent directory filled in),
+  the reason `Codex's sandbox is not the one TAT configured`, and the
+  call's `_meta` (`_dumped(meta)`, the helper the `unannounced` record now
+  shares). Before `configure` or `initialize`, a `TAT_InternalError` enters
+  the ending — neither can happen in `served()`.
+- `sandbox_is_the_profile(policy, working_directory)`: true when some
+  entry of `policy["permissionProfile"]["file_system"]["entries"]` denies
+  a `path` whose real path is the working directory's; any other shape,
+  `{"type": "disabled"}`, no policy: false. Real paths on both sides, so
+  a canonicalised path from Codex still matches.
+- Test (test_hooks, where the Codex client plumbing is):
+  `the_profile(working_directory)` as recorded on a host running
+  systemd-resolved (the resolver's read entry before the `deny`, `network`
+  the string `enabled`, Codex's own install paths left out); a call under it
+  served; then, with a `slow` call in flight, a call with no policy, a
+  disabled one, a read-only one, or one denying another directory — the
+  refusal answers the fifth line to it and to the call in flight, the
+  conversation ends with the `ClientRefused` whose message is the
+  sentence and whose `line` is the fifth, `client_refused` carries the
+  call's `_meta`; the Codex server's `initialize` declares the capability,
+  Claude Code's declares none. The jobs session's two-agents test now
+  calls `configure` and carries the policy on Codex.
+- Mutation checks, in memory: the committed write-through shape; the
+  command by concatenation; the resolver's prefix test; `toml_string`
+  without escapes; the sandbox check removed; the capability not
+  declared; writing only when absent; the record omitted — each fails at
+  least one case. Fast suite: 389 pass, the 14 known failures; the
+  Isabelle-backed test_conversation: 24 pass; pyright 0 on mcp_server.py,
+  toplevel.py, test_mcp_server.py, test_hooks.py.
+
+**Verified and reviewed** (`review/LOGGING_STEP10_FIXES_STEP11_REVIEW.md`,
+Workflow `wf_17bca8fc-968`: eight verifiers, two challengers on step 11
+with a defender per finding, a judge; 23 minutes): **not accepted, but
+close** — the production code right on every point, seven rulings done,
+one partly; what blocked it was in the tests and the prose, fixed the
+same day as the judge ruled:
+
+- test_mcp_server.py did not compile under Python 3.11, the declared
+  minimum (a backslash inside an f-string expression, line 865); the
+  judge checked with a real 3.11.15. The expression is gone with the
+  `working_directory` fixture below. Both test files now compile under
+  that interpreter (checked the same way).
+- The shared helper `configured()` chose the working directory's name
+  itself, so its callers re-spelt `"work dir\x7f"` seven times and its
+  docstring said "fresh" when three callers seeded the directory first:
+  the directory is now a fixture, `working_directory`, which carries the
+  sentence about the space and DEL; `configured(server_class,
+  working_directory, monkeypatch)` returns the server alone.
+- The replacement test planted a file at `.codex`, never a link, so its
+  assertion on the user's `config.toml` could not fail, and the record said
+  otherwise: the second round now links `.codex` to the user's directory
+  (the file stays in the first round, the case of a file where a directory
+  goes), runs both servers, and asserts the user's directory holds its one
+  file and `.codex` is no link.
+- A directory at one of TAT's file names is refused (`Is a directory`),
+  not replaced — `Path.unlink` cannot remove one, and compile refuses a
+  folder at a file's path the same way (COMPILATION §2, owner-approved);
+  the judge kept the code and had the prose follow: `_replaced`'s
+  docstring, CLIENT_HOOKS's sentence ("replacing a symbolic link or a file
+  an agent left at their names rather than writing through it, a directory
+  there refused"), this record; the startup-error test is parametrised
+  over the file at `TAT.agents` and the directory at `.mcp.json`.
+- The sandbox check's test could not see the rule's `deny` (a check
+  without the access condition passed every test — and would serve
+  `codex -s workspace-write --add-dir <working directory>`, whose entry on
+  the working directory is a `write`): a fifth refused policy, "the
+  working directory writable"; the policies are functions of the working
+  directory. `the_profile` claimed the measured shape but had the entries
+  in another order and `network` as a dict: now the recorded shape (the
+  resolver's read entry first, then the `deny`, `:minimal`, the write on
+  the agent directory; `network` the string `enabled`; `sandboxCwd`,
+  `useLegacyLandlock`), so a check reading only the first entry fails.
+  The real-path comparison is pinned by a unit test on
+  `sandbox_is_the_profile` through a linked working directory.
+- Dismissed by the judge: pinning that a broken installation's scripts
+  stay a bug (would fake `__file__`); the `{}` line's own mutant; the
+  replacement test checking TAT's text only through `.mcp.json`'s type.
+
+The judge's five mutants — the access condition dropped, the first entry
+alone, raw strings for real paths, Codex alone following a link at
+`.codex`, a directory removed with `rmtree` — each fail at least one case
+now. Fast suite and pyright as before; test_mcp_server and test_hooks
+compile under Python 3.11.15.
+
+**`hook.answer`'s `judged` is absent when the request was not judged**
+(owner, 2026-10-05, ruled to the jobs session on its review, relayed: a
+503 while the conversation is ending, a 500 on a bug of the path):
+LOGGING §4's row says so; `log.hook.answer(judged: Judged | None, ...)` —
+no default, so every writer states it, None absent from the record as
+every other field. The jobs session's `/hook` passes None on those two
+paths once it takes mcp_server.py again.
+
+For the owner, from the judge, neither blocking: (1) CLIENT_HOOKS §5's
+rule accepts a policy that carries both the profile's `deny` and a
+`write` on the working directory (`--add-dir <working directory>` under
+the profile); nobody has measured which entry wins inside Codex's
+sandbox — the judge recommends measuring once and, if the `write` wins,
+tightening the rule to "no entry on the working directory but its
+`deny`"; (2) `[tool.pyright] pythonVersion = "3.11"` in pyproject.toml,
+so pyright checks against the declared minimum — a configuration change.
+The owner (2026-10-05): (1) 「问题不大，不用管，可以相信用户不会写这种矛盾」
+— the rule stays as CLIENT_HOOKS §5 has it; (2) 「赞同」 — the setting is
+in pyproject.toml.
 
 **`ending` is always `error`** (owner, 2026-10-04: 「连接断开的日志级别要从
 info 改成 error」, said to the compilation session, which relayed it; put

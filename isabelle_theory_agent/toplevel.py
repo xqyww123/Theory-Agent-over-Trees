@@ -26,13 +26,13 @@ from . import isabelle_driver, mcp, plugin
 from .compile import compile, report_lines
 from .exceptions import TAT_StartupError
 from .log import Log, now
-from .mcp_server import SERVERS, Ending, TAT_Server
+from .mcp_server import DOT_TAT, SERVERS, Ending, TAT_Server
 from .model import Conversation, Forest
 from .store import SCHEMA_VERSION, Forest_Store
 
 DATABASE = "TAT.sqlite"                 # the launcher's, shared with the plugins table (§5)
 LOCK = "tat.lock"
-LOG = Path(".tat") / "log"              # the logs' directory, under the working directory (LOGGING.md §2)
+LOG = Path(DOT_TAT) / "log"             # the logs' directory, under the working directory (LOGGING.md §2)
 
 Announce = Callable[[int], None]        # the lock's port line, written once the server listens
 

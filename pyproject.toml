@@ -34,6 +34,10 @@ dependencies = [
 [project.urls]
 "Homepage" = "https://github.com/xqyww123/Theory-Agent-over-Trees"
 
+[tool.pyright]
+# the declared minimum, so that later syntax cannot pass unnoticed
+pythonVersion = "3.11"
+
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
 

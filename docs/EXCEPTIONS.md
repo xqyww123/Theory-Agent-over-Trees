@@ -50,15 +50,18 @@ report carries it to Python, which raises it as a `TAT_InternalError`
 environment — the working directory's database was written by another
 schema version or is not a database, a node class package cannot be
 loaded (PLUGIN_SYSTEM §1, §5), the Isabelle environment variable
-`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` is set to anything but a positive
-integer (MODULE_STRUCTURE §4.6), another conversation or a compile holds
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` holds a value that is neither
+empty nor a positive integer (MODULE_STRUCTURE §4.6), another
+conversation or a compile holds
 the working directory (ARCHITECTURE §9), its lock file cannot be opened,
 its log directory cannot be made (LOGGING.md §2), a `Session`'s folder
 path under it holds something that is not a directory — a compile
 refuses it before it removes anything (COMPILATION.md §2, §7), and a
 conversation ends on it, or on a folder the system will not make, when
-a theory of that `Session` begins (MODULE_STRUCTURE §4.1) — the port
-cannot be bound, the agent client that connects states, in its MCP
+a theory of that `Session` begins (MODULE_STRUCTURE §4.1) — a file
+`configure` writes for the agent client cannot be written
+(CLIENT_HOOKS.md), the port cannot be bound, the agent client that
+connects states, in its MCP
 `initialize`, a version lower than the one TAT's client facts were
 measured on, or none, or another client's name, or Claude Code saves no
 transcript for an agent that announces a call, or a Codex tool call
