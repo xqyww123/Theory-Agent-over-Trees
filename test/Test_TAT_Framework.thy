@@ -291,6 +291,32 @@ let open MessagePackBinIO.Pack in
 end
 \<close>
 
+setup \<open>
+(*env's fork_job under each end of a job's work (docs/CONSTRUCT_INTERACTION.md
+  §3.3): it passes, fails with a message, raises a Bug, or waits for the file
+  the case names to appear -- for as long as the case likes, or until it is
+  cancelled*)
+let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
+  TAT_Framework.register_callback {python_packages = []} (fn env =>
+    {name = "TAT_test.fork_job",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
+      arg_schema = unpackPair (unpackInt, unpackPair (unpackString, unpackString)),
+      ret_schema = packUnit,
+      function = fn (id, (outcome, path)) =>
+        #fork_job env {id = id, work = fn () =>
+          (case outcome of
+            "pass" => ()
+          | "fail" => error "tat-job-error"
+          | "bug" => raise TAT_Framework.Bug "tat-job-bug"
+          | "wait" =>
+              let val file = Path.explode path in
+                while not (File.exists file) do OS.Process.sleep (Time.fromMilliseconds 50)
+              end
+          | _ => raise Fail ("unknown outcome " ^ outcome))},
+      timeout = NONE})
+end
+\<close>
+
 ML \<open>
 (*a duplicated callback wire name is rejected before anything starts*)
 let

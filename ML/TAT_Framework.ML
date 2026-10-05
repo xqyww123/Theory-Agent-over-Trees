@@ -55,8 +55,11 @@ sig
     begin_theory : {session_name : string, master_dir : Path.T} ->
                    Thy_Header.header -> Toplevel.state,
                       (*§2.4's, imports resolved through this conversation's tables*)
-    end_theory : Toplevel.state -> unit
+    end_theory : Toplevel.state -> unit,
                       (*§2.4's, the result put into this conversation's theory table*)
+    fork_job : {id : int, work : unit -> unit} -> unit
+                      (*§2.4's: the work as a Future task, its end reported to
+                        Python by the remote procedure job_finished*)
   }
   val register_callback :
     {python_packages : string list} ->    (*the class's Python half; imported at
@@ -554,13 +557,154 @@ fun begin_theory theories (context as {session_name, master_dir}) (header : Thy_
   node's `end` already; its position lives in the node's text, not here.*)
 fun end_theory theories st = Theories.put theories (Toplevel.end_theory Position.none st)
 
+(*** Evaluation jobs (§2.4; docs/CONSTRUCT_INTERACTION.md §3.3) ***)
+
+structure Jobs = struct
+
+(*What a job's work came to, as Python's job_finished is told it: on the wire
+  ["ok"], ["messages", [...]] or ["bug", <message>].  A work that was
+  interrupted reports nothing: the Python side cancels only a job it has
+  dropped, and TAT.reset ends the conversation that would hear.*)
+datatype failure = Passed | Messages of string list | Bug_Raised of string
+
+local open MessagePackBinIO.Pack in
+
+fun pack_failure Passed = packList packString ["ok"]
+  | pack_failure (Messages messages) = packPair (packString, packList packString) ("messages", messages)
+  | pack_failure (Bug_Raised message) = packPair (packString, packString) ("bug", message)
+
+(*the remote procedure, through Isabelle_RPC's registry; it answers at once*)
+val finished : (int * failure, unit) Remote_Procedure_Calling.command =
+  {name = "job_finished", arg_schema = packPair (packInt, pack_failure),
+   ret_schema = MessagePackBinIO.Unpack.unpackUnit, callback = [], timeout = NONE}
+
+end
+
+(*the wire's value, for the log*)
+fun json_of_failure Passed = Log.Array [Log.String "ok"]
+  | json_of_failure (Messages messages) =
+      Log.Array [Log.String "messages", Log.Array (map Log.String messages)]
+  | json_of_failure (Bug_Raised message) = Log.Array [Log.String "bug", Log.String message]
+
+(*the exception a work raised, as `operation` reads one (TAT_Common_Nodes.ML):
+  a Bug before anything else, an interrupt as no failure at all, and an
+  exception rendering to no message -- which would read as success -- a bug*)
+fun failure_of exn =
+  (case bug_message exn of
+    SOME message => SOME (Bug_Raised message)
+  | NONE =>
+      if Exn.is_interrupt exn then NONE
+      else
+        (case map (#2 o #1) (Runtime.exn_messages exn) of
+          [] => SOME (Bug_Raised "fork_job: an exception with no message")
+        | messages => SOME (Messages messages)))
+
+(*A job from its fork to its end.  A task cancelled before it began never
+  runs -- Future skips its body -- so its end is the canceller's to record:
+  the phase says who writes job_ended, exactly once per job_forked.  The log
+  is the one current at the fork (LOGGING.md §5).*)
+datatype phase = Pending | Running | Ended
+type job = {future : unit future, phase : phase Synchronized.var, log : Log.T}
+type T = job Inttab.table Synchronized.var
+
+fun create () : T = Synchronized.var "TAT.jobs" Inttab.empty
+
+fun ended (log : Log.T) id failure duration =
+  Log.record log {event = "job_ended", level = "info",
+    data = [("id", Log.Int id)] @
+      (case failure of SOME failure => [("failure", json_of_failure failure)] | NONE => []) @
+      [("duration", Log.seconds duration), ("cancelled", Log.Bool (is_none failure))]}
+
+(*the report, made with interrupts deferred by its caller: one that cannot be
+  delivered is recorded, and the task ends*)
+fun report (log : Log.T) id failure =
+  (case Exn.capture_body (fn () => Remote_Procedure_Calling.call_command finished (id, failure)) of
+    Exn.Res () => ()
+  | Exn.Exn exn =>
+      if Exn.is_interrupt exn then Exn.reraise exn
+      else
+        let
+          val reason =
+            (case exn of
+              Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => message
+            | _ => Runtime.exn_message exn)
+        in
+          Log.record log {event = "report_undelivered", level = "warning",
+            data = [("id", Log.Int id), ("failure", json_of_failure failure),
+                    ("message", Log.String ("The result of evaluation job " ^ string_of_int id ^
+                      " could not be reported to the Python side: " ^ reason))]}
+        end)
+
+(*§2.4's fork_job: the work as a Future task of a group of its own, the
+  future kept under the id; only the work itself can be interrupted -- what
+  follows it, the report included, runs with interrupts deferred, so a late
+  interrupt cannot leave a pooled connection taken.*)
+fun fork (jobs : T) {id, work} =
+  let
+    val log = Log.get_current ()
+    val phase = Synchronized.var "TAT.job" Pending
+    fun task () =
+      Thread_Attributes.uninterruptible_body (fn run =>
+        if Synchronized.change_result phase (fn Pending => (true, Running) | p => (false, p)) then
+          let
+            val start = Time.now ()
+            val result = Exn.capture_body (fn () => run work ())
+            val _ = Synchronized.change phase (K Ended)
+            val _ = Synchronized.change jobs (Inttab.delete_safe id)
+            val failure = (case result of Exn.Res () => SOME Passed | Exn.Exn exn => failure_of exn)
+            val _ = ended log id failure (Time.now () - start)
+            val _ =
+              (case failure of
+                SOME (Bug_Raised message) =>
+                  Log.record log {event = "bug", level = "error",
+                    data = [("message", Log.String message), ("job", Log.Int id)]}
+              | _ => ())
+          in Option.app (report log id) failure end
+        else ())
+  in
+    Synchronized.change jobs (fn tab =>
+      if Inttab.defined tab id
+      then raise Bug ("Evaluation job " ^ string_of_int id ^ " forked twice")
+      else
+        let
+          val _ = Log.record log {event = "job_forked", level = "info", data = [("id", Log.Int id)]}
+          val params =
+            {name = "TAT.job", group = SOME (Future.new_group NONE), deps = [], pri = 0,
+             interrupts = true}
+          val future = singleton (Future.forks params) task
+        in Inttab.update (id, {future = future, phase = phase, log = log}) tab end)
+  end
+
+(*a job taken off the table: one still Pending ends here; a Running one ends
+  when the interrupt reaches its work*)
+fun cancel (id, {future, phase, log} : job) =
+  (if Synchronized.change_result phase (fn Pending => (true, Ended) | p => (false, p))
+   then ended log id NONE Time.zeroTime else ();
+   Future.cancel future)
+
+(*TAT.job_cancel: the ids looked up, their futures cancelled; an id that is
+  not there -- its job ended -- is not an error*)
+fun cancel_ids (jobs : T) ids =
+  Synchronized.change_result jobs (fn tab =>
+    (map_filter (fn id => Option.map (pair id) (Inttab.lookup tab id)) ids,
+     fold Inttab.delete_safe ids tab))
+  |> List.app cancel
+
+(*TAT.reset: every job's future cancelled; how many, for the `reset` record*)
+fun cancel_all (jobs : T) =
+  let val taken = Synchronized.change_result jobs (fn tab => (Inttab.dest tab, Inttab.empty))
+  in List.app cancel taken; length taken end
+
+end
+
 (*** Node classes ***)
 
 type env = {
   slot_unpacker : slot MessagePackBinIO.Unpack.unpacker,
   begin_theory : {session_name : string, master_dir : Path.T} ->
                  Thy_Header.header -> Toplevel.state,
-  end_theory : Toplevel.state -> unit
+  end_theory : Toplevel.state -> unit,
+  fork_job : {id : int, work : unit -> unit} -> unit
 }
 
 (*Registrations ride on the theory (§2.5): a conversation's node classes are
@@ -648,7 +792,7 @@ val log_directory =
         Output.protocol_message [Markup.function "TAT.log_directory"] [XML.Encode.string directory]),
      timeout = NONE}
 
-fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
+fun framework_callbacks (slots : Slots.T) (theories : Theories.T) (jobs : Jobs.T) = [
   make_callback
     {name = "TAT.state_copy",
      on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -682,9 +826,16 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
                                 unpackList (unpackPair (unpackString, unpackString))),
      ret_schema = pack_session_answer, function = Loader.check_session, timeout = NONE},
   log_directory,
-  (*a fresh conversation begins on the same process: both tables emptied,
-    recorded into this conversation's log, which a fresh one then replaces
-    (LOGGING.md §5); the futures cancelled are the jobs', none yet*)
+  (*the futures of the evaluation jobs whose ids it is given, cancelled (§2.4)*)
+  make_callback
+    {name = "TAT.job_cancel",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackList unpackInt,
+     ret_schema = packUnit, function = Jobs.cancel_ids jobs, timeout = NONE},
+  (*a fresh conversation begins on the same process: every job's future
+    cancelled first, both tables emptied, recorded into this conversation's
+    log, which a fresh one then replaces (LOGGING.md §5); a cancelled job's
+    task ends later, into the log it found at its fork*)
   make_callback
     {name = "TAT.reset",
      on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -692,11 +843,13 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) = [
      ret_schema = packUnit,
      function = fn () =>
        let
+         val futures_cancelled = Jobs.cancel_all jobs
          val slots_cleared = Slots.clear slots
          val theories_cleared = Theories.clear theories
          val _ =
            Log.record (Log.get_current ()) {event = "reset", level = "info",
-             data = [("futures_cancelled", Log.Int 0), ("slots_cleared", Log.Int slots_cleared),
+             data = [("futures_cancelled", Log.Int futures_cancelled),
+                     ("slots_cleared", Log.Int slots_cleared),
                      ("theories_cleared", Log.Int theories_cleared)]}
        in Log.renew () end,
      timeout = NONE}
@@ -724,6 +877,7 @@ fun start' procedure theories working_directory port client =
     val max_concurrent_construction_jobs = getenv "TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS"
     val slots = Slots.create ()
     val theory_table = Theories.create ()
+    val jobs = Jobs.create ()
     (*This unpacker must not raise: mk_callback advances the input stream only
       after a successful unpack (contrib/Isabelle_RPC/Tools/RPC.ML), so an
       exception here leaves the message pending on the connection and every later
@@ -733,10 +887,11 @@ fun start' procedure theories working_directory port client =
       slot_unpacker = fn src =>
         let val (name, src') = unpackString src in (Slots.slot slots name, src') end,
       begin_theory = begin_theory theory_table,
-      end_theory = end_theory theory_table}
+      end_theory = end_theory theory_table,
+      fork_job = Jobs.fork jobs}
     val (regs, packages) = collect theories
     val callbacks =
-      map (fn (_, {make, ...}) => make env) regs @ framework_callbacks slots theory_table
+      map (fn (_, {make, ...}) => make env) regs @ framework_callbacks slots theory_table jobs
     (*the dispatch table would silently keep one of two same-named callbacks*)
     val _ = (case duplicates (op =) (map #name callbacks)
               of [] => ()

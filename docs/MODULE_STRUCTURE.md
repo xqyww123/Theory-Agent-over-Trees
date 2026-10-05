@@ -166,7 +166,10 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   holds for all three — the `Bug`'s
   message, which the task also logs as the `isabelle` record `bug` and
   which ends the conversation (CONSTRUCT_INTERACTION §3.3); on the wire
-  `["ok"]`, `["messages", [...]]` or `["bug", <message>]`. The test is the
+  `["ok"]`, `["messages", [...]]` or `["bug", <message>]`. A work that
+  is interrupted — its future cancelled by `TAT.job_cancel` or
+  `TAT.reset` — reports nothing: the Python side cancels only a job it
+  has dropped, and a reset ends the conversation that would hear. The test is the
   framework's `bug_message : exn -> string option`, the first `Bug` found
   bare, in a `Par_Exn` or in an `Exn.EXCEPTIONS`, a `Bug` counting before
   an interrupt in an exception that holds both. The procedure
