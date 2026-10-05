@@ -170,9 +170,9 @@ ending in a newline — and `emit_ending`, the `end` (COMPILATION.md §3).
 
 The header `Theory` runs and the header it emits are one text, built by
 one function: the `theory` line, the agent's `imports`, and — on a theory
-none of whose imports resolves to a theory of the forest — the imports
-the loaded plugins declare (PLUGIN_SYSTEM §1), which every other theory
-receives through the forest theories it imports. The agent writes none
+that imports no theory of the forest — the imports the loaded plugins
+declare (PLUGIN_SYSTEM §1), which every other theory receives through
+the forest theories it imports. The agent writes none
 of them, and `recall` shows the agent's items alone (§4); their sessions
 are recorded in `import_sessions` with the agent's, so the ROOT's
 `sessions` clause names them (COMPILATION.md §2).

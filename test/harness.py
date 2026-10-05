@@ -26,7 +26,8 @@ from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 
 from isabelle_theory_agent import isabelle_driver, toplevel
-from isabelle_theory_agent.mcp_server import HOOK, HOST, PATH, TOOL_PREFIX, Claude_Code_Server, Ending
+from isabelle_theory_agent.mcp_server import (
+    HOOK, HOST, PATH, SERVER_NAME, TOOL_PREFIX, Claude_Code_Server, Ending)
 
 PLUGIN = "Theory_Agent_over_Trees.Test_TAT_Framework"
 PACKAGES = ["tat_test_plugin"]          # what the plugin's registrations name, deduplicated
@@ -40,6 +41,23 @@ CLIENT_INFO = types.Implementation(name=Claude_Code_Server.client_name,
                                    version=Claude_Code_Server.measured_version)
 SESSION_ID = "6c1f0e4a-2b7d-4f3e-9a58-0d2c7b1e8f90"            # invented, as the payloads' other ids
 TRANSCRIPT_PATH = f"/home/agent/.claude/projects/-work-TAT-agents/{SESSION_ID}.jsonl"   # named, not read
+MAX_CONCURRENT_CONSTRUCTION_JOBS = "7"  # the child's environment; `launch_TAT` sees the text arrive
+
+
+def claude_code(tool: str, tool_use_id: str, agent_id: str | None = None,
+                tool_input: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Claude Code's `PreToolUse` on a TAT tool, in the measured shape
+    (ai-artifacts/AGENT_CLIENTS_MEASURED.md) with invented ids: a
+    subagent's carries `agent_id`, the main conversation's does not
+    (CLIENT_HOOKS.md §2)."""
+    payload: dict[str, Any] = {
+        "session_id": SESSION_ID, "transcript_path": TRANSCRIPT_PATH, "cwd": "/work/TAT.agents",
+        "permission_mode": "default", "hook_event_name": "PreToolUse",
+        "tool_name": TOOL_PREFIX + tool, "tool_input": tool_input or {}, "tool_use_id": tool_use_id,
+        "mcp_server": {"name": SERVER_NAME, "source": "dynamic"}}
+    if agent_id is not None:
+        payload |= {"agent_id": agent_id, "agent_type": "general-purpose"}
+    return payload
 
 
 def free_port() -> int:
@@ -89,10 +107,10 @@ def hook_url(url: str) -> str:
     return url.removesuffix(PATH) + HOOK
 
 
-async def announce(url: str, payload: Any) -> httpx.Response:
-    """One hook payload posted to `/hook` as the hook script does
-    (CLIENT_HOOKS.md §1)."""
-    async with httpx.AsyncClient() as http:
+async def post_hook(url: str, payload: Any) -> httpx.Response:
+    """One payload posted to `/hook` as the hook script does (CLIENT_HOOKS.md
+    §1): to the address itself, whatever proxy the environment names."""
+    async with httpx.AsyncClient(trust_env=False) as http:
         return await http.post(url, json=payload)
 
 
@@ -100,10 +118,11 @@ class Announcing_Session(ClientSession):
     """An `mcp` client session that announces each tool call to `/hook`
     the way Claude Code's main conversation does — a `PreToolUse` payload
     in the measured shape, with an invented `tool_use_id` — and then sends
-    the call with the matching `_meta` (CONSTRUCT_INTERACTION §8).  An
-    announcement the ending answers 503 does not stop the call, as it does
-    not stop an interactive client whose user allows it: the call is sent,
-    and the ending answers it (RENDER_BASELINES §4)."""
+    the call with the matching `_meta` (CONSTRUCT_INTERACTION §8).  The
+    announcement is answered the grant; one the ending answers 503 does
+    not stop the call, as it does not stop an interactive client whose
+    user allows it: the call is sent, and the ending answers it
+    (RENDER_BASELINES §4)."""
 
     def __init__(self, read: Any, write: Any, url: str, **kwargs: Any):
         super().__init__(read, write, **kwargs)
@@ -113,12 +132,11 @@ class Announcing_Session(ClientSession):
                         read_timeout_seconds: Any = None, progress_callback: Any = None, *,
                         meta: dict[str, Any] | None = None) -> types.CallToolResult:
         tool_use_id = "toolu_" + uuid.uuid4().hex
-        answer = await announce(self._hook_url, {
-            "session_id": SESSION_ID, "transcript_path": TRANSCRIPT_PATH, "cwd": "/work/TAT.agents",
-            "permission_mode": "default", "hook_event_name": "PreToolUse",
-            "tool_name": TOOL_PREFIX + name, "tool_input": arguments or {}, "tool_use_id": tool_use_id,
-            "mcp_server": {"name": "TAT", "source": "dynamic"}})
-        assert answer.status_code in (200, 503), (answer, answer.text)
+        answer = await post_hook(self._hook_url, claude_code(name, tool_use_id, tool_input=arguments))
+        if answer.status_code == 200:
+            assert answer.json() == Claude_Code_Server.announcement_answer, answer.text
+        else:
+            assert answer.status_code == 503, (answer, answer.text)
         return await super().call_tool(name, arguments, read_timeout_seconds, progress_callback,
                                        meta={Claude_Code_Server.call_key: tool_use_id, **(meta or {})})
 
@@ -350,11 +368,12 @@ class Harness:
         """What the ML side calls under the product's wire name: one
         conversation per request, `TAT.reset` first, until the suite is over."""
         # the wire delivers a list; the child is started without -c, so the
-        # default client arrives
+        # default client arrives, and with the bound in its environment
         packages, launcher_directory, port, client, max_concurrent_construction_jobs = arg
         assert packages == PACKAGES, packages
-        assert (launcher_directory, port, client) == \
-            (str(self.launcher_directory), self.port, "claude-code"), (launcher_directory, port, client)
+        assert (launcher_directory, port, client, max_concurrent_construction_jobs) == \
+            (str(self.launcher_directory), self.port, Claude_Code_Server.name,
+             MAX_CONCURRENT_CONSTRUCTION_JOBS), arg
         self.launched.set_result(None)
         try:
             while True:
@@ -402,7 +421,8 @@ class Harness:
             self.child = subprocess.Popen(
                 ["isabelle", "TAT_mcp", "-p", str(self.port), str(self.launcher_directory)],
                 stdout=log, stderr=subprocess.STDOUT,
-                env={**os.environ, "RPC_Host": self.host_address},
+                env={**os.environ, "RPC_Host": self.host_address,
+                     "TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS": MAX_CONCURRENT_CONSTRUCTION_JOBS},
                 start_new_session=True, preexec_fn=default_sigint)
         self.child_exit = asyncio.ensure_future(asyncio.to_thread(self.child.wait))
         self.child_exit.add_done_callback(self._child_done)

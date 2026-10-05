@@ -1120,7 +1120,7 @@ where AoA is absent. Its theory `TAT_Isabelle_Std` imports
 launched on the base heap `Minilang_AoA` (`-l`), so that AoA's theory is
 not loaded from source at every launch. The plugin declares the import
 `Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined, for the
-conversation's theories (PLUGIN_SYSTEM §1, node_classes/THEOREM.md §5).
+forest's theories (PLUGIN_SYSTEM §1, node_classes/THEOREM.md §5).
 
 `Theorem` is its first class, and
 brings two job classes (THEOREM.md §7): `Proof_Job`, its

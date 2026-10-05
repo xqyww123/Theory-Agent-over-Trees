@@ -121,13 +121,14 @@ class Bodies:
 
 
 @asynccontextmanager
-async def serving(port: int, tools: list[Tool], on_compaction=no_briefing):
+async def serving(port: int, tools: list[Tool], on_compaction=no_briefing,
+                  server_class: type[TAT_Server] = Claude_Code_Server):
     """A server listening and serving in a task, on an ending object of its
-    own — Claude Code's, the client the harness's `client()` is; yields the
-    server and the serving task, which raises what ended the conversation
-    (`ended`)."""
+    own — Claude Code's by default, the client the harness's `client()`
+    is; yields the server and the serving task, which raises what ended
+    the conversation (`ended`)."""
     async with stand_ins.ending() as ending, \
-            Claude_Code_Server(ending, port, tools, on_compaction) as server:
+            server_class(ending, port, tools, on_compaction) as server:
         serve = asyncio.create_task(server.serve())
         try:
             yield server, serve
