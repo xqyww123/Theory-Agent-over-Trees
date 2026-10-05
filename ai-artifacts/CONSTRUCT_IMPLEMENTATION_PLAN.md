@@ -198,9 +198,10 @@ Build.
   each call to `/hook` before sending it with the matching `_meta`;
   the tests that call tools through it are unchanged.
 
-Files: `mcp_server.py`, new `jobs.py`, `exceptions.py`, `toplevel.py`,
-`test/harness.py`, `test/test_mcp_server.py` (its cases build the
-server and call tools without the harness's client).
+Files: `mcp_server.py` (`ClientRefused` lives here, where it is
+raised, as EXCEPTIONS.md §3 places it), new `jobs.py`, `log.py` (the
+`Judged` alias), `test/harness.py`, new `test/test_hooks.py`,
+`test/test_mcp_server.py` (its cases build the Claude Code subclass).
 
 Tests. New `test/test_hooks.py`, posting payloads straight to `/hook`.
 The payloads are written by hand in the test module from the shapes

@@ -36,15 +36,17 @@ sig
   datatype output_message =
     Writeln of string | Tracing of string | Warning of string |
     Information of string | Legacy of string
-  type command_record = {
-    source : string,                (*the command's text, sliced verbatim*)
-    range : Position.range,         (*within the text handed to run_commands*)
-    errors : Runtime.error list,
-    output : output_message list    (*plain text, markup stripped*)
-  }
-  val run_commands : Toplevel.state -> string -> command_record list * Toplevel.state option
-                                          (*one record per command; stops at a
-                                            command that returns no state*)
+  structure Output_Routing : sig
+    val new_buffer : string -> unit     (*a buffer for what is printed under this id
+                                          in Position.thread_data*)
+    val take_buffer : string -> output_message list
+                                        (*its messages, oldest first, plain text; the
+                                          buffer gone*)
+  end
+  val apply_transition : Toplevel.transition -> Toplevel.state -> Toplevel.state option * string list
+                                          (*one transition through Toplevel.command_errors
+                                            true: the state, or its errors as messages --
+                                            `operation`'s shape (TAT_Common_Nodes.ML)*)
 
   (*** Node classes (§2.5) ***)
   type env = {
@@ -436,13 +438,6 @@ datatype output_message =
   Writeln of string | Tracing of string | Warning of string |
   Information of string | Legacy of string
 
-type command_record = {
-  source : string,
-  range : Position.range,
-  errors : Runtime.error list,
-  output : output_message list
-}
-
 structure Output_Routing = struct
 
 (*§2.4: agent-facing text leaves the process through the six Private_Output
@@ -499,8 +494,8 @@ val channels = [
 ]
 
 (*Idempotent; the first call captures the process's current functions as the
-  fallback.  Called at conversation start (§2.6) and by run_commands itself,
-  so capture cannot be forgotten (EVALUATOR_DESIGN §4).*)
+  fallback.  Called at conversation start (§2.6), before any operation runs
+  (EVALUATOR_DESIGN §4).*)
 val installed = Synchronized.var "TAT.output_routing" false
 fun install () =
   Synchronized.change installed (fn true => true | false =>
@@ -509,120 +504,20 @@ fun install () =
 
 end
 
-local
-
-(*offsets count symbols, as Position offsets do*)
-fun span_source symbols span =
-  let
-    val (pos1, pos2) = Command_Span.range span
-    val i = the_default 1 (Position.offset_of pos1)
-    val j = the_default i (Position.offset_of pos2)
-  in implode (take (j - i) (drop (i - 1) symbols)) end
-
-(*§2.4: a fresh id per span.  The id slot of a position is the execution
-  registry's key: Execution.fork and Execution.print read it back
-  (Position.parse_id) and fail on an unregistered id, so the id is minted
-  by the registry's own counter and registered before the command runs,
-  exactly as batch loading does (thy_info.ML:359-364); Toplevel.exec_id
-  plants it on the transition's position -- the transition runs under its
-  own position (toplevel.ML:628), so the ambient wrapper alone would be
-  overridden.  After the run, forks that attached to the command are joined
-  and their failures land in this command's errors (thy_info.ML:240-242).*)
-fun run_span tr st =
-  let
-    val exec = Document_ID.make ()
-    val id = Document_ID.print exec
-  in
-    \<^try>\<open>
-      let
-        val _ = Output_Routing.new_buffer id
-        val _ = Execution.running Document_ID.none exec [] orelse
-                  raise Bug ("Failed to register execution " ^ id)
-        val (errors, st') =
-          Position.setmp_thread_data (Position.id_only id)
-            (fn () => Toplevel.command_errors true (Toplevel.exec_id exec tr) st) ()
-        val _ = Execution.join [exec]
-        val fork_errors =
-          maps Runtime.exn_messages (maps Task_Queue.group_status (Execution.peek exec))
-        val output = Output_Routing.take_buffer id
-        (*one normalisation contract for both record fields (the output side
-          is stripped in Output_Routing.route)*)
-        val all_errors =
-          map (fn ((i, msg), pos_id) => ((i, Protocol_Message.clean_output msg), pos_id))
-            (errors @ fork_errors)
-      in
-        (*an interrupt is folded to ([], NONE) by command_errors -- Par_Exn.dest
-          yields no messages for a proper interrupt; stock re-raises the case
-          (command.ML:247-249, toplevel.ML:652-654) and so does TAT: a
-          cancellation unwinds the conversation whole.  A failed fork is the
-          command's failure -- its committed state carries a broken promise,
-          so it is withheld -- keeping "errors nonempty iff no state" exact.*)
-        (case (all_errors, st') of
-          ([], NONE) => Isabelle_Thread.raise_interrupt ()
-        | ([], SOME _) => (([], output), st')
-        | (errs, _) => ((errs, output), NONE))
-      end
-      (*cancel before purge: purge alone drops a still-live group without a
-        guard (its own "Attempt to purge valid execution" check is vacuous,
-        execution.ML:229-235); after the join above, cancel touches only
-        finished groups*)
-      finally
-        (Execution.cancel exec; Execution.purge [exec];
-         ignore (Output_Routing.take_buffer id))\<close>
-  end
-
-in
-
-(*DO NOT USE.  run_span registers each span in the process-global Execution
-  table, which a library load's Execution.reset wipes; build the transition
-  in ML and apply it through Toplevel.command_errors instead, as
-  begin_theory does.  Kept only until `end` is moved to that shape.
-
-  §2.4: split with Outer_Syntax.parse_spans, run each span through
-  Toplevel.command_errors true, threading the state.  The first argument
-  `true` is Isabelle's interactive flag and load-bearing: `sorry` is refused
-  without it (EVALUATOR_DESIGN §1).  Tokenisation is one pass over the whole
-  text (stock does the same, thy_info.ML:300), but each span is parsed
-  against the state it runs in (stock: Command.read_span per element), so a
-  command *implementation* an earlier span installed parses in a later one
-  -- a new *keyword* does not, its token was lexed before it existed.  The
-  init handed to parse_span is pure_syn.ML's own refusal, for a stray
-  `theory` command mid-text.*)
-fun run_commands st text =
-  let
-    val _ = Output_Routing.install ()
-    val keywords = Thy_Header.get_keywords (Command.read_thy st)
-    val symbols = Symbol.explode text
-    val spans =
-      Outer_Syntax.parse_spans (Token.explode keywords Position.start text)
-      |> filter_out Command_Span.is_ignored
-    fun run [] st = ([], SOME st)
-      | run (span :: rest) st =
-          let
-            val tr =
-              Outer_Syntax.parse_span (Command.read_thy st)
-                (fn () => error "Missing theory initialization")
-                (Command_Span.content span)
-          in
-            (*a span that parses to no command produces no record: a
-              marked-comment-only span arrives as Malformed_Span yet parses
-              to an ignored transition*)
-            if Toplevel.is_ignored tr then run rest st
-            else
-              let
-                val ((errors, output), st') = run_span tr st
-                val record : command_record =
-                  {source = span_source symbols span, range = Command_Span.range span,
-                   errors = errors, output = output}
-              in
-                (case st' of
-                  NONE => ([record], NONE)
-                | SOME st'' => run rest st'' |>> cons record)
-              end
-          end
-  in run spans st end
-
-end
+(*§2.4: one transition, built in ML by its operation, applied through
+  Toplevel.command_errors true.  The first argument `true` is Isabelle's
+  interactive flag and load-bearing: `sorry` is refused without it
+  (EVALUATOR_DESIGN §1).  The errors are the messages, markup stripped, as
+  the output side is in Output_Routing.route.  An interrupt is folded to
+  ([], NONE) by command_errors -- Par_Exn.dest yields no messages for a
+  proper interrupt; stock re-raises the case (command.ML:247-249,
+  toplevel.ML:652-654) and so does TAT: a cancellation unwinds the
+  conversation whole.*)
+fun apply_transition tr st =
+  (case Toplevel.command_errors true tr st of
+    (_, SOME st') => (SOME st', [])
+  | ([], NONE) => Isabelle_Thread.raise_interrupt ()
+  | (errors, NONE) => (NONE, map (Protocol_Message.clean_output o #2 o #1) errors))
 
 (*§2.4.  The header's name is qualified through the same one import_name call
   as every import (EVALUATOR_DESIGN §7), as batch loading does
@@ -650,10 +545,9 @@ fun begin_theory theories (context as {session_name, master_dir}) (header : Thy_
       Toplevel.make Thy_Header.theoryN name_pos
       |> Toplevel.init_theory (fn () => Resources.begin_theory master_dir header' parents)
   in
-    (case Toplevel.command_errors true tr (Toplevel.make_state NONE) of
-      (_, SOME st) => st
-    | ([], NONE) => Isabelle_Thread.raise_interrupt ()   (*as run_span: the folded-interrupt case*)
-    | (errors, NONE) => error (cat_lines (map (#2 o #1) errors)))
+    (case apply_transition tr (Toplevel.make_state NONE) of
+      (SOME st, _) => st
+    | (NONE, messages) => error (cat_lines messages))
   end
 
 (*§2.4: the value the theory table stores.  The state must have run the

@@ -18,6 +18,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
+Isabelle_Std/                 the plugin of Isabelle's standard commands, an Isabelle component of its own (§4.5): etc/settings, a ROOT declaring the session `TAT_Isabelle_Std`, TAT_Isabelle_Std.thy, and ML/ with one file per node class
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -42,18 +43,18 @@ found by its session-qualified name, `Theory_Agent_over_Trees.<name>`,
 while declaring no theory there.
 
 One structure per file except the boot, which defines none, and two
-structures in all. Inside a file the body is
+structures in TAT's own theory. Inside a file the body is
 divided by Isabelle's sectioning comments — `(*** section ***)`,
 `(** subsection **)`, `(* subsubsection *)` — following
 `contrib/Isabelle2025-2/src/Doc/Implementation/ML.thy:60-97`.
 
 `TAT_Framework` knows no node class. `TAT_Common_Nodes` is its first client and
-carries the predefined node classes, and the helpers a node class writes its
-callbacks with (`operation`, §3); a node class delivered separately
-(ARCHITECTURE §6) is another client of the same interface, free to use
-`TAT_Common_Nodes` as well. The test for where something belongs: what the conversation itself
+carries `Theory`'s callbacks and the helper a node class writes its
+callbacks with (`operation`, §3); a plugin's node classes — those of
+`Isabelle_Std` (§4.5) first — are other clients of the same interface
+(ARCHITECTURE §6), free to use `TAT_Common_Nodes` as well. The test for where something belongs: what the conversation itself
 needs — its tables, its loader, its callbacks — is in `TAT_Framework`; what
-only a node class needs is in `TAT_Common_Nodes`.
+only a node class needs is in `TAT_Common_Nodes`, or in its plugin.
 
 ## 2. `TAT_Framework`
 
@@ -140,16 +141,17 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   through §2.3, builds the header's transition in ML (`Toplevel.make` …
   `|> Toplevel.init_theory`, its init `Resources.begin_theory`) and runs
   it from `Toplevel.make_state NONE`.
-- `run_commands` — **not to be used.** It splits a node's text with
-  `Outer_Syntax.parse_spans` and runs each span through
-  `Toplevel.command_errors true`, registering each span in Isabelle's
-  execution table, which a library load's `Execution.reset` wipes
-  (EVALUATOR_DESIGN §6). Every operation builds its transition in ML and
-  applies it through `Toplevel.command_errors true` itself: `Theory`'s
-  header does (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
-  transition, and `Theorem` builds one transition from its statement's
-  structure (THEOREM.md §6). The function and `run_span` go once `end`
-  is moved off them.
+- `apply_transition` — one transition, built in ML by its operation,
+  applied through `Toplevel.command_errors true`; the answer is
+  `operation`'s shape (§3): the state, or the errors as messages, markup
+  stripped; a folded interrupt is re-raised. `Theory`'s header goes
+  through it (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
+  transition through it, and `Theorem` builds one transition from its
+  statement's structure (THEOREM.md §6). Nothing splits a node's text into
+  spans or registers anything in Isabelle's execution table, which a
+  library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6). The
+  output buffers below, `Output_Routing.new_buffer` and `take_buffer`,
+  are exported beside it.
 - `end_theory` — `Toplevel.end_theory`, yielding the value the theory table
   stores.
 - `fork_job` — the evaluation jobs' one function (CONSTRUCT_INTERACTION
@@ -310,7 +312,9 @@ the agent client's name, and starts the conversation:
 4. install the output routing of §2.4;
 5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.6) with the collected package list, the
-   working directory, the port and the client's name; `launch_TAT` does
+   working directory, the port, the client's name and the text of the
+   Isabelle environment variable `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`,
+   empty when it is unset; `launch_TAT` does
    not return.
 
 The callbacks go in the `callback` field of that one command, as AoA's
@@ -357,13 +361,15 @@ text.
 ## 3. `TAT_Common_Nodes`
 
 `operation`, the helper a node class writes its callbacks against (§2.5),
-then one section per predefined node class, each a client of §2.5.
+then `Theory`'s section, a client of §2.5. The rows after `Theory` are
+the plugin `Isabelle_Std`'s, one structure per class in a file of its
+own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem`.
 
 | section | what it runs |
 | --- | --- |
 | `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
-| `Theorem` | `TAT.Theorem.evaluate`: the statement opened and admitted, two direct-ML transitions on the input slot's state, the first's result into the node's `goal_state` slot, the second's into the resulting slot, no `run_commands` (THEOREM.md §6); `TAT.Theorem.construct`: the proof construction — AoA's `hammer_or_AoA` on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Theorem.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way (THEOREM.md §7) |
+| `Theorem` | `TAT.Theorem.evaluate`: the statement opened and admitted, two direct-ML transitions on the input slot's state, the first's result into the node's `goal_state` slot, the second's into the resulting slot (THEOREM.md §6); `TAT.Theorem.construct`: the proof construction — AoA's `hammer_or_AoA` on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Theorem.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way (THEOREM.md §7) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
@@ -371,7 +377,7 @@ then one section per predefined node class, each a client of §2.5.
 registers no evaluator: it runs no Isabelle commands — its evaluation is
 the forest's scheduling (ARCHITECTURE §3.5) — and it emits nothing:
 `compile` writes its ROOT entry from its fields (COMPILATION.md §2). The
-Python halves of both are framework classes in `model.py` (§4.5).
+Python halves of both are framework classes in `model.py` (§4.1).
 
 ## 4. Python side
 
@@ -386,15 +392,14 @@ isabelle_theory_agent/
   jobs.py              Construction_Job, Evaluation_Job, Unfinished, Interactive_Question and Answered, Agent, messages and mailboxes (CONSTRUCT_INTERACTION §3, §4)
   edit.py              building nodes from constructs; the entries behind edit, move and delete
   compile.py           compile, Compile_Report, report_lines and the path listing `paths`: the forest written as `.thy` files and a ROOT (COMPILATION.md §5)
+  invariants.py        the store-mirror helper a node class's test suite calls on its forests (COMPILATION.md §3)
   store.py             Forest_Store and Node_Rows: the working directory's database (ARCHITECTURE §4.1)
   log.py               Log: a conversation's or a compile's log (LOGGING.md)
   hook.py              the conversation's hooks' script, copied into the working directory's .tat/ by configure (CLIENT_HOOKS.md §1)
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
-  invariants.py        the store-mirror helper a node class's test suite calls on its forests (COMPILATION.md §3)
   plugin.py            loading node classes and their table; the argument schema grammar
-  builtins.py          the predefined node classes
-  theorem_node.py      Theorem with Proof_Job and Proof_Check (THEOREM.md)
+  std/                 the Python half of the plugin Isabelle_Std (§4.5), one module per node class: theorem.py, Theorem with Proof_Job and Proof_Check (THEOREM.md); statement.py, the statement's schema definitions
   mcp.py               the tools, recall, the tool boundary that delivers an agent's mailbox
   mcp_server.py        the Streamable HTTP MCP server; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -717,7 +722,9 @@ the same `Evaluation` (the invalidation functions, below).
 `Conversation` is what one conversation, or one compile, is given and
 the forest does not store — this list and no other: the connection to the
 Isabelle side, the working directory (ARCHITECTURE §4), the log
-(LOGGING.md §2) and the ending object (§4.6). A node reaches it through
+(LOGGING.md §2), the ending object (§4.6) and the bound on the
+construction jobs running at once, None for none (node_classes/THEOREM.md
+§7; a compile has none). A node reaches it through
 `forest().conversation` (PLUGIN_SYSTEM §2).
 
 An evaluation hook runs the class's own ML callback (§2.5) itself, through
@@ -1092,14 +1099,33 @@ Python cannot resolve. `check_construct` checks a submitted construct
 against the declaration; `edit.py` runs it before the class's `gen`
 (§4.2).
 
-### 4.5 `builtins.py` and `theorem_node.py`
+### 4.5 The plugin `Isabelle_Std`
 
-The predefined node classes of ARCHITECTURE §2.2, except `Session` and
-`Theory`, which carry the forest's structure and live in `model.py`
-(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). `Theorem` has its own file
-because it brings two job classes (THEOREM.md §7): `Proof_Job`, its
-construction job, whose `_run` drives the AoA search — how, is the AoA
-round's (CONSTRUCT_INTERACTION §10) — and returns the proof as the job's product, which
+The node classes of Isabelle's standard commands (ARCHITECTURE §2.2)
+are one plugin, `Isabelle_Std`; `Session` and `Theory`, which carry the
+forest's structure, are the framework's and live in `model.py`
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The plugin's directory
+`Isabelle_Std/` is an Isabelle component of its own. Its `ROOT`
+declares the session `TAT_Isabelle_Std`, whose parent is `Minilang_AoA`
+and which imports the session `Theory_Agent_over_Trees`; TAT's own
+`ROOT` does not name it, since Isabelle refuses the whole session
+structure over a `ROOT` whose parent session is unknown, and TAT works
+where AoA is absent. Its theory `TAT_Isabelle_Std` imports
+`Theory_Agent_over_Trees.Theory_Agent_over_Trees` and
+`Minilang_AoA.Minilang_AoA` and loads one ML file per node class from
+`Isabelle_Std/ML/`; the Python half is the subpackage
+`isabelle_theory_agent.std`, which the theory's registrations name
+(§2.5), one module per class. A working directory takes the plugin with
+`isabelle TAT_new -P TAT_Isabelle_Std.TAT_Isabelle_Std` (§5) and is
+launched on the base heap `Minilang_AoA` (`-l`), so that AoA's theory is
+not loaded from source at every launch. The plugin declares the import
+`Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined, for the
+conversation's theories (PLUGIN_SYSTEM §1, node_classes/THEOREM.md §5).
+
+`Theorem` is its first class, and
+brings two job classes (THEOREM.md §7): `Proof_Job`, its
+construction job, whose `_run` drives the AoA search and returns the
+proof as the job's product, which
 the framework stores on the node; and `Proof_Check`, its evaluation job,
 whose `_start` forks the replay of that proof on the ML side (§2.4's
 `fork_job`). The framework, not the class, posts the jobs' notifications
@@ -1116,7 +1142,8 @@ body asked for (CONSTRUCT_INTERACTION §5); the future `query` tool
 nine tools — `edit`, `move`, `delete` (TOOL_SCHEMAS.md), `recall`
 (RECALL.md §3), `evaluate_to`, and `construct`, `cancel_construct`,
 `check_construct` and `answer` (CONSTRUCT_INTERACTION §5), the last four
-only when a loaded class names a construction job class — through one
+only when a loaded class names the job class each needs
+(CONSTRUCT_INTERACTION §3.1) — through one
 builder, `_tool(name, description, schema, run, read_only)`, which
 validates the schema as the tool is built (`plugin.validate_call_schema`)
 and checks every call against it before the entry runs
@@ -1324,8 +1351,13 @@ built on the same settings object the session manager is given. Like
 
 `toplevel.py` holds the two procedures Isabelle calls: `launch_TAT`
 (`@isabelle_remote_procedure("launch_TAT")`) with the package list, the
-working directory, the port and the client's name (§2.6), which does not
-return; and `compile_TAT` with the package list and the working
+working directory, the port, the client's name and the text of
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` (§2.6), which does not
+return — an empty text is no bound on the construction jobs running at
+once, and any other that is not a positive integer is a
+`TAT_StartupError`, `TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS
+to be a positive integer, but it is <value>` (node_classes/THEOREM.md
+§7); and `compile_TAT` with the package list and the working
 directory, which returns whether every tree was written and the
 report's lines (COMPILATION.md §5). The start is three layers of context
 managers, the two procedures sharing the first two:

@@ -129,6 +129,12 @@ plain text is the agent system the method falls back to, and the one a
 
 ### 2.2 Node classes *(decided)*
 
+`Session` and `Theory` are the framework's. The node classes of
+Isabelle's standard commands — `Theorem`, and the others of this
+section as they are specified — are one plugin, `Isabelle_Std`
+(MODULE_STRUCTURE §4.5), which a working directory takes with
+`isabelle TAT_new -P`.
+
 **`Theorem`** is specified in [node_classes/THEOREM.md](node_classes/THEOREM.md):
 four kinds (`lemma`, `theorem`, `corollary`, `proposition`), a `name`, a
 `statement` (AoA's `LongStatement`), and, recorded by the framework, `proof`

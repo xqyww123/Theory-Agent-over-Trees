@@ -105,7 +105,10 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
 
 (*`end`, from the slot after the children into the resulting slot, and the
   result into the theory table -- before the slot is written, so a table
-  write that fails leaves no state the framework does not know of*)
+  write that fails leaves no state the framework does not know of.  The
+  transition is Toplevel.exit, the one the `end` span parses to at theory
+  level (EVALUATOR_DESIGN §1); on a state still inside a context or a proof
+  it fails, and the failure is the node's messages.*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Theory.end",
     on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -113,9 +116,11 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
     ret_schema = packList packString,
     function = fn (src, dst) =>
       operation dst (fn () =>
-        (case TAT_Framework.run_commands (#get src ()) "end" of
-          (_, SOME st) => (#end_theory env st; (SOME st, []))
-        | (records, NONE) => (NONE, maps (map (#2 o #1) o #errors) records))),
+        let
+          val (st, messages) =
+            TAT_Framework.apply_transition
+              (Toplevel.make "end" Position.none |> Toplevel.exit) (#get src ())
+        in (Option.app (#end_theory env) st; (st, messages)) end),
     timeout = NONE}))
 
 end

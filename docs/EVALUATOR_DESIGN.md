@@ -32,9 +32,9 @@ For the `Theory` root node's header:
 For the root node's `end`: an ML-built `Toplevel.exit` transition, then
 `Toplevel.end_theory`, which yields the `theory` value that goes into the
 theory table (§3). A `Theorem` builds one transition from its statement's
-structure (THEOREM.md §6). The span path — split a node's text with
-`Outer_Syntax.parse_spans` and run each span — is the retiring
-`run_commands`, not to be used (MODULE_STRUCTURE §2.4, §6 below).
+structure (THEOREM.md §6). Nothing splits a node's text with
+`Outer_Syntax.parse_spans` and runs the spans: every operation applies
+the one transition it built (MODULE_STRUCTURE §2.4, §6 below).
 
 `Toplevel.command_errors` returns `(errors, state option)`; check both, since a
 failing command can return no state. The errors are `Runtime.error` values,
@@ -254,8 +254,8 @@ Four conditions, all required together:
   and `TAT.start` has loaded the plugins' (MODULE_STRUCTURE §2.6, §5), so
   those loads never overlap it; its dispatch is one synchronous loop;
   `begin_theory` resolves every import before it runs anything; and TAT
-  registers nothing in the table itself — `run_commands`, which did, is
-  not to be used (MODULE_STRUCTURE §2.4). The jobs, which do run beside a
+  registers nothing in the table itself (MODULE_STRUCTURE §2.4). The
+  jobs, which do run beside a
   load (CONSTRUCT_INTERACTION §3.3), never reach the table either: a job's
   work applies no Toplevel transition and calls nothing that forks a
   proof — `Goal.prove_future`, `Goal.prove_sorry` — and the tactics a

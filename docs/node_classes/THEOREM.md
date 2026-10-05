@@ -262,7 +262,7 @@ Toplevel.end_proof Proof.global_skip_proof
 |> Toplevel.command_errors true
 ```
 
-— the shape of `begin_theory`, no `run_span` envelope, no proof step.
+— the shape of `begin_theory`, through `apply_transition`, no proof step.
 The first's result, the goal open and no step taken, is written into
 `goal_state`, where the proof construction and the proof check find
 their goal (§7); the second's into the resulting slot: at theory level

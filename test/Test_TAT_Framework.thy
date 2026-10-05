@@ -12,7 +12,123 @@ text \<open>The test plugin (ai-artifacts/TEST_HARNESS_PLAN.md §5): the plugin 
   ML while the theory loads.\<close>
 
 ML \<open>
+(*Avoid run_commands wherever possible: it registers each span in Isabelle's
+  execution table, which a library load's Execution.reset wipes
+  (docs/EVALUATOR_DESIGN.md §6), and nothing of the product uses it -- every
+  operation builds its transition in ML and applies it through
+  TAT_Framework.apply_transition (docs/MODULE_STRUCTURE.md §2.4).  It lives
+  here, as test code, for the probes test_conversation.py runs Isar text
+  with.*)
 structure TAT_Test_Lib = struct
+
+type command_record = {
+  source : string,                (*the command's text, sliced verbatim*)
+  range : Position.range,         (*within the text handed to run_commands*)
+  errors : Runtime.error list,
+  output : TAT_Framework.output_message list    (*plain text, markup stripped*)
+}
+
+(*offsets count symbols, as Position offsets do*)
+fun span_source symbols span =
+  let
+    val (pos1, pos2) = Command_Span.range span
+    val i = the_default 1 (Position.offset_of pos1)
+    val j = the_default i (Position.offset_of pos2)
+  in implode (take (j - i) (drop (i - 1) symbols)) end
+
+(*A fresh id per span.  The id slot of a position is the execution
+  registry's key: Execution.fork and Execution.print read it back
+  (Position.parse_id) and fail on an unregistered id, so the id is minted
+  by the registry's own counter and registered before the command runs,
+  exactly as batch loading does (thy_info.ML:359-364); Toplevel.exec_id
+  plants it on the transition's position -- the transition runs under its
+  own position (toplevel.ML:628), so the ambient wrapper alone would be
+  overridden.  After the run, forks that attached to the command are joined
+  and their failures land in this command's errors (thy_info.ML:240-242).*)
+fun run_span tr st =
+  let
+    val exec = Document_ID.make ()
+    val id = Document_ID.print exec
+  in
+    \<^try>\<open>
+      let
+        val _ = TAT_Framework.Output_Routing.new_buffer id
+        val _ = Execution.running Document_ID.none exec [] orelse
+                  raise TAT_Framework.Bug ("Failed to register execution " ^ id)
+        val (errors, st') =
+          Position.setmp_thread_data (Position.id_only id)
+            (fn () => Toplevel.command_errors true (Toplevel.exec_id exec tr) st) ()
+        val _ = Execution.join [exec]
+        val fork_errors =
+          maps Runtime.exn_messages (maps Task_Queue.group_status (Execution.peek exec))
+        val output = TAT_Framework.Output_Routing.take_buffer id
+        (*one normalisation contract for both record fields (the output side
+          is stripped by the framework's routing)*)
+        val all_errors =
+          map (fn ((i, msg), pos_id) => ((i, Protocol_Message.clean_output msg), pos_id))
+            (errors @ fork_errors)
+      in
+        (*an interrupt is folded to ([], NONE) by command_errors -- Par_Exn.dest
+          yields no messages for a proper interrupt; stock re-raises the case
+          (command.ML:247-249, toplevel.ML:652-654) and so does TAT: a
+          cancellation unwinds the conversation whole.  A failed fork is the
+          command's failure -- its committed state carries a broken promise,
+          so it is withheld -- keeping "errors nonempty iff no state" exact.*)
+        (case (all_errors, st') of
+          ([], NONE) => Isabelle_Thread.raise_interrupt ()
+        | ([], SOME _) => (([], output), st')
+        | (errs, _) => ((errs, output), NONE))
+      end
+      (*cancel before purge: purge alone drops a still-live group without a
+        guard (its own "Attempt to purge valid execution" check is vacuous,
+        execution.ML:229-235); after the join above, cancel touches only
+        finished groups*)
+      finally
+        (Execution.cancel exec; Execution.purge [exec];
+         ignore (TAT_Framework.Output_Routing.take_buffer id))\<close>
+  end
+
+(*Split with Outer_Syntax.parse_spans, run each span through
+  Toplevel.command_errors true, threading the state.  Tokenisation is one
+  pass over the whole text (stock does the same, thy_info.ML:300), but each
+  span is parsed against the state it runs in (stock: Command.read_span per
+  element), so a command *implementation* an earlier span installed parses
+  in a later one -- a new *keyword* does not, its token was lexed before it
+  existed.  The init handed to parse_span is pure_syn.ML's own refusal, for
+  a stray `theory` command mid-text.  One record per command; stops at a
+  command that returns no state.*)
+fun run_commands st text =
+  let
+    val keywords = Thy_Header.get_keywords (Command.read_thy st)
+    val symbols = Symbol.explode text
+    val spans =
+      Outer_Syntax.parse_spans (Token.explode keywords Position.start text)
+      |> filter_out Command_Span.is_ignored
+    fun run [] st = ([], SOME st)
+      | run (span :: rest) st =
+          let
+            val tr =
+              Outer_Syntax.parse_span (Command.read_thy st)
+                (fn () => error "Missing theory initialization")
+                (Command_Span.content span)
+          in
+            (*a span that parses to no command produces no record: a
+              marked-comment-only span arrives as Malformed_Span yet parses
+              to an ignored transition*)
+            if Toplevel.is_ignored tr then run rest st
+            else
+              let
+                val ((errors, output), st') = run_span tr st
+                val record : command_record =
+                  {source = span_source symbols span, range = Command_Span.range span,
+                   errors = errors, output = output}
+              in
+                (case st' of
+                  NONE => ([record], NONE)
+                | SOME st'' => run rest st'' |>> cons record)
+              end
+          end
+  in run spans st end
 
 fun output_message (TAT_Framework.Writeln s) = ("writeln", s)
   | output_message (TAT_Framework.Tracing s) = ("tracing", s)
@@ -22,7 +138,7 @@ fun output_message (TAT_Framework.Writeln s) = ("writeln", s)
 
 (*records travel as (source, error messages, (kind, text) output) triples*)
 fun serialize records =
-  map (fn {source, errors, output, ...} : TAT_Framework.command_record =>
+  map (fn {source, errors, output, ...} : command_record =>
         (source, map (#2 o #1) errors, map output_message output)) records
 
 val pack_records =
@@ -107,7 +223,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
       ret_schema = TAT_Test_Lib.pack_records,
       function = fn (src, (dst, text)) =>
         let
-          val (records, st') = TAT_Framework.run_commands (#get src ()) text
+          val (records, st') = TAT_Test_Lib.run_commands (#get src ()) text
           val _ = #put dst st'
         in TAT_Test_Lib.serialize records end,
       timeout = NONE})
@@ -129,8 +245,8 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
       function = fn (sa, (sb, (ta, tb))) =>
         let
           val sta = #get sa () and stb = #get sb ()
-          val fa = Future.fork (fn () => TAT_Framework.run_commands sta ta)
-          val fb = Future.fork (fn () => TAT_Framework.run_commands stb tb)
+          val fa = Future.fork (fn () => TAT_Test_Lib.run_commands sta ta)
+          val fb = Future.fork (fn () => TAT_Test_Lib.run_commands stb tb)
           val (ra, _) = Future.join fa and (rb, _) = Future.join fb
         in (TAT_Test_Lib.serialize ra, TAT_Test_Lib.serialize rb) end,
       timeout = NONE})

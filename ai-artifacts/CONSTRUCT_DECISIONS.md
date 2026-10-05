@@ -795,6 +795,25 @@ verbatim, `X` standing for a full node id.
   dirty-database branch and the `TAT_compile` refusal line go. A job's
   settlement, an await-free stretch, lands before or after such a
   block, never inside it.
+- From the review of steps 1 and 2 (2026-10-05, ai-artifacts/review/
+  STEPS_1_2_REVIEW.md §4), the owner ruled: `hook.answer`'s `judged` is
+  absent for a request answered 503 or 500, which was not judged
+  (「按你的建议来」; LOGGING.md §4 and `log.py` are the logging session's
+  to change); the `<client>` of the refusal sentence `TAT cannot serve
+  this client: it is <name> <version>; TAT requires <client> <version> or
+  newer.` is the name `-c` takes, `claude-code` or `codex` (「赞同」); a
+  second announcement of a `tool_use_id` whose first call has not arrived
+  is a bug on the `/hook` path, which ends the conversation (「建议当作
+  bug」, then 「好的，赞同」 on the guard with its sentence `TAT received a
+  second announcement of the call <id> before that call arrived; the
+  client's hooks cannot be trusted.`; the ids are unique on both clients
+  by their measured behaviour, so a repeat means the premise about the
+  client's hooks is broken, and TAT stops rather than guesses). *(author)*
+  On Codex the agent is
+  named by the call's `_meta.threadId`, as CONSTRUCT_INTERACTION §8 states,
+  created at the call (`agent.created` with `first="call"`), `main` when
+  `threadId` equals `sessionId`; the announcement records the `callId`
+  alone.
 
 ## 11. `Theorem`
 
@@ -1614,3 +1633,10 @@ CONSTRUCT_INTERACTION §10, OPEN_QUESTIONS §2, ARCHITECTURE §2.1, §3.1,
   told it runs under TAT, a job continuing through a context change
   (until then the context change cancels and the construction is
   started again).
+- The bound's home (2026-10-05, from the review of steps 1 and 2): the
+  value lives on `Conversation` as `max_concurrent_construction_jobs`,
+  None for no bound, and MODULE_STRUCTURE §4.1's list of what a
+  `Conversation` holds names it (「赞同你的建议」). The declared imports'
+  sessions are recorded in `import_sessions` with the agent's, by
+  construction, so the ROOT's `sessions` clause names `Minilang_AoA`;
+  SESSION_AND_THEORY §2 says so (「赞同你的建议」).
