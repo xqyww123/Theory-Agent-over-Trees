@@ -403,8 +403,8 @@ isabelle_theory_agent/
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
   std/                 the Python half of the plugin Isabelle_Std (§4.5), one module per node class: theorem.py, Theorem with Proof_Job and Proof_Check (THEOREM.md); statement.py, the statement's schema definitions
-  mcp.py               the tools, recall, the tool boundary that delivers an agent's mailbox
-  mcp_server.py        the Streamable HTTP MCP server; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
+  mcp.py               the tools, recall
+  mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
   tools/*.jsonc        the tools' schemas; edit's $defs filled at start (PLUGIN_SYSTEM §4)
 ```
@@ -1139,10 +1139,12 @@ cancels or drops the jobs when the node is deleted or amended (§4.2).
 
 ### 4.6 `mcp.py`, `mcp_server.py`, `toplevel.py`
 
-`mcp.py` implements the tools of MCP_SPECIFICATION §1 and the tool
-boundary that delivers an agent's mailbox: every tool result is the
-body's text, then the caller's undelivered messages, then the trailer the
-body asked for (CONSTRUCT_INTERACTION §5); the future `query` tool
+`mcp.py` implements the tools of MCP_SPECIFICATION §1. A tool's body
+returns its text, alone or with the trailer it asks for (`With_Trailer`),
+and the tool boundary in `mcp_server.py` (below) makes the result: the
+body's text, then the caller's undelivered messages — `jobs.deliver`
+takes the mailbox — then the trailer, made once the messages are taken
+(CONSTRUCT_INTERACTION §5); the future `query` tool
 (MCP_SPECIFICATION §1.1) lands here too. `tools(forest, loaded)` builds all
 nine tools — `edit`, `move`, `delete` (TOOL_SCHEMAS.md), `recall`
 (RECALL.md §3), `evaluate_to`, and `construct`, `cancel_construct`,

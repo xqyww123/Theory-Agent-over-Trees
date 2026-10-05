@@ -1,15 +1,17 @@
-"""The agents (CONSTRUCT_INTERACTION §4) and the evaluation jobs' wire (§3.3):
-the process's table from a job's id to the job, and the remote procedure
-`job_finished` the ML side reports a job's end through; later the jobs of
-both kinds, the messages and the mailboxes (§3), as MODULE_STRUCTURE §4
-lists them.
+"""The agents (CONSTRUCT_INTERACTION §4), the messages and the mailboxes
+(§3.4), and the evaluation jobs' wire (§3.3): the process's table from a
+job's id to the job, and the remote procedure `job_finished` the ML side
+reports a job's end through; later the jobs of both kinds (§3), as
+MODULE_STRUCTURE §4 lists them.
 """
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
@@ -17,6 +19,7 @@ from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 from .exceptions import TAT_InternalError
 
 if TYPE_CHECKING:
+    from .log import Log
     from .model import Conversation
 
 Key = tuple[int, str | None]            # a seen set's key: a node's identity and what of it was shown
@@ -30,16 +33,19 @@ class Agent:
     conversation.  `seen` is what a class has shown this agent once, under
     keys of the class's choosing (PRINT.md §4); `Conversation.forget`
     removes a key from every agent's, and a compaction clears this one's.
-    `working_calls` counts its TAT tool calls whose bodies are running: the
-    tool boundary holds `working()` around each body, from before it is
-    spawned until it ends, whatever the client did meanwhile
-    (MODULE_STRUCTURE §4.6)."""
+    `mailbox` holds the messages posted to it and not yet delivered
+    (§3.4); a change to it wakes the agent.  `working_calls` counts its TAT
+    tool calls whose bodies are running: the tool boundary holds
+    `working()` around each body, from before it is spawned until it ends,
+    whatever the client did meanwhile (MODULE_STRUCTURE §4.6)."""
 
     def __init__(self, identity: str, main: bool):
         self.identity = identity
         self.main = main
         self.seen: set[Key] = set()
+        self.mailbox: list[Message] = []
         self.working_calls = 0
+        self._woken = asyncio.Event()
 
     @contextmanager
     def working(self) -> Generator[None]:
@@ -49,6 +55,55 @@ class Agent:
             yield
         finally:
             self.working_calls -= 1
+
+    def wake(self) -> None:
+        """A change to the agent's mailbox or its jobs: whoever sleeps on the
+        agent goes on."""
+        self._woken.set()
+
+    async def sleep(self) -> None:
+        """Until the agent is next woken.  A caller tests what it waits for
+        and then sleeps, with no await between the two, so no wake-up is
+        lost."""
+        self._woken.clear()
+        await self._woken.wait()
+
+
+# --- messages (CONSTRUCT_INTERACTION §3.4)
+
+@dataclass(frozen=True)
+class Message:
+    """A message: its recipient, its text, whether it interrupts the
+    recipient's `check_construct`, and optionally what it comes from — an
+    evaluation job, or a construction job's run — and the question it
+    carries."""
+    recipient: Agent
+    text: str
+    interrupts: bool
+    source: Any = None
+    question: Any = None
+
+
+def post(log: Log, message: Message) -> None:
+    """Put a message into its recipient's mailbox, and wake the recipient;
+    anything may post one.  It is delivered with the recipient's next tool
+    result (`deliver`)."""
+    message.recipient.mailbox.append(message)
+    log.job.message_posted(
+        recipient=message.recipient.identity,
+        kind="notification" if message.question is None else "question",
+        source=message.source, interrupts=message.interrupts, text=message.text)
+    message.recipient.wake()
+
+
+def deliver(log: Log, agent: Agent) -> list[str]:
+    """Take the agent's mailbox: the texts its tool result carries after the
+    body's, oldest first.  Called by the tool boundary alone, past its
+    cancellation checkpoint (MODULE_STRUCTURE §4.6)."""
+    messages, agent.mailbox = agent.mailbox, []
+    for _ in messages:
+        log.job.message_delivered(recipient=agent.identity)
+    return [message.text for message in messages]
 
 
 # --- the evaluation jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)

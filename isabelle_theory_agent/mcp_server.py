@@ -45,7 +45,7 @@ from starlette.requests import Request
 from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
-from .jobs import Agent
+from .jobs import Agent, deliver
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
@@ -170,16 +170,31 @@ def _extra(meta: types.RequestParams.Meta | None) -> dict[str, Any]:
     return (meta.model_extra if meta is not None else None) or {}
 
 
-Body = Callable[[Agent, dict[str, Any]], Coroutine[Any, Any, str]]
+# What stands at a call's return, written last on its result: asked for by the
+# body, made by the boundary once the caller's messages are taken; None for nothing.
+Trailer = Callable[[], str | None]
+
+
+@dataclass(frozen=True)
+class With_Trailer:
+    """A body's text together with the trailer it asks for
+    (CONSTRUCT_INTERACTION §5); a body that returns its text alone asks for
+    none, and its result is plain."""
+    text: str
+    trailer: Trailer
+
+
+Body = Callable[[Agent, dict[str, Any]], Coroutine[Any, Any, str | With_Trailer]]
 
 
 @dataclass(frozen=True)
 class Tool:
     """One tool as the server advertises and runs it (`mcp.py` builds
     them): `run` takes the calling agent and the call's arguments and
-    returns the result's text, or raises — a `TAT_Error` for the agent,
-    anything else ending the conversation; `read_only` is advertised as
-    MCP's `readOnlyHint` (MCP_SPECIFICATION §5)."""
+    returns the body's text, alone or with the trailer it asks for, or
+    raises — a `TAT_Error` for the agent, anything else ending the
+    conversation; `read_only` is advertised as MCP's `readOnlyHint`
+    (MCP_SPECIFICATION §5)."""
     name: str
     description: str
     input_schema: JSON_Schema
@@ -822,7 +837,7 @@ class TAT_Server:
         if agent is None:
             result: Result | None = None    # the ending answers
         elif tool is None:
-            result = Result(f"unknown tool `{name}`", True, None)
+            result = Result(f"unknown tool `{name}`", True, None, None)
         else:
             # The body runs as a task of its own, outside the request's
             # cancel scope, and the wait is shielded: neither a client's
@@ -840,34 +855,50 @@ class TAT_Server:
             # answered the client itself, and this call is nobody's to answer
             await anyio.lowlevel.checkpoint()
         except asyncio.CancelledError:
-            log.given_up(tool=name, text=None if result is None else result.text, messages=[],
+            # the mailbox is left as it was, for the caller's next call (CONSTRUCT_INTERACTION §3.4)
+            log.given_up(tool=name, text=None if result is None else result.text,
+                         messages=[] if agent is None else [message.text for message in agent.mailbox],
                          duration=duration)
             raise
-        if result is None:
+        delivered = None if result is None or agent is None else self._delivered(agent, result)
+        if result is None or delivered is None:
             log.while_ending(tool=name)
             return _call_tool_result(stopped(self.ending.ended_by), is_error=True)
-        log.result(tool=name, is_error=result.is_error, text=result.text, messages=[],
-                   trailer=None, class_=result.class_, duration=duration)
-        return _call_tool_result(result.text, result.is_error)
+        messages, trailer = delivered
+        log.result(tool=name, is_error=result.is_error, text=result.text, messages=messages,
+                   trailer=trailer, class_=result.class_, duration=duration)
+        return _call_tool_result(_composed(result.text, messages, trailer), result.is_error)
 
-    def _result_of(self, name: str, body: asyncio.Task[str]) -> Result | None:
-        """What the body did decides (MODULE_STRUCTURE §4.6): its text; a
-        `TAT_Error`, rendered; anything else enters the ending, which
-        answers — None.  The boundary itself failing is a bug like any
-        other."""
+    def _result_of(self, name: str, body: asyncio.Task[With_Trailer]) -> Result | None:
+        """What the body did decides (MODULE_STRUCTURE §4.6): its text, with
+        the trailer it asked for; a `TAT_Error`, rendered; anything else
+        enters the ending, which answers — None.  The boundary itself
+        failing is a bug like any other."""
         try:
             if body.cancelled():            # the ending's, or a cancellation the body let escape
                 self.ending.end(TAT_InternalError(f"the body of `{name}` was cancelled"))
             else:
                 exn = body.exception()
                 if exn is None:
-                    return Result(body.result(), False, None)
+                    return Result(body.result().text, False, None, body.result().trailer)
                 if isinstance(exn, TAT_Error):
-                    return Result(str(exn), True, type(exn).__name__)
+                    return Result(str(exn), True, type(exn).__name__, None)
                 self.ending.end(exn)
         except Exception as bug:
             self.ending.end(bug)
         return None
+
+    def _delivered(self, agent: Agent, result: Result) -> tuple[list[str], str | None] | None:
+        """Past the checkpoint (MODULE_STRUCTURE §4.6): the caller's messages,
+        taken from its mailbox, and the trailer the body asked for, made
+        now, after them.  Either failing is a bug that enters the ending,
+        which answers — None."""
+        try:
+            messages = deliver(self.ending.log, agent)
+            return messages, result.trailer() if result.trailer is not None else None
+        except Exception as bug:
+            self.ending.end(bug)
+            return None
 
 
 class Claude_Code_Server(TAT_Server):
@@ -1212,19 +1243,38 @@ SERVERS: dict[str, type[TAT_Server]] = {cls.name: cls for cls in (Claude_Code_Se
 
 
 class Result(NamedTuple):
-    """A tool call's result as the boundary decides it — what the client is
-    answered and what the `tool.result` record carries: the text, whether
-    it is an error, and the `TAT_Error`'s class when one refused the call."""
+    """What a tool's body came to, as the boundary decides it: the body's
+    text — or the rendered `TAT_Error` — whether it is an error, the
+    `TAT_Error`'s class when one refused the call, and the trailer the
+    body asked for."""
     text: str
     is_error: bool
     class_: str | None
+    trailer: Trailer | None
 
 
-async def _run(tool: Tool, agent: Agent, arguments: dict[str, Any]) -> str:
-    text = await tool.run(agent, arguments)     # a malformed tool fails as its body fails
+async def _run(tool: Tool, agent: Agent, arguments: dict[str, Any]) -> With_Trailer:
+    """The body, its answer brought to one shape: a text alone asks for no
+    trailer."""
+    answer = await tool.run(agent, arguments)   # a malformed tool fails as its body fails
+    text = answer.text if isinstance(answer, With_Trailer) else answer
     if not isinstance(text, str):
         raise TAT_InternalError(
             f"the body of `{tool.name}` returned a {type(text).__name__}, not a text")
+    return answer if isinstance(answer, With_Trailer) else With_Trailer(text, _no_trailer)
+
+
+def _no_trailer() -> None:
+    return None
+
+
+def _composed(text: str, messages: list[str], trailer: str | None) -> str:
+    """A tool result (CONSTRUCT_INTERACTION §5): the body's text, then the
+    caller's messages, then the trailer, each separated from the one before
+    by one blank line; a plain result with no message is the body's text
+    as it is."""
+    for part in (*messages, *([] if trailer is None else [trailer])):
+        text = text.rstrip("\n") + "\n\n" + part
     return text
 
 

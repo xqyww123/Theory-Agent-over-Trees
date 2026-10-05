@@ -15,7 +15,7 @@ from . import edit
 from .exceptions import (
     HoldsNoChildren, MoveBesideItself, ProtectedNode, TAT_Error, TAT_InternalError)
 from .jobs import Agent
-from .mcp_server import Body, Tool
+from .mcp_server import Body, Tool, With_Trailer
 from .model import BRIEFING, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus
 from .plugin import Loaded, check_call, validate_call_schema
 
@@ -99,7 +99,7 @@ def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only
     `edit`'s are `edit.py`'s to check, element by element."""
     validate_call_schema(schema, name)
 
-    async def checked(agent: Agent, arguments: dict[str, Any]) -> str:
+    async def checked(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         check_call(schema, name, arguments)
         return await run(agent, arguments)
     return Tool(name, description, schema, checked, read_only)

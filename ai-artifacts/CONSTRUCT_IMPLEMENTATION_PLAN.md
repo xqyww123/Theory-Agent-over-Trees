@@ -1,11 +1,12 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 6 are committed since
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 7 are committed since
 2026-10-05, with the review of steps 1 and 2 applied (review/DOC_SYNC_LIST.md
-entries 32–38); the review of steps 4 and 5 is in
-review/STEPS_4_5_REVIEW.md, its fixes not yet applied; the rest is not
-implemented.
+entries 32–40); the review of steps 4 and 5 is in
+review/STEPS_4_5_REVIEW.md, its first fixes applied, the second
+compaction check's rebuilding waiting for the owner's ruling; the rest
+is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -100,7 +101,8 @@ fail — the 18 less `test_the_field_checks`, which Phase B's B2 made
 pass; with step 2 in, 418 pass and the same 17 fail; with step 4 in, 434
 pass and 13 fail; with step 5 in, 441 pass and the same 13 fail; with
 step 6 in, 446 pass and the same 13 fail; with the first fixes of
-the review of steps 4 and 5, 453 pass and the same 13 fail.
+the review of steps 4 and 5, 453 pass and the same 13 fail; with step 7
+in, 457 pass and the same 13 fail.
 
 | case | waits for |
 | --- | --- |

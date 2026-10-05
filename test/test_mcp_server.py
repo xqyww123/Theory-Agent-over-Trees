@@ -27,9 +27,10 @@ from harness import client, free_port, text_of
 from isabelle_theory_agent import mcp_server, toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
+from isabelle_theory_agent.jobs import Agent, Message, post
 from isabelle_theory_agent.mcp_server import (
-    AGENTS, DOT_TAT, HOST, Claude_Code_Server, Codex_Server, TAT_Server, Tool, resolver_entry,
-    stopped, stopped_for, toml_string)
+    AGENTS, DOT_TAT, HOST, Claude_Code_Server, Codex_Server, TAT_Server, Tool, With_Trailer,
+    resolver_entry, stopped, stopped_for, toml_string)
 from isabelle_theory_agent.model import CannotUseWorkingDirectory
 from test_toplevel import Recorder, cancelled_by_the_host
 
@@ -859,3 +860,109 @@ def test_a_toml_string_escapes_what_toml_cannot_hold_raw():
     assert all(ord(c) >= 0x20 and ord(c) != 0x7F for c in string)
     assert string == '"a \\"quoted\\" \\\\ path\\u0009with\\u000Anewline, \\u0001 and \\u007F, and ü"'
     assert tomllib.loads(f"k = {string}")["k"] == value
+
+
+# --- the messages on a tool result (CONSTRUCT_INTERACTION §3.4, §5; MODULE_STRUCTURE §4.6) ----
+
+def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_trailer():
+    """CONSTRUCT_INTERACTION §5: every tool result is the body's text, then
+    the caller's undelivered messages, then the trailer the body asked
+    for, each separated from the one before by one blank line — whatever
+    the tool, a rendered `TAT_Error` included; a result with neither is
+    the body's text as it is.  The trailer is made once the mailbox is
+    taken.  `message_posted`, `message_delivered` and `tool.result` say
+    what went where (LOGGING.md §4)."""
+    mailbox_at_the_trailer = []
+
+    async def trailed(agent, arguments):
+        def trailer():
+            mailbox_at_the_trailer.append(list(agent.mailbox))
+            return "the trailer"
+        return With_Trailer("the body\n", trailer)
+
+    async def scenario():
+        bodies = Bodies()
+        tools = [*bodies.tools(), Tool("trailed", "the trailed tool", SCHEMA, trailed, read_only=True)]
+        async with serving(free_port(), tools) as (server, serve), client(server.url) as session:
+            assert text_of(await session.call_tool("echo", {"text": "hi"})) == "echo hi"   # nothing waits: as it is
+            main, log = server.agents["main"], server.ending.log
+            post(log, Message(main, "first message", interrupts=False))
+            post(log, Message(main, "second message\nits second line", interrupts=True, source="a run"))
+            result = await session.call_tool("trailed", {})
+            assert text_of(result).split("\n") == [
+                "the body", "", "first message", "", "second message", "its second line", "", "the trailer"]
+            assert mailbox_at_the_trailer == [[]] and main.mailbox == []
+            assert text_of(await session.call_tool("trailed", {})) == "the body\n\nthe trailer"
+            post(log, Message(main, "third message", interrupts=False))
+            refused = await session.call_tool("refused", {})
+            error = str(NodeNotFound("theory_X", []))
+            assert refused.isError and text_of(refused) == error + "\n\nthird message"
+            assert text_of(await session.call_tool("echo", {"text": "on"})) == "echo on" and not serve.done()
+            results = [r["data"] for r in stand_ins.records("tool") if r["event"] == "result"]
+            assert [(r["text"], r["messages"], r.get("trailer")) for r in results] == [
+                ("echo hi", [], None),
+                ("the body\n", ["first message", "second message\nits second line"], "the trailer"),
+                ("the body\n", [], "the trailer"),
+                (error, ["third message"], None),
+                ("echo on", [], None)]
+            job = stand_ins.records("job")
+            assert [(r["event"], r["data"]) for r in job] == [
+                ("message_posted", {"recipient": "main", "kind": "notification", "interrupts": False,
+                                    "text": "first message"}),
+                ("message_posted", {"recipient": "main", "kind": "notification", "source": "a run",
+                                    "interrupts": True, "text": "second message\nits second line"}),
+                ("message_delivered", {"recipient": "main"}), ("message_delivered", {"recipient": "main"}),
+                ("message_posted", {"recipient": "main", "kind": "notification", "interrupts": False,
+                                    "text": "third message"}),
+                ("message_delivered", {"recipient": "main"})]
+    run(scenario)
+
+
+def test_a_call_given_up_and_the_endings_line_leave_the_mailbox_as_it_was():
+    """CONSTRUCT_INTERACTION §3.4: the handler takes the mailbox only past
+    its checkpoint, so a call its client gave up leaves the messages for
+    the next — `given_up` names what would have gone with it — and the
+    ending's fixed line carries none."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools()) as (server, serve), client(server.url) as session:
+            await session.call_tool("echo", {"text": "hi"})
+            main, log = server.agents["main"], server.ending.log
+            request_id = session._request_id             # the id the next request takes
+            call = asyncio.create_task(session.call_tool("slow", {}))
+            await bodies.began("slow").wait()
+            post(log, Message(main, "waiting", interrupts=False))
+            await session.send_notification(types.ClientNotification(types.CancelledNotification(
+                method="notifications/cancelled",
+                params=types.CancelledNotificationParams(requestId=request_id))))
+            with pytest.raises(McpError, match="Request cancelled"):
+                await call
+            bodies.release.set()
+            assert text_of(await session.call_tool("echo", {"text": "on"})) == "echo on\n\nwaiting"
+            [given_up] = [r["data"] for r in stand_ins.records("tool") if r["event"] == "given_up"]
+            assert (given_up["text"], given_up["messages"]) == ("slow done", ["waiting"])
+            assert [r["event"] for r in stand_ins.records("job")] == ["message_posted", "message_delivered"]
+
+            accepting = hold_accepting(server)
+            post(log, Message(main, "too late", interrupts=False))
+            server.ending.end(RuntimeError("ended"))
+            stopped_line = await session.call_tool("echo", {"text": "after"})
+            assert (text_of(stopped_line), stopped_line.isError) == (INTERNAL, True)
+            assert [message.text for message in main.mailbox] == ["too late"]
+            accepting.set()
+            assert isinstance(await ended(serve), RuntimeError)
+    run(scenario)
+
+
+def test_posting_wakes_the_recipient():
+    """CONSTRUCT_INTERACTION §4: a change to an agent's mailbox wakes whoever
+    sleeps on the agent."""
+    async def scenario():
+        agent = Agent("main", True)
+        sleeper = asyncio.create_task(agent.sleep())
+        await asyncio.sleep(0.05)
+        assert not sleeper.done()
+        post(stand_ins.log(), Message(agent, "a message", interrupts=True))
+        await asyncio.wait_for(sleeper, 1)
+        assert [message.text for message in agent.mailbox] == ["a message"]
+    run(scenario)

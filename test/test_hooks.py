@@ -29,6 +29,7 @@ from harness import (
     CLIENT_INFO, claude_code, client, compact_boundary, free_port, hook_url, post_hook, text_of,
     transcript, transcript_line)
 from isabelle_theory_agent.exceptions import TAT_InternalError
+from isabelle_theory_agent.jobs import Message, post
 from isabelle_theory_agent.mcp_server import (
     AGENTS, SANDBOX_STATE, SAVES_NO_TRANSCRIPT, TOOL_PREFIX, Claude_Code_Server, ClientRefused,
     Codex_Server, Tool, boundary_before_announcement, post_compact_without_boundary,
@@ -865,4 +866,28 @@ def test_codex_compaction_hooks_clear_the_named_threads_set_and_are_answered_not
                 ("019a7c3e-0000-7a12-b4f0-6e1d2c3b4a59", {"learned_from": "pre_compact", "seen_cleared": 0})]
             assert [judged for judged, _ in answers()[2:]] == [
                 "compaction"] * 4 + ["session_start"] * 6 + ["compaction"]
+    run(scenario)
+
+
+def test_a_message_reaches_its_recipient_alone(transcript_path):
+    """CONSTRUCT_INTERACTION §3.4: a message is delivered with its
+    recipient's next tool result and on no other agent's."""
+    async def scenario():
+        bodies = Bodies()
+        subagent_file(transcript_path, CC_SUBAGENT)
+        async with serving(free_port(), bodies.tools()) as (server, serve), plain_client(server.url) as session:
+            url = hook_url(server.url)
+
+            async def call(tool_use_id: str, agent_id: str | None) -> str:
+                await announce(url, tool_use_id, transcript_path, agent_id)
+                return text_of(await session.call_tool("echo", {"text": "a"},
+                                                       meta={"claudecode/toolUseId": tool_use_id}))
+            assert await call("toolu_m1", None) == "echo a" and await call("toolu_s1", CC_SUBAGENT) == "echo a"
+            post(server.ending.log, Message(server.agents[CC_SUBAGENT], "for the subagent", interrupts=False))
+            assert await call("toolu_m2", None) == "echo a"
+            assert await call("toolu_s2", CC_SUBAGENT) == "echo a\n\nfor the subagent"
+            assert await call("toolu_s3", CC_SUBAGENT) == "echo a"
+            [delivered] = [r for r in stand_ins.records("job") if r["event"] == "message_delivered"]
+            assert (delivered["agent"], delivered["call"], delivered["data"]) == (
+                CC_SUBAGENT, "toolu_s2", {"recipient": CC_SUBAGENT})
     run(scenario)
