@@ -177,7 +177,7 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   an interrupt in an exception that holds both. The procedure
   answers at once; a task whose report cannot be delivered logs it — the
   `isabelle` record `report_undelivered` (LOGGING.md §4) — and ends. A
-  report left unanswered for a minute is beyond repair, the Python side
+  report left unanswered for five minutes is beyond repair, the Python side
   answering no more: the task logs it the same way and ends the process
   as a disaster — the protocol message `TAT.finished` with code 2 and
   the record's message, which the launcher prints (§2.6). A

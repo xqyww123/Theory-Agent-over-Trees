@@ -276,7 +276,7 @@ own, and runs the report after the work with interrupts deferred, so a
 late interrupt cannot leave a pooled connection taken. The callback
 `cancel(ids)` looks the ids up in that table and cancels the futures;
 it goes through the existing callback table, the remote procedure
-through Isabelle_RPC's registry, declared with a timeout of one minute —
+through Isabelle_RPC's registry, declared with a timeout of five minutes —
 it answers at once, so a report unanswered that long means the Python
 side answers no more, and the task ends the process as a disaster
 (MODULE_STRUCTURE §2.4) — on the wire

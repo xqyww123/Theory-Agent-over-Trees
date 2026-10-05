@@ -595,7 +595,7 @@ fun pack_failure Passed = packList packString ["ok"]
 
 (*the remote procedure, through Isabelle_RPC's registry; it answers at once,
   so one left unanswered this long means the Python side answers no more*)
-val report_timeout = Time.fromSeconds 60
+val report_timeout = Time.fromSeconds 300
 val finished : (int * failure, unit) Remote_Procedure_Calling.command =
   {name = "job_finished", arg_schema = packPair (packInt, pack_failure),
    ret_schema = MessagePackBinIO.Unpack.unpackUnit, callback = [], timeout = SOME report_timeout}
