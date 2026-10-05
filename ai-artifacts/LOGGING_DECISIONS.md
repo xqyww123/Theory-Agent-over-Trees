@@ -1946,6 +1946,53 @@ The owner (2026-10-05): (1) 「问题不大，不用管，可以相信用户不�
 — the rule stays as CLIENT_HOOKS §5 has it; (2) 「赞同」 — the setting is
 in pyproject.toml.
 
+Committed 2026-10-05 as `94e721b` (「提交」): this session's files, one
+hunk of MODULE_STRUCTURE.md staged alone (`git apply --cached` of that
+hunk), EXCEPTIONS.md's hunk with the jobs session's three lines named.
+The other hunks left in MODULE_STRUCTURE.md and ARCHITECTURE.md are the
+jobs session's (the `Isabelle_Std` plugin, the bound, the declared
+imports), not the compilation session's as the author had assumed — the
+compilation session has nothing uncommitted (its work is in `dfefca1`,
+`ee9e4f5`, `96d1bb4`, `b3bb2d2`).
+Of the logging plan, what remains: step 7's review once the jobs session's
+`fork_job` is written; step 13, the one live run, with the jobs session,
+when the owner says.
+
+The jobs session's fixes after its own review (2026-10-05, in the tree,
+awaiting the owner's commit), where they touch this session's work:
+`_refuse`'s keyword is `meta`; `_check_sandbox` is called as before, right
+after `_check_client`, before `current_call` is set, so `client_refused`
+carries `_meta` in its data and no `call` field, like `client_connected`;
+the matchers and the TOML's server table are written from `TOOL_PREFIX`
+and `SERVER_NAME`, the files byte-identical; the sandbox test posts
+through `post_hook` (the harness's `announce` renamed) and its Codex
+`_meta` carries `threadId`/`sessionId`, a Codex agent being named by the
+call's `threadId`; `/hook` passes `judged=None` on 503 and 500. Committed
+by it as `9dc8f9b`. Its step 4 next: `/on-compaction` with `CLIENTS`,
+`envelope`, `unknown_client`, `mcp.on_compaction` and the test
+`test_on_compaction_answers_the_briefing_in_the_clients_shape` go, and
+`TAT_new`'s hook files in tat.scala (a jar rebuild — it says when, so no
+`isabelle TAT_mcp` runs meanwhile); it tells this session before opening
+mcp_server.py. Done 2026-10-05 (in the tree, uncommitted): the jar
+rebuilt without `TAT_new`'s hook files, `no_build` restored;
+`TAT_Server.__init__(ending, port, tools, agents)`, `Body(agent,
+arguments)`; the configure tests' server constructions pass `{}` as the
+agents; the three compaction cases and their imports gone with the path.
+Committed by it as `0319ba4`. Its step 5 next (compaction events, the
+`agent.compaction` record — the first writer of that event); it tells
+this session before opening mcp_server.py again.
+
+**State for a resumption of this session** (2026-10-05, context near its
+limit): everything of the logging plan that this session can do is
+committed — last `94e721b`; the working tree holds only this record's
+tail uncommitted. Open, neither startable here: step 7's review of the
+jobs session's `fork_job` once written; step 13, the one live run with
+the jobs session, when the owner says. The standing rules of the session
+are at the top of this record and in CLAUDE.md; the sessions' refs after
+the restart: jobs [9ffa3c] at `uds:/run/user/1002/cc-socks/5611.sock`,
+compilation [ebfd21] at `uds:/run/user/1002/cc-socks/7431.sock`, this
+one [b341d7].
+
 **`ending` is always `error`** (owner, 2026-10-04: 「连接断开的日志级别要从
 info 改成 error」, said to the compilation session, which relayed it; put
 to the owner here with the exact edit and confirmed, 「批准」): the
