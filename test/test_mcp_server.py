@@ -898,7 +898,10 @@ def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_
             error = str(NodeNotFound("theory_X", []))
             assert refused.isError and text_of(refused) == error + "\n\nthird message"
             assert text_of(await session.call_tool("echo", {"text": "on"})) == "echo on" and not serve.done()
-            results = [r["data"] for r in stand_ins.records("tool") if r["event"] == "result"]
+            post(log, Message(main, "a question", interrupts=True, question=object()))
+            unknown = await session.call_tool("no_such_tool", {})      # whatever the tool
+            assert unknown.isError and text_of(unknown) == "unknown tool `no_such_tool`\n\na question"
+            results = [r["data"] for r in stand_ins.records("tool") if r["event"] == "result"][:5]
             assert [(r["text"], r["messages"], r.get("trailer")) for r in results] == [
                 ("echo hi", [], None),
                 ("the body\n", ["first message", "second message\nits second line"], "the trailer"),
@@ -906,7 +909,8 @@ def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_
                 (error, ["third message"], None),
                 ("echo on", [], None)]
             job = stand_ins.records("job")
-            assert [(r["event"], r["data"]) for r in job] == [
+            assert (job[-2]["event"], job[-2]["data"]["kind"]) == ("message_posted", "question")
+            assert [(r["event"], r["data"]) for r in job[:-2]] == [
                 ("message_posted", {"recipient": "main", "kind": "notification", "interrupts": False,
                                     "text": "first message"}),
                 ("message_posted", {"recipient": "main", "kind": "notification", "source": "a run",
@@ -925,32 +929,36 @@ def test_a_call_given_up_and_the_endings_line_leave_the_mailbox_as_it_was():
     ending's fixed line carries none."""
     async def scenario():
         bodies = Bodies()
-        async with serving(free_port(), bodies.tools()) as (server, serve), client(server.url) as session:
-            await session.call_tool("echo", {"text": "hi"})
-            main, log = server.agents["main"], server.ending.log
-            request_id = session._request_id             # the id the next request takes
-            call = asyncio.create_task(session.call_tool("slow", {}))
-            await bodies.began("slow").wait()
-            post(log, Message(main, "waiting", interrupts=False))
-            await session.send_notification(types.ClientNotification(types.CancelledNotification(
-                method="notifications/cancelled",
-                params=types.CancelledNotificationParams(requestId=request_id))))
-            with pytest.raises(McpError, match="Request cancelled"):
-                await call
-            bodies.release.set()
-            assert text_of(await session.call_tool("echo", {"text": "on"})) == "echo on\n\nwaiting"
-            [given_up] = [r["data"] for r in stand_ins.records("tool") if r["event"] == "given_up"]
-            assert (given_up["text"], given_up["messages"]) == ("slow done", ["waiting"])
-            assert [r["event"] for r in stand_ins.records("job")] == ["message_posted", "message_delivered"]
+        async with serving(free_port(), bodies.tools()) as (server, serve):
+            accepting = hold_accepting(server)           # before anything is awaited: the main loop is not yet run
+            async with client(server.url) as session:
+                await given_up_then_ended(bodies, server, serve, session, accepting)
 
-            accepting = hold_accepting(server)
-            post(log, Message(main, "too late", interrupts=False))
-            server.ending.end(RuntimeError("ended"))
-            stopped_line = await session.call_tool("echo", {"text": "after"})
-            assert (text_of(stopped_line), stopped_line.isError) == (INTERNAL, True)
-            assert [message.text for message in main.mailbox] == ["too late"]
-            accepting.set()
-            assert isinstance(await ended(serve), RuntimeError)
+    async def given_up_then_ended(bodies, server, serve, session, accepting):
+        await session.call_tool("echo", {"text": "hi"})
+        main, log = server.agents["main"], server.ending.log
+        request_id = session._request_id             # the id the next request takes
+        call = asyncio.create_task(session.call_tool("slow", {}))
+        await bodies.began("slow").wait()
+        post(log, Message(main, "waiting", interrupts=False))
+        await session.send_notification(types.ClientNotification(types.CancelledNotification(
+            method="notifications/cancelled",
+            params=types.CancelledNotificationParams(requestId=request_id))))
+        with pytest.raises(McpError, match="Request cancelled"):
+            await call
+        bodies.release.set()
+        assert text_of(await session.call_tool("echo", {"text": "on"})) == "echo on\n\nwaiting"
+        [given_up] = [r["data"] for r in stand_ins.records("tool") if r["event"] == "given_up"]
+        assert (given_up["text"], given_up["messages"]) == ("slow done", ["waiting"])
+        assert [r["event"] for r in stand_ins.records("job")] == ["message_posted", "message_delivered"]
+
+        post(log, Message(main, "too late", interrupts=False))
+        server.ending.end(RuntimeError("ended"))
+        stopped_line = await session.call_tool("echo", {"text": "after"})
+        assert (text_of(stopped_line), stopped_line.isError) == (INTERNAL, True)
+        assert [message.text for message in main.mailbox] == ["too late"]
+        accepting.set()
+        assert isinstance(await ended(serve), RuntimeError)
     run(scenario)
 
 
@@ -959,10 +967,51 @@ def test_posting_wakes_the_recipient():
     sleeps on the agent."""
     async def scenario():
         agent = Agent("main", True)
-        sleeper = asyncio.create_task(agent.sleep())
+        post(stand_ins.log(), Message(agent, "before the sleeper began", interrupts=False))
+        sleeper = asyncio.create_task(agent.sleep_until(lambda: len(agent.mailbox) == 2))
         await asyncio.sleep(0.05)
         assert not sleeper.done()
         post(stand_ins.log(), Message(agent, "a message", interrupts=True))
         await asyncio.wait_for(sleeper, 1)
-        assert [message.text for message in agent.mailbox] == ["a message"]
+        await asyncio.wait_for(agent.sleep_until(lambda: True), 1)      # what holds already: no sleep
+        assert [message.text for message in agent.mailbox] == ["before the sleeper began", "a message"]
+    run(scenario)
+
+
+def test_an_empty_part_of_a_result_is_left_out():
+    """CONSTRUCT_INTERACTION §5: the parts are separated by one blank line —
+    a body that says nothing, as `check_construct`'s, opens with no blank
+    line, and an empty message or trailer adds none."""
+    composed = mcp_server._composed
+    assert composed("", ["a message"], "the trailer") == "a message\n\nthe trailer"
+    assert composed("", [], "the trailer") == "the trailer"
+    assert composed("the body\n", ["", "a message"], "") == "the body\n\na message"
+    assert composed("the body\n", [], None) == "the body\n" and composed("", [], None) == ""
+    assert composed("the body", ["a message\n"], "the trailer") == "the body\n\na message\n\nthe trailer"
+
+
+def raising_trailer():
+    raise RuntimeError("trailer-bug")
+
+
+@pytest.mark.parametrize("trailer, exception, text", [
+    (lambda: 7, TAT_InternalError, "a trailer is a int"), (raising_trailer, RuntimeError, "trailer-bug")],
+    ids=["no text", "raises"])
+def test_a_trailer_that_is_no_text_or_raises_is_a_bug_that_ends_the_conversation(trailer, exception, text):
+    """MODULE_STRUCTURE §4.6: the boundary renders a text and nothing else —
+    a trailer that is none, or that raises, is a bug like a body's: the
+    call is answered the ending's line and the conversation ends."""
+    async def wrong(agent, arguments):
+        return With_Trailer("the body", trailer)
+
+    async def scenario():
+        tool = Tool("wrong", "the wrong tool", SCHEMA, wrong, read_only=True)
+        async with serving(free_port(), [tool]) as (server, serve):
+            accepting = hold_accepting(server)
+            async with client(server.url) as session:
+                result = await session.call_tool("wrong", {})
+                assert (text_of(result), result.isError) == (INTERNAL, True)
+                accepting.set()
+                exn = await ended(serve)
+                assert isinstance(exn, exception) and text in str(exn)
     run(scenario)

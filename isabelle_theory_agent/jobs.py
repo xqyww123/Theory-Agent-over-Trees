@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -61,12 +61,13 @@ class Agent:
         agent goes on."""
         self._woken.set()
 
-    async def sleep(self) -> None:
-        """Until the agent is next woken.  A caller tests what it waits for
-        and then sleeps, with no await between the two, so no wake-up is
-        lost."""
-        self._woken.clear()
-        await self._woken.wait()
+    async def sleep_until(self, holds: Callable[[], bool]) -> None:
+        """Until `holds()`, tested now and after every wake-up — with no
+        await between the test and the sleep, so no wake-up is lost however
+        this is called."""
+        while not holds():
+            self._woken.clear()
+            await self._woken.wait()
 
 
 # --- messages (CONSTRUCT_INTERACTION §3.4)
@@ -96,14 +97,20 @@ def post(log: Log, message: Message) -> None:
     message.recipient.wake()
 
 
+def waiting(agent: Agent) -> list[str]:
+    """The texts the agent's mailbox holds, oldest first; they stay there."""
+    return [message.text for message in agent.mailbox]
+
+
 def deliver(log: Log, agent: Agent) -> list[str]:
     """Take the agent's mailbox: the texts its tool result carries after the
-    body's, oldest first.  Called by the tool boundary alone, past its
-    cancellation checkpoint (MODULE_STRUCTURE §4.6)."""
-    messages, agent.mailbox = agent.mailbox, []
-    for _ in messages:
+    body's.  Called by the tool boundary alone, past its cancellation
+    checkpoint (MODULE_STRUCTURE §4.6)."""
+    texts = waiting(agent)
+    agent.mailbox = []
+    for _ in texts:
         log.job.message_delivered(recipient=agent.identity)
-    return [message.text for message in messages]
+    return texts
 
 
 # --- the evaluation jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)
@@ -148,10 +155,11 @@ async def job_finished(arg: tuple[int, list[Any]], connection: Connection) -> No
     report carrying a `Bug` ends the conversation of the job the table
     holds, whatever became of the job; any other is the job's to take, and
     whatever its body raises ends the conversation too.  A report for an
-    id the table no longer holds is nobody's."""
+    id the table no longer holds is nobody's, and a conversation that has
+    ended hears none."""
     id, failure = arg
     job = _evaluation_jobs.pop(id, None)
-    if job is None:
+    if job is None or job.conversation.ending.entered:      # nobody's, or a conversation that ended
         return
     try:
         match failure:

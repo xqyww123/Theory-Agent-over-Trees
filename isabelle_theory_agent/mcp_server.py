@@ -45,7 +45,7 @@ from starlette.requests import Request
 from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
-from .jobs import Agent, deliver
+from .jobs import Agent, deliver, waiting
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
@@ -857,7 +857,7 @@ class TAT_Server:
         except asyncio.CancelledError:
             # the mailbox is left as it was, for the caller's next call (CONSTRUCT_INTERACTION §3.4)
             log.given_up(tool=name, text=None if result is None else result.text,
-                         messages=[] if agent is None else [message.text for message in agent.mailbox],
+                         messages=[] if agent is None else waiting(agent),
                          duration=duration)
             raise
         delivered = None if result is None or agent is None else self._delivered(agent, result)
@@ -869,7 +869,7 @@ class TAT_Server:
                    trailer=trailer, class_=result.class_, duration=duration)
         return _call_tool_result(_composed(result.text, messages, trailer), result.is_error)
 
-    def _result_of(self, name: str, body: asyncio.Task[With_Trailer]) -> Result | None:
+    def _result_of(self, name: str, body: asyncio.Task[tuple[str, Trailer | None]]) -> Result | None:
         """What the body did decides (MODULE_STRUCTURE §4.6): its text, with
         the trailer it asked for; a `TAT_Error`, rendered; anything else
         enters the ending, which answers — None.  The boundary itself
@@ -880,7 +880,8 @@ class TAT_Server:
             else:
                 exn = body.exception()
                 if exn is None:
-                    return Result(body.result().text, False, None, body.result().trailer)
+                    text, trailer = body.result()
+                    return Result(text, False, None, trailer)
                 if isinstance(exn, TAT_Error):
                     return Result(str(exn), True, type(exn).__name__, None)
                 self.ending.end(exn)
@@ -895,7 +896,10 @@ class TAT_Server:
         which answers — None."""
         try:
             messages = deliver(self.ending.log, agent)
-            return messages, result.trailer() if result.trailer is not None else None
+            trailer = result.trailer() if result.trailer is not None else None
+            if trailer is not None and not isinstance(trailer, str):
+                raise TAT_InternalError(f"a trailer is a {type(trailer).__name__}, not a text")
+            return messages, trailer
         except Exception as bug:
             self.ending.end(bug)
             return None
@@ -1253,28 +1257,24 @@ class Result(NamedTuple):
     trailer: Trailer | None
 
 
-async def _run(tool: Tool, agent: Agent, arguments: dict[str, Any]) -> With_Trailer:
-    """The body, its answer brought to one shape: a text alone asks for no
-    trailer."""
+async def _run(tool: Tool, agent: Agent, arguments: dict[str, Any]) -> tuple[str, Trailer | None]:
+    """The body: its text, and the trailer it asks for, None for a text alone."""
     answer = await tool.run(agent, arguments)   # a malformed tool fails as its body fails
-    text = answer.text if isinstance(answer, With_Trailer) else answer
+    text, trailer = (answer.text, answer.trailer) if isinstance(answer, With_Trailer) else (answer, None)
     if not isinstance(text, str):
         raise TAT_InternalError(
             f"the body of `{tool.name}` returned a {type(text).__name__}, not a text")
-    return answer if isinstance(answer, With_Trailer) else With_Trailer(text, _no_trailer)
-
-
-def _no_trailer() -> None:
-    return None
+    return text, trailer
 
 
 def _composed(text: str, messages: list[str], trailer: str | None) -> str:
     """A tool result (CONSTRUCT_INTERACTION §5): the body's text, then the
     caller's messages, then the trailer, each separated from the one before
-    by one blank line; a plain result with no message is the body's text
-    as it is."""
+    by one blank line; a part that is empty is left out, and a plain result
+    with no message is the body's text as it is."""
     for part in (*messages, *([] if trailer is None else [trailer])):
-        text = text.rstrip("\n") + "\n\n" + part
+        if part:
+            text = text.rstrip("\n") + "\n\n" + part if text else part
     return text
 
 

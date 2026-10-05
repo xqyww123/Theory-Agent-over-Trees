@@ -308,6 +308,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
             "pass" => ()
           | "fail" => error "tat-job-error"
           | "bug" => raise TAT_Framework.Bug "tat-job-bug"
+          | "interrupt" => Isabelle_Thread.raise_interrupt ()
           | "wait" =>
               let val file = Path.explode path in
                 while not (File.exists file) do OS.Process.sleep (Time.fromMilliseconds 50)

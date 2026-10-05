@@ -166,15 +166,21 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   holds for all three — the `Bug`'s
   message, which the task also logs as the `isabelle` record `bug` and
   which ends the conversation (CONSTRUCT_INTERACTION §3.3); on the wire
-  `["ok"]`, `["messages", [...]]` or `["bug", <message>]`. A work that
-  is interrupted — its future cancelled by `TAT.job_cancel` or
-  `TAT.reset` — reports nothing: the Python side cancels only a job it
-  has dropped, and a reset ends the conversation that would hear. The test is the
+  `["ok"]`, `["messages", [...]]` or `["bug", <message>]`. A work TAT
+  cancelled — its future cancelled by `TAT.job_cancel` or `TAT.reset` —
+  reports nothing: the Python side cancels only a job it has dropped,
+  and a reset ends the conversation that would hear. A work interrupted
+  by anything else is reported as a `Bug`, since Python still waits for
+  its job. The test is the
   framework's `bug_message : exn -> string option`, the first `Bug` found
   bare, in a `Par_Exn` or in an `Exn.EXCEPTIONS`, a `Bug` counting before
   an interrupt in an exception that holds both. The procedure
   answers at once; a task whose report cannot be delivered logs it — the
   `isabelle` record `report_undelivered` (LOGGING.md §4) — and ends. A
+  report left unanswered for a minute is beyond repair, the Python side
+  answering no more: the task logs it the same way and ends the process
+  as a disaster — the protocol message `TAT.finished` with code 2 and
+  the record's message, which the launcher prints (§2.6). A
   task's records go to the Isabelle side's log that was current at its
   fork (LOGGING.md §5). Its
   counterpart is the callback `TAT.job_cancel(ids)` (§2.6),

@@ -23,6 +23,8 @@ sig
                                       (*the first Bug in an exception: bare, in a
                                         Par_Exn or in an Exn.EXCEPTIONS; found before
                                         any interrupt the exception holds beside it*)
+  val interrupted : exn -> bool       (*an interrupt of either kind: bare, in a Par_Exn
+                                        or in an Exn.EXCEPTIONS*)
 
   (*** State slots (§2.1) ***)
   type slot = {
@@ -103,6 +105,16 @@ fun bug_message (Bug message) = SOME message
       (case Par_Exn.dest exn of
         SOME exns => get_first bug_message exns
       | NONE => NONE)
+
+(*An interrupt of either kind -- bare, or hidden in the Par_Exn a parallel
+  load releases (Par_Exn keeps a breakdown, dropping only a proper interrupt)
+  or in an Exn.EXCEPTIONS.  One test for `operation` and fork_job.*)
+fun interrupted (Exn.EXCEPTIONS exns) = exists interrupted exns
+  | interrupted exn =
+      Exn.is_interrupt exn orelse
+      (case Par_Exn.dest exn of
+        SOME exns => exists interrupted exns
+      | NONE => false)
 
 (*** The log (docs/LOGGING.md §5) ***)
 
@@ -557,14 +569,22 @@ fun begin_theory theories (context as {session_name, master_dir}) (header : Thy_
   node's `end` already; its position lives in the node's text, not here.*)
 fun end_theory theories st = Theories.put theories (Toplevel.end_theory Position.none st)
 
+(*What ends the launcher (§2.6, §5): the protocol message TAT.finished, a
+  code and messages in build_session_finished's shape; it takes the first.*)
+fun tell_finished (answer : int * string list) =
+  answer
+  |> let open XML.Encode in pair int (list string) end
+  |> single
+  |> Output.protocol_message [Markup.function "TAT.finished"]
+
 (*** Evaluation jobs (§2.4; docs/CONSTRUCT_INTERACTION.md §3.3) ***)
 
 structure Jobs = struct
 
 (*What a job's work came to, as Python's job_finished is told it: on the wire
-  ["ok"], ["messages", [...]] or ["bug", <message>].  A work that was
-  interrupted reports nothing: the Python side cancels only a job it has
-  dropped, and TAT.reset ends the conversation that would hear.*)
+  ["ok"], ["messages", [...]] or ["bug", <message>].  A work TAT cancelled
+  reports nothing: the Python side cancels only a job it has dropped, and
+  TAT.reset ends the conversation that would hear.*)
 datatype failure = Passed | Messages of string list | Bug_Raised of string
 
 local open MessagePackBinIO.Pack in
@@ -573,10 +593,12 @@ fun pack_failure Passed = packList packString ["ok"]
   | pack_failure (Messages messages) = packPair (packString, packList packString) ("messages", messages)
   | pack_failure (Bug_Raised message) = packPair (packString, packString) ("bug", message)
 
-(*the remote procedure, through Isabelle_RPC's registry; it answers at once*)
+(*the remote procedure, through Isabelle_RPC's registry; it answers at once,
+  so one left unanswered this long means the Python side answers no more*)
+val report_timeout = Time.fromSeconds 60
 val finished : (int * failure, unit) Remote_Procedure_Calling.command =
   {name = "job_finished", arg_schema = packPair (packInt, pack_failure),
-   ret_schema = MessagePackBinIO.Unpack.unpackUnit, callback = [], timeout = NONE}
+   ret_schema = MessagePackBinIO.Unpack.unpackUnit, callback = [], timeout = SOME report_timeout}
 
 end
 
@@ -586,14 +608,14 @@ fun json_of_failure Passed = Log.Array [Log.String "ok"]
       Log.Array [Log.String "messages", Log.Array (map Log.String messages)]
   | json_of_failure (Bug_Raised message) = Log.Array [Log.String "bug", Log.String message]
 
-(*the exception a work raised, as `operation` reads one (TAT_Common_Nodes.ML):
+(*the exception a work raised, read as `operation` reads one (TAT_Common_Nodes.ML):
   a Bug before anything else, an interrupt as no failure at all, and an
   exception rendering to no message -- which would read as success -- a bug*)
 fun failure_of exn =
   (case bug_message exn of
     SOME message => SOME (Bug_Raised message)
   | NONE =>
-      if Exn.is_interrupt exn then NONE
+      if interrupted exn then NONE
       else
         (case map (#2 o #1) (Runtime.exn_messages exn) of
           [] => SOME (Bug_Raised "fork_job: an exception with no message")
@@ -601,9 +623,10 @@ fun failure_of exn =
 
 (*A job from its fork to its end.  A task cancelled before it began never
   runs -- Future skips its body -- so its end is the canceller's to record:
-  the phase says who writes job_ended, exactly once per job_forked.  The log
-  is the one current at the fork (LOGGING.md §5).*)
-datatype phase = Pending | Running | Ended
+  the phase says who writes job_ended, exactly once per job_forked, and
+  whether an interrupt of the work was TAT's own cancel.  The log is the one
+  current at the fork (LOGGING.md §5).*)
+datatype phase = Pending | Running | Cancelled | Ended
 type job = {future : unit future, phase : phase Synchronized.var, log : Log.T}
 type T = job Inttab.table Synchronized.var
 
@@ -616,7 +639,9 @@ fun ended (log : Log.T) id failure duration =
       [("duration", Log.seconds duration), ("cancelled", Log.Bool (is_none failure))]}
 
 (*the report, made with interrupts deferred by its caller: one that cannot be
-  delivered is recorded, and the task ends*)
+  delivered is recorded, and the task ends; one the Python side left
+  unanswered is beyond repair, and ends the process as a disaster -- the
+  launcher prints the record's message and exits 2*)
 fun report (log : Log.T) id failure =
   (case Exn.capture_body (fn () => Remote_Procedure_Calling.call_command finished (id, failure)) of
     Exn.Res () => ()
@@ -624,21 +649,29 @@ fun report (log : Log.T) id failure =
       if Exn.is_interrupt exn then Exn.reraise exn
       else
         let
+          val unanswered = (case exn of Remote_Procedure_Calling.Read_Timeout => true | _ => false)
           val reason =
             (case exn of
               Remote_Procedure_Calling.Remote_Calling_Failure {message, ...} => message
-            | _ => Runtime.exn_message exn)
-        in
-          Log.record log {event = "report_undelivered", level = "warning",
-            data = [("id", Log.Int id), ("failure", json_of_failure failure),
-                    ("message", Log.String ("The result of evaluation job " ^ string_of_int id ^
-                      " could not be reported to the Python side: " ^ reason))]}
-        end)
+            | _ =>
+                if unanswered
+                then "it did not answer within " ^
+                  string_of_int (Time.toSeconds report_timeout) ^ " seconds"
+                else Runtime.exn_message exn)
+          val message =
+            "The result of evaluation job " ^ string_of_int id ^
+            " could not be reported to the Python side: " ^ reason
+          val _ =
+            Log.record log {event = "report_undelivered", level = "warning",
+              data = [("id", Log.Int id), ("failure", json_of_failure failure),
+                      ("message", Log.String message)]}
+        in if unanswered then tell_finished (2, [message]) else () end)
 
 (*§2.4's fork_job: the work as a Future task of a group of its own, the
   future kept under the id; only the work itself can be interrupted -- what
-  follows it, the report included, runs with interrupts deferred, so a late
-  interrupt cannot leave a pooled connection taken.*)
+  follows it, the report included, runs with interrupts deferred, so a work
+  that ended is always reported.  The table changes with the fork in one
+  uninterruptible step: no task runs that the table does not hold.*)
 fun fork (jobs : T) {id, work} =
   let
     val log = Log.get_current ()
@@ -649,9 +682,18 @@ fun fork (jobs : T) {id, work} =
           let
             val start = Time.now ()
             val result = Exn.capture_body (fn () => run work ())
-            val _ = Synchronized.change phase (K Ended)
+            val cancelled = Synchronized.change_result phase (fn p => (p = Cancelled, Ended))
             val _ = Synchronized.change jobs (Inttab.delete_safe id)
-            val failure = (case result of Exn.Res () => SOME Passed | Exn.Exn exn => failure_of exn)
+            (*an interrupt nobody of TAT sent leaves a job Python still waits for: a bug*)
+            val failure =
+              (case result of
+                Exn.Res () => SOME Passed
+              | Exn.Exn exn =>
+                  (case failure_of exn of
+                    NONE =>
+                      if cancelled then NONE
+                      else SOME (Bug_Raised "fork_job: the work was interrupted, and TAT had not cancelled it")
+                  | failure => failure))
             val _ = ended log id failure (Time.now () - start)
             val _ =
               (case failure of
@@ -662,38 +704,42 @@ fun fork (jobs : T) {id, work} =
           in Option.app (report log id) failure end
         else ())
   in
-    Synchronized.change jobs (fn tab =>
-      if Inttab.defined tab id
-      then raise Bug ("Evaluation job " ^ string_of_int id ^ " forked twice")
-      else
-        let
-          val _ = Log.record log {event = "job_forked", level = "info", data = [("id", Log.Int id)]}
-          val params =
-            {name = "TAT.job", group = SOME (Future.new_group NONE), deps = [], pri = 0,
-             interrupts = true}
-          val future = singleton (Future.forks params) task
-        in Inttab.update (id, {future = future, phase = phase, log = log}) tab end)
+    Thread_Attributes.uninterruptible_body (fn _ =>
+      Synchronized.change jobs (fn tab =>
+        if Inttab.defined tab id
+        then raise Bug ("Evaluation job " ^ string_of_int id ^ " forked twice")
+        else
+          let
+            val _ = Log.record log {event = "job_forked", level = "info", data = [("id", Log.Int id)]}
+            val params =
+              {name = "TAT.job", group = SOME (Future.new_group NONE), deps = [], pri = 0,
+               interrupts = true}
+            val future = singleton (Future.forks params) task
+          in Inttab.update (id, {future = future, phase = phase, log = log}) tab end))
   end
 
-(*a job taken off the table: one still Pending ends here; a Running one ends
-  when the interrupt reaches its work*)
+(*a job taken off the table: one still Pending ends here; a Running one is
+  marked, and ends when the interrupt reaches its work*)
 fun cancel (id, {future, phase, log} : job) =
-  (if Synchronized.change_result phase (fn Pending => (true, Ended) | p => (false, p))
+  (if Synchronized.change_result phase
+        (fn Pending => (true, Ended) | Running => (false, Cancelled) | p => (false, p))
    then ended log id NONE Time.zeroTime else ();
    Future.cancel future)
 
 (*TAT.job_cancel: the ids looked up, their futures cancelled; an id that is
   not there -- its job ended -- is not an error*)
 fun cancel_ids (jobs : T) ids =
-  Synchronized.change_result jobs (fn tab =>
-    (map_filter (fn id => Option.map (pair id) (Inttab.lookup tab id)) ids,
-     fold Inttab.delete_safe ids tab))
-  |> List.app cancel
+  Thread_Attributes.uninterruptible_body (fn _ =>
+    Synchronized.change_result jobs (fn tab =>
+      (map_filter (fn id => Option.map (pair id) (Inttab.lookup tab id)) ids,
+       fold Inttab.delete_safe ids tab))
+    |> List.app cancel)
 
 (*TAT.reset: every job's future cancelled; how many, for the `reset` record*)
 fun cancel_all (jobs : T) =
-  let val taken = Synchronized.change_result jobs (fn tab => (Inttab.dest tab, Inttab.empty))
-  in List.app cancel taken; length taken end
+  Thread_Attributes.uninterruptible_body (fn _ =>
+    let val taken = Synchronized.change_result jobs (fn tab => (Inttab.dest tab, Inttab.empty))
+    in List.app cancel taken; length taken end)
 
 end
 
@@ -952,10 +998,7 @@ fun define_entry name (entry : string list -> string list * (theory list -> int 
             Exn.Res msgs => msgs
           | Exn.Exn _ (*sic!*) => ["CRASHED"])
       fun finished result =
-        (case result of Exn.Res answer => answer | Exn.Exn exn => (2, messages exn))
-        |> let open XML.Encode in pair int (list string) end
-        |> single
-        |> Output.protocol_message [Markup.function "TAT.finished"]
+        tell_finished (case result of Exn.Res answer => answer | Exn.Exn exn => (2, messages exn))
     in
       ignore (Isabelle_Thread.fork (Isabelle_Thread.params name) (fn () =>
         finished (Exn.capture_body (Future.interruptible_task body))))

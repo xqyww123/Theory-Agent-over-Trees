@@ -21,20 +21,11 @@ struct
 
 (*** Operations (§2.5) ***)
 
-(*What is never data: a Bug (TAT_Framework.bug_message finds one however
-  wrapped), and an interrupt of either kind -- bare, or hidden in the
-  Par_Exn a parallel load releases (Par_Exn keeps a breakdown, dropping only
-  a proper interrupt) or in an Exn.EXCEPTIONS.  A wrapper holding one of
-  them beside a genuine error propagates whole: the error is not reported
-  as data.*)
-fun interrupted (Exn.EXCEPTIONS exns) = exists interrupted exns
-  | interrupted exn =
-      Exn.is_interrupt exn orelse
-      (case Par_Exn.dest exn of
-        SOME exns => exists interrupted exns
-      | NONE => false)
-
-fun escapes exn = is_some (TAT_Framework.bug_message exn) orelse interrupted exn
+(*What is never data: a Bug and an interrupt of either kind, each found
+  however wrapped (TAT_Framework.bug_message, TAT_Framework.interrupted).  A
+  wrapper holding one of them beside a genuine error propagates whole: the
+  error is not reported as data.*)
+fun escapes exn = is_some (TAT_Framework.bug_message exn) orelse TAT_Framework.interrupted exn
 
 (*The callback's side of docs/EXCEPTIONS.md §1: every failure of the operation
   is data, and what escapes is a bug.  A run's success is a state, written

@@ -102,7 +102,8 @@ pass; with step 2 in, 418 pass and the same 17 fail; with step 4 in, 434
 pass and 13 fail; with step 5 in, 441 pass and the same 13 fail; with
 step 6 in, 446 pass and the same 13 fail; with the first fixes of
 the review of steps 4 and 5, 453 pass and the same 13 fail; with step 7
-in, 457 pass and the same 13 fail.
+in, 457 pass and the same 13 fail; with the fixes of the review of steps
+6 and 7, 466 pass and the same 13 fail.
 
 | case | waits for |
 | --- | --- |

@@ -10,6 +10,8 @@ Run: python -m pytest test/test_fork_job.py
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 import stand_ins
 from isabelle_theory_agent import isabelle_driver, jobs
 from isabelle_theory_agent.exceptions import TAT_InternalError
@@ -24,12 +26,16 @@ class Recorded_Ending:
 
     def __init__(self):
         self.ended_by: BaseException | None = None
-        self.entered = asyncio.Event()
+        self.ended = asyncio.Event()
+
+    @property
+    def entered(self) -> bool:
+        return self.ended_by is not None
 
     def end(self, ended_by: BaseException) -> None:
         if self.ended_by is None:
             self.ended_by = ended_by
-            self.entered.set()
+            self.ended.set()
 
 
 class Job:
@@ -46,6 +52,14 @@ class Job:
     def _report(self, errors: list[str]) -> None:
         self.errors = errors
         self.reported.set()
+
+
+@pytest.fixture(autouse=True)
+def an_empty_table():
+    """No stand-in outlives its case in the process's table, however the
+    case ends."""
+    yield
+    jobs._evaluation_jobs.clear()
 
 
 async def fork(conversation, job: Job, outcome: str, path="") -> None:
@@ -80,8 +94,9 @@ async def test_a_work_that_passes_and_one_that_fails_are_reported_to_their_jobs(
     for job, failure in ((passed, ["ok"]), (failed, ["messages", ["tat-job-error"]])):
         assert records(log, "job_forked", job.id) == [{"id": job.id}]
         [ended] = records(log, "job_ended", job.id)
-        assert ended == {"id": job.id, "failure": failure, "cancelled": False, "duration": ended["duration"]}
-        assert ended["duration"] >= 0
+        assert set(ended) == {"id", "failure", "cancelled", "duration"}
+        assert (ended["id"], ended["failure"], ended["cancelled"]) == (job.id, failure, False)
+        assert isinstance(ended["duration"], float)
     assert records(log, "report_undelivered") == [] and records(log, "bug") == []
 
 
@@ -92,7 +107,7 @@ async def test_a_bug_in_the_work_ends_the_conversation_of_the_job(conversation):
     conv, log = conversation.forest.conversation, conversation.log.directory
     job = Job()
     await fork(conv, job, "bug")
-    await asyncio.wait_for(job.ending.entered.wait(), 30)
+    await asyncio.wait_for(job.ending.ended.wait(), 30)
     exn = job.ending.ended_by
     assert isinstance(exn, TAT_InternalError) and str(exn) == "tat-job-bug"
     assert not job.reported.is_set() and job.id not in jobs._evaluation_jobs
@@ -111,7 +126,7 @@ async def test_a_cancelled_work_ends_without_a_report(conversation, tmp_path):
     await isabelle_driver.job_cancel(conv, [job.id, 10 ** 9])
     await until(lambda: records(log, "job_ended", job.id))
     [ended] = records(log, "job_ended", job.id)
-    assert ended == {"id": job.id, "cancelled": True, "duration": ended["duration"]}
+    assert set(ended) == {"id", "cancelled", "duration"} and (ended["id"], ended["cancelled"]) == (job.id, True)
     await asyncio.sleep(0.5)
     assert not job.reported.is_set() and job.ending.ended_by is None
     assert job.id in jobs._evaluation_jobs      # its report will not come: the framework's to discard
@@ -163,3 +178,17 @@ async def test_a_library_theory_loads_from_source_beside_a_running_work(conversa
     await asyncio.wait_for(job.reported.wait(), 30)
     assert job.errors == []
     assert [e["cancelled"] for e in records(log, "job_ended", job.id)] == [False]
+
+
+async def test_a_work_interrupted_by_anything_but_tats_cancel_is_reported_as_a_bug(conversation):
+    """A work that is interrupted while TAT has not cancelled it would leave
+    a job Python waits for: it is reported as a bug, which ends the job's
+    conversation, and `job_ended` does not call it cancelled."""
+    conv, log = conversation.forest.conversation, conversation.log.directory
+    job = Job()
+    await fork(conv, job, "interrupt")
+    await asyncio.wait_for(job.ending.ended.wait(), 30)
+    message = "fork_job: the work was interrupted, and TAT had not cancelled it"
+    assert isinstance(job.ending.ended_by, TAT_InternalError) and str(job.ending.ended_by) == message
+    [ended] = records(log, "job_ended", job.id)
+    assert (ended["failure"], ended["cancelled"]) == (["bug", message], False)
