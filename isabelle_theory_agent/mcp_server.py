@@ -46,7 +46,7 @@ from starlette.requests import Request
 from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
-from .jobs import Agent, deliver, waiting
+from .jobs import RUNNING, Agent, deliver, waiting
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
@@ -350,8 +350,8 @@ class Ending:
     as a context right after the `Log` and hands it to the `Conversation`
     and to the server.  It holds the `Log`, the `Forest` once that is
     built, and the tasks it cancels and `unwound` waits for: the tool
-    bodies the server runs through `spawn`, a compaction check's wait,
-    later a construction job's run.
+    bodies the server runs through `spawn`, a compaction check's wait, a
+    construction job's run.
     Whichever door is reached first calls `end`, which enters the ending
     once; the server's exit drains (the calls answered, the tasks unwound);
     the context's exit enters it for an exception escaping the start and
@@ -389,16 +389,26 @@ class Ending:
 
     def end(self, ended_by: BaseException) -> None:
         """Enter the ending, unless it is entered, in one synchronous
-        stretch: write the `ending` record (LOGGING.md §4) and cancel every
-        spawned task — each tool handler answers its own call."""
+        stretch, the event set first, so that nothing below can leave the
+        ending half entered: write the `ending` record (LOGGING.md §4),
+        cancel every running construction job through its own
+        `cancel(None)` — the run detached, its question withdrawn, nothing
+        told, no round trip (CONSTRUCT_INTERACTION §9) — and cancel every
+        spawned task; each tool handler answers its own call.  `forest` is
+        None when the start failed before it was built: nothing to walk."""
         if self._ended_by is not None:
             return
         self._ended_by = ended_by
         self._since = time.monotonic()
         self.log.conversation.ending(ended_by)
+        self._entered.set()
+        if self.forest is not None:
+            for node in self.forest._tree_order():
+                job = node.job()
+                if job is not None and job.outcome is RUNNING:
+                    job.cancel(None)
         for task in self._tasks:
             task.cancel()
-        self._entered.set()
 
     async def unwound(self) -> None:
         """Every spawned task has ended: the server waits for this before it

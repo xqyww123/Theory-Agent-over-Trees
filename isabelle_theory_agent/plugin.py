@@ -32,6 +32,7 @@ import jsoncomment
 import jsonschema
 
 from . import model
+from .jobs import Construction_Job
 from .exceptions import (
     InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
     UnexpectedField)
@@ -231,7 +232,8 @@ def _check_class(cls: type[Node]) -> list[str]:
         # TAT would print an id it then refuses to accept (MCP_SPECIFICATION §2.1).
         raise _refuse(cls, "omissible on output but compulsory on input")
     if _defined_by(cls, "is_finished") is not Node:
-        raise _refuse(cls, "overrides `is_finished`; `_owes_nothing` is the override point")
+        raise _refuse(cls, "overrides `is_finished`; `_unfinished` is the override point")
+    _check_job_class(cls)
     if _defined_by(cls, "_operations_ready") is not Node:
         raise _refuse(cls, "overrides `_operations_ready`, which is the framework's")
     if _defined_by(cls, "_own_statuses") not in (Leaf, StdBlock, Unchained_Node):
@@ -271,6 +273,23 @@ def _check_class(cls: type[Node]) -> list[str]:
         raise _refuse(cls, f"construct_schema requires {sorted(schema_required)},"
                            f" argument_schema requires {sorted(typed_required)}")
     return own_kinds
+
+
+def _check_job_class(cls: type[Node]) -> None:
+    """The construction job class a node class names (PLUGIN_SYSTEM §2,
+    §5): a `Construction_Job` subclass with every abstract member
+    implemented, overriding none of the framework's."""
+    job_class = cls.construction_job_class
+    if job_class is None:
+        return
+    if not (isinstance(job_class, type) and issubclass(job_class, Construction_Job)):
+        raise _refuse(cls, "`construction_job_class` is not a `Construction_Job` subclass")
+    if inspect.isabstract(job_class):
+        missing = ", ".join(f"`{name}`" for name in sorted(job_class.__abstractmethods__))
+        raise _refuse(cls, f"{job_class.__name__} does not implement {missing}")
+    for member in Construction_Job.FRAMEWORK_MEMBERS:
+        if _defined_by(job_class, member) is not Construction_Job:
+            raise _refuse(cls, f"{job_class.__name__} overrides `{member}`, which is the framework's")
 
 
 def _check_coroutines(cls: type[Node]) -> None:
@@ -474,7 +493,7 @@ def _json_name(ann: Any) -> str:
     return _JSON_TYPES[_JSON_NAMES[ann]].phrase
 
 
-def check_construct(cls: type[Node], kind: str, raw: RawAST) -> None:
+def check_fields(cls: type[Node], kind: str, raw: RawAST) -> None:
     """The mechanical shape of a submitted construct, before its class is
     consulted: no field the class does not declare, required fields
     present, types right — against the class's `argument_schema`."""

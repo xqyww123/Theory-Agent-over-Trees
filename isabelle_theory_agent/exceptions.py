@@ -470,20 +470,63 @@ class ProtectedNode(BadEdit):
 
 
 # ---------------------------------------------------------------------------
-# ConstructFailed — `construct` could not start
+# ConstructionError — a construct tool refused (CONSTRUCT_INTERACTION §5)
 
-class ConstructFailed(TAT_Error, ABC):
-    """The node's class does not offer the operation, so reach the goal
-    another way (EXCEPTIONS.md §2)."""
+class ConstructionError(TAT_Error, ABC):
+    """`construct`, `cancel_construct` or `answer` refused the call
+    (EXCEPTIONS.md §2, §3)."""
 
 
-class ConstructNotSupported(ConstructFailed):
-    """Raised by `Node.construct`'s default implementation; a class with a
-    `construct` overrides it (MCP_SPECIFICATION §1)."""
+class ConstructNotSupported(ConstructionError):
+    """`construct` or `cancel_construct` named no node with a construction
+    job: the one id the call named, or None when it named several."""
+
+    def __init__(self, id: str | None):
+        super().__init__()
+        self.id = id
+
+    def _cause(self) -> str:
+        if self.id is None:
+            return "None of these nodes has anything to construct."
+        return f"`{self.id}` has nothing to construct."
+
+
+class ConstructOwnedByAnother(ConstructionError):
+    """`answer` on a question of another agent's run; the sentence is the
+    job class's `owned_by_another_refusal` (RENDER_BASELINES §2)."""
+
+    def __init__(self, id: str, refusal: str):
+        super().__init__()
+        self.id = id
+        self.refusal = refusal
+
+    def _cause(self) -> str:
+        return self.refusal
+
+
+class NoQuestionPending(ConstructionError):
+    """`answer` on a node where no question of the caller's waits: no
+    construction job, a job not running, a run that asked nothing."""
 
     def __init__(self, id: str):
         super().__init__()
         self.id = id
 
     def _cause(self) -> str:
-        return f"`{self.id}` does not support construct."
+        return f"`{self.id}` has no question waiting for an answer."
+
+
+# ---------------------------------------------------------------------------
+# BadAnswer — the question refused the answer (CONSTRUCT_INTERACTION §3.4)
+
+class BadAnswer(TAT_Error):
+    """The question's `receive` refused a shape-valid answer, with its own
+    sentence; the question stays pending.  Raised by a job class's
+    `Interactive_Question`."""
+
+    def __init__(self, message: str):
+        super().__init__()
+        self.message = message
+
+    def _cause(self) -> str:
+        return self.message

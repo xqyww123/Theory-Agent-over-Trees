@@ -703,7 +703,7 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
     text = text_of(result)
     assert not result.isError, text
     assert text.startswith("Done: append Sessions.\n"), text
-    assert "- theory_TAT_E2E_A (success)" in text, text
+    assert "- theory_TAT_E2E_A (complete)" in text, text
 
     renewed = await conversation.restart()
     (sess,) = renewed.forest.sub_nodes
@@ -738,12 +738,12 @@ async def test_recall_through_the_wire(conversation):
         assert not result.isError and text.count("Error:") == 1, text
         briefing = await session.call_tool("recall")
         assert not briefing.isError and text_of(briefing).splitlines() == [
-            "session_TAT_RECALL", "- theory_TAT_RECALL_A (success)",
+            "session_TAT_RECALL (incomplete)","- theory_TAT_RECALL_A (complete)",
             "- theory_TAT_RECALL_B (failed)"], text_of(briefing)
         sessions = await session.call_tool("recall", {"node_id": "Sessions"})
         assert not sessions.isError and text_of(sessions).splitlines() == [
-            "session_TAT_RECALL", "parent_session: HOL",
-            "- theory_TAT_RECALL_A (success)", "  imports: Main",
+            "session_TAT_RECALL (incomplete)","parent_session: HOL",
+            "- theory_TAT_RECALL_A (complete)", "  imports: Main",
             "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope"], text_of(sessions)
         failed = await session.call_tool("recall", {"node_id": "theory_TAT_RECALL_B"})
         assert not failed.isError and text_of(failed).splitlines() == [

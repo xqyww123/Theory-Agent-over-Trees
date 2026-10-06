@@ -11,7 +11,7 @@ from typing import NotRequired, TypedDict
 import pytest
 
 import stand_ins
-from isabelle_theory_agent import edit, isabelle_driver, model as M
+from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M
 from isabelle_theory_agent.exceptions import (
     InvalidName, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.model import NOT_EVALUATED, Isar_State_Slot
@@ -431,7 +431,9 @@ def test_finished_is_derived_and_owes_nothing_is_the_classes_part():
     assert sec.is_finished() and not thy.is_finished()   # the theory's ending has not run
     run(thy.evaluate_to(False))
     assert thy.is_finished() and f.is_finished()
-    t2._owes_nothing = lambda: False             # one leaf still owing something
+    class Owing(jobs.Unfinished):
+        def title(self, plural=False): return "debts" if plural else "debt"
+    t2._unfinished = lambda: Owing()             # type: ignore[method-assign]  # one leaf still owing something
     assert t1.is_finished() and not t2.is_finished()
     assert not sec.is_finished() and not thy.is_finished() and not f.is_finished()
     assert t3.is_finished()                      # the debt does not spread sideways

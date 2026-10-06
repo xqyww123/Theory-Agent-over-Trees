@@ -35,7 +35,7 @@ the fake state slot table of `test_model.py` and the forest's real store
 """
 
 import isabelle_theory_agent.model as M
-from isabelle_theory_agent import invariants as package_invariants
+from isabelle_theory_agent import invariants as package_invariants, jobs
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import NOT_EVALUATED, StdBlock
 from test_model import CANNOT_EVALUATE, NOT_RUN, READY, Block, CONN, T, shape
@@ -178,4 +178,13 @@ def assert_store_mirrors(forest, kinds, shape=shape):
     assert shape(twin) == shape(forest)
     for n in twin._all_nodes():
         assert n.parent is not None and n in n.parent.sub_nodes
+    # a construction job's stored image is its outcome, `RUNNING` read as
+    # `NOT_STARTED`, and the loaded forest holds it (ARCHITECTURE §4.1)
+    loaded = {n.identity: n for n in twin._all_nodes()}
+    for n in forest._all_nodes():
+        job = n.job()
+        if job is not None:
+            assert store.get(n.identity, "job") == jobs.image(job.outcome), f"{n}: the job row"
+            assert loaded[n.identity].job().outcome == jobs.outcome_of_image(jobs.image(job.outcome))
+            assert loaded[n.identity].job().auto_construct == job.auto_construct
     package_invariants.assert_store_mirrors(forest, kinds)

@@ -266,7 +266,7 @@ def test_evaluate_runs_to_the_last_new_node_and_names_a_stop():
                evaluate=True)
     x = sec.sub_nodes[-1]
     assert [tm.st(n) for n in (a, b, x, c)] == [READY, READY, READY, tm.NOT_EVALUATED]
-    assert out[0] == "Done: append block_Section." and "  - t_x (success)" in out
+    assert out[0] == "Done: append block_Section." and "  - t_x (complete)" in out
     out = call(tools["edit"], action="insert_after", target_id="t_x",
                constructs=[t("bad", fail=True), t("after")], evaluate=True)
     bad, after = sec.sub_nodes[-2:]
@@ -363,8 +363,8 @@ def test_move_evaluates_the_moved_subtree_when_asked():
                evaluate=True)
     assert names(thy) == ["c", "Section"]
     assert (c._status, a._status, b._status) == (READY, READY, READY)
-    assert out == ["Done: move block_Section after t_c.", "block_Theory (not evaluated)",
-                   "- t_c (success)", "- block_Section (success)", "  - t_a (success)", "  - t_b (success)"]
+    assert out == ["Done: move block_Section after t_c.", "block_Theory (incomplete)",   # its ending did not run
+                   "- t_c (complete)", "- block_Section (complete)", "  - t_a (complete)", "  - t_b (complete)"]
 
 
 def test_move_refusals():

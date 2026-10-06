@@ -205,6 +205,11 @@ registration, per class:
   `#/$defs/<Name>`, or an `anyOf` of such;
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
+- a `construction_job_class`, when the class declares one, is a
+  `Construction_Job` subclass that implements `title`, `failure_header`
+  and `_run`, and overrides none of the framework's members —
+  `can_start`, `start`, `cancel`, `ask`, `receive_answer`,
+  `question_message` (CONSTRUCT_INTERACTION §3.2);
 - the class does not override `is_finished` — `_unfinished` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
   `_own_statuses` (MODULE_STRUCTURE §4.1), nor `print` nor

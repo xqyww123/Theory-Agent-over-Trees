@@ -887,7 +887,9 @@ def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_
             assert text_of(await session.call_tool("echo", {"text": "hi"})) == "echo hi"   # nothing waits: as it is
             main, log = server.agents["main"], server.ending.log
             post(log, Message(main, "first message", interrupts=False))
-            post(log, Message(main, "second message\nits second line", interrupts=True, source="a run"))
+            a_run = type("A_Run", (), {"dropped_for": lambda self, message: None,       # a source that stands
+                                       "__repr__": lambda self: "a run"})()
+            post(log, Message(main, "second message\nits second line", interrupts=True, source=a_run))
             result = await session.call_tool("trailed", {})
             assert text_of(result).split("\n") == [
                 "the body", "", "first message", "", "second message", "its second line", "", "the trailer"]

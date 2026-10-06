@@ -27,10 +27,11 @@ from .exceptions import (
     BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
     MalformedRawAST, MoveIntoOwnSubtree, TAT_Error, TAT_InternalError,
     UnexpectedChildren, UnknownKind)
+from .jobs import Cancel_Reason
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
     NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
-from .plugin import check_construct
+from .plugin import check_fields
 
 
 def _gate(hook, *args) -> None:
@@ -52,6 +53,16 @@ def _fire(fired: list[Node], hook, *args) -> None:
     (MODULE_STRUCTURE §4.1, "Events")."""
     _completed(hook, *args)
     fired.append(hook.__self__)
+
+
+def _cancel_job(node: Node, reason: Cancel_Reason) -> None:
+    """The framework's own completed event (CONSTRUCT_INTERACTION §9): a
+    deleted or amended node's running construction job is cancelled, its
+    owner told why; nothing for a node without one, or whose job does not
+    run."""
+    job = node.job()
+    if job is not None:
+        job.cancel(reason)
 
 
 def _store_transaction(forest: Forest, ev: Evaluation,
@@ -176,6 +187,7 @@ async def amend(old: Node, raws: list[RawAST],
     for node in nodes[1:]:
         node.parent = parent
     parent.sub_nodes[index + 1:index + 1] = nodes[1:]
+    replacement._copy_carried_job(old)      # the old job's image, where `gen` asked for it
     # A replacement that inherited children invalidates from its first
     # child: the children come before its own ending in the walk
     # (ARCHITECTURE §3.5), and under a `Session` its own position marks
@@ -189,6 +201,7 @@ async def amend(old: Node, raws: list[RawAST],
     # Completed events (MODULE_STRUCTURE §4.1's order).
     fired: list[Node] = []
     _fire(fired, old.on_deleted, "amend")
+    _cancel_job(old, "NODE_AMENDED")
     for child in inherited:
         assert isinstance(replacement, NonLeaf_Node)
         _fire(fired, child.on_inherited, old)
@@ -236,6 +249,7 @@ async def delete(node: Node) -> NonLeaf_Node:
     fired: list[Node] = []
     for n in node._children_first():
         _fire(fired, n.on_deleted, "delete")
+        _cancel_job(n, "NODE_DELETED")
     # the parent: its `children` row changed, and no completed hook fires on it
     _store_transaction(forest, ev, "delete", location, changed=[*fired, parent],
                        deleted=subtree, removed=removed, invalidated=invalidated)
@@ -327,6 +341,8 @@ class Edit_Call:
     kinds: Mapping[str, type[Node]]
     role: Role = Insertion()         # the call's: an amendment's `old` is left out
                                      # of every uniqueness check of the call
+    auto_construct: bool = False     # written on every built node's construction job
+                                     # (CONSTRUCT_INTERACTION §3.2); off when the call says nothing
     taken: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
                                      # the names the constructs built so far have
                                      # taken in each forest-wide namespace:
@@ -440,13 +456,16 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
             and replacing.sub_nodes and issubclass(cls, Leaf)):
         raise ChildrenNotInheritable(forest.id_of(replacing), kind,
                                      len(replacing.sub_nodes))
-    check_construct(cls, kind, raw)
+    check_fields(cls, kind, raw)
     node = await cls.gen(config, {k: v for k, v in raw.items()
                                   if k != "children"})
     if isinstance(node, NonLeaf_Node) and node.sub_nodes:
         raise TAT_InternalError(
             f"{cls.__name__}.gen returned children; the framework builds them")
     node.kind = kind
+    job = node.job()
+    if job is not None:                       # the call's setting, which no class sees (MODULE_STRUCTURE §4.2)
+        job.auto_construct = call.auto_construct
     # A replacement keeps the identity of what it replaces (MCP_SPECIFICATION
     # §3.1).  A fresh one is the store's own write, outside any transaction:
     # nothing of this edit is in one until its commit (the plan's §2).

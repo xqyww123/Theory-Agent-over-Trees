@@ -18,6 +18,7 @@ import stat
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TextIO,
@@ -31,11 +32,12 @@ from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent, DuplicateName,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
     ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError)
+from .jobs import RUNNING, Succeeded, Unfinished, Unfinished_Construction, image, outcome_of_image
 from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
 
 if TYPE_CHECKING:
-    from .jobs import Agent, Key
+    from .jobs import Agent, Construction_Job, Key
     from .mcp_server import Ending
 
 
@@ -341,6 +343,12 @@ class Node(ABC):
     # (`edit._take_name`).
     namespace: ClassVar[Namespace | None] = None
 
+    # The class's job classes (CONSTRUCT_INTERACTION §3.1; PLUGIN_SYSTEM §2):
+    # the construction job `construct` starts on the node, built with the
+    # node, and the evaluation job an evaluation starts on it.
+    construction_job_class: ClassVar[type[Construction_Job] | None] = None
+    evaluation_job_class: ClassVar[Any] = None
+
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
         """Semantic construction from the agent's construct — `raw`, the
@@ -383,6 +391,9 @@ class Node(ABC):
         self.parent = parent
         self.state = state
         self._last_evaluation_statuses = [NOT_EVALUATED for _ in self._operation_names()]
+        job_class = type(self).construction_job_class
+        self._construction_job = job_class(self) if job_class is not None else None
+        self._carry_job_from: Node | None = None        # `carry_job_from`'s intent, for the commit
 
     @final
     def last_evaluation_statuses(self) -> tuple[EvaluationStatus, ...]:
@@ -437,6 +448,11 @@ class Node(ABC):
             status=kind, messages=messages if duration is not None else None, duration=duration)
         if isinstance(old, Ready) and not isinstance(new, Ready):
             _completed(self.on_invalidated, operation)
+        # a running construction job is told of every write, a rerun's
+        # rewrite of `ready` included (CONSTRUCT_INTERACTION §3.2)
+        job = self.job()
+        if job is not None and job.outcome is RUNNING:
+            _completed(job._on_context_change)
 
     def id_component(self) -> Id_Component:
         """The node's one component of an id, `<kind>_<name>`
@@ -499,16 +515,45 @@ class Node(ABC):
     @final
     def is_finished(self) -> bool:
         """Whether the node still owes anything (ARCHITECTURE §3.2): every
-        operation of the node and of its subtree `Ready`, and it and every
-        node below owing nothing.  The one question asked of a node from
-        outside, and the framework's derivation: a class overrides
-        `_owes_nothing`, never this (PLUGIN_SYSTEM §5)."""
-        return all(n._operations_ready() and n._owes_nothing() for n in self._tree_order())
+        operation of the node and of its subtree `Ready`, and `_unfinished`
+        None on it and on every node below.  The one question asked of a
+        node from outside, and the framework's derivation: a class
+        overrides `_unfinished`, never this (PLUGIN_SYSTEM §5)."""
+        return all(n._operations_ready() and n._unfinished() is None for n in self._tree_order())
 
-    def _owes_nothing(self) -> bool:
-        """The class's own part of `is_finished`: `Theorem` owes a proof
-        until it has one.  True by default (ARCHITECTURE §3.2)."""
-        return True
+    def _unfinished(self) -> Unfinished | None:
+        """What the node itself still owes (CONSTRUCT_INTERACTION §3.1's
+        table): None when it has no compulsory construction job, or that
+        job `SUCCEEDED`; else the `Unfinished` saying what — the
+        construction.  A class may override it; `Theorem` does not."""
+        job = self.job()
+        if job is None or not job.compulsory:
+            return None
+        if not isinstance(job.outcome, Succeeded):
+            return Unfinished_Construction(job)
+        return None
+
+    # --- The construction job (CONSTRUCT_INTERACTION §3.1): built with the
+    # node when its class names a job class.
+
+    @final
+    def job(self) -> Construction_Job | None:
+        return self._construction_job
+
+    @final
+    def carry_job_from(self, old: Node) -> None:
+        """For a `gen` that amends: have the commit copy the replaced node's
+        job image onto this node's job (CONSTRUCT_INTERACTION §3.1); the
+        copy is made then, so nothing that happens to the old job meanwhile
+        is lost."""
+        self._carry_job_from = old
+
+    def _copy_carried_job(self, old: Node) -> None:
+        """The commit's half of `carry_job_from`: nothing unless `gen` asked
+        it of `old`, and both nodes have a job."""
+        job, old_job = self.job(), old.job()
+        if self._carry_job_from is old and job is not None and old_job is not None:
+            job._carry_from(old_job)
 
     @abstractmethod
     def _own_statuses(self) -> list[EvaluationStatus]:
@@ -581,16 +626,16 @@ class Node(ABC):
                 or (mode is RECALL and depth < 2))
 
     def mark(self, mode: PrintMode, depth: int) -> str | None:
-        """The default of PRINT.md §1, first row wins; a class overrides it
-        to say more where this says nothing."""
+        """The default of PRINT.md §1, its four rows, the first that applies
+        winning; a class overrides it to say more."""
         if self.is_finished():
-            return "success"
+            return "complete"
         statuses = self._own_statuses()
         if any(isinstance(s, CannotEvaluate) for s in statuses):
             return "failed"
-        if any(s is NOT_EVALUATED for s in statuses):
+        if statuses and statuses[0] is NOT_EVALUATED:
             return "not evaluated"
-        return None
+        return "incomplete"
 
     def _children_to_print(self, mode: PrintMode, depth: int) -> list[tuple[Node, PrintMode]]:
         """The children `print` descends into and the mode each gets
@@ -1220,6 +1265,8 @@ class Forest(Unchained_Node):
         self._index = None
         self._above = None
         self._agent = None
+        bound = conversation.max_concurrent_construction_jobs
+        self._construction_slots = asyncio.Semaphore(bound) if bound is not None else None
         try:
             if store.nodes():
                 seen = {self.identity}
@@ -1237,6 +1284,13 @@ class Forest(Unchained_Node):
     def _in_forest(self, node: Node) -> bool:
         """Whether the node's parent chain reaches this root."""
         return node is self or node._is_under(self)
+
+    def construction_slot(self) -> AbstractAsyncContextManager[Any]:
+        """One of the conversation's places for a construction run, held
+        around the work (CONSTRUCT_INTERACTION §3.2; CONSTRUCT_DECISIONS
+        §15): a run waits for its turn when every place is taken, and
+        nothing waits under no bound."""
+        return self._construction_slots if self._construction_slots is not None else nullcontext()
 
     def _store_node(self, node: Node) -> None:
         """Rewrite one node's rows, inside an open transaction: `kind`, a
@@ -1256,6 +1310,10 @@ class Forest(Unchained_Node):
             self._store_children(node)
         self.store.put(node.identity, "last_evaluation_statuses",
                        [_status_to_store(s) for s in node._last_evaluation_statuses])
+        job = node.job()
+        if job is not None:                    # the job's image and its setting (ARCHITECTURE §4.1)
+            self.store.put(node.identity, "job", image(job.outcome))
+            self.store.put(node.identity, "auto_construct", job.auto_construct)
         node.to_store(self.store.rows(node.identity))
 
     def _store_written(self, ev: Evaluation, changed: Sequence[Node] = (),
@@ -1298,6 +1356,27 @@ class Forest(Unchained_Node):
         if len(statuses) == len(node._last_evaluation_statuses):
             node._last_evaluation_statuses = [s for s in statuses if s is not None]
 
+    def _restore_job(self, node: Node, identity: int) -> None:
+        """The `job` and `auto_construct` rows (ARCHITECTURE §4.1), for a node
+        whose class names a construction job: a missing `job` row reads as
+        `NOT_STARTED`, a missing setting as off; a row of another shape is
+        refused."""
+        job = node.job()
+        if job is None:
+            return
+        fields = self.store.fields(identity)
+        if "job" in fields:
+            outcome = outcome_of_image(fields["job"])
+            if outcome is None:
+                raise TAT_StartupError(
+                    f"the forest database's `job` row of node {identity} is not a job's image")
+            job.outcome = outcome
+        if "auto_construct" in fields:
+            if not isinstance(fields["auto_construct"], bool):
+                raise TAT_StartupError(
+                    f"the forest database's `auto_construct` row of node {identity} is not a boolean")
+            job.auto_construct = fields["auto_construct"]
+
     def _store_children(self, parent: NonLeaf_Node) -> None:
         """The ordered identities of `parent`'s children — the root's one
         row, the only one it has."""
@@ -1339,6 +1418,7 @@ class Forest(Unchained_Node):
         node.kind = kind
         node.identity = identity
         self._restore_statuses(node, identity)
+        self._restore_job(node, identity)
         if isinstance(node, NonLeaf_Node):
             for child_identity in self._child_identities(identity, seen):
                 node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))

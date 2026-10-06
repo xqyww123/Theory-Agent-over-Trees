@@ -290,8 +290,10 @@ class Forest_Store:
 CONSTRUCT_FRAMEWORK_FIELDS = ("kind", "children")
 
 # The rows the framework stores of a node, never a class's (the plan's §2;
-# the stored statuses, COMPILATION.md §4).
-FRAMEWORK_FIELDS = (*CONSTRUCT_FRAMEWORK_FIELDS, "last_evaluation_statuses")
+# the stored statuses, COMPILATION.md §4; the jobs' images and the
+# automatic-construction setting, ARCHITECTURE §4.1).
+FRAMEWORK_FIELDS = (*CONSTRUCT_FRAMEWORK_FIELDS, "last_evaluation_statuses", "job", "check",
+                    "auto_construct")
 
 
 class Node_Rows:

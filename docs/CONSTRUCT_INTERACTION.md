@@ -111,7 +111,8 @@ also while an evaluation job finds it wanting (`bad proof`), and a new
 `start` replaces the outcome whole.
 
 **The store's image.** The framework persists the outcome in one
-reserved field (one row), `job`, a tag and an optional string, at every
+reserved field (one row), `job`, a tag and an optional value — the
+product, or the failure's message — at every
 change; the value written for
 `RUNNING` is `NOT_STARTED`, so that a loaded forest holds no run
 (ARCHITECTURE §4.1) and a `start` clears a previous failure. That value —

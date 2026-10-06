@@ -222,10 +222,10 @@ def test_schema_typed_dict_forms():
         argument_schema = Rich_RawAST
 
     def check_ok(raw):
-        plugin.check_construct(Rich, "t", raw)
+        plugin.check_fields(Rich, "t", raw)
     def check_bad(raw, field, reason):
         with pytest.raises((MissingField, InvalidField)) as e:
-            plugin.check_construct(Rich, "t", raw)
+            plugin.check_fields(Rich, "t", raw)
         got = e.value
         assert (got.field if isinstance(got, InvalidField)
                 else got.field) == field
@@ -253,12 +253,12 @@ def test_schema_typed_dict_forms():
               "tags", "must be a list")
     # undeclared fields are refused, the typo before its own hole
     with pytest.raises(UnexpectedField) as e:
-        plugin.check_construct(Rich, "t", {"kind": "t", "namee": "x"})
+        plugin.check_fields(Rich, "t", {"kind": "t", "namee": "x"})
     assert (e.value.holder, e.value.field) == ("t", "namee")
     assert e.value.takes == ["name", "priority", "note", "facts", "tags"]
     assert e.value.holder_is_top
     with pytest.raises(UnexpectedField) as e:
-        plugin.check_construct(Rich, "t", {"kind": "t", "name": "x",
+        plugin.check_fields(Rich, "t", {"kind": "t", "name": "x",
                                     "facts": [{"name": "f", "extra": 1}]})
     assert (e.value.holder, e.value.field) == ("facts[0]", "extra")
     assert e.value.takes == ["name"] and not e.value.holder_is_top
@@ -270,7 +270,7 @@ def test_schema_typed_dict_forms():
         kind: Literal["t"]
         name: str
     with pytest.raises(UnexpectedField) as e:
-        plugin.check_construct(type("RK", (RT,), {"argument_schema": WithKind}),
+        plugin.check_fields(type("RK", (RT,), {"argument_schema": WithKind}),
                         "t", {"kind": "t", "nmae": "x"})
     assert e.value.takes == ["name"]
     # a declaration is compulsory (PLUGIN_SYSTEM §5); an empty one declares no field
@@ -280,7 +280,7 @@ def test_schema_typed_dict_forms():
         pass
     plugin.validate_argument_schema(Empty)
     with pytest.raises(UnexpectedField):
-        plugin.check_construct(type("RE", (RT,), {"argument_schema": Empty}),
+        plugin.check_fields(type("RE", (RT,), {"argument_schema": Empty}),
                         "t", {"kind": "t", "whatever": 1})
 
 
@@ -332,20 +332,20 @@ def test_schema_grammar_is_closed_at_registration():
     # what the grammar admits, the checker renders within the approved words
     class R(RT):
         argument_schema = Fine
-    plugin.check_construct(R, "t", {"kind": "t", "a": "x", "n": 3})         # an int is a number
-    plugin.check_construct(R, "t", {"kind": "t", "a": "x", "either": "s"})
+    plugin.check_fields(R, "t", {"kind": "t", "a": "x", "n": 3})         # an int is a number
+    plugin.check_fields(R, "t", {"kind": "t", "a": "x", "either": "s"})
     with pytest.raises(InvalidField) as e:
-        plugin.check_construct(R, "t", {"kind": "t", "a": "x", "either": 5})
+        plugin.check_fields(R, "t", {"kind": "t", "a": "x", "either": 5})
     assert e.value.reason == "must be an object or a string"
     with pytest.raises(UnexpectedField) as e:                          # D5: through a union arm
-        plugin.check_construct(R, "t", {"kind": "t", "a": "x", "either": {"bogus": 1}})
+        plugin.check_fields(R, "t", {"kind": "t", "a": "x", "either": {"bogus": 1}})
     assert (e.value.holder, e.value.field) == ("either", "bogus")
     class Lists(TypedDict):
         xs: list[str] | list[int]
     class L(RT):
         argument_schema = Lists
     with pytest.raises(InvalidField) as e:
-        plugin.check_construct(L, "t", {"kind": "t", "xs": "3"})
+        plugin.check_fields(L, "t", {"kind": "t", "xs": "3"})
     assert e.value.reason == "must be a list"                          # deduplicated
 
 

@@ -632,7 +632,8 @@ node in a transaction of its own, and the conversation's ending stores
 nothing; a loaded forest re-attaches no job and reads the value through
 `check_outcome()` (CONSTRUCT_INTERACTION §3.1, §3.3). Each is a
 reserved field of the node's stored image — `job` for the construction
-job, `check` for the evaluation job — a tag with an optional string; a
+job, `check` for the evaluation job — a tag with an optional value, the
+product or the failure's message; a
 missing one reads as `NOT_STARTED` and as none, so the store's schema
 version is unchanged (COMPILATION.md §4). The construction job's
 automatic construction is a third reserved field, a boolean; a missing

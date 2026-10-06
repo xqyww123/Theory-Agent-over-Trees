@@ -893,7 +893,7 @@ node class (§4.4), and `children` — which no `gen` ever sees — holds a
 nesting node's contents. The framework checks the construct's mechanical
 shape — no field the class does not declare, required fields present,
 types right — against the class's declared argument schema
-(`check_construct`, §4.4), raising `UnexpectedField` / `MissingField` /
+(`check_fields`, §4.4), raising `UnexpectedField` / `MissingField` /
 `InvalidField` before the class is consulted. The JSON tool schemas are
 hand-written, as AoA's (`contrib/Isa-Mini/IsaMini/AoA/tools/`).
 
@@ -1071,7 +1071,7 @@ dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
 schema, is PLUGIN_SYSTEM.md. `check_call(schema, tool, arguments)` checks
 a tool call's own arguments against the schema the tool advertises — the
-one object the agent is told and held to — the way `check_construct`
+one object the agent is told and held to — the way `check_fields`
 checks a construct's fields against its class's declaration: an argument
 the schema does not name, a required one missing, a type, an `enum`, an
 empty `constructs` (`minItems`), an object's fields by their names and a
@@ -1106,7 +1106,7 @@ each field optionally wrapped in `NotRequired[X]` or
 check renders within RENDER_BASELINES §2's
 vocabulary; `@TAT_node` refuses anything else when the class is
 registered, as it refuses a TypedDict that nests itself and an annotation
-Python cannot resolve. `check_construct` checks a submitted construct
+Python cannot resolve. `check_fields` checks a submitted construct
 against the declaration; `edit.py` runs it before the class's `gen`
 (§4.2).
 

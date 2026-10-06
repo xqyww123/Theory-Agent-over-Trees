@@ -13,7 +13,7 @@ import pytest
 
 import stand_ins
 from baselines import DOCS, fenced_blocks
-from isabelle_theory_agent import isabelle_driver, model as M
+from isabelle_theory_agent import isabelle_driver, jobs, model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.model import (
     BRIEFING, NOT_EVALUATED, OUT_FOCUS, RECALL, Isar_State_Slot,
@@ -37,10 +37,10 @@ def slot(): return Isar_State_Slot.assign(stand_ins.conversation(CONN))
 
 
 # --- the node classes of the examples --------------------------------------
-# `Session` and `Theory` are the real ones; a lemma owes its proof until a
-# `Theorem` exists, and a definition prints its errors in every mode but
-# the briefing — a stand-in for `Define`, whose rule is undecided
-# (PRINT.md §8), shaped by §7's example.
+# `Session` and `Theory` are the real ones; a lemma owes its proof until its
+# construction job succeeds, as `Theorem` will, and a definition prints its
+# errors in every mode but the briefing — a stand-in for `Define`, whose
+# rule is undecided (PRINT.md §8), shaped by §7's example.
 
 class Stub:
     name: str
@@ -51,9 +51,22 @@ class Stub:
     def __repr__(self): return self.name
 
 
+class Proof_Construction(jobs.Construction_Job):
+    @classmethod
+    def title(cls, plural=False): return "proof constructions" if plural else "proof construction"
+    @classmethod
+    def failure_header(cls, failure): return "No proof was found:"
+    async def _run(self): raise NotImplementedError
+
+
 class Lemma(Stub, M.Leaf):
-    def _owes_nothing(self): return False
+    construction_job_class = Proof_Construction
     def emit(self, indent, out): raise NotImplementedError
+
+
+def proven(lemma) -> None:
+    """The lemma's proof construction succeeded: it owes nothing more."""
+    lemma.job().outcome = jobs.Succeeded("by simp")
 
 
 class Definition(Stub, M.Leaf):          # its messages are the framework's (PRINT.md §3)
@@ -151,8 +164,7 @@ def test_the_recall_of_recall_md_section_2():
     f = new_forest()
     a = session(f, "A")
     base = theory(a, "Base", beginning=READY, ending=READY)
-    proven = leaf(Lemma, base, "lemma", "A", status=READY)
-    proven._owes_nothing = lambda: True                    # type: ignore[method-assign]
+    proven(leaf(Lemma, base, "lemma", "A", status=READY))
     b = session(f, "B", description="Sorting, verified.")
     x = theory(b, "X", imports=("Main", "A.Base"))
     leaf(Lemma, x, "lemma", "P")
@@ -192,7 +204,7 @@ def test_the_lines_of_render_baselines_section_5():
     lines = []
     for status, owes in ((READY, False), (NOT_EVALUATED, True), (READY, True)):
         p._status = status
-        p._owes_nothing = lambda owes=owes: not owes          # type: ignore[method-assign]
+        p.job().outcome = jobs.NOT_STARTED if owes else jobs.Succeeded("by simp")
         lines.append(render(f, p, OUT_FOCUS)[0])
     lines.insert(2, render(f, f_, OUT_FOCUS)[0])
     assert lines == node_lines
@@ -215,14 +227,18 @@ def test_the_default_mark_first_row_wins():
     p = leaf(Lemma, x, "lemma", "P", status=READY)
     q = leaf(Lemma, x, "lemma", "Q")
     mark = lambda n: n.mark(OUT_FOCUS, 1)             # noqa: E731
-    assert mark(base) == "success" and mark(g) == "success" and mark(a) is None
-    assert mark(p) is None                             # ran, owes its proof
+    assert mark(base) == "complete" and mark(g) == "complete" and mark(a) == "incomplete"
+    assert mark(p) == "incomplete"                     # ran, owes its proof
+    proven(p)
+    assert mark(p) == "complete"
     assert mark(q) == "not evaluated"
-    assert mark(x) == "not evaluated"                  # its ending has not run
+    assert mark(x) == "incomplete"                     # its beginning ran, its ending has not: stopped inside
     x.evaluation_status_beginning = CANNOT_EVALUATE
     assert mark(x) == "failed"                         # an obstacle beats the ending's not evaluated
+    x.evaluation_status_beginning = NOT_EVALUATED
+    assert mark(x) == "not evaluated"                  # its first own operation did not run
     empty = session(f, "Empty")
-    assert mark(empty) == "success"                    # nothing under it, nothing owed
+    assert mark(empty) == "complete"                   # nothing under it, nothing owed
 
 
 def test_the_field_lines_of_session_and_theory_section_4():
@@ -236,13 +252,14 @@ def test_the_field_lines_of_session_and_theory_section_4():
     assert render(f, a, RECALL)[1:5] == ["  " + line for line in lines[:4]]   # depth 0: the description too
     bare = new_forest()
     session(bare, "B")
-    assert render(bare, bare, RECALL) == ["session_B (success)", "parent_session: HOL"]
+    assert render(bare, bare, RECALL) == ["session_B (complete)", "parent_session: HOL"]
 
 
 def test_a_class_may_say_more_than_the_default():
     class Theorem(Lemma):
-        def mark(self, mode, depth):
-            return super().mark(mode, depth) or "not proven"
+        def mark(self, mode, depth):                   # the default never says nothing: a class refines it
+            default = super().mark(mode, depth)
+            return "not proven" if default == "incomplete" else default
     f = new_forest()
     a = session(f, "A")
     x = theory(a, "X", beginning=READY, ending=READY)
@@ -269,10 +286,10 @@ def deep_forest():
 def test_the_briefing_is_every_line_to_the_bottom_with_no_field():
     f, *_ = deep_forest()
     assert render(f, f, BRIEFING) == [
-        "session_A",
-        "- theory_X (not evaluated)",
-        "  - section_S",
-        "    - lemma_P",
+        "session_A (incomplete)",
+        "- theory_X (incomplete)",                     # its beginning ran, its ending did not
+        "  - section_S (incomplete)",                  # ran whole; the lemma under it owes its proof
+        "    - lemma_P (incomplete)",
     ]
 
 
@@ -313,30 +330,30 @@ def test_what_session_and_theory_print_section_4_mode_by_mode():
 def test_recall_descends_three_levels_with_the_fields_thinning_out():
     f, a, x, s, p = deep_forest()
     assert render(f, f, RECALL) == [                   # the root: the session at depth 1, the theory at 2
-        "session_A",
+        "session_A (incomplete)",
         "parent_session: HOL",
         "options: quick_and_dirty = true",
-        "- theory_X (not evaluated)",
+        "- theory_X (incomplete)",
         "  imports: Main HOL-Library.Multiset",
-        "  - section_S",                               # depth 3: a line, nothing under it
+        "  - section_S (incomplete)",                  # depth 3: a line, nothing under it
     ]
     assert render(f, a, RECALL) == [                   # the session at depth 0: its description too,
-        "- session_A",                                 # and the dash, not reached from the root
+        "- session_A (incomplete)",                    # and the dash, not reached from the root
         "  parent_session: HOL",
         "  options: quick_and_dirty = true",
         "  description:",
         "    Sorting,",
         "    verified.",
-        "  - theory_X (not evaluated)",
+        "  - theory_X (incomplete)",
         "    imports: Main HOL-Library.Multiset",
-        "    - section_S",
-        "      - lemma_P",
+        "    - section_S (incomplete)",
+        "      - lemma_P (incomplete)",
     ]
     assert render(f, x, RECALL) == [                   # the theory: itself and its children detailed
-        "- theory_X (not evaluated)",
+        "- theory_X (incomplete)",
         "  imports: Main HOL-Library.Multiset",
-        "  - section_S",
-        "    - lemma_P",
+        "  - section_S (incomplete)",
+        "    - lemma_P (incomplete)",
     ]
 
 
@@ -345,17 +362,17 @@ def test_the_quickview_expands_the_path_to_the_focus_only():
     q = leaf(Lemma, s, "lemma", "Q")
     y = theory(a, "Y")
     assert render(f, f, focus(s)) == [
-        "session_A",
-        "- theory_X (not evaluated)",                  # on the path: no fields
-        "  - section_S",                               # the focus
-        "    - lemma_P",                               # its children: lines only
+        "session_A (incomplete)",
+        "- theory_X (incomplete)",                     # on the path: no fields
+        "  - section_S (incomplete)",                  # the focus
+        "    - lemma_P (incomplete)",                  # its children: lines only
         "    - lemma_Q (not evaluated)",
         "- theory_Y (not evaluated)",                  # off the path: the line
     ]
     assert render(f, f, focus(x)) == [
-        "session_A",
-        "- theory_X (not evaluated)",                  # the focus: no field either (PRINT.md §3)
-        "  - section_S",
+        "session_A (incomplete)",
+        "- theory_X (incomplete)",                     # the focus: no field either (PRINT.md §3)
+        "  - section_S (incomplete)",
         "- theory_Y (not evaluated)",
     ]
     with pytest.raises(TAT_InternalError, match="a focus outside the rendered node"):
@@ -374,21 +391,22 @@ def test_the_depth_is_how_far_under_a_focus_every_node_is_detailed():
     leaf(Lemma, t, "lemma", "R")
     y = theory(a, "Y")
     subtree = [
-        "- theory_X (not evaluated)",
-        "  - section_S",
-        "    - lemma_P",
-        "  - section_T",
+        "- theory_X (incomplete)",
+        "  - section_S (incomplete)",
+        "    - lemma_P (incomplete)",
+        "  - section_T (incomplete)",
         "    - lemma_R (not evaluated)",
     ]
-    assert render(f, f, focus(x, depth=1)) == ["session_A", *subtree, "- theory_Y (not evaluated)"]
+    top = "session_A (incomplete)"
+    assert render(f, f, focus(x, depth=1)) == [top, *subtree, "- theory_Y (not evaluated)"]
     assert render(f, f, focus(x, depth=2)) == render(f, f, focus(x, depth=-1)) \
-        == ["session_A", *subtree, "- theory_Y (not evaluated)"]
+        == [top, *subtree, "- theory_Y (not evaluated)"]
     assert render(f, f, focus(x, depth=0)) == [
-        "session_A", *subtree[:2], "  - section_T", "- theory_Y (not evaluated)"]
+        top, *subtree[:2], "  - section_T (incomplete)", "- theory_Y (not evaluated)"]
     assert render(f, f, focus(s, t, depth=-1)) == [   # several focuses: siblings, an edit's batch
-        "session_A", *subtree, "- theory_Y (not evaluated)"]
-    assert render(f, f, focus(f)) == ["session_A"]     # the root as the focus: a deleted session's parent
-    assert render(f, f, focus(f, depth=-1)) == ["session_A", *subtree, "- theory_Y (not evaluated)"]
+        top, *subtree, "- theory_Y (not evaluated)"]
+    assert render(f, f, focus(f)) == [top]             # the root as the focus: a deleted session's parent
+    assert render(f, f, focus(f, depth=-1)) == [top, *subtree, "- theory_Y (not evaluated)"]
 
 
 def test_detailed_is_a_focus_and_recall_above_the_grandchildren():
@@ -412,7 +430,7 @@ def test_a_theory_prints_its_error_once_per_run_in_a_quickview_and_whole_in_reca
     block = ["  Error:", "    header broke"]
     first = render(f, f, focus(x))
     assert first[-2:] == block and (x.identity, "beginning") in agent(f).seen
-    assert render(f, f, focus(x)) == ["session_A", "- theory_X (failed)"]   # seen: not again
+    assert render(f, f, focus(x)) == ["session_A (incomplete)", "- theory_X (failed)"]   # seen: not again
     assert render(f, x, RECALL)[-2:] == block                         # whole under recall
     assert render(f, x, RECALL)[-2:] == block                         # every time
     assert "Error:" not in "".join(render(f, f, BRIEFING))
@@ -424,7 +442,7 @@ def test_a_recall_that_writes_an_error_whole_records_it():
     """RECALL.md §2: the quickview after a `recall` does not repeat it."""
     f, a, x = failing_theory()
     assert render(f, x, RECALL)[-2:] == ["  Error:", "    header broke"]
-    assert render(f, f, focus(x)) == ["session_A", "- theory_X (failed)"]
+    assert render(f, f, focus(x)) == ["session_A (incomplete)", "- theory_X (failed)"]
 
 
 def test_a_theory_reports_its_error_where_the_agent_is_not_looking():

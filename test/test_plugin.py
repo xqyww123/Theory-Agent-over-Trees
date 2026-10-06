@@ -10,7 +10,7 @@ from typing import Any, Literal, NotRequired, Required, TypedDict
 import jsonschema
 import pytest
 
-from isabelle_theory_agent import model as M, plugin
+from isabelle_theory_agent import jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import (
     InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
 from isabelle_theory_agent.plugin import CannotLoadPlugin
@@ -214,7 +214,7 @@ def test_output_omissible_but_input_compulsory_is_refused():
 
 def test_is_finished_is_the_frameworks():
     refused(leaf("Done", ["done"], is_finished=lambda self: True), "overrides `is_finished`")
-    plugin.TAT_node(leaf("Owing", ["owing"], _owes_nothing=lambda self: False))
+    plugin.TAT_node(leaf("Owing", ["owing"], _unfinished=lambda self: None))
 
 
 def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchronous():
@@ -754,3 +754,26 @@ def test_an_empty_table_cannot_complete_the_edit_schema():
     with pytest.raises(CannotLoadPlugin, match="cannot load the assembled edit schema") as e:
         plugin.edit_schema([])
     assert e.value.node_class is None and e.value.package is None
+
+
+def test_a_construction_job_class_is_checked():
+    """PLUGIN_SYSTEM §5: a `Construction_Job` subclass, complete, overriding
+    none of the framework's members."""
+    class Half(jobs.Construction_Job):
+        @classmethod
+        def title(cls, plural=False): return "halves" if plural else "half"
+
+    class Whole(Half):
+        @classmethod
+        def failure_header(cls, failure): return None
+        async def _run(self): return jobs.Succeeded(None)
+
+    class Overriding(Whole):
+        def start(self, owner): pass
+
+    refused(leaf("Odd", ["odd"], construction_job_class=object), "not a `Construction_Job` subclass")
+    refused(leaf("Partial", ["partial"], construction_job_class=Half),
+            "Half does not implement `_run`, `failure_header`")
+    refused(leaf("Framework", ["framework"], construction_job_class=Overriding),
+            "Overriding overrides `start`, which is the framework's")
+    plugin.TAT_node(leaf("Constructed", ["constructed"], construction_job_class=Whole))

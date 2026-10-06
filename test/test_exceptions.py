@@ -8,11 +8,11 @@ cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
-    ChildrenNotInheritable, ConstructFailed,
-    ConstructNotSupported, DuplicateName, DuplicateTheoryShortName,
+    AmbiguousId, BadAnswer, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
+    ChildrenNotInheritable, ConstructionError,
+    ConstructNotSupported, ConstructOwnedByAnother, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
-    MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, ProtectedNode, RawASTError,
+    MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, NoQuestionPending, ProtectedNode, RawASTError,
     ReservedSessionName, ReservedTheoryName, ResolutionError, TAT_DisasterError, TAT_Error,
     TAT_InternalError,
     TAT_IsabelleError, TAT_StartupError, UnexpectedChildren, UnexpectedField,
@@ -62,11 +62,11 @@ def test_malformed_raw_ast():
 
 def test_unknown_kind():
     check(UnknownKind(kind="lemna",
-                      available_kinds=["lemma", "theorem", "corollary",
+                      available_kinds=["lemma", "theorem", "corollary", "proposition",
                                        "definition", "section", "text",
                                        "theory", "session"]),
           "Unknown kind `lemna`. Available kinds: `lemma`, `theorem`,"
-          " `corollary`, `definition`, `section`, `text`, `theory`,"
+          " `corollary`, `proposition`, `definition`, `section`, `text`, `theory`,"
           " `session`.")
 
 def of_tool(exc):
@@ -99,24 +99,24 @@ def test_invalid_field():
     check(of_tool(InvalidField("constructs", "must not be empty")),
           "The argument `constructs` must not be empty.")
     # The schema check's own reason form.
-    check(InvalidField(field="statement", reason="must be a string"),
-          "The field `statement` must be a string.")
+    check(InvalidField(field="statement", reason="must be an object"),
+          "The field `statement` must be an object.")
 
 
 def test_unexpected_field():
     check(UnexpectedField(holder="lemma", field="statment",
-                          takes=["statement", "name", "facts"],
+                          takes=["name", "statement"],
                           holder_is_top=True),
-          "A `lemma` has no field `statment`; it takes `statement`, `name`,"
-          " `facts`.")
-    check(UnexpectedField(holder="facts[1]", field="nmae", takes=["name"],
+          "A `lemma` has no field `statment`; it takes `name`, `statement`.")
+    check(UnexpectedField(holder="statement.premises[1]", field="nmae", takes=["name", "term"],
                           holder_is_top=False),
-          "`facts[1]` has no field `nmae`; it takes `name`.")
+          "`statement.premises[1]` has no field `nmae`; it takes `name`, `term`.")
     check(of_tool(UnexpectedField(holder="edit", field="kind",
-                                  takes=["action", "target_id", "constructs", "evaluate"],
+                                  takes=["action", "target_id", "constructs", "evaluate",
+                                         "auto_construct"],
                                   holder_is_top=True)),
           "The `edit` tool has no argument `kind`; it takes `action`, `target_id`,"
-          " `constructs`, `evaluate`.")
+          " `constructs`, `evaluate`, `auto_construct`.")
     check(of_tool(UnexpectedField(holder="location", field="where", takes=["position", "node_id"],
                                   holder_is_top=False)),
           "`location` has no argument `where`; it takes `position`, `node_id`.")
@@ -214,8 +214,21 @@ def test_protected_node():
           "The `Sessions` cannot be edited.")
 
 def test_construct_not_supported():
-    check(ConstructNotSupported(id="theory_X.text_intro"),
-          "`theory_X.text_intro` does not support construct.")
+    check(ConstructNotSupported(id="theory_X.section_Basics"),
+          "`theory_X.section_Basics` has nothing to construct.")
+    check(ConstructNotSupported(id=None),
+          "None of these nodes has anything to construct.")
+
+def test_the_answer_tools_refusals():
+    """`NoQuestionPending`'s sentence is the framework's; `ConstructOwnedByAnother`
+    carries the job class's `owned_by_another_refusal`; `BadAnswer` the
+    question's own sentence (CONSTRUCT_INTERACTION §5)."""
+    check(NoQuestionPending(id="theory_X.definition_f"),
+          "`theory_X.definition_f` has no question waiting for an answer.")
+    check(ConstructOwnedByAnother(id="theory_X.lemma_P",
+                                  refusal="The proof construction on `theory_X.lemma_P` belongs to another agent."),
+          "The proof construction on `theory_X.lemma_P` belongs to another agent.")
+    assert str(BadAnswer("A verdict needs a reason.")) == "A verdict needs a reason."
 
 
 # --- opening lines (RENDER_BASELINES §1) ------------------------------------
@@ -296,13 +309,15 @@ def test_groups():
     assert issubclass(ReservedSessionName, BadEdit)
     assert issubclass(BadSessionNodeParent, BadEdit)
     assert issubclass(BadTheoryNodeParent, BadEdit)
-    assert issubclass(ConstructNotSupported, ConstructFailed)
-    for group in (ResolutionError, RawASTError, BadEdit, ConstructFailed):
+    for cls in (ConstructNotSupported, ConstructOwnedByAnother, NoQuestionPending):
+        assert issubclass(cls, ConstructionError)
+    for group in (ResolutionError, RawASTError, BadEdit, ConstructionError):
         assert issubclass(group, TAT_Error)
+    assert issubclass(BadAnswer, TAT_Error) and not issubclass(BadAnswer, ConstructionError)
 
 def test_group_bases_are_abstract():
     for cls in (TAT_Error, ResolutionError, RawASTError, BadEdit,
-                ConstructFailed):
+                ConstructionError):
         with pytest.raises(TypeError):
             cls()
 
