@@ -272,8 +272,8 @@ ends it calls the framework's remote procedure `finished(id, failure)`,
 the work raised (MODULE_STRUCTURE §2.4).
 The framework's ML half offers the fork and the report as one function:
 it forks the work, keeps the future under the job's id in a table of its
-own, and runs the report after the work with interrupts deferred, so a
-late interrupt cannot leave a pooled connection taken. The callback
+own, and runs the report after the work with interrupts deferred, so
+that a work which ended is always reported. The callback
 `cancel(ids)` looks the ids up in that table and cancels the futures;
 it goes through the existing callback table, the remote procedure
 through Isabelle_RPC's registry, declared with a timeout of five minutes —
