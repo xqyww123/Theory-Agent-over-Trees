@@ -105,13 +105,12 @@ the review of steps 4 and 5, 453 pass and the same 13 fail; with step 7
 in, 457 pass and the same 13 fail; with the fixes of the review of steps
 6 and 7, 466 pass and the same 13 fail; with step 8 in, 491 pass and 8
 fail; with step 9 in, 498 pass and the same 8 fail; with the fixes of
-the review of steps 8 and 9, 522 pass and the same 8 fail.
+the review of steps 8 and 9, 522 pass and the same 8 fail; with step 10
+in, 526 pass and 5 fail.
 
 | case | waits for |
 | --- | --- |
 | `test_mcp`: `test_the_four_tools_their_descriptions_and_schemas_as_the_documents_state_them` | step 11 (`auto_construct` in `edit`'s schema); it grows with step 12 |
-| `test_print`: `test_the_recall_of_recall_md_section_2`, `test_the_quickview_of_print_md_section_7` | step 10 (the tags) |
-| `test_print`: `test_the_lines_of_render_baselines_section_5` | step 10 (the tags; the unpacking of RB §5) |
 | `test_exceptions`: `test_every_baseline_is_covered` | step 11 (`auto_construct` in `it takes …`), step 14 (the fact name's line) and the compilation session's `ReservedSessionName` lines |
 | `test_mcp`: `test_a_malformed_call_is_refused_on_its_own_shape_with_no_opening_line` | step 11 (`auto_construct` in `it takes …`) |
 | `test_mcp`: `test_the_success_lines_of_render_baselines_section_6` | step 11 and step 12 (RB §6's three blocks) |

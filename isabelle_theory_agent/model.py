@@ -35,7 +35,8 @@ from .exceptions import (
 from .jobs import (
     RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
     Succeeded, Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs,
-    cancel_jobs_at_once, check_image, check_of_image, current_run, job_image, job_of_image)
+    cancel_jobs_at_once, check_image, check_of_image, current_run, job_image, job_of_image,
+    with_message)
 from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
 
@@ -731,21 +732,103 @@ class Node(ABC):
     # may say more in `mark`.
 
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
-        """The line at `indent`, then `print_fields` — never in the briefing
-        — and the children one level deeper (PRINT.md §2).  The root's only
-        child, reached from the root, writes its line without the dash and
-        its body at the same indent (§6)."""
+        """The line at `indent` — the mark and the framework's tags inside
+        the parentheses — then `print_fields` (never in the briefing), the
+        messages, the failure blocks, the children one level deeper, and
+        under `Recall` the summary below an `incomplete` nesting node at the
+        last printed depth (PRINT.md §1, §2).  The root's only child,
+        reached from the root, writes its line without the dash and its
+        body at the same indent (§6)."""
         forest = self.forest()
         mark = self.mark(mode, depth)
-        line = forest.id_of(self) + (f" ({mark})" if mark else "")
+        inside = [part for part in (mark, *self._tags(forest.agent)) if part]
+        line = forest.id_of(self) + (f" ({', '.join(inside)})" if inside else "")
         alone = self.parent is forest and len(forest.sub_nodes) == 1 and depth >= 1
         out.write(INDENT * indent + ("" if alone else "- ") + line + "\n")
         below = indent if alone else indent + 1
         if mode is not BRIEFING:
             self.print_fields(below, out, mode, depth)
         self._print_messages(below, out, mode, depth)
+        self._print_failures(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
+        if mode is RECALL and depth == 3 and mark == "incomplete" and isinstance(self, NonLeaf_Node):
+            self._print_summary(below, out)
+
+    def _tags(self, agent: Agent) -> list[str]:
+        """The framework's tags after the mark (CONSTRUCT_INTERACTION §6):
+        `automatic construction` for every agent; after it, for the owner
+        of a construction job waiting for an answer, `needs your answer`."""
+        job = self.job()
+        if job is None:
+            return []
+        tags = ["automatic construction"] if job.auto_construct else []
+        if job.pending_question is not None and job.owner is agent:
+            tags.append("needs your answer, call `check_construct` to see it")
+        return tags
+
+    def _print_failures(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+        """The failure blocks (PRINT.md §2; CONSTRUCT_INTERACTION §6): where
+        the node is detailed and is not itself an obstacle, the job class's
+        `failure_header` over the message for the construction job whose
+        outcome is `FAILED` and for the check whose outcome is `FAILED`; a
+        None header prints nothing; the seen set does not apply."""
+        if mode is BRIEFING or not self.detailed(mode, depth):
+            return
+        if any(isinstance(s, CannotEvaluate) for s in self._own_statuses()):
+            return
+        blocks: list[tuple[str | None, str]] = []
+        job = self.job()
+        if job is not None and isinstance(job.outcome, Failed):
+            blocks.append((type(job).failure_header(job.outcome), job.outcome.message))
+        check, job_class = self.check_outcome(), type(self).evaluation_job_class
+        if isinstance(check, Failed) and job_class is not None:
+            blocks.append((job_class.failure_header(check), check.message))
+        for header, message in blocks:
+            if header is None:
+                continue
+            text = with_message(header[:-1] if header.endswith(":") else header, message)
+            for line in text.splitlines():
+                out.write(INDENT * indent + line + "\n")
+
+    def _print_summary(self, indent: int, out: TextIO) -> None:
+        """The summary under a cut-off `incomplete` nesting node (PRINT.md
+        §2): one line per group with members — the nodes below that are
+        `ready`, by the title their `Unfinished` carries, then the nodes
+        `failed`, then the nodes `not evaluated` — ids in tree order,
+        relative to this node, up to five, the count alone past five."""
+        owed: dict[str, tuple[Unfinished, list[Node]]] = {}
+        failed: list[Node] = []
+        not_evaluated: list[Node] = []
+        for node in self._tree_order()[1:]:
+            statuses = node._own_statuses()
+            if any(isinstance(s, CannotEvaluate) for s in statuses):
+                failed.append(node)
+            elif statuses and statuses[0] is NOT_EVALUATED:
+                not_evaluated.append(node)
+            elif node._operations_ready() and (unfinished := node._unfinished()) is not None:
+                owed.setdefault(unfinished.title(plural=True), (unfinished, []))[1].append(node)
+
+        def line(count: int, what: str, nodes: list[Node]) -> None:
+            ids = ": " + ", ".join(self._id_below(n) for n in nodes) if len(nodes) <= 5 else ""
+            out.write(INDENT * indent + f"{count} {what}{ids}\n")
+        for unfinished, nodes in owed.values():
+            line(len(nodes), f"{unfinished.title(plural=len(nodes) != 1)} incomplete", nodes)
+        if failed:
+            line(len(failed), "node failed" if len(failed) == 1 else "nodes failed", failed)
+        if not_evaluated:
+            line(len(not_evaluated), "node not evaluated" if len(not_evaluated) == 1 else "nodes not evaluated",
+                 not_evaluated)
+
+    def _id_below(self, node: Node) -> str:
+        """`node`'s id relative to this node, an ancestor: the components
+        below this one, dotted."""
+        components: list[str] = []
+        n: Node | None = node
+        while n is not None and n is not self:
+            components.append(n.id_component())
+            n = n.parent
+        return ".".join(reversed(components))
 
     def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The class's: its fields, one per line at `indent`, under `Recall`

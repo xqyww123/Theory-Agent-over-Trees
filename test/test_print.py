@@ -59,14 +59,48 @@ class Proof_Construction(jobs.Construction_Job):
     async def _run(self): raise NotImplementedError
 
 
+class Proof_Check(jobs.Evaluation_Job):
+    @classmethod
+    def title(cls, plural=False): return "proof checks" if plural else "proof check"
+    @classmethod
+    def failure_header(cls, failure): return "The proof no longer holds:"
+    @classmethod
+    def failure_notification(cls, ids, automatic): raise NotImplementedError
+    async def _start(self): raise NotImplementedError
+
+
 class Lemma(Stub, M.Leaf):
     construction_job_class = Proof_Construction
+    evaluation_job_class = Proof_Check
     def emit(self, indent, out): raise NotImplementedError
+
+    def mark(self, mode, depth):
+        """`Theorem`'s two slots (node_classes/THEOREM.md §7), which the
+        documents' examples read."""
+        if isinstance(self._status, M.CannotEvaluate):
+            return "invalid statement"
+        statement = "valid statement" if isinstance(self._status, M.Ready) else "not evaluated"
+        outcome = self.job().outcome
+        if outcome is jobs.NOT_STARTED:
+            proof = "proof not started"
+        elif outcome is jobs.RUNNING:
+            proof = "proving"
+        elif isinstance(outcome, jobs.Failed):
+            proof = "failed to prove"
+        else:
+            check = self.check_outcome()
+            proof = ("unchecked proof" if check is None else "proof checking" if check is jobs.RUNNING
+                     else "proven" if check is jobs.PASSED else "bad proof")
+            if statement == "not evaluated":
+                return statement                    # a stored proof is left out
+        return f"{statement}, {proof}"
 
 
 def proven(lemma) -> None:
-    """The lemma's proof construction succeeded: it owes nothing more."""
+    """The lemma's proof construction succeeded and its check passed: it
+    owes nothing more."""
     lemma.job().outcome = jobs.Succeeded("by simp")
+    lemma._check_outcome = jobs.PASSED
 
 
 class Definition(Stub, M.Leaf):          # its messages are the framework's (PRINT.md §3)
@@ -194,26 +228,64 @@ def test_the_root_forms_of_print_md_section_6():
 
 
 def test_the_lines_of_render_baselines_section_5():
-    node_lines, waiting_line, error_block, notice_block = fenced_blocks(
-        DOCS / "RENDER_BASELINES.md", "5.")[:4]
+    """RB §5's six blocks: the default marks' four lines; the two tags, for
+    every agent and for the owner alone; the error and notice blocks; a
+    job's failure block; the summary under a cut-off nesting node."""
+    node_lines, tag_lines, error_block, notice_block, failure_block, summary = fenced_blocks(
+        DOCS / "RENDER_BASELINES.md", "5.")
     f = new_forest()
     a = session(f, "A")
     x = theory(a, "X", beginning=READY, ending=READY)
+    basics = section(x, "Basics")
+    g = leaf(Definition, x, "definition", "g")
     f_ = leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=["e"])
-    p = leaf(Lemma, x, "lemma", "P")
-    lines = []
-    for status, owes in ((READY, False), (NOT_EVALUATED, True), (READY, True)):
-        p._status = status
-        p.job().outcome = jobs.NOT_STARTED if owes else jobs.Succeeded("by simp")
-        lines.append(render(f, p, OUT_FOCUS)[0])
-    lines.insert(2, render(f, f_, OUT_FOCUS)[0])
+    lines = [render(f, basics, OUT_FOCUS)[0]]
+    basics.evaluation_status_ending = NOT_EVALUATED
+    lines += [render(f, n, OUT_FOCUS)[0] for n in (basics, g, f_)]
     assert lines == node_lines
+    q = leaf(Lemma, x, "lemma", "Q", status=READY)
+    proven(q)
+    q.job().auto_construct = True
+    rev = leaf(Lemma, x, "lemma", "rev_length", status=READY)
+    rev.job().outcome = jobs.RUNNING
+    rev.job().pending_question = object()
+    rev.job().owner = agent(f)
+    other = stand_ins.agent(f.conversation, "other", False)
+    assert render(f, rev, OUT_FOCUS, to=other) == ["- lemma_rev_length (valid statement, proving)"]
+    lines = [render(f, q, OUT_FOCUS)[0], render(f, rev, OUT_FOCUS)[0]]
+    rev.job().auto_construct = True
+    lines.append(render(f, rev, OUT_FOCUS)[0])
+    assert lines == tag_lines
     out = io.StringIO()
     print_error(0, out, "Type unification failed: ...")
     assert out.getvalue().splitlines() == error_block
     out = io.StringIO()
     print_error(0, out, "Ignoring duplicate rewrite rule: ...", "Notice:")
     assert out.getvalue().splitlines() == notice_block
+    p = leaf(Lemma, x, "lemma", "P", status=READY)
+    p.job().outcome = jobs.Failed("Sledgehammer timed out on every prover.")
+    assert render(f, p, focus(p))[1:] == failure_block
+    assert render(f, p, OUT_FOCUS) == ["- lemma_P (valid statement, failed to prove)"]   # not detailed: no block
+    p.job().outcome = jobs.Failed("")
+    assert render(f, p, focus(p))[1:] == ["  No proof was found."]        # an empty message: a period, nothing below
+    p._status = failing("e")                                             # itself an obstacle: its own block alone
+    assert render(f, p, focus(p))[1:] == ["  Error:", "    e"]
+    # the summary: under Recall from the root, a section at depth 3
+    s = section(x, "Summary")
+    leaf(Lemma, s, "lemma", "A", status=READY)
+    leaf(Lemma, s, "lemma", "C", status=READY)
+    c = section(s, "C"); c.kind = "context"
+    leaf(Lemma, c, "lemma", "B", status=READY)
+    for i in range(12):
+        checked = leaf(Lemma, s, "lemma", f"K{i}", status=READY)
+        checked.job().outcome = jobs.Succeeded("by simp")
+    leaf(Definition, s, "definition", "f", status=CANNOT_EVALUATE, errors=["e"])
+    leaf(Lemma, s, "lemma", "E")
+    leaf(Lemma, s, "lemma", "F")
+    rendered = render(f, f, RECALL)
+    at = rendered.index("  - section_Summary (incomplete)")
+    assert [line[2:] for line in rendered[at + 1:at + 5]] == summary    # the block, less the section's own indent
+    assert len(rendered) == at + 5                                        # nothing below depth 3
 
 
 # --- the mark ---------------------------------------------------------------
@@ -226,7 +298,7 @@ def test_the_default_mark_first_row_wins():
     x = theory(a, "X", beginning=READY)
     p = leaf(Lemma, x, "lemma", "P", status=READY)
     q = leaf(Lemma, x, "lemma", "Q")
-    mark = lambda n: n.mark(OUT_FOCUS, 1)             # noqa: E731
+    mark = lambda n: M.Node.mark(n, OUT_FOCUS, 1)     # noqa: E731  # the framework's default, `Lemma`'s own aside
     assert mark(base) == "complete" and mark(g) == "complete" and mark(a) == "incomplete"
     assert mark(p) == "incomplete"                     # ran, owes its proof
     proven(p)
@@ -258,7 +330,7 @@ def test_the_field_lines_of_session_and_theory_section_4():
 def test_a_class_may_say_more_than_the_default():
     class Theorem(Lemma):
         def mark(self, mode, depth):                   # the default never says nothing: a class refines it
-            default = super().mark(mode, depth)
+            default = M.Node.mark(self, mode, depth)
             return "not proven" if default == "incomplete" else default
     f = new_forest()
     a = session(f, "A")
@@ -289,7 +361,7 @@ def test_the_briefing_is_every_line_to_the_bottom_with_no_field():
         "session_A (incomplete)",
         "- theory_X (incomplete)",                     # its beginning ran, its ending did not
         "  - section_S (incomplete)",                  # ran whole; the lemma under it owes its proof
-        "    - lemma_P (incomplete)",
+        "    - lemma_P (valid statement, proof not started)",
     ]
 
 
@@ -305,8 +377,8 @@ def test_the_briefing_calls_no_print_fields():
             out.write(M.INDENT * indent + "field: value\n")
     loud = Loud(s, slot()); loud.name = "Q"; loud._status = NOT_EVALUATED
     enter(s, loud, "lemma")
-    assert render(f, f, BRIEFING)[-1] == "    - lemma_Q (not evaluated)" and calls == []
-    assert render(f, s, RECALL)[-2:] == ["  - lemma_Q (not evaluated)", "    field: value"]
+    assert render(f, f, BRIEFING)[-1] == "    - lemma_Q (not evaluated, proof not started)" and calls == []
+    assert render(f, s, RECALL)[-2:] == ["  - lemma_Q (not evaluated, proof not started)", "    field: value"]
     assert calls == [("Recall", 1)]
 
 
@@ -335,7 +407,8 @@ def test_recall_descends_three_levels_with_the_fields_thinning_out():
         "options: quick_and_dirty = true",
         "- theory_X (incomplete)",
         "  imports: Main HOL-Library.Multiset",
-        "  - section_S (incomplete)",                  # depth 3: a line, nothing under it
+        "  - section_S (incomplete)",                  # depth 3: a line, and the summary of what is below
+        "    1 proof construction incomplete: lemma_P",
     ]
     assert render(f, a, RECALL) == [                   # the session at depth 0: its description too,
         "- session_A (incomplete)",                    # and the dash, not reached from the root
@@ -347,13 +420,13 @@ def test_recall_descends_three_levels_with_the_fields_thinning_out():
         "  - theory_X (incomplete)",
         "    imports: Main HOL-Library.Multiset",
         "    - section_S (incomplete)",
-        "      - lemma_P (incomplete)",
+        "      - lemma_P (valid statement, proof not started)",
     ]
     assert render(f, x, RECALL) == [                   # the theory: itself and its children detailed
         "- theory_X (incomplete)",
         "  imports: Main HOL-Library.Multiset",
         "  - section_S (incomplete)",
-        "    - lemma_P (incomplete)",
+        "    - lemma_P (valid statement, proof not started)",
     ]
 
 
@@ -365,8 +438,8 @@ def test_the_quickview_expands_the_path_to_the_focus_only():
         "session_A (incomplete)",
         "- theory_X (incomplete)",                     # on the path: no fields
         "  - section_S (incomplete)",                  # the focus
-        "    - lemma_P (incomplete)",                  # its children: lines only
-        "    - lemma_Q (not evaluated)",
+        "    - lemma_P (valid statement, proof not started)",                  # its children: lines only
+        "    - lemma_Q (not evaluated, proof not started)",
         "- theory_Y (not evaluated)",                  # off the path: the line
     ]
     assert render(f, f, focus(x)) == [
@@ -393,9 +466,9 @@ def test_the_depth_is_how_far_under_a_focus_every_node_is_detailed():
     subtree = [
         "- theory_X (incomplete)",
         "  - section_S (incomplete)",
-        "    - lemma_P (incomplete)",
+        "    - lemma_P (valid statement, proof not started)",
         "  - section_T (incomplete)",
-        "    - lemma_R (not evaluated)",
+        "    - lemma_R (not evaluated, proof not started)",
     ]
     top = "session_A (incomplete)"
     assert render(f, f, focus(x, depth=1)) == [top, *subtree, "- theory_Y (not evaluated)"]
@@ -457,7 +530,7 @@ def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
     assert beside[1:5] == ["- theory_X (failed)", *block, "- theory_Y (not evaluated)"]
     agent(f).seen.clear()
     on_the_path = render(f, f, focus(p))   # x with a non-empty path
-    assert on_the_path[1:5] == ["- theory_X (failed)", *block, "  - lemma_P (not evaluated)"]
+    assert on_the_path[1:5] == ["- theory_X (failed)", *block, "  - lemma_P (not evaluated, proof not started)"]
     assert "Error:" not in "".join(render(f, f, focus(p)))   # once per run
 
 
