@@ -131,7 +131,7 @@ end, the manager's SIGTERM or an interrupt at the terminal, leaves no
 | --- | --- | --- |
 | `created` | info | the client's identity for it, whether it is the main conversation, what first reached TAT — a call or a hook |
 | `transcript_read` | debug | Claude Code: the file, the offset read from, the bytes, the complete lines, the boundaries found |
-| `compaction` | info | how TAT learned of it — `compact_boundary` with its `uuid`, `transcript_path_changed` with both paths, `session_start` with its `source`, `pre_compact`, `post_compact` — and the size of the seen set cleared |
+| `compaction` | info | how TAT learned of it — `compact_boundary` with its `uuid`, `transcript_path_changed` with both paths, `transcript_changed` with its `file` (the transcript cut short or rewritten under TAT's reading position), `session_start` with its `source`, `pre_compact`, `post_compact` — and the size of the seen set cleared |
 | `seen` | debug | a key added to the seen set |
 | `check_failed` | error | a compaction check failed (CONSTRUCT_INTERACTION §8): which check, its facts, `message`; TAT ends the conversation with a `TAT_InternalError` carrying the message, which the launcher prints |
 | `stop_judged` | info | allowed or blocked; when blocked, what stands |

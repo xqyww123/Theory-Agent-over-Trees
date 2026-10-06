@@ -204,8 +204,8 @@ class _Hook(_Category):
 
 
 # How TAT learned of a compaction (§4, `agent.compaction`).
-Learned_From = Literal["compact_boundary", "transcript_path_changed", "session_start",
-                       "pre_compact", "post_compact"]
+Learned_From = Literal["compact_boundary", "transcript_path_changed", "transcript_changed",
+                       "session_start", "pre_compact", "post_compact"]
 
 
 class _Agent(_Category):

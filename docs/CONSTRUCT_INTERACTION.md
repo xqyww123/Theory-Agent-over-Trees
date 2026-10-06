@@ -861,14 +861,16 @@ subagents as much as for the main conversation
   cleared; this is accepted.
 - On Claude Code, `PreCompact`, `SessionStart` (`compact`) and
   `PostCompact` fire for a subagent's compaction as for the main
-  conversation's, but none of their payloads names the agent; TAT registers `PostCompact` alone, to count compactions against the boundaries it finds (the second check below), and reads nothing else from it. A compaction is detected at the agent's next
+  conversation's, but none of their payloads names the agent; TAT registers `PostCompact` alone, and reads nothing from it but its `transcript_path`, the session it belongs to (the second check below). A compaction is detected at the agent's next
   announcement, from the agent's own transcript, which Claude Code has
   written before that announcement: a compaction boundary there that
   TAT has not recorded is the agent's compaction event. So is an
   announcement whose `transcript_path` differs from the one at the
   agent's previous announcement: `/clear` and `/resume` replace the
   main conversation's context, and count as a compaction of every
-  subagent running across them as well (CLIENT_HOOKS.md §2). An agent
+  subagent running across them as well (CLIENT_HOOKS.md §2). So is a
+  transcript whose part TAT had read is no longer there, which TAT
+  reads again from its first line (CLIENT_HOOKS.md §2). An agent
   whose transcript TAT does not find at an announcement cannot be
   served. TAT then ends the conversation with a `ClientRefused`, a
   `TAT_StartupError` (EXCEPTIONS.md §3), `TAT cannot serve this client: Claude Code saves no transcript of the
@@ -885,12 +887,14 @@ subagents as much as for the main conversation
   agent whose own timestamp precedes that agent's previous served
   announcement, `TAT found a compaction of agent <id> recorded after a
   result it had already rendered for that agent; its reading of Claude
-  Code's transcripts cannot be trusted.`; and a `PostCompact` hook
-  received while no new boundary has appeared in any transcript of the
-  session directories TAT knows within 10 seconds, `TAT received a
-  PostCompact hook but found no compaction boundary in any transcript
-  within 10 seconds; its reading of Claude Code's transcripts cannot be
-  trusted.` Neither check clears a seen set.
+  Code's transcripts cannot be trusted.`; and a `PostCompact` hook for
+  a session TAT reads that no compaction boundary in that session's
+  transcripts matches — each hook matched with one boundary, timestamped
+  within 10 seconds before the hook or appearing within 10 seconds after
+  it — `TAT received a PostCompact hook but found no compaction boundary
+  in any transcript within 10 seconds; its reading of Claude Code's
+  transcripts cannot be trusted.`; a `PostCompact` for a session TAT
+  does not read yet starts no check. Neither check clears a seen set.
 
 `SessionEnd` is not handled: the process's end is the ending's (§9),
 and the event also fires while agents still work.

@@ -192,8 +192,9 @@ it.
 A compaction event — TAT learning that an agent's context was replaced:
 on Codex the `PreCompact` and `PostCompact` hooks, which name the agent,
 and a `SessionStart` of the main conversation; on Claude Code, where no hook
-names the agent, a compaction boundary in the agent's own transcript or
-a new transcript path, found at the agent's next announcement
+names the agent, a compaction boundary in the agent's own transcript,
+a new transcript path, or the part of the transcript TAT had read no
+longer there, found at the agent's next announcement
 (CLIENT_HOOKS.md, MODULE_STRUCTURE §4.6) — clears that agent's set
 whole, and that agent's alone: nothing it was shown can be assumed. On
 Claude Code a `/clear` or a `/resume` counts as a compaction of every agent running

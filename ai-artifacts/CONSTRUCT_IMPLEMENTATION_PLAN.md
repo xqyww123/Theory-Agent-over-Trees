@@ -2,11 +2,10 @@
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
 (review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 7 are committed since
-2026-10-05, with the review of steps 1 and 2 applied (review/DOC_SYNC_LIST.md
-entries 32–40); the review of steps 4 and 5 is in
-review/STEPS_4_5_REVIEW.md, its first fixes applied, the second
-compaction check's rebuilding waiting for the owner's ruling; the rest
-is not implemented.
+2026-10-05, with the reviews of steps 1–2, 4–5 and 6–7 applied
+(review/DOC_SYNC_LIST.md entries 32–43; the second compaction check
+rebuilt on 2026-10-06 on the owner's rulings); the rest is not
+implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is

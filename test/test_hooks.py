@@ -15,7 +15,7 @@ import json
 import os
 from collections.abc import Generator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -26,7 +26,7 @@ from mcp.shared.exceptions import McpError
 
 import stand_ins
 from harness import (
-    CLIENT_INFO, claude_code, client, compact_boundary, free_port, hook_url, post_hook, text_of,
+    CLIENT_INFO, SESSION_ID, claude_code, client, compact_boundary, free_port, hook_url, post_hook, text_of,
     transcript, transcript_line)
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.jobs import Message, post
@@ -621,37 +621,49 @@ def test_a_changed_transcript_path_is_a_compaction_and_what_a_file_first_holds_i
                             "previous": str(new_path), "current": transcript_path}),
                 (identity, {"learned_from": "compact_boundary", "seen_cleared": 1, "uuid": uuid_of(after)})]
             assert [(r["offset"], r["boundaries"]) for r in reads(new)] == [(0, [uuid_of(held)])]
-            assert [r["offset"] == 0 for r in reads(old)] == [True, False, True, False]
+            # the file is kept across the agent's absence: read on from where the reading stopped
+            assert [r["offset"] == 0 for r in reads(old)] == [True, False, False, False]
     run(scenario)
 
 
-def test_a_transcript_cut_short_or_replaced_is_read_again_from_its_first_line(transcript_path):
-    """Claude Code can cut the main transcript in place and can rewrite it
-    under its name (AGENT_CLIENTS_MEASURED.md): a file shorter than what
-    was read, or another file, is read again from its first line, so a
-    boundary written after the cut is found, and one recorded before is
-    not counted again."""
+def test_a_transcript_whose_read_part_is_gone_is_a_compaction_and_is_read_again(transcript_path):
+    """CLIENT_HOOKS.md §2; PRINT.md §4: Claude Code cuts the main transcript
+    in place when a message is removed, and can rewrite it under its name
+    (AGENT_CLIENTS_MEASURED.md) — a file no longer holding what TAT read
+    of it, or another file at the path, is that agent's compaction event,
+    `transcript_changed` naming the file, and is read again from its
+    first line, so a boundary written after the cut is found and one
+    recorded before is not counted again."""
     async def scenario():
         path = Path(transcript_path)
         async with serving(free_port(), []) as (server, serve):
             url = hook_url(server.url)
             await announce(url, "toolu_1", transcript_path)
+            main = server.agents["main"]
             first = compact_boundary()
             append(path, first)
             await announce(url, "toolu_2", transcript_path)
+            main.seen.add((1, None))
             path.write_text(path.read_text().splitlines(keepends=True)[0])     # cut in place
+            await announce(url, "toolu_3", transcript_path)
+            assert main.seen == set()
+            main.seen.add((2, None))
             second = compact_boundary()
             append(path, second)
-            await announce(url, "toolu_3", transcript_path)
+            await announce(url, "toolu_4", transcript_path)
+            main.seen.add((3, None))
             replacement = path.with_suffix(".new")
             third = compact_boundary()
             replacement.write_text(path.read_text() + third)                    # rewritten under its name
             os.replace(replacement, path)
-            await announce(url, "toolu_4", transcript_path)
-            assert not serve.done() and check_failures() == []
-            assert [data["uuid"] for _, data in compactions()] == [uuid_of(first), uuid_of(second), uuid_of(third)]
+            await announce(url, "toolu_5", transcript_path)
+            assert main.seen == set() and not serve.done() and check_failures() == []
+            assert [(d["learned_from"], d.get("uuid", d.get("file")), d["seen_cleared"]) for _, d in compactions()] == [
+                ("compact_boundary", uuid_of(first), 0), ("transcript_changed", transcript_path, 1),
+                ("compact_boundary", uuid_of(second), 1), ("transcript_changed", transcript_path, 1),
+                ("compact_boundary", uuid_of(third), 0)]      # `second`, read again, is not counted again
             assert [(r["offset"] == 0, r["boundaries"]) for r in reads(path)] == [
-                (True, []), (False, [uuid_of(first)]), (True, [uuid_of(second)]),
+                (True, []), (False, [uuid_of(first)]), (True, []), (False, [uuid_of(second)]),
                 (True, [uuid_of(second), uuid_of(third)])]
     run(scenario)
 
@@ -766,53 +778,122 @@ def test_the_body_is_handed_the_agent_that_called(transcript_path):
     run(scenario)
 
 
-def test_a_post_compact_without_a_boundary_within_the_wait_fails_the_second_check(transcript_path, monkeypatch):
+def post_compact(transcript_path: str) -> dict:
+    """Claude Code's `PostCompact` in the measured shape: it names the
+    session by `transcript_path`, and no agent (CLIENT_HOOKS.md §2)."""
+    return {"session_id": SESSION_ID, "transcript_path": transcript_path, "cwd": "/work/TAT.agents",
+            "hook_event_name": "PostCompact", "trigger": "auto", "compact_summary": "The conversation so far..."}
+
+
+def test_a_post_compact_is_matched_with_a_boundary_of_its_session_or_fails_the_second_check(
+        transcript_path, monkeypatch):
     """CONSTRUCT_INTERACTION §8, the second check: a `PostCompact` is
-    answered nothing and counted — within the wait a boundary TAT has not
-    seen must appear in some transcript of the session directories it
-    knows, else the conversation ends with the check's message and
-    `check_failed`, no set cleared; one that appears in time passes, and
-    counts for its agent at the next announcement.  Before TAT knows a
-    session directory there is nothing to check against."""
+    answered nothing and, for a session TAT reads, matched with one
+    boundary of that session's — written within the wait before the hook,
+    or appearing within the wait after it, in the main conversation's
+    file or a subagent's — else the conversation ends with the check's
+    message and `check_failed`, no set cleared.  A boundary matches one
+    hook; one older than the wait matches none.  The boundary the check
+    reads is its agent's compaction event at that agent's next
+    announcement still, and none for an agent nothing was shown to.  A
+    `PostCompact` for a session TAT does not read starts no check."""
     assert post_compact_without_boundary(Claude_Code_Server.boundary_wait) == (
         "TAT received a PostCompact hook but found no compaction boundary in any transcript within "
         "10 seconds; its reading of Claude Code's transcripts cannot be trusted.")
     monkeypatch.setattr(Claude_Code_Server, "boundary_wait", 0.4)
     monkeypatch.setattr(Claude_Code_Server, "boundary_poll", 0.05)
-    post_compact = {"session_id": "6c1f0e4a-2b7d-4f3e-9a58-0d2c7b1e8f90", "transcript_path": transcript_path,
-                    "cwd": "/work/TAT.agents", "hook_event_name": "PostCompact", "trigger": "auto",
-                    "compact_summary": "The conversation so far..."}
+    hook = post_compact(transcript_path)
+
+    async def hooked(url: str, times: int = 1) -> None:
+        for _ in range(times):
+            r = await post_hook(url, hook)
+            assert r.status_code == 200 and r.content == b""
+
+    async def failed(serve, unmatched: int) -> None:
+        """The conversation ends with the check's failure, `unmatched` hooks
+        still waiting."""
+        exn = await ended(serve)
+        assert isinstance(exn, TAT_InternalError) and str(exn) == post_compact_without_boundary(0.4)
+        assert check_failures()[-1]["data"] == {
+            "check": "post_compact_without_boundary", "message": str(exn), "session": transcript_path,
+            "waited": 0.4, "unmatched": unmatched}
 
     async def scenario():
-        async with serving(free_port(), []) as (server, serve):          # fails
+        async with serving(free_port(), []) as (server, serve):          # no boundary: fails
             url = hook_url(server.url)
             await announce(url, "toolu_1", transcript_path)
             main = server.agents["main"]
             main.seen.add((1, None))
-            r = await post_hook(url, post_compact)
-            assert r.status_code == 200 and r.content == b""
-            exn = await ended(serve)
-            assert isinstance(exn, TAT_InternalError) and str(exn) == post_compact_without_boundary(0.4)
+            await hooked(url)
+            await failed(serve, 1)
             assert main.seen == {(1, None)} and compactions() == []
-            [failed] = check_failures()
-            assert failed["data"] == {"check": "post_compact_without_boundary", "message": str(exn),
-                                      "waited": 0.4}
-            assert "agent" not in failed                # the hook names nobody
+            [record] = check_failures()
+            assert "agent" not in record                # the hook names nobody
             assert answers()[-1] == ("compaction", 200)
-        async with serving(free_port(), []) as (server, serve):          # passes
+        async with serving(free_port(), []) as (server, serve):          # a boundary after the hook
             url = hook_url(server.url)
             await announce(url, "toolu_1", transcript_path)
-            assert (await post_hook(url, post_compact)).status_code == 200
+            await hooked(url)
             await asyncio.sleep(0.1)
             append(transcript_path, compact_boundary())
             await asyncio.sleep(0.6)
             assert not serve.done() and len(check_failures()) == 1       # the first block's alone
             await announce(url, "toolu_2", transcript_path)
             assert [d["learned_from"] for _, d in compactions()] == ["compact_boundary"]
-        async with serving(free_port(), []) as (server, serve):          # nothing known yet
-            assert (await post_hook(hook_url(server.url), post_compact)).status_code == 200
+        async with serving(free_port(), []) as (server, serve):          # a boundary before the hook, read before it
+            url = hook_url(server.url)
+            append(transcript_path, compact_boundary())
+            await announce(url, "toolu_1", transcript_path)
+            await hooked(url)
             await asyncio.sleep(0.6)
             assert not serve.done() and len(check_failures()) == 1
+            append(transcript_path, compact_boundary())
+            await announce(url, "toolu_2", transcript_path)
+            await asyncio.sleep(0.6)                    # read, and older than the wait by the time of its hook
+            await hooked(url)
+            await failed(serve, 1)
+        async with serving(free_port(), []) as (server, serve):          # a boundary older than the wait
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            await hooked(url)
+            stale = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(timespec="milliseconds")
+            append(subagent_file(transcript_path, CC_SUBAGENT), compact_boundary(timestamp=stale))
+            await failed(serve, 1)                      # a file's past, found while the hook waits
+        async with serving(free_port(), []) as (server, serve):          # the boundary in a subagent's file
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            file = subagent_file(transcript_path, CC_SUBAGENT, "workflows", "wf_01")
+            await hooked(url)
+            await asyncio.sleep(0.1)
+            append(file, compact_boundary())
+            await asyncio.sleep(0.6)
+            assert not serve.done() and len(check_failures()) == 3
+            file.write_text(file.read_text().splitlines(keepends=True)[0])    # cut, as read by the check
+            await announce(url, "toolu_s1", transcript_path, CC_SUBAGENT)   # nothing was shown to it: no event
+            assert len(compactions()) == 2              # the second block's, and this block's main's below
+        async with serving(free_port(), []) as (server, serve):          # hooks close together, in either order
+            url = hook_url(server.url)
+            await announce(url, "toolu_1", transcript_path)
+            await hooked(url, 2)
+            await asyncio.sleep(0.1)
+            append(transcript_path, compact_boundary() + compact_boundary() + compact_boundary())
+            await asyncio.sleep(0.1)                    # two matched; the third waits for its hook
+            await hooked(url)
+            await asyncio.sleep(0.6)
+            assert not serve.done() and len(check_failures()) == 3
+            await hooked(url)                           # a fourth: nothing is left to match it
+            await failed(serve, 1)
+        async with serving(free_port(), []) as (server, serve):          # a session TAT does not read
+            url = hook_url(server.url)
+            assert (await post_hook(url, hook)).status_code == 200      # none read yet
+            await announce(url, "toolu_1", transcript_path)
+            other = post_compact("/nowhere/" + Path(transcript_path).name)
+            assert (await post_hook(url, other)).status_code == 200
+            nameless = {k: v for k, v in hook.items() if k != "transcript_path"}
+            assert (await post_hook(url, nameless)).status_code == 200
+            await asyncio.sleep(0.6)
+            assert not serve.done() and len(check_failures()) == 4
+            assert answers()[-2:] == [("compaction", 200)] * 2
     run(scenario)
 
 

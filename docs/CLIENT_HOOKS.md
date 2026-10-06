@@ -47,7 +47,7 @@ documents:
 | `Stop`, `SubagentStop` — the agent is about to stop | `{"decision": "block", "reason": "<the reason of CONSTRUCT_INTERACTION §7>"}` when the stop is blocked, else an empty answer |
 | `SessionStart` (Codex) — the main conversation's context was replaced (`startup`, `resume`, `clear`, `fork`, `compact`) | an empty answer; the main conversation's seen set cleared (PRINT.md §4) |
 | `PreCompact`, `PostCompact` (Codex) — a thread is about to compact; it has compacted | an empty answer; at each of the two, the seen set of the agent `agent_id` names — the main conversation when there is none — cleared |
-| `PostCompact` (Claude Code) — some agent has compacted | an empty answer; counted against the compaction boundaries TAT finds in the transcripts (§2's second check); nothing else read from it |
+| `PostCompact` (Claude Code) — some agent has compacted | an empty answer; its `transcript_path` names the session, and for a session TAT reads the hook is matched with a compaction boundary in that session's transcripts (§2's second check); nothing else read from it |
 
 An empty answer is an empty standard output, which both clients read as
 no decision. Every decision travels in the JSON; the script never exits
@@ -101,7 +101,7 @@ agent but the caller and the main conversation (CONSTRUCT_INTERACTION
 §7).
 
 No compaction hook of Claude Code's — `PreCompact`, `SessionStart` with
-`compact`, `PostCompact` — names the agent that compacted (measured, AGENT_CLIENTS_MEASURED.md). TAT registers `PostCompact` alone, answered with nothing and read for nothing but the count the second check below keeps, and detects an agent's compaction at that agent's next announcement, from the agent's
+`compact`, `PostCompact` — names the agent that compacted (measured, AGENT_CLIENTS_MEASURED.md). TAT registers `PostCompact` alone, answered with nothing and read for nothing but its `transcript_path`, the session it belongs to (the second check below), and detects an agent's compaction at that agent's next announcement, from the agent's
 own transcript. The transcript is the payload's `transcript_path` for
 the main conversation; for a subagent it is the file
 `agent-<agent_id>.jsonl` under
@@ -120,15 +120,26 @@ context, has its later lines written under the new path, and is cleared
 with the rest. From then on TAT reads the agent's file under the new
 path, from its first line.
 
+A transcript whose part TAT had read is no longer there — another file
+at the path, or the file no longer ending where TAT's reading stopped:
+Claude Code cuts the main transcript in place when a message is
+removed, and can rewrite it under its name — is that agent's compaction
+event too. TAT reads the file again from its first line, and a boundary
+it has recorded counts no second time.
+
 An agent whose transcript TAT does not find at an announcement cannot
 be served, and the conversation ends (CONSTRUCT_INTERACTION §8).
 
 Two checks guard the premise, and a failed check ends the conversation
 with a `TAT_InternalError` carrying its message (CONSTRUCT_INTERACTION
 §8): a boundary whose own timestamp precedes the agent's previous served
-announcement; and a `PostCompact` received while no new boundary
-appears in any transcript of the session directories TAT knows within
-10 seconds. Neither check clears a seen set.
+announcement; and a `PostCompact` for a session TAT reads that no
+boundary of that session's matches. Each such hook is matched with one
+boundary in the session's transcripts — the main conversation's file
+and every `.jsonl` under its directory — timestamped within 10 seconds
+before the hook, or appearing within 10 seconds after it, TAT reading
+those transcripts while a hook waits; a `PostCompact` for a session TAT
+does not read yet starts no check. Neither check clears a seen set.
 Claude Code writes no transcript when it is started with
 `--no-session-persistence`, or through the SDK with
 `persistSession: false`. It also writes none when its environment

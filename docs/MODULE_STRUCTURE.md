@@ -1340,15 +1340,21 @@ CONSTRUCT_INTERACTION §7's rule, the interruption reading the agents'
 working-call counts in that same step, a compaction by clearing that agent's seen
 set (PRINT.md §4) and nothing more — the agent reads the briefing itself,
 `recall` with no id (PRINT.md §5). On Claude Code the announcement of a call is
-also where a compaction is detected. The subclass keeps, for each agent,
-the `transcript_path` of its last announcement, how far it has read the
-agent's transcript — the file that path and the payload's `agent_id`
-name — and the `compact_boundary` lines recorded from it; at an
-announcement it reads the lines the file has gained, and a boundary not
-yet recorded, or a `transcript_path` other than the one kept, is the
-agent's compaction event. An agent whose transcript is not found at an
-announcement ends the conversation with a `TAT_StartupError`
-(CLIENT_HOOKS.md §2, CONSTRUCT_INTERACTION §8). While the conversation is ending the path answers
+also where a compaction is detected. The subclass keeps, for each
+transcript file it reads, how far it has read it and the
+`compact_boundary` lines recorded from it; for each agent, the
+`transcript_path` of its last announcement and the agent's own file
+under it — the file that path and the payload's `agent_id` name; and
+for each session, the `PostCompact` hooks and the boundaries not yet
+matched, the second check's account (CLIENT_HOOKS.md §2). At an
+announcement it reads the lines the agent's file has gained, and a
+boundary not yet recorded, a `transcript_path` other than the one kept,
+or the part of the file TAT had read no longer there, is the agent's
+compaction event; while a `PostCompact` waits for its boundary, a task
+of the ending's reads every transcript of its session. An agent whose
+transcript is not found at an announcement ends the conversation with a
+`TAT_StartupError` (CLIENT_HOOKS.md §2, CONSTRUCT_INTERACTION §8).
+While the conversation is ending the path answers
 status 503 with an empty body, touching no forest. The request is counted
 among those in flight, so the conversation's ending waits for it. The
 judgement runs under the tool body's rule: anything it
