@@ -426,6 +426,21 @@ def test_an_exception_whose_str_fails_still_enters_the_ending():
     run(scenario)
 
 
+def test_a_task_spawned_after_the_ending_is_cancelled_at_once():
+    """A task spawned once the ending is entered — the unwinding's own
+    work reaching `spawn` — is cancelled as the others were (MODULE_STRUCTURE
+    §4.6): it raises `CancelledError` at its first await, and `unwound`
+    waits only for its unwinding."""
+    async def scenario():
+        async with stand_ins.ending() as ending:
+            ending.end(RuntimeError("over"))
+            late = ending.spawn(asyncio.Event().wait())
+            await asyncio.wait({late})
+            assert late.cancelled()
+            await ending.unwound()
+    run(scenario)
+
+
 def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
     """The RPC host cancelling `launch_TAT` (the connection gone): a call in
     flight is answered `Isabelle is gone`, and `serve` raises the
@@ -889,7 +904,8 @@ def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_
             post(log, Message(main, "first message", interrupts=False))
             a_run = type("A_Run", (), {"dropped_for": lambda self, message: None,       # a source that stands
                                        "__repr__": lambda self: "a run"})()
-            post(log, Message(main, "second message\nits second line", interrupts=True, source=a_run))
+            post(log, Message(main, "second message\nits second line", interrupts=True,
+                              source=a_run))                                      # type: ignore[arg-type]
             result = await session.call_tool("trailed", {})
             assert text_of(result).split("\n") == [
                 "the body", "", "first message", "", "second message", "its second line", "", "the trailer"]
@@ -900,7 +916,7 @@ def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_
             error = str(NodeNotFound("theory_X", []))
             assert refused.isError and text_of(refused) == error + "\n\nthird message"
             assert text_of(await session.call_tool("echo", {"text": "on"})) == "echo on" and not serve.done()
-            post(log, Message(main, "a question", interrupts=True, question=object()))
+            post(log, Message(main, "a question", interrupts=True, question=object()))   # type: ignore[arg-type]
             unknown = await session.call_tool("no_such_tool", {})      # whatever the tool
             assert unknown.isError and text_of(unknown) == "unknown tool `no_such_tool`\n\na question"
             results = [r["data"] for r in stand_ins.records("tool") if r["event"] == "result"][:5]

@@ -152,7 +152,7 @@ not.
 | member | who | what |
 | --- | --- | --- |
 | `title(plural=False)` | class method, abstract | the words for the work |
-| `compulsory` | class | true when the forest is not complete without the job; read by `_unfinished` alone, never by the stop hook |
+| `compulsory` | class | true when the forest is not complete without the job, as it is by default; read by `_unfinished` alone, never by the stop hook |
 | `_run()` | class, hook | the work; returns the outcome; a cancellation propagates out of it: its `try/finally` is its cleanup, which never starts a round trip on the ending's path (MODULE_STRUCTURE §4.3) |
 | `_check() -> bool` | class, hook, default true | the class's own condition for a start: whether the job can be started on the node as it stands |
 | `auto_construct` | framework, a boolean, false by default | automatic construction, on or off; written by `edit`, `construct` and `cancel_construct` on every node of the call that has a construction job (§5); persisted in a reserved framework field of its own, which the call that writes it stores at once, in a transaction of its own, on every node it wrote — started, cancelled or skipped — and read back at load; no class reads or writes it |
@@ -183,7 +183,10 @@ started on a failed check is spawned from the report's path and would
 inherit none; `call` it inherits, the `construct`'s or none; waits for
 every earlier run's task of the job that has not unwound yet
 (`asyncio.wait` over them — an `await` of a cancelled task would cancel
-this run too); `result = await self._run()`; then asks one thing: is
+this run too); `result = await self._run()`, under the bound on runs
+when the conversation has one (THEOREM.md §7) — a run waiting for its
+place is `RUNNING`, and a cancellation while it waits detaches it like
+any other; then asks one thing: is
 the run still the job's? Every legitimate cancellation — `cancel`, by
 `cancel_construct`, the framework or the ending — detaches the run
 first, so a run that is no longer the job's is one somebody cancelled,

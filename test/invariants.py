@@ -184,8 +184,9 @@ def assert_store_mirrors(forest, kinds, shape=shape):
     for n in forest._all_nodes():
         job = n.job()
         if job is not None:
-            assert store.get(n.identity, "job") == jobs.image(job.outcome), f"{n}: the job row"
-            assert loaded[n.identity].job().outcome == jobs.outcome_of_image(jobs.image(job.outcome))
+            assert store.get(n.identity, "job") == jobs.job_image(job.outcome), f"{n}: the job row"
+            settled = isinstance(job.outcome, (jobs.Succeeded, jobs.Failed))
+            assert loaded[n.identity].job().outcome == (job.outcome if settled else jobs.NOT_STARTED)
             assert loaded[n.identity].job().auto_construct == job.auto_construct
         # the stored check is the `check` row, none when none; a loaded forest re-attaches no job
         if n._check_outcome is not None:

@@ -46,7 +46,7 @@ from starlette.requests import Request
 from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
-from .jobs import RUNNING, Agent, deliver, waiting
+from .jobs import Agent, deliver, waiting
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
@@ -380,11 +380,14 @@ class Ending:
         await self._entered.wait()
 
     def spawn(self, coroutine: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
-        """A task of the conversation's: cancelled by `end`, waited for by
+        """A task of the conversation's: cancelled by `end` — at once, when
+        spawned after it, as `end` would have — and waited for by
         `unwound`."""
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        if self._ended_by is not None:
+            task.cancel()
         return task
 
     def end(self, ended_by: BaseException) -> None:
@@ -406,10 +409,7 @@ class Ending:
         self._entered.set()
         if self.forest is not None:
             for node in self.forest._tree_order():
-                job = node.job()
-                if job is not None and job.outcome is RUNNING:
-                    job.cancel(None)
-                node.drop_evaluation_job("ending")
+                node.jobs_leave(None, "ending")
         for task in self._tasks:
             task.cancel()
 

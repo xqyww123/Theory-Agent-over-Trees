@@ -19,11 +19,18 @@ import pytest
 import invariants
 import stand_ins
 import test_model as tm
-from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M
+from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import BadAnswer, NoQuestionPending, TAT_InternalError, TAT_StartupError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Answered, Failed, Message, Succeeded
+from isabelle_theory_agent.log import current_agent
 from isabelle_theory_agent.store import Forest_Store
 from test_model import CONN, READY, Block, T, add, locked, run, slot
+
+
+async def until(agent, holds) -> None:
+    """The agent's sleep until `holds()`, bounded: a wrong implementation
+    fails the case instead of hanging the suite."""
+    await asyncio.wait_for(agent.sleep_until(holds), 2.0)
 
 CANCELS: list[list[int]] = []               # every `TAT.job_cancel` round trip's ids
 
@@ -239,7 +246,7 @@ def test_a_run_settles_and_its_owner_is_told():
         await asyncio.sleep(0)
         assert job.began == 1
         job.release.set()
-        await owner.sleep_until(lambda: job.outcome is not RUNNING)
+        await until(owner,lambda: job.outcome is not RUNNING)
         assert job.outcome == Succeeded("by simp") and job.can_start() and p.is_finished()
         assert (tm.TABLE.transactions, f.store.get(p.identity, "job")) == (2, ["SUCCEEDED", "by simp"])
         assert records("construction_settled") == [{"node": P, "outcome": "SUCCEEDED"}]   # no message: none recorded
@@ -330,7 +337,7 @@ def test_a_rerun_waits_for_the_earlier_runs_task_to_unwind():
         await asyncio.sleep(0.01)
         assert (job.began, job.cleaned) == (2, 1)
         job.release.set()
-        await owner.sleep_until(lambda: job.outcome is not RUNNING)
+        await until(owner,lambda: job.outcome is not RUNNING)
         assert job.outcome == Succeeded("by simp") and job.cleaned == 2
     run(scenario())
 
@@ -398,7 +405,7 @@ def test_the_questions_round_trip():
         job.ends_with = asking
         job.start(owner)
         job.release.set()
-        await owner.sleep_until(lambda: job.pending_question is not None)
+        await until(owner,lambda: job.pending_question is not None)
         first = job.pending_question
         assert isinstance(first, Verdict) and job.outcome is RUNNING
         assert deliver(f, owner) == [question_text(P, first)]
@@ -414,7 +421,7 @@ def test_the_questions_round_trip():
         assert job.pending_question is second and job.outcome is RUNNING
         assert job.receive_answer({"reason": "too long"}) == "Noted."
         assert job.pending_question is None and second.reason == "too long"
-        await owner.sleep_until(lambda: job.outcome is not RUNNING)
+        await until(owner,lambda: job.outcome is not RUNNING)
         assert job.outcome == Succeeded("by simp") and job.asked is first
         assert [r["outcome"] for r in records("question_answered")] == ["replaced", "refused", "accepted"]
         assert records("question_withdrawn") == []
@@ -424,10 +431,10 @@ def test_the_questions_round_trip():
         job.release = asyncio.Event()                        # accepted at once: the default notice
         job.start(owner)
         job.release.set()
-        await owner.sleep_until(lambda: job.pending_question is not None)
+        await until(owner,lambda: job.pending_question is not None)
         assert job.receive_answer({"verdict": "accept"}) == (
             f"Answered the proof construction on `{P}`; call `check_construct` before you exit.")
-        await owner.sleep_until(lambda: job.outcome is not RUNNING)
+        await until(owner,lambda: job.outcome is not RUNNING)
         assert job.outcome == Succeeded("by simp")
     run(scenario())
 
@@ -444,7 +451,7 @@ def test_a_question_is_withdrawn_by_a_cancel_and_by_the_settlement_and_delivery_
         job.ends_with = asking
         job.start(owner)
         job.release.set()
-        await owner.sleep_until(lambda: job.pending_question is not None)
+        await until(owner,lambda: job.pending_question is not None)
         job.cancel("CONTEXT_CHANGED")
         assert job.pending_question is None and records("question_withdrawn") == [{"node": P}]
         await runs_unwound(job)
@@ -462,7 +469,7 @@ def test_a_question_is_withdrawn_by_a_cancel_and_by_the_settlement_and_delivery_
         assert job.outcome == Succeeded("by simp") and job.pending_question is None
         assert len(records("question_withdrawn")) == 2
         with pytest.raises(asyncio.CancelledError):
-            await branches[0]
+            await asyncio.wait_for(branches[0], 2.0)
         assert deliver(f, owner) == [f"The proof construction on `{P}` succeeded."]
         assert records("message_dropped")[-1]["reason"] == "the question is no longer its job's pending question"
     run(scenario())
@@ -516,7 +523,7 @@ def test_a_runs_own_notification_is_dropped_once_the_run_is_cancelled():
         job.release.set()
         await asyncio.sleep(0)
         gate.set()
-        await owner.sleep_until(lambda: job.outcome is not RUNNING)
+        await until(owner,lambda: job.outcome is not RUNNING)
         assert deliver(f, owner) == ["halfway", f"The proof construction on `{P}` succeeded."]
     run(scenario())
 
@@ -620,7 +627,7 @@ def test_the_rows_across_a_reload():
         invariants.assert_store_mirrors(f, KINDS)
         job.auto_construct = True
         job.release.set()
-        await owner.sleep_until(lambda: job.outcome is not RUNNING)
+        await until(owner,lambda: job.outcome is not RUNNING)
         invariants.assert_store_mirrors(f, KINDS)
         twin = tm.OneTreeForest(CONN, f.store, KINDS)
         loaded = twin.sub_nodes[0].sub_nodes[1].job()
@@ -688,7 +695,7 @@ def test_the_bound_holds_a_run_which_is_running_meanwhile():
         await asyncio.sleep(0.01)
         assert q.job().began == 1
         q.job().release.set()
-        await owner.sleep_until(lambda: q.job().outcome is not RUNNING)
+        await until(owner,lambda: q.job().outcome is not RUNNING)
         assert q.job().outcome == Succeeded("by simp")
     run(scenario())
 
@@ -735,7 +742,7 @@ def test_an_evaluation_job_is_attached_started_and_settled_by_its_report():
         assert second is not job and p.check_outcome() is RUNNING and "check" not in f.store.fields(p.identity)
         assert records("evaluation_dropped") == [{"id": job.id, "dropped_by": "attached"}]
         await asyncio.sleep(0)
-        assert CANCELS == [[job.id]]
+        assert CANCELS == []                                  # a settled job's work is not cancelled
         await report(second, ["bad", "worse"])
         assert second.outcome == Failed("bad\nworse") and p.check_outcome() == Failed("bad\nworse")
         assert p._unfinished() == jobs.Unfinished_Check(Failed("bad\nworse"), Check) and not p.is_finished()
@@ -801,16 +808,24 @@ def test_the_drops_and_the_stored_checks_clearings():
         ev = M.Evaluation(None, False)
         p._set_status(ev, M.Ready(), 0.1)                     # `ready` over `ready`: dropped, the check kept
         assert p.evaluation_job() is None and settled[0].ended and p.check_outcome() is PASSED
-        assert ev.dropped == [settled[0].id] and CANCELS == []
         q._set_status(ev, M.NOT_EVALUATED, None)              # leaves `Ready`: dropped, the check cleared
-        assert q.evaluation_job() is None and q.check_outcome() is None and ev.dropped == [settled[0].id, settled[1].id]
-        await ev.flush(f.conversation)
-        assert CANCELS == [[settled[0].id, settled[1].id]] and ev.dropped == []
-        assert records("cancel_sent") == [{"ids": [settled[0].id, settled[1].id]}]
+        assert q.evaluation_job() is None and q.check_outcome() is None
+        assert ev.dropped == [] and CANCELS == []             # a settled job's work is not cancelled
         assert [(r["id"], r["dropped_by"]) for r in records("evaluation_dropped")] == [
             (settled[0].id, "status_write"), (settled[1].id, "status_write")]
         await thy.evaluate_to(False)                          # q rerun, p kept
         assert p.check_outcome() is PASSED and q.check_outcome() is None
+        for node in (p, q):
+            await node.start_evaluation_job(starter)          # running: a drop cancels the work
+        running = [p.evaluation_job(), q.evaluation_job()]
+        assert p.check_outcome() is RUNNING                   # the attach cleared the stored PASSED
+        p._set_status(ev, M.Ready(), 0.1)
+        q._set_status(ev, M.NOT_EVALUATED, None)
+        assert ev.dropped == [running[0].id, running[1].id] and CANCELS == []
+        await ev.flush(f.conversation)
+        assert CANCELS == [[running[0].id, running[1].id]] and ev.dropped == []
+        assert records("cancel_sent") == [{"ids": [running[0].id, running[1].id]}]
+        await thy.evaluate_to(False)                          # q rerun again
         p.job().start(starter)                                # a construction start clears the stored check
         assert p.check_outcome() is None
         p.job().cancel(None)
@@ -921,7 +936,7 @@ def test_a_job_class_raising_a_tat_error_at_its_start_is_a_bug():
             async def _start(self):
                 raise NoQuestionPending("x")
         p.__class__ = type("Fussy_Checked", (Checked,), {"evaluation_job_class": Fussy})
-        with pytest.raises(TAT_InternalError, match="raised a TAT_Error at its start"):
+        with pytest.raises(TAT_InternalError, match="_start raised a TAT_Error"):
             await p.start_evaluation_job(stand_ins.agent(f.conversation))
         with pytest.raises(TAT_InternalError, match="names no evaluation job class"):
             await t1.start_evaluation_job(stand_ins.agent(f.conversation))
@@ -1030,3 +1045,408 @@ def test_an_id_is_never_handed_out_twice():
     assert second.id > first.id
     finished(first.id, ["ok"])                           # the discarded job's late report
     assert second.reports == [] and set(jobs._evaluation_jobs) == {second.id}
+
+
+# --- the cases of the tests reader of steps 8 and 9 (STEPS_8_9_REVIEW.md §3) -------
+
+async def woken_by(agent, holds, action):
+    """Whether `action()` wakes a sleeper on `agent` that waits for `holds()`
+    (which `action` makes true): no wake-up, no return."""
+    sleeper = asyncio.ensure_future(agent.sleep_until(holds))
+    await asyncio.sleep(0)
+    assert not sleeper.done()
+    action()
+    try:
+        await asyncio.wait_for(sleeper, 0.5)
+        return True
+    except TimeoutError:
+        return False
+
+
+# listed_bound_4, listed_bound_2, on_each_and_everywhere, listed_bullet_indent,
+# starting_header_singular, cancelling_header_singular, owned_refusal_reworded
+def test_the_default_wording_in_the_three_forms_of_section_5():
+    ids = ["theory_X.lemma_P", "theory_X.lemma_Q", "theory_X.lemma_R", "theory_Y.lemma_S"]
+    exit_ = "; call `check_construct` before you exit"
+    assert Proof.starting_notice(ids[:1]) == f"Started the proof construction on `theory_X.lemma_P`{exit_}."
+    assert Proof.starting_notice(ids[:2]) == (
+        f"Started the proof construction on `theory_X.lemma_P` and on `theory_X.lemma_Q`{exit_}.")
+    assert Proof.starting_notice(ids[:3]) == (
+        "Started the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q`"
+        f" and on `theory_X.lemma_R`{exit_}.")
+    assert Proof.starting_notice(ids) == (
+        f"Started the following proof constructions{exit_}:\n"
+        "  - theory_X.lemma_P\n  - theory_X.lemma_Q\n  - theory_X.lemma_R\n  - theory_Y.lemma_S")
+    assert Proof.cancelling_notice(ids[:3]) == (
+        "Cancelled the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`.")
+    assert Proof.cancelling_notice(ids) == (
+        "Cancelled the following proof constructions:\n"
+        "  - theory_X.lemma_P\n  - theory_X.lemma_Q\n  - theory_X.lemma_R\n  - theory_Y.lemma_S")
+
+    async def scenario():
+        f, thy, t1, p, q = build()
+        job = p.job()
+        job.start(stand_ins.agent(f.conversation))
+        assert job.owned_by_another_refusal() == f"The proof construction on `{P}` belongs to another agent."
+        job.cancel(None)
+    run(scenario())
+
+
+# with_message_first_line_only
+def test_a_failure_message_of_several_lines_is_indented_line_by_line():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        job.ends_with = ends(Failed("first line\nsecond line"))
+        await run_to_end(job, owner)
+        assert deliver(f, owner) == [f"The proof construction on `{P}` failed:\n  first line\n  second line"]
+    run(scenario())
+
+
+# failed_image_any_message, check_image_any_message, restore_auto_any_type
+@pytest.mark.parametrize("field, row, match", [
+    ("job", ["FAILED", 3], "not a job's image"),
+    ("check", ["FAILED", 3], "not a check's image"),
+    ("auto_construct", "yes", "not a boolean")])
+def test_a_row_of_the_right_tag_but_the_wrong_value_is_refused(field, row, match):
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        with f.store.transaction():
+            f.store.put(p.identity, field, row)
+        with pytest.raises(TAT_StartupError, match=match):
+            tm.OneTreeForest(CONN, f.store, KINDS)
+    run(scenario())
+
+
+# carry_drops_failure
+def test_an_amend_carries_a_failure_too():
+    async def scenario():
+        f, thy, t1, p, q = build(Carrying)
+        p.job().outcome = Failed("no proof")
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}], KINDS))
+        assert p2.job().outcome == Failed("no proof")
+        assert f.store.get(p2.identity, "job") == ["FAILED", "no proof"]
+    run(scenario())
+
+
+# can_start_ignores_check
+def test_can_start_asks_the_class():
+    class Refusing(Proof):
+        def _check(self):
+            return False
+
+    class Guarded(Lemma):
+        construction_job_class = Refusing
+
+    async def scenario():
+        f, thy, t1, p, q = build(Guarded)
+        job = p.job()
+        assert job.outcome is NOT_STARTED and not job.can_start()
+        with pytest.raises(TAT_InternalError, match="cannot be started now"):
+            job.start(stand_ins.agent(f.conversation))
+        assert job.outcome is NOT_STARTED and records("construction_started") == []
+    run(scenario())
+
+
+# start_wakes_nobody, cancel_none_wakes_nobody
+def test_a_start_and_a_silent_cancel_wake_the_owner():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        assert await woken_by(owner, lambda: job.outcome is RUNNING, lambda: job.start(owner))
+        await asyncio.sleep(0)
+        assert await woken_by(owner, lambda: job.outcome is not RUNNING, lambda: job.cancel(None))
+        await runs_unwound(job)
+    run(scenario())
+
+
+# report_wakes_nobody, drop_wakes_nobody
+def test_a_passing_report_and_a_drop_wake_the_starter():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        await p.start_evaluation_job(starter)
+        job = p.evaluation_job()
+        loop = asyncio.get_running_loop()
+        assert await woken_by(starter, lambda: job.ended,
+                              lambda: loop.create_task(report(job)))          # PASSED: nothing posted
+        await q.start_evaluation_job(starter)
+        other = q.evaluation_job()
+        assert await woken_by(starter, lambda: other.ended,
+                              lambda: q.drop_evaluation_job("status_write", M.Evaluation(None, False)))
+    run(scenario())
+
+
+# start_stores_stale_image, start_stores_stale_check
+def test_a_start_stores_the_cleared_failure_and_the_cleared_check():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        job.ends_with = ends(Failed("no proof"))
+        await run_to_end(job, owner)
+        await p.start_evaluation_job(owner)
+        await report(p.evaluation_job())
+        assert f.store.get(p.identity, "job") == ["FAILED", "no proof"] and f.store.get(p.identity, "check") == ["PASSED"]
+        job.release = asyncio.Event()
+        job.start(owner)
+        assert f.store.get(p.identity, "job") == ["NOT_STARTED"]
+        assert "check" not in f.store.fields(p.identity)
+        invariants.assert_store_mirrors(f, KINDS)
+        job.cancel(None)
+        await runs_unwound(job)
+    run(scenario())
+
+
+# run_agent_not_set
+def test_the_runs_records_name_its_owner_whoever_started_it():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        stand_ins.agent(f.conversation)
+        sub = stand_ins.agent(f.conversation, "sub", main=False)
+        current_agent.set("main")                     # the context the start is made in
+        job = p.job()
+        await run_to_end(job, sub)
+        settled = [r for r in stand_ins.records("job") if r["event"] == "construction_settled"]
+        assert [r.get("agent") for r in settled] == ["sub"]
+    run(scenario())
+
+
+# cancelled_not_interrupting
+def test_the_cancelled_notification_interrupts():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        p.job().start(owner)
+        await asyncio.sleep(0)
+        p.job().cancel("NODE_DELETED")
+        posted = records("message_posted")[-1]
+        assert (posted["kind"], posted["interrupts"]) == ("notification", True)
+        await runs_unwound(p.job())
+    run(scenario())
+
+
+# attach_survives_cancel
+def test_an_attach_of_a_cancelled_run_never_lands_at_a_later_settlement():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        gate = asyncio.Event()
+
+        async def checking(job):
+            check = Check(p, owner)
+            check._finished(["stale"])
+            p.attach_evaluation_job(check)
+            await gate.wait()
+            return Succeeded("by simp")
+        job.ends_with = checking
+        job.start(owner)
+        job.release.set()
+        await asyncio.sleep(0)
+        job.cancel(None)
+        await runs_unwound(job)
+        job.ends_with = ends(Succeeded("by auto"))
+        await run_to_end(job, owner)
+        assert p.evaluation_job() is None and p.check_outcome() is None
+    run(scenario())
+
+
+# replaced_releases_ask
+def test_a_question_asked_instead_keeps_the_run_waiting():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        job.ends_with = asking
+        job.start(owner)
+        job.release.set()
+        await until(owner, lambda: job.pending_question is not None)
+        assert job.receive_answer({"verdict": "reject"}) is None
+        second = job.pending_question
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert job.pending_question is second and isinstance(second, Why) and job.outcome is RUNNING
+        assert job.receive_answer({"reason": "too long"}) == "Noted."
+        await asyncio.wait_for(owner.sleep_until(lambda: job.outcome is not RUNNING), 1.0)
+    run(scenario())
+
+
+# accept_releases_nothing (bounded: the existing case hangs instead)
+def test_an_accepted_answer_lets_the_run_go_on():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        job.ends_with = asking
+        job.start(owner)
+        job.release.set()
+        await until(owner, lambda: job.pending_question is not None)
+        job.receive_answer({"verdict": "accept"})
+        await asyncio.wait_for(owner.sleep_until(lambda: job.outcome is not RUNNING), 1.0)
+        assert job.outcome == Succeeded("by simp")
+    run(scenario())
+
+
+# ask_keeps_question_on_its_cancel
+def test_an_ask_cancelled_by_the_run_itself_withdraws_its_question():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        gate = asyncio.Event()
+
+        async def impatient(job):
+            try:
+                await asyncio.wait_for(job.ask(Verdict()), 0.01)
+            except TimeoutError:
+                pass
+            await gate.wait()
+            return Succeeded("by simp")
+        job.ends_with = impatient
+        job.start(owner)
+        job.release.set()
+        await until(owner, lambda: job.pending_question is not None)
+
+        async def withdrawn():                                # polled: a withdrawal wakes nobody
+            while job.pending_question is not None:
+                await asyncio.sleep(0.005)
+        await asyncio.wait_for(withdrawn(), 1.0)
+        assert job.outcome is RUNNING
+        assert records("question_withdrawn") == [{"node": P}]
+        assert deliver(f, owner) == []                        # the question no longer pending: dropped
+        gate.set()
+        await asyncio.wait_for(owner.sleep_until(lambda: job.outcome is not RUNNING), 1.0)
+    run(scenario())
+
+
+# withdraw_releases_no_ask (bounded: the existing case hangs instead)
+def test_the_settlement_ends_a_stray_asking_branch():
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        branches = []
+
+        async def stray(job):
+            branches.append(asyncio.ensure_future(job.ask(Verdict())))
+            await asyncio.sleep(0)
+            return Succeeded("by simp")
+        job.ends_with = stray
+        await run_to_end(job, owner)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(branches[0], 1.0)
+    run(scenario())
+
+
+# question_schema_unvalidated, question_without_a_run
+def test_a_question_outside_the_grammar_or_with_no_run_is_a_bug():
+    class Bare(Verdict):
+        schema = {"type": "string"}
+
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        await run_to_end(job, owner)                         # settled: no run is the job's
+        with pytest.raises(TAT_InternalError, match="from no run of its"):
+            await asyncio.wait_for(job.ask(Verdict()), 0.5)
+
+        async def asks_barely(job):
+            await job.ask(Bare())
+            return Succeeded("by simp")
+        g, _, _, p2, _ = build()
+        job2 = p2.job()
+        job2.ends_with = asks_barely
+        job2.start(stand_ins.agent(g.conversation))
+        job2.release.set()
+        await asyncio.wait_for(g.conversation.ending.wait(), 1.0)
+        assert isinstance(g.conversation.ending.ended_by, TAT_InternalError)
+        assert job2.pending_question is None
+    run(scenario())
+
+
+# drop_cancels_twice
+def test_a_walks_drop_sends_nothing_before_its_flush():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        await p.start_evaluation_job(starter)
+        job = p.evaluation_job()
+        ev = M.Evaluation(None, False)
+        p.drop_evaluation_job("status_write", ev)
+        await asyncio.sleep(0.01)                            # any task spawned has run
+        assert CANCELS == []
+        await ev.flush(f.conversation)
+        assert CANCELS == [[job.id]]
+    run(scenario())
+
+
+# unfinished_passed_first
+def test_a_failed_construction_is_owed_whatever_the_check():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+
+        async def checked_then_failed(job):
+            check = Check(p, owner)
+            check._finished([])
+            p.attach_evaluation_job(check)
+            return Failed("the replay broke")
+        job.ends_with = checked_then_failed
+        await run_to_end(job, owner)
+        assert p.check_outcome() is PASSED and job.outcome == Failed("the replay broke")
+        assert p._unfinished() == jobs.Unfinished_Construction(job)
+    run(scenario())
+
+
+# make_outside_the_guard
+def test_a_tat_error_from_make_is_the_classs_bug():
+    class Fussy(Check):
+        @classmethod
+        def make(cls, node, starter):
+            raise NoQuestionPending("x")
+
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        p.__class__ = type("Fussy_Make", (Checked,), {"evaluation_job_class": Fussy})
+        with pytest.raises(TAT_InternalError, match="make raised a TAT_Error"):
+            await p.start_evaluation_job(stand_ins.agent(f.conversation))
+    run(scenario())
+
+
+# restore_check_only_with_a_job
+def test_the_check_row_of_a_node_with_no_construction_job_is_restored():
+    class Only_Checked(T):
+        evaluation_job_class = Check
+    kinds = KINDS | {"only": Only_Checked}
+
+    async def scenario():
+        f = tm.OneTreeForest(CONN, kinds=kinds)
+        f.conversation.ending.forest = f
+        thy = add(f, tm.Block(f, slot(), "Theory", slot()))
+        o = add(thy, Only_Checked(thy, slot(), "O"), "only")
+        await o.start_evaluation_job(stand_ins.agent(f.conversation))
+        await report(o.evaluation_job(), ["no"])
+        twin = tm.OneTreeForest(CONN, f.store, kinds)
+        assert twin.sub_nodes[0].sub_nodes[0].check_outcome() == Failed("no")
+    run(scenario())
+
+
+# job_class_own_dict_only
+def test_a_framework_member_overridden_higher_up_is_refused(monkeypatch):
+    import test_plugin as tp
+    monkeypatch.setattr(plugin, "registry", {})
+    monkeypatch.setattr(plugin, "compile_hooks", {})
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [])
+
+    class Overriding(Proof):
+        def cancel(self, reason): pass
+
+    class Inheriting(Overriding):
+        pass
+    tp.refused(tp.leaf("Inherits", ["inherits"], construction_job_class=Inheriting),
+               "Inheriting overrides `cancel`, which is the framework's")

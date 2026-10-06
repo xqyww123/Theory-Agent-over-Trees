@@ -197,9 +197,9 @@ registration, per class:
 - no kind it names is registered by another class, and no other class has
   the same Python class name;
 - no field of `construct_schema` bears the name of a row the framework
-  stores of every node, `kind` and `children` aside — today
-  `last_evaluation_statuses` (COMPILATION.md §4): such a class would load
-  and then fail at its first store;
+  stores, `kind` and `children` aside — `last_evaluation_statuses`
+  (COMPILATION.md §4), `job`, `check` and `auto_construct` (ARCHITECTURE
+  §4.1): such a class would load and then fail at its first store;
 - if `children` is declared, the class is not a `Leaf`, and the property
   is `{"type": "array", "items": X, ...}` with `X` a `$ref` of the form
   `#/$defs/<Name>`, or an `anyOf` of such;

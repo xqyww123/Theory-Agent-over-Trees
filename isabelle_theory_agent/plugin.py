@@ -278,7 +278,9 @@ def _check_class(cls: type[Node]) -> list[str]:
 def _check_job_class(cls: type[Node]) -> None:
     """The job classes a node class names (PLUGIN_SYSTEM §2, §5): each a
     subclass of its base with every abstract member implemented,
-    overriding none of the framework's."""
+    overriding none of the framework's — the base's members marked
+    `typing.final` — and each override a coroutine exactly when the
+    member it overrides is."""
     for attribute, base in (("construction_job_class", Construction_Job),
                             ("evaluation_job_class", Evaluation_Job)):
         job_class = getattr(cls, attribute)
@@ -289,9 +291,14 @@ def _check_job_class(cls: type[Node]) -> None:
         if inspect.isabstract(job_class):
             missing = ", ".join(f"`{name}`" for name in sorted(job_class.__abstractmethods__))
             raise _refuse(cls, f"{job_class.__name__} does not implement {missing}")
-        for member in base.FRAMEWORK_MEMBERS:
-            if _defined_by(job_class, member) is not base:
+        for member, framework in vars(base).items():
+            if getattr(framework, "__final__", False) and _defined_by(job_class, member) is not base:
                 raise _refuse(cls, f"{job_class.__name__} overrides `{member}`, which is the framework's")
+            override = _function(getattr(job_class, member, None))
+            if (callable(framework) and override is not None
+                    and inspect.iscoroutinefunction(override) != inspect.iscoroutinefunction(_function(framework))):
+                raise _refuse(cls, f"{job_class.__name__}.{member} is a coroutine exactly when the"
+                                   " member it overrides is not")
 
 
 def _check_coroutines(cls: type[Node]) -> None:

@@ -27,7 +27,6 @@ from .exceptions import (
     BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
     MalformedRawAST, MoveIntoOwnSubtree, TAT_Error, TAT_InternalError,
     UnexpectedChildren, UnknownKind)
-from .jobs import Cancel_Reason
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
     NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
@@ -53,17 +52,6 @@ def _fire(fired: list[Node], hook, *args) -> None:
     (MODULE_STRUCTURE §4.1, "Events")."""
     _completed(hook, *args)
     fired.append(hook.__self__)
-
-
-def _jobs_of_leaving(node: Node, reason: Cancel_Reason, ev: Evaluation) -> None:
-    """The framework's own completed events (CONSTRUCT_INTERACTION §9): a
-    deleted or amended node's running construction job is cancelled, its
-    owner told why, and its evaluation job dropped, the id kept for the
-    edit's one `cancel(ids)` after the block."""
-    job = node.job()
-    if job is not None:
-        job.cancel(reason)
-    node.drop_evaluation_job("delete" if reason == "NODE_DELETED" else "amend", ev)
 
 
 def _store_transaction(forest: Forest, ev: Evaluation,
@@ -202,7 +190,7 @@ async def amend(old: Node, raws: list[RawAST],
     # Completed events (MODULE_STRUCTURE §4.1's order).
     fired: list[Node] = []
     _fire(fired, old.on_deleted, "amend")
-    _jobs_of_leaving(old, "NODE_AMENDED", ev)
+    old.jobs_leave("NODE_AMENDED", "amend", ev)       # the framework's own completed event (CONSTRUCT_INTERACTION §9)
     for child in inherited:
         assert isinstance(replacement, NonLeaf_Node)
         _fire(fired, child.on_inherited, old)
@@ -250,7 +238,7 @@ async def delete(node: Node) -> NonLeaf_Node:
     fired: list[Node] = []
     for n in node._children_first():
         _fire(fired, n.on_deleted, "delete")
-        _jobs_of_leaving(n, "NODE_DELETED", ev)
+        n.jobs_leave("NODE_DELETED", "delete", ev)
     # the parent: its `children` row changed, and no completed hook fires on it
     _store_transaction(forest, ev, "delete", location, changed=[*fired, parent],
                        deleted=subtree, removed=removed, invalidated=invalidated)

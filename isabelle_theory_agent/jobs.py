@@ -1,10 +1,9 @@
 """The agents (CONSTRUCT_INTERACTION §4), the messages and the mailboxes
-(§3.4), the construction jobs with their questions (§3.1, §3.2), what a
-node still owes (`Unfinished`, ARCHITECTURE §3.2), and the evaluation
-jobs' wire (§3.3): the process's table from a job's id to the job, and
-the remote procedure `job_finished` the ML side reports a job's end
-through; later the evaluation jobs themselves, as MODULE_STRUCTURE §4
-lists them.
+(§3.4), the construction jobs with their questions (§3.1, §3.2), the
+evaluation jobs (§3.3) with their wire — the process's table from a
+job's id to the job, and the remote procedure `job_finished` the ML side
+reports a job's end through — and what a node still owes (`Unfinished`,
+ARCHITECTURE §3.2), as MODULE_STRUCTURE §4 lists them.
 """
 
 from __future__ import annotations
@@ -15,11 +14,13 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, final
 
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 
+from . import isabelle_driver
 from .exceptions import BadAnswer, TAT_InternalError
 from .log import current_agent
 
@@ -112,9 +113,15 @@ def post(log: Log, message: Message) -> None:
     message.recipient.wake()
 
 
+def _dropped_for(message: Message) -> str | None:
+    """Why delivery would drop the message now, or None while it stands."""
+    return message.source.dropped_for(message) if message.source is not None else None
+
+
 def waiting(agent: Agent) -> list[str]:
-    """The texts the agent's mailbox holds, oldest first; they stay there."""
-    return [message.text for message in agent.mailbox]
+    """The texts the agent's mailbox would deliver now, oldest first, as
+    `deliver` would compose them; they stay there."""
+    return _merged_failures([message for message in agent.mailbox if _dropped_for(message) is None])
 
 
 def deliver(log: Log, agent: Agent) -> list[str]:
@@ -126,7 +133,7 @@ def deliver(log: Log, agent: Agent) -> list[str]:
     messages, agent.mailbox = agent.mailbox, []
     delivered: list[Message] = []
     for message in messages:
-        reason = message.source.dropped_for(message) if message.source is not None else None
+        reason = _dropped_for(message)
         if reason is None:
             delivered.append(message)
             log.job.message_delivered(recipient=agent.identity)
@@ -146,7 +153,8 @@ class Not_Started:
 
 
 class Running:
-    """A run is the job's; `RUNNING` is its one value."""
+    """The work is in flight — a construction job's run is the job's, an
+    evaluation job's report has not come; `RUNNING` is its one value."""
 
     def __repr__(self) -> str:
         return "RUNNING"
@@ -172,7 +180,7 @@ Settled = Succeeded | Failed             # what a run returns
 Cancel_Reason = Literal["NODE_DELETED", "NODE_AMENDED", "CONTEXT_CHANGED"]
 
 
-def image(outcome: Outcome) -> list[Any]:
+def job_image(outcome: Outcome) -> list[Any]:
     """The store's `job` row (§3.1; ARCHITECTURE §4.1): a tag and an
     optional value — the product, or the failure's message.  `RUNNING` is
     written as `NOT_STARTED`, so a loaded forest holds no run."""
@@ -185,7 +193,7 @@ def image(outcome: Outcome) -> list[Any]:
             return ["NOT_STARTED"]
 
 
-def outcome_of_image(row: Any) -> Outcome | None:
+def job_of_image(row: Any) -> Outcome | None:
     """The outcome a `job` row holds; None for a row of no known shape."""
     match row:
         case ["NOT_STARTED"]:
@@ -251,12 +259,15 @@ class _Run:
     """One run of a construction job — the source of the run's messages
     (§3.4): a message stands unless the run was cancelled, so is no
     longer its job's, or its question, if it carries one, is no longer
-    the job's pending question."""
+    the job's pending question.  `attach` is an evaluation job attached
+    from inside the run, applied at its settlement and gone with it
+    (§3.3)."""
 
     def __init__(self, job: Construction_Job):
         self.job = job
         self.task: asyncio.Task[None] | None = None
         self.cancelled = False
+        self.attach: Evaluation_Job | None = None
 
     def dropped_for(self, message: Message) -> str | None:
         if self.cancelled:
@@ -266,7 +277,16 @@ class _Run:
         return None
 
     def __repr__(self) -> str:
-        return f"run of the {self.job.title()} on `{self.job._id}`"
+        return f"run of the {self.job.title()} on `{self.job.node_id}`"
+
+
+# The run whose code is running: set by the wrapper, inherited by the tasks
+# the run spawns, None outside every run (§3.3's "from inside a run").
+_run_here: ContextVar[_Run | None] = ContextVar("tat_run", default=None)
+
+
+def current_run() -> _Run | None:
+    return _run_here.get()
 
 
 class Construction_Job(ABC):
@@ -279,9 +299,6 @@ class Construction_Job(ABC):
     somebody cancelled."""
 
     compulsory: ClassVar[bool] = True       # the forest is not complete without the job
-    # the members a class never overrides (PLUGIN_SYSTEM §2, §5)
-    FRAMEWORK_MEMBERS: ClassVar[tuple[str, ...]] = (
-        "can_start", "start", "cancel", "ask", "receive_answer", "question_message")
 
     def __init__(self, node: Node):
         self.node = node
@@ -292,10 +309,15 @@ class Construction_Job(ABC):
         self._current: _Run | None = None    # the job's run; None when none is
         self._runs: set[asyncio.Task[None]] = set()     # every run's task not yet unwound
         self._answered: asyncio.Future[None] | None = None   # what `ask` waits on
-        self._attach: Evaluation_Job | None = None    # an attach made from inside the run, applied at its settlement
         # recorded at `start`, for the steps that may happen off the forest
         self._conversation: Conversation | None = None
-        self._id = ""                        # the node's id, named by every record and notification
+        self._id = ""
+
+    @property
+    def node_id(self) -> str:
+        """The node's full id as the forest gives it; once the node has left
+        the forest, the id recorded at `start`."""
+        return self.node.current_id() or self._id
 
     # --- the class's (§3.2)
 
@@ -342,13 +364,13 @@ class Construction_Job(ABC):
                       f"Cancelled the following {cls.title(plural=True)}:")
 
     def answered_notice(self) -> str:
-        return f"Answered the {self.title()} on `{self._id}`; call `check_construct` before you exit."
+        return f"Answered the {self.title()} on `{self.node_id}`; call `check_construct` before you exit."
 
     def owned_by_another_refusal(self) -> str:
-        return f"The {self.title()} on `{self._id}` belongs to another agent."
+        return f"The {self.title()} on `{self.node_id}` belongs to another agent."
 
     def finished_notification(self, outcome: Settled) -> str:
-        head = f"The {self.title()} on `{self._id}`"
+        head = f"The {self.title()} on `{self.node_id}`"
         if isinstance(outcome, Succeeded):
             return head + " succeeded."
         return with_message(head + " failed", outcome.message)
@@ -356,7 +378,7 @@ class Construction_Job(ABC):
     def cancelled_notification(self, reason: Cancel_Reason) -> str:
         why = {"NODE_DELETED": "the node was deleted.", "NODE_AMENDED": "the node was amended.",
                "CONTEXT_CHANGED": "its context changed."}[reason]
-        return f"The {self.title()} on `{self._id}` was cancelled: {why}"
+        return f"The {self.title()} on `{self.node_id}` was cancelled: {why}"
 
     # --- the framework's
 
@@ -371,16 +393,15 @@ class Construction_Job(ABC):
         the run spawned through the ending (§9); the owner is woken, its
         jobs having changed."""
         if not self.can_start():
-            raise TAT_InternalError(f"the {self.title()} on `{self._id}` cannot be started now")
+            raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` cannot be started now")
         forest = self.node.forest()
         self._conversation, self._id = forest.conversation, forest.full_id(self.node)
         self.owner = owner
-        self.node.drop_evaluation_job("construction_start")   # and the stored check cleared (§3.3)
-        self.node._check_outcome = None
+        self.node.drop_evaluation_job("construction_start")
+        self.node._clear_check()
         self.outcome = RUNNING
-        self._attach = None
         self._store()
-        self._log.construction_started(node=self._id, owner=owner.identity)
+        self._log.construction_started(node=self.node_id, owner=owner.identity)
         earlier = [task for task in self._runs if not task.done()]
         run = self._current = _Run(self)
         run.task = self._conversation.ending.spawn(self._running(run, owner, earlier, forest.construction_slot()))
@@ -388,46 +409,49 @@ class Construction_Job(ABC):
         run.task.add_done_callback(self._runs.discard)
         owner.wake()
 
+    @final
     async def _running(self, run: _Run, owner: Agent, earlier: list[asyncio.Task[None]],
                        slot: Any) -> None:
         """The wrapper around `_run` (§3.2), in order: the log's agent is the
-        owner; every earlier run of the job is waited for to unwind; the
-        work, under the bound on runs (`slot`); then one question — is the
-        run still the job's?  A run that is settles itself; one that is not
-        was cancelled, and nothing is done.  Anything raised while the run
-        is the job's — a cancellation it brought on itself included — is a
-        bug and enters the ending; so is a cleanup that raised after a
-        cancellation."""
+        owner, and the run is the one `current_run` names here and in every
+        task it spawns; every earlier run of the job is waited for to
+        unwind; the work, under the bound on runs (`slot`); then one
+        question — is the run still the job's?  A run that is settles
+        itself; one that is not was cancelled, and nothing is done.
+        Anything raised while the run is the job's — a cancellation it
+        brought on itself included — is a bug and enters the ending; so is
+        a cleanup that raised after a cancellation."""
         try:
             current_agent.set(owner.identity)
+            _run_here.set(run)
             if earlier:
                 await asyncio.wait(earlier)
             async with slot:
                 result = await self._run()
             if self._current is run:
-                self._settle(result)
+                self._settle(run, result)
         except asyncio.CancelledError:
             if self._current is run:
-                self._bug(TAT_InternalError(f"the run of the {self.title()} on `{self._id}` cancelled itself"))
+                self._bug(TAT_InternalError(f"the run of the {self.title()} on `{self.node_id}` cancelled itself"))
             raise
         except Exception as bug:
             self._bug(bug)
 
-    def _settle(self, outcome: Settled) -> None:
+    @final
+    def _settle(self, run: _Run, outcome: Settled) -> None:
         """A run that ended on its own, in one synchronous stretch under no
-        lock (§3.2): the outcome recorded and stored, the pending question
-        withdrawn, an attach made from inside the run applied (§3.3),
-        `finished_notification` posted to the owner, who wakes."""
+        lock (§3.2): the outcome recorded, the pending question withdrawn,
+        an attach made from inside the run applied (§3.3), the node stored
+        once, `finished_notification` posted to the owner, who wakes."""
         if not isinstance(outcome, (Succeeded, Failed)):
             raise TAT_InternalError(f"{type(self).__name__}._run returned {outcome!r}, which is no outcome")
         self.outcome = outcome
         self._current = None
         self._withdraw()
+        if run.attach is not None:
+            self.node._attach_now(run.attach)
         self._store()
-        if self._attach is not None:
-            attach, self._attach = self._attach, None
-            self.node.attach_evaluation_job(attach)
-        self._log.construction_settled(node=self._id, outcome=image(outcome)[0],
+        self._log.construction_settled(node=self.node_id, outcome=job_image(outcome)[0],
                                        message=outcome.message if isinstance(outcome, Failed) else None)
         post(self._log_of_conversation, Message(self._owned_by(), self.finished_notification(outcome),
                                                 interrupts=True))
@@ -446,12 +470,11 @@ class Construction_Job(ABC):
         run, self._current = self._current, None
         self._withdraw()
         self.outcome = NOT_STARTED
-        self._attach = None                      # discarded with the cancelled run (§3.3)
-        if run is not None:
+        if run is not None:                      # its attach goes with it (§3.3)
             run.cancelled = True
             if run.task is not None:
                 run.task.cancel()
-        self._log.construction_cancelled(node=self._id, reason=reason)
+        self._log.construction_cancelled(node=self.node_id, reason=reason)
         owner = self._owned_by()
         if reason is not None:
             post(self._log_of_conversation, Message(owner, self.cancelled_notification(reason), interrupts=True))
@@ -464,14 +487,22 @@ class Construction_Job(ABC):
         a bug in `_run` — the question posted to the owner's mailbox as the
         job's pending question, and the run suspended until some `receive`
         accepts an answer; the job then reads its data off the question.  A
-        cancellation while it waits withdraws the question."""
-        self._post_question(question)
-        self._answered = asyncio.get_running_loop().create_future()
+        cancellation while it waits withdraws the question.  A job has at
+        most one pending question, and a run asks only while it is the
+        job's: an `ask` otherwise is a bug of `_run`."""
+        run = current_run()
+        if run is None or run is not self._current:
+            raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` asks a question from no run of its")
+        if self.pending_question is not None:
+            raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` asks while a question is pending")
+        self._post_question(question, run)
+        answered = self._answered = asyncio.get_running_loop().create_future()
         try:
-            await self._answered
+            await answered
         finally:
-            self._answered = None
-            self._withdraw()
+            if self._answered is answered:
+                self._answered = None
+                self._withdraw()
 
     @final
     def receive_answer(self, value: Any) -> str | None:
@@ -483,43 +514,47 @@ class Construction_Job(ABC):
         new question pending and posted, the result None."""
         question = self.pending_question
         if question is None:
-            raise TAT_InternalError(f"the {self.title()} on `{self._id}` has no pending question to answer")
+            raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` has no pending question to answer")
         try:
             judged = question.receive(value)
         except BadAnswer:
-            self._log.question_answered(node=self._id, outcome="refused")
+            self._log.question_answered(node=self.node_id, outcome="refused")
             raise
         if isinstance(judged, Answered):
             self.pending_question = None
             if self._answered is not None and not self._answered.done():
                 self._answered.set_result(None)
-            self._log.question_answered(node=self._id, outcome="accepted")
+            self._log.question_answered(node=self.node_id, outcome="accepted")
             return judged.response if judged.response is not None else self.answered_notice()
         if isinstance(judged, Interactive_Question):
-            self._log.question_answered(node=self._id, outcome="replaced")
-            self._post_question(judged)
+            if judged is question:
+                raise TAT_InternalError(f"{type(question).__name__}.receive returned the pending question itself")
+            self._log.question_answered(node=self.node_id, outcome="replaced")
+            assert self._current is not None             # a pending question has a run
+            self._post_question(judged, self._current)
             return None
         raise TAT_InternalError(f"{type(question).__name__}.receive returned {judged!r}")
 
+    @final
     def question_message(self, question: Interactive_Question) -> str:
         """The delivered form of a question (§3.4)."""
-        return (f"The {self.title()} on `{self._id}` asks:\n{question.text}\n"
-                f"Answer with the `answer` tool, node_id `{self._id}`; the answer must follow the JSON schema:\n"
+        return (f"The {self.title()} on `{self.node_id}` asks:\n{question.text}\n"
+                f"Answer with the `answer` tool, node_id `{self.node_id}`; the answer must follow the JSON schema:\n"
                 + json.dumps(question.schema, indent=2))
 
-    def _post_question(self, question: Interactive_Question) -> None:
-        """The job's pending question, posted to the owner from the run."""
+    @final
+    def _post_question(self, question: Interactive_Question, run: _Run) -> None:
+        """The job's pending question, posted to the owner from `run`."""
         from .plugin import validate_call_schema      # plugin imports model, which imports this module
-        where = f"the question of the {self.title()} on `{self._id}`"
+        where = f"the question of the {self.title()} on `{self.node_id}`"
         validate_call_schema(question.schema, where)
         if "$defs" in question.schema:                # it stands in for `answer`'s property, which has none
             raise TAT_InternalError(f"{where}: the schema carries `$defs`")
-        if self._current is None:
-            raise TAT_InternalError(f"the {self.title()} on `{self._id}` asks a question with no run")
         self.pending_question = question
         post(self._log_of_conversation, Message(self._owned_by(), self.question_message(question),
-                                                interrupts=True, source=self._current, question=question))
+                                                interrupts=True, source=run, question=question))
 
+    @final
     def _withdraw(self) -> None:
         """The pending question withdrawn (§3.4): cleared,
         `question_withdrawn`, the `ask` waiting on it cancelled, so a stray
@@ -528,18 +563,21 @@ class Construction_Job(ABC):
         if self.pending_question is None:
             return
         self.pending_question = None
-        self._log.question_withdrawn(node=self._id)
+        self._log.question_withdrawn(node=self.node_id)
         if self._answered is not None and not self._answered.done():
             self._answered.cancel()
 
+    @final
     def _carry_from(self, old: Construction_Job) -> None:
         """An amend's commit copying the replaced node's job image (§3.1):
         the old outcome, `RUNNING` read as `NOT_STARTED`."""
         self.outcome = old.outcome if isinstance(old.outcome, (Succeeded, Failed)) else NOT_STARTED
 
+    @final
     def _store(self) -> None:
         self.node._store_alone()
 
+    @final
     def _bug(self, bug: BaseException) -> None:
         self._conversation_of().ending.end(bug)
 
@@ -558,7 +596,7 @@ class Construction_Job(ABC):
 
     def _owned_by(self) -> Agent:
         if self.owner is None:
-            raise TAT_InternalError(f"the {self.title()} on `{self._id}` has no owner")
+            raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` has no owner")
         return self.owner
 
 
@@ -604,8 +642,6 @@ class Evaluation_Job(ABC):
     making (`id`) until its report, which `job_finished` hands to
     `_report`."""
 
-    FRAMEWORK_MEMBERS: ClassVar[tuple[str, ...]] = ("_report", "dropped_for")
-
     def __init__(self, node: Node, starter: Agent | None):
         self.node = node
         self.starter = starter                   # None when never started
@@ -615,7 +651,13 @@ class Evaluation_Job(ABC):
         self.started_construction = False        # its failure started the node's construction (§3.3)
         forest = node.forest()
         self.conversation: Conversation = forest.conversation
-        self.node_id = forest.full_id(node)
+        self._id = forest.full_id(node)
+
+    @property
+    def node_id(self) -> str:
+        """The node's full id as the forest gives it; once the node has left
+        the forest, the id recorded when the job was built."""
+        return self.node.current_id() or self._id
 
     @classmethod
     @abstractmethod
@@ -689,7 +731,6 @@ class Evaluation_Job(ABC):
 async def cancel_jobs(conversation: Conversation, ids: list[int]) -> None:
     """One `cancel(ids)` round trip for dropped jobs' works, recorded
     `cancel_sent` (§3.3; MODULE_STRUCTURE §2.4)."""
-    from . import isabelle_driver                 # isabelle_driver imports model, which imports this module
     conversation.log.job.cancel_sent(ids=ids)
     await isabelle_driver.job_cancel(conversation, ids)
 
@@ -749,7 +790,7 @@ class Unfinished_Construction(Unfinished):
 @dataclass(frozen=True)
 class Unfinished_Check(Unfinished):
     """The check's outcome is `RUNNING` or `FAILED`."""
-    outcome: Check_Outcome
+    outcome: Running | Failed
     job_class: type[Evaluation_Job]
 
     def title(self, plural: bool = False) -> str:
