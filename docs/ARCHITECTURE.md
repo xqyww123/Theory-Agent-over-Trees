@@ -79,8 +79,9 @@ dependency graph, and compilation order is a topological order over it;
 imports cross `Session` boundaries freely. The `Session` layer is ordered
 like every other; Isabelle reads no meaning into that order.
 
-Initial node classes: `Session`, `Theory`, `Theorem`, `Define`, `Datatype`, `QuotientType`,
-`Record`, `TypeClass`, `Text`, `Section`, `Context`, `Locale`. New node classes must be
+The node classes: `Session` and `Theory`, the framework's, and those of
+the plugin `Isabelle_Std`, listed in
+[node_classes/INDEX.md](node_classes/INDEX.md). New node classes must be
 addable without touching the core. Every tree's root is a `Theory` node, which
 owns the theory header, the `imports` list and the `end`.
 
@@ -190,8 +191,8 @@ evaluator reports each separately.
 structure, are specified in
 [node_classes/SESSION_AND_THEORY.md](node_classes/SESSION_AND_THEORY.md).
 
-`Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
-and `Locale` are unspecified (OPEN_QUESTIONS §1).
+The plugin's other classes, and which of them are specified, are
+[node_classes/INDEX.md](node_classes/INDEX.md).
 
 ## 3. Evaluation *(decided)*
 

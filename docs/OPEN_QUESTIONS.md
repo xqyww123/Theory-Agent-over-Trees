@@ -6,10 +6,11 @@ Nothing here is settled. Ordered by what it blocks.
 
 **Blocks:** most of what an agent would actually write.
 
-`Datatype`, `QuotientType`, `Record`, `TypeClass`, `Text`, `Section`, `Context`
-and `Locale` are unspecified. `Context` and `Locale` also need their two
-omissibility flags (MCP_SPECIFICATION §2.1). Each will be a node class of
-the plugin `Isabelle_Std`, beside `Theorem` (node_classes/THEOREM.md).
+The node classes of the plugin `Isabelle_Std` are listed in
+node_classes/INDEX.md; every one but `Theorem` (node_classes/THEOREM.md)
+and the part of `Define` ARCHITECTURE §2.2 gives is unspecified.
+`Context` and `Locale` also need their two omissibility flags
+(MCP_SPECIFICATION §2.1).
 
 ## 2. The AoA round
 
