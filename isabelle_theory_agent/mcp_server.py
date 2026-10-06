@@ -46,7 +46,7 @@ from starlette.requests import Request
 from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
-from .jobs import Agent, deliver, waiting
+from .jobs import Agent, Standing, blocked_reason, deliver, standing, waiting
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
@@ -272,6 +272,26 @@ class Compaction:
 
 
 @dataclass(frozen=True)
+class Stop:
+    """A `Stop` or `SubagentStop` hook (CONSTRUCT_INTERACTION §7): the agent
+    about to stop, looked up and never created — None for one TAT has not
+    met, which nothing holds."""
+    agent: Agent | None
+
+
+@dataclass(frozen=True)
+class Interruption:
+    """A `PreToolUse` on the client's tool that stops a subagent
+    (CONSTRUCT_INTERACTION §7): the caller, looked up and never created."""
+    caller: Agent | None
+
+
+# The interruption's denial (CONSTRUCT_INTERACTION §7), the parent's error result.
+INTERRUPTION_DENIED = ("This agent cannot be interrupted: it may still have work in `TAT`.\n"
+                       "Send it a message asking it to finish its work in `TAT` and exit, then wait for it.")
+
+
+@dataclass(frozen=True)
 class Post_Compact:
     """Claude Code's `PostCompact`, which names no agent (CLIENT_HOOKS.md
     §2): the session it belongs to, by the payload's `transcript_path` —
@@ -452,6 +472,7 @@ class TAT_Server:
     measured_version: ClassVar[str]
     call_key: ClassVar[str]
     announcement_answer: ClassVar[Any]
+    interrupting_tool: ClassVar[str]        # the parent's tool that stops a subagent (CONSTRUCT_INTERACTION §7)
     experimental: ClassVar[dict[str, dict[str, Any]]] = {}     # declared in `initialize`
 
     def __init__(self, ending: Ending, port: int, tools: list[Tool], agents: dict[str, Agent]):
@@ -542,19 +563,60 @@ class TAT_Server:
         agent_id = payload.get("agent_id")
         return str(agent_id) if agent_id else self._main_identity(payload)
 
-    def event_of_hook(self, payload: dict[str, Any]) -> Announcement | Compaction | Post_Compact | None:
-        """The client's JSON as an event (CONSTRUCT_INTERACTION §8): a
-        `PreToolUse` on a TAT tool is the announcement of a call, a
-        compaction hook what the subclass makes of it; every other hook is
-        consumed — None.  Reads the payload and changes nothing; `_judge`
-        acts on the event."""
-        if payload.get("hook_event_name") != "PreToolUse":
+    def event_of_hook(self, payload: dict[str, Any]
+                      ) -> Announcement | Interruption | Stop | Compaction | Post_Compact | None:
+        """The client's JSON as an event (CONSTRUCT_INTERACTION §7, §8): a
+        `PreToolUse` on a TAT tool is the announcement of a call, one on
+        the client's tool that stops a subagent an interruption, a `Stop`
+        or `SubagentStop` the stop of its agent, a compaction hook what the
+        subclass makes of it; every other hook is consumed — None.  Reads
+        the payload and changes nothing; `_judge` acts on the event."""
+        hook = payload.get("hook_event_name")
+        if hook in ("Stop", "SubagentStop"):
+            return Stop(self._known(self._identity(payload)))
+        if hook != "PreToolUse":
             return self._compaction_of_hook(payload)
-        if not str(payload.get("tool_name", "")).startswith(TOOL_PREFIX):
+        tool = str(payload.get("tool_name", ""))
+        if tool == self.interrupting_tool:
+            return Interruption(self._known(self._identity(payload)))
+        if not tool.startswith(TOOL_PREFIX):
             return None
         return Announcement(str(_field(payload, "tool_use_id")), self._identity(payload),
                             main=not payload.get("agent_id"),
                             transcript_path=_text(payload.get("transcript_path")))
+
+    def _standing(self, agent: Agent) -> Standing:
+        """What stands for the agent (CONSTRUCT_INTERACTION §5), over the
+        forest once it is built."""
+        forest = self.ending.forest
+        return standing(forest._tree_order() if forest is not None else [], agent)
+
+    def _stop_answer(self, agent: Agent | None) -> Any:
+        """The stop rule (CONSTRUCT_INTERACTION §7): allowed — nothing
+        answered — when `check_construct` would answer `No job is running.`
+        and deliver no message; else blocked with the reason."""
+        reason = blocked_reason(self._standing(agent)) if agent is not None else None
+        stands = self._standing(agent) if agent is not None and reason is not None else None
+        self.ending.log.agent.stop_judged(
+            allowed=reason is None,
+            stands=None if stands is None else {
+                "waiting": [job.node_id for job in stands.waiting],
+                "running": [job.node_id for job in stands.running],
+                "checks": [job.node_id for job in stands.checks], "messages": len(stands.messages)})
+        return None if reason is None else {"decision": "block", "reason": reason}
+
+    def _interruption_answer(self, caller: Agent | None) -> Any:
+        """The interruption judgement (CONSTRUCT_INTERACTION §7): denied when
+        any agent other than the caller and the main conversation would be
+        held, or has a call still working; else allowed — nothing answered."""
+        holding = [agent.identity for agent in self.agents.values()
+                   if agent is not caller and not agent.main
+                   and (agent.working_calls > 0 or not self._standing(agent).nothing())]
+        self.ending.log.agent.interruption_judged(allowed=not holding, holding_work=holding or None)
+        if not holding:
+            return None
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": INTERRUPTION_DENIED}}
 
     def _compaction_of_hook(self, payload: dict[str, Any]) -> Compaction | Post_Compact | None:
         """The event a hook other than `PreToolUse` is on this client, or
@@ -837,6 +899,10 @@ class TAT_Server:
         event = self.event_of_hook(payload)
         if event is None:
             return "ignored", None
+        if isinstance(event, Stop):
+            return "stop", self._stop_answer(event.agent)
+        if isinstance(event, Interruption):
+            return "interruption", self._interruption_answer(event.caller)
         if isinstance(event, Compaction):
             self._compaction(event.agent, event.learned_from, **event.facts)
             return ("session_start" if event.learned_from == "session_start" else "compaction"), None
@@ -967,6 +1033,7 @@ class Claude_Code_Server(TAT_Server):
     measured_version = "2.1.286"
     call_key = "claudecode/toolUseId"
     announcement_answer = ALLOW             # the grant, without which Claude Code refuses the call under -p
+    interrupting_tool = "TaskStop"          # the parent's tool that stops a subagent (CONSTRUCT_INTERACTION §7)
     main_identity = "main"                  # LOGGING.md §3
     boundary_wait: ClassVar[float] = 10.0   # seconds a `PostCompact` and its boundary may lie apart (the second check)
     boundary_poll: ClassVar[float] = 0.25   # seconds between the readings while a hook waits
@@ -1222,6 +1289,7 @@ class Codex_Server(TAT_Server):
     measured_version = "0.156.1"
     call_key = "callId"
     announcement_answer = None              # Codex rejects a bare `allow`; nothing is needed
+    interrupting_tool = "collaborationinterrupt_agent"
     experimental = {SANDBOX_STATE: {}}      # under which Codex sends the policy in force with every call
 
     def _main_identity(self, payload: dict[str, Any]) -> str | None:

@@ -536,6 +536,13 @@ class Construction_Job(ABC):
         raise TAT_InternalError(f"{type(question).__name__}.receive returned {judged!r}")
 
     @final
+    def repeat_question(self) -> None:
+        """The pending question posted to the owner again — for
+        `check_construct`, when the mailbox no longer holds it (§5)."""
+        if self.pending_question is not None and self._current is not None:
+            self._post_question(self.pending_question, self._current)
+
+    @final
     def question_message(self, question: Interactive_Question) -> str:
         """The delivered form of a question (§3.4)."""
         return (f"The {self.title()} on `{self.node_id}` asks:\n{question.text}\n"
@@ -765,6 +772,107 @@ def _merged_failures(messages: list[Message]) -> list[str]:
     for (cls, automatic), (at, ids) in groups.items():
         texts[at] = cls.failure_notification(ids, automatic)
     return texts
+
+
+# --- what stands for an agent (CONSTRUCT_INTERACTION §4, §5, §7)
+
+@dataclass(frozen=True)
+class Standing:
+    """An agent's jobs and messages at one moment, read off the forest and
+    the mailbox: the construction jobs it owns that wait for its answer
+    and that run, the evaluation jobs it started that run, and the
+    mailbox's messages that stand.  `check_construct` judges its return
+    on it, and the stop rule its answer (§5, §7)."""
+    waiting: list[Construction_Job]
+    running: list[Construction_Job]
+    checks: list[Evaluation_Job]
+    messages: list[Message]
+
+    def nothing(self) -> bool:
+        """`check_construct` would answer `No job is running.` and deliver
+        no message: the stop is allowed (§7)."""
+        return not (self.waiting or self.running or self.checks or self.messages)
+
+
+def standing(nodes: list[Node], agent: Agent) -> Standing:
+    """What stands for `agent` over `nodes`, the forest in tree order (§4):
+    a job is the agent's by its owner, a check by its starter."""
+    waiting: list[Construction_Job] = []
+    running: list[Construction_Job] = []
+    checks: list[Evaluation_Job] = []
+    for node in nodes:
+        job = node.job()
+        if job is not None and job.outcome is RUNNING and job.owner is agent:
+            (waiting if job.pending_question is not None else running).append(job)
+        check = node.evaluation_job()
+        if check is not None and check.outcome is RUNNING and check.starter is agent:
+            checks.append(check)
+    return Standing(waiting, running, checks, [m for m in agent.mailbox if _dropped_for(m) is None])
+
+
+def _by_title(jobs_: list[Any]) -> list[tuple[Any, list[str]]]:
+    """The jobs' classes with their nodes' ids, titles alphabetical."""
+    groups: dict[str, tuple[Any, list[str]]] = {}
+    for job in jobs_:
+        groups.setdefault(type(job).title(), (type(job), []))[1].append(job.node_id)
+    return [groups[title] for title in sorted(groups)]
+
+
+def state_lines(stands: Standing) -> list[str]:
+    """`check_construct`'s state lines (§5): the caller's jobs by title and
+    situation — construction titles first, each one's waiting then running,
+    then evaluation titles — up to three nodes as one sentence, more as a
+    header over one full id per line."""
+    lines: list[str] = []
+    waiting = dict(_by_title(stands.waiting))
+    running = dict(_by_title(stands.running))
+    for cls in sorted(waiting | running, key=lambda cls: cls.title()):
+        if cls in waiting:
+            lines.append(listed(waiting[cls], lambda on, c=cls: f"The {c.title()} {on} is waiting for your answer.",
+                                f"The following {cls.title(plural=True)} are waiting for your answer:"))
+        if cls in running:
+            lines.append(listed(running[cls], lambda on, c=cls: f"The {c.title()} {on} is still running.",
+                                f"The following {cls.title(plural=True)} are still running:"))
+    for cls, ids in _by_title(stands.checks):
+        lines.append(listed(ids, lambda on, c=cls: f"The {c.title()} {on} is still running.",
+                            f"The following {cls.title(plural=True)} are still running:"))
+    return lines
+
+
+NO_JOB = "No job is running."                    # `check_construct`'s one-line body when nothing stands (§5)
+BLOCKED = "The `TAT` server blocked your exit:"  # the stop reason's opening line (§7)
+
+
+def running_titles(stands: Standing) -> str:
+    """The titles of the running jobs in their own numbers — construction
+    titles first, then evaluation titles, alphabetical within, the same
+    title merged — joined with commas and `and` (§7)."""
+    def words(jobs_: list[Any]) -> list[str]:
+        return [cls.title(plural=len(ids) > 1) for cls, ids in _by_title(jobs_)]
+    titles = words(stands.running) + words(stands.checks)
+    return titles[0] if len(titles) == 1 else ", ".join(titles[:-1]) + " and " + titles[-1]
+
+
+def blocked_reason(stands: Standing) -> str | None:
+    """The stop hook's reason when the stop is blocked (§7): the opening
+    line, the state lines, and one instruction composed from what stands;
+    None when the stop is allowed."""
+    if stands.nothing():
+        return None
+    questions = len(stands.waiting)
+    the_question = "the questions" if questions > 1 else "the question"
+    it = "them" if questions > 1 else "it"
+    running = stands.running or stands.checks
+    if questions and running:
+        instruction = (f"Call `check_construct` to see {the_question} and to wait for the running "
+                       f"{running_titles(stands)}; answer {it} before you exit.")
+    elif questions:
+        instruction = f"Call `check_construct` to see {the_question}; answer {it} before you exit."
+    elif running:
+        instruction = f"Call `check_construct` to wait for the running {running_titles(stands)} before you exit."
+    else:
+        instruction = "Call `check_construct` to read your messages before you exit."
+    return "\n".join([BLOCKED, *state_lines(stands), instruction])
 
 
 # --- what a node still owes (ARCHITECTURE §3.2; CONSTRUCT_INTERACTION §3.1)

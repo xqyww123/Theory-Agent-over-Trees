@@ -313,7 +313,8 @@ def test_the_path_answers_503_while_ending_and_500_on_a_bug_and_ignores_other_ho
             assert r.status_code == 500 and r.content == b""
             exn = await ended(serve)
             assert isinstance(exn, TAT_InternalError) and "tool_use_id" in str(exn)
-        assert answers() == [("ignored", 200), ("ignored", 200), (None, 500)]
+        # a `Stop` of an agent TAT has not met is judged, and allowed with nothing answered (CI §7)
+        assert answers() == [("stop", 200), ("ignored", 200), (None, 500)]
 
         async with serving(free_port(), []) as (server, serve):
             r = await post_hook(hook_url(server.url), [1, 2])

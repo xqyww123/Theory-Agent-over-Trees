@@ -1,0 +1,12 @@
+// The `answer` tool (TOOL_SCHEMAS.md §5; CONSTRUCT_INTERACTION §5).  `answer`
+// is a bare object: at call time the pending question's own schema takes its
+// place, and the call is checked against that.
+{
+  "type": "object",
+  "properties": {
+    "node_id": { "type": "string", "description": "The id of the node whose construction job asked the question" },
+    "answer":  { "type": "object", "description": "The answer, in the shape the question asked for" }
+  },
+  "required": ["node_id", "answer"],
+  "additionalProperties": false
+}

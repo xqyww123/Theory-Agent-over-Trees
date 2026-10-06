@@ -1,0 +1,9 @@
+// The `check_construct` tool (TOOL_SCHEMAS.md §5; CONSTRUCT_INTERACTION §5).
+{
+  "type": "object",
+  "properties": {
+    "wait_seconds": { "type": "integer", "description": "The time to wait at most, in seconds; the call returns earlier when a message arrives or every job has finished" }
+  },
+  "required": ["wait_seconds"],
+  "additionalProperties": false
+}

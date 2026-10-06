@@ -1,0 +1,11 @@
+// The `construct` tool (TOOL_SCHEMAS.md §5; CONSTRUCT_INTERACTION §5).
+{
+  "type": "object",
+  "properties": {
+    "node_ids": { "type": "array", "minItems": 1, "items": { "type": "string" },
+                  "description": "The ids of the nodes whose construction jobs to start; a non-leaf node stands for every node under it." },
+    "auto_construct": { "type": "boolean", "description": "If true, automatically start the construction of each node whenever an evaluation reaches it and it is not constructed yet; false turns this automatic construction off. Default: false." }
+  },
+  "required": ["node_ids"],
+  "additionalProperties": false
+}

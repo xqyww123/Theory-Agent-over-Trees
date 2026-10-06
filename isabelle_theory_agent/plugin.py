@@ -115,6 +115,10 @@ class Loaded:
     kinds: dict[str, type[Node]]
     edit_schema: JSON_Schema
     compile_hooks: tuple[Compile_Hook, ...] = ()
+    # the job classes the loaded classes name, each once, by title: what the
+    # construct tools' existence and descriptions follow (CONSTRUCT_INTERACTION §3.1, §5)
+    construction_job_classes: tuple[type[Construction_Job], ...] = ()
+    evaluation_job_classes: tuple[type[Evaluation_Job], ...] = ()
 
 
 def load(python_packages: list[str]) -> Loaded:
@@ -142,7 +146,16 @@ def load(python_packages: list[str]) -> Loaded:
     classes = [cls for cls in registry
                if cls in model.FRAMEWORK_NODE_CLASSES or _defined_in(cls, python_packages)]
     return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes),
-                  tuple(h for h in compile_hooks if _defined_in(h, python_packages)))
+                  tuple(h for h in compile_hooks if _defined_in(h, python_packages)),
+                  _job_classes(classes, "construction_job_class"),
+                  _job_classes(classes, "evaluation_job_class"))
+
+
+def _job_classes(classes: list[type[Node]], attribute: str) -> tuple[Any, ...]:
+    """The job classes the node classes name under `attribute`, each once,
+    in the alphabetical order of their titles."""
+    named = {job_class for cls in classes if (job_class := getattr(cls, attribute)) is not None}
+    return tuple(sorted(named, key=lambda job_class: job_class.title()))
 
 
 def _defined_in(defined: type | Compile_Hook, packages: list[str]) -> bool:
@@ -157,6 +170,11 @@ def edit_schema(classes: list[type[Node]]) -> JSON_Schema:
     (PLUGIN_SYSTEM §4), checked whole."""
     schema = jsoncomment.JsonComment().loads(_EDIT_SCHEMA.read_text())
     schema["$defs"] = assemble(classes)
+    if any(cls.construction_job_class is not None for cls in classes):    # TOOL_SCHEMAS §1
+        schema["properties"]["auto_construct"] = {
+            "type": "boolean",
+            "description": "True turns the new nodes' automatic construction on; false leaves it off."
+                           " Default: false."}
     try:
         jsonschema.Draft202012Validator.check_schema(schema)
     except jsonschema.SchemaError as e:

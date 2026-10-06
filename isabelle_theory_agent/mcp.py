@@ -4,6 +4,7 @@ builds what the server advertises and runs for one conversation.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,11 +14,17 @@ import jsoncomment
 
 from . import edit
 from .exceptions import (
-    HoldsNoChildren, MoveBesideItself, ProtectedNode, TAT_Error, TAT_InternalError)
-from .jobs import Agent
+    ConstructNotSupported, ConstructOwnedByAnother, HoldsNoChildren, MoveBesideItself, NoQuestionPending,
+    ProtectedNode, TAT_Error, TAT_InternalError)
+from .jobs import NO_JOB, RUNNING, Agent, Construction_Job, Standing, standing, state_lines
 from .mcp_server import Body, Tool, With_Trailer
 from .model import BRIEFING, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus
 from .plugin import Loaded, check_call, validate_call_schema
+
+# `check_construct`'s clamps on `wait_seconds` (CONSTRUCT_INTERACTION §5, §8): at
+# least 3 seconds, and a minute under the clients' twelve-hour tool limit
+WAIT_AT_LEAST = 3
+WAIT_AT_MOST = 12 * 3600 - 60
 
 _TOOLS = Path(__file__).parent / "tools"
 
@@ -80,6 +87,139 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
         # `Forest.resolve`, not `_resolve`: a read may name the root
         return forest.render(forest.resolve(arguments["node_id"]), RECALL, agent)
 
+    # --- the construct tools (CONSTRUCT_INTERACTION §5): no lock, each
+    # synchronous from its checks to its change, the quickview as `recall`'s
+
+    def quickview(named: list[Node]) -> str:
+        """The nodes the call named as focuses at depth 0, an id under
+        another named id left out."""
+        focuses = [n for n in named if not any(n._is_under(other) for other in named)]
+        return forest.render(forest, Relative_Focus(frozenset(focuses), 0), agent_of_rendering[0])
+
+    agent_of_rendering: list[Agent] = []
+
+    def nodes_of_call(agent: Agent, arguments: dict[str, Any]) -> tuple[list[Node], list[Node]]:
+        """The nodes the ids name — a non-leaf node standing for every node
+        under it — those without a construction job left out, and the
+        named nodes themselves; `ConstructNotSupported` when none has a
+        job.  Each job takes the call's `auto_construct`, stored at once."""
+        agent_of_rendering[:] = [agent]
+        ids = arguments["node_ids"]
+        named = [_resolve(forest, id) for id in ids]
+        nodes = [n for root in named for n in root._tree_order() if n.job() is not None]
+        nodes = list(dict.fromkeys(nodes))
+        if not nodes:
+            raise ConstructNotSupported(ids[0] if len(ids) == 1 else None)
+        for node in nodes:
+            job = node.job()
+            assert job is not None
+            job.auto_construct = arguments.get("auto_construct", False)
+            node._store_alone()
+        return nodes, named
+
+    def notices(jobs_: list[Construction_Job], notice: str, none: str) -> str:
+        if not jobs_:
+            return none
+        by_class: dict[type[Construction_Job], list[str]] = {}
+        for job in jobs_:
+            by_class.setdefault(type(job), []).append(job.node_id)
+        return "\n".join(getattr(cls, notice)(ids) for cls, ids in by_class.items())
+
+    async def run_construct(agent: Agent, arguments: dict[str, Any]) -> str:
+        nodes, named = nodes_of_call(agent, arguments)
+        started: list[Construction_Job] = []
+        for node in nodes:
+            job = node.job()
+            assert job is not None
+            if job.can_start():                   # not ready, constructed, running: skipped, the mark says
+                job.start(agent)
+                started.append(job)
+        return notices(started, "starting_notice", "No construction job was started.") + "\n" + quickview(named)
+
+    async def run_cancel_construct(agent: Agent, arguments: dict[str, Any]) -> str:
+        nodes, named = nodes_of_call(agent, arguments)
+        cancelled: list[Construction_Job] = []
+        for node in nodes:
+            job = node.job()
+            assert job is not None
+            if job.outcome is RUNNING and job.owner is agent:   # another agent's run is skipped and goes on
+                job.cancel(None)
+                cancelled.append(job)
+        return notices(cancelled, "cancelling_notice", "No construction job was running.") + "\n" + quickview(named)
+
+    async def run_check_construct(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
+        """Returns on one of four conditions, judged at the start and on every
+        wake of the caller: an interrupting message waiting; a question
+        waiting — delivered again when the mailbox no longer holds it; a
+        job of the caller's ended since the start with none of its title
+        left running; the deadline (CONSTRUCT_INTERACTION §5)."""
+        wait = min(max(arguments["wait_seconds"], WAIT_AT_LEAST), WAIT_AT_MOST)
+        at_start = standing(forest._tree_order(), agent)
+        if not (at_start.waiting or at_start.running or at_start.checks):
+            return NO_JOB
+        had = {*at_start.waiting, *at_start.running, *at_start.checks}
+        titles_had = {type(job).title() for job in had}
+
+        def now() -> Standing:
+            return standing(forest._tree_order(), agent)
+
+        def returns() -> bool:
+            stands = now()
+            for job in stands.waiting:
+                if not any(m.question is job.pending_question for m in agent.mailbox):
+                    job.repeat_question()
+            if any(m.interrupts for m in stands.messages):
+                return True
+            left = {*stands.waiting, *stands.running, *stands.checks}
+            titles_left = {type(job).title() for job in left}
+            return any(type(job).title() not in titles_left for job in had - left)
+        try:
+            await asyncio.wait_for(agent.sleep_until(returns), wait)
+        except TimeoutError:
+            pass
+
+        def trailer() -> str:
+            stands = now()
+            lines = state_lines(stands)
+            titles_left = {type(job).title() for job in (*stands.waiting, *stands.running, *stands.checks)}
+            for job in sorted(had, key=lambda job: type(job).title()):
+                title = type(job).title()
+                if title in titles_had and title not in titles_left:
+                    lines.append(f"All {type(job).title(plural=True)} have finished.")
+                    titles_had.discard(title)
+            return "\n".join(lines)
+        return With_Trailer("", trailer)
+
+    async def run_answer(agent: Agent, arguments: dict[str, Any]) -> str:
+        node_id = arguments["node_id"]
+        node = _resolve(forest, node_id)
+        job = node.job()
+        if job is None or job.pending_question is None:
+            raise NoQuestionPending(node_id)
+        if job.owner is not agent:
+            raise ConstructOwnedByAnother(node_id, job.owned_by_another_refusal())
+        shaped = dict(answer_schema)
+        shaped["properties"] = dict(answer_schema["properties"]) | {"answer": job.pending_question.schema}
+        check_call(shaped, "answer", arguments)
+        return job.receive_answer(arguments["answer"]) or ""
+
+    constructions, checks = loaded.construction_job_classes, loaded.evaluation_job_classes
+    answer_schema = _schema("answer")
+    construct_tools: list[Tool] = []
+    if constructions:
+        construct_tools += [
+            _tool("construct", "Start the construction jobs of nodes, such as "
+                  f"{_joined([cls.title(plural=True) for cls in constructions], 'and')}.",
+                  _schema("construct"), run_construct, read_only=False),
+            _tool("cancel_construct", "Cancel the running construction jobs of nodes.",
+                  _schema("cancel_construct"), run_cancel_construct, read_only=False)]
+    if constructions or checks:
+        construct_tools.append(_tool("check_construct", _check_construct_description(constructions, checks),
+                                     _schema("check_construct"), run_check_construct, read_only=True))
+    if constructions:
+        construct_tools.append(_tool("answer", "Answer the question a construction job asked you",
+                                     answer_schema, run_answer, read_only=False))
+
     return [_tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit,
                   read_only=False),
             _tool("move", "Move an Isabelle theory construct", _schema("move"), run_move,
@@ -88,7 +228,29 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                   read_only=False),
             _tool("recall", "Read an Isabelle theory construct with what is under it, briefer the"
                   " deeper, or an outline of everything.", _schema("recall"), run_recall,
-                  read_only=True)]
+                  read_only=True),
+            *construct_tools]
+
+
+def _joined(words: list[str], last: str) -> str:
+    """Distinct words, alphabetical, joined with commas and `last` before
+    the last (CONSTRUCT_INTERACTION §5)."""
+    words = sorted(set(words))
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
+
+
+def _check_construct_description(constructions: tuple[Any, ...], checks: tuple[Any, ...]) -> str:
+    """Completed at start (TOOL_SCHEMAS.md §5): the construction titles
+    singular, the evaluation titles plural, the `or all …` part absent
+    without evaluation job classes, the first slot absent without
+    construction job classes."""
+    slots = []
+    if constructions:
+        slots.append("any " + _joined([cls.title() for cls in constructions], "or"))
+    if checks:
+        slots.append("all " + _joined([cls.title(plural=True) for cls in checks], "or"))
+    return (f"Wait until {' or '.join(slots)} have finished, or a message arrives. Returns at once when"
+            " nothing is running. To ensure all jobs have finished, call it repeatedly.")
 
 
 def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:

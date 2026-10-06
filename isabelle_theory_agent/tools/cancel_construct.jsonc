@@ -1,0 +1,11 @@
+// The `cancel_construct` tool (TOOL_SCHEMAS.md §5; CONSTRUCT_INTERACTION §5).
+{
+  "type": "object",
+  "properties": {
+    "node_ids": { "type": "array", "minItems": 1, "items": { "type": "string" },
+                  "description": "The ids of the nodes whose construction jobs to cancel; a non-leaf node stands for every node under it." },
+    "auto_construct": { "type": "boolean", "description": "True keeps their automatic construction on; false turns it off. Default: false." }
+  },
+  "required": ["node_ids"],
+  "additionalProperties": false
+}
