@@ -4,9 +4,9 @@ Written 2026-10-03, revised on 2026-10-04 after four readers' checks
 (review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 9 are committed since
 2026-10-05, with the reviews of steps 1–2, 4–5 and 6–7 applied
 (review/DOC_SYNC_LIST.md entries 32–45; the second compaction check
-rebuilt on 2026-10-06 on the owner's rulings); step 9's harness half —
-the test plugin's node class with both job classes — is owed before step
-11; the review of steps 8 and 9 is next; the rest is not implemented.
+rebuilt on 2026-10-06 on the owner's rulings, the review of steps 8 and 9
+applied on 2026-10-07 but for its eight questions to the owner,
+review/STEPS_8_9_REVIEW.md §4); the rest is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is

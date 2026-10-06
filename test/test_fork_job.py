@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import stand_ins
-from isabelle_theory_agent import isabelle_driver, jobs
+from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.isabelle_driver import call
 from test_conversation import Probes, errors
@@ -192,3 +192,60 @@ async def test_a_work_interrupted_by_anything_but_tats_cancel_is_reported_as_a_b
     assert isinstance(job.ending.ended_by, TAT_InternalError) and str(job.ending.ended_by) == message
     [ended] = records(log, "job_ended", job.id)
     assert (ended["failure"], ended["cancelled"]) == (["bug", message], False)
+
+
+# --- the test plugin's node class: both jobs over the wire (the jobs plan, step 9)
+
+def note(name: str, work: str = "pass") -> dict:
+    return {"kind": "note", "name": name, "text": f"the note {name}", "work": work}
+
+
+async def test_the_notes_jobs_over_the_wire(conversation):
+    """The test plugin's `note` (tat_test_plugin): its evaluation job's work
+    is forked by `TAT_test.fork_job` and settles by the report — `PASSED`,
+    or `FAILED` with the work's message posted to the starter; one dropped
+    by an edit has its future cancelled on the Isabelle side; its
+    construction job asks one question and settles by the answer."""
+    forest, kinds, log = conversation.forest, conversation.kinds, conversation.log.directory
+    conv = forest.conversation
+    agent = stand_ins.agent(conv)
+
+    async def insert(parent, index, raws):
+        async with forest.lock:
+            return await edit.insert(parent, index, raws, kinds)
+
+    (sess,) = await insert(forest, 0, [
+        {"kind": "session", "name": "TAT_NOTES", "parent_session": "HOL",
+         "children": [{"kind": "theory", "name": "TAT_NOTES_A", "imports": ["Main"],
+                       "children": [note("P"), note("Q", "fail"), note("R", "wait")]}]}])
+    (thy,) = sess.sub_nodes
+    p, q, r = thy.sub_nodes
+    await thy.evaluate_to(False)
+    assert all(isinstance(n._status, M.Ready) for n in (p, q, r)), [n._status for n in (p, q, r)]
+    for n in (p, q, r):
+        await n.start_evaluation_job(agent)
+    checks = [n.evaluation_job() for n in (p, q, r)]
+    await until(lambda: checks[0].ended and checks[1].ended)
+    assert p.check_outcome() is jobs.PASSED and q.check_outcome() == jobs.Failed("tat-job-error")
+    assert jobs.deliver(conv.log, agent) == [f"The note check on `{forest.full_id(q)}` failed."]
+    assert records(log, "job_ended", checks[0].id)[0]["failure"] == ["ok"]
+    # the waiting work: dropped by the edit that deletes its node, cancelled on the Isabelle side
+    await until(lambda: records(log, "job_forked", checks[2].id))
+    async with forest.lock:
+        await edit.delete(r)
+    assert checks[2].ended and r.evaluation_job() is None
+    await until(lambda: records(log, "job_ended", checks[2].id))
+    [ended] = records(log, "job_ended", checks[2].id)
+    assert ended["cancelled"] is True
+    assert checks[2].id in jobs._evaluation_jobs                 # no report comes for a cancelled work
+    # the construction job: one question, settled by the answer
+    job = p.job()
+    assert job.can_start()
+    job.start(agent)
+    await until(lambda: job.pending_question is not None)
+    assert jobs.deliver(conv.log, agent)[0].startswith(f"The note construction on `{forest.full_id(p)}` asks:\nAccept the note?")
+    assert job.receive_answer({"verdict": "accept"}) == (
+        f"Answered the note construction on `{forest.full_id(p)}`; call `check_construct` before you exit.")
+    await until(lambda: job.outcome is not jobs.RUNNING)
+    assert job.outcome == jobs.Succeeded("accept") and p.is_finished() is False   # its check was dropped by the start
+    assert p.check_outcome() is None
