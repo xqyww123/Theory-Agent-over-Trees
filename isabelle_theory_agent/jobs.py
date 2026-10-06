@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, final
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, final
 
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 
@@ -124,15 +124,15 @@ def deliver(log: Log, agent: Agent) -> list[str]:
     `message_dropped` (§3.4).  Called by the tool boundary alone, past its
     cancellation checkpoint (MODULE_STRUCTURE §4.6)."""
     messages, agent.mailbox = agent.mailbox, []
-    texts: list[str] = []
+    delivered: list[Message] = []
     for message in messages:
         reason = message.source.dropped_for(message) if message.source is not None else None
         if reason is None:
-            texts.append(message.text)
+            delivered.append(message)
             log.job.message_delivered(recipient=agent.identity)
         else:
             log.job.message_dropped(recipient=agent.identity, reason=reason)
-    return texts
+    return _merged_failures(delivered)
 
 
 # --- construction jobs (CONSTRUCT_INTERACTION §3.1, §3.2)
@@ -292,6 +292,7 @@ class Construction_Job(ABC):
         self._current: _Run | None = None    # the job's run; None when none is
         self._runs: set[asyncio.Task[None]] = set()     # every run's task not yet unwound
         self._answered: asyncio.Future[None] | None = None   # what `ask` waits on
+        self._attach: Evaluation_Job | None = None    # an attach made from inside the run, applied at its settlement
         # recorded at `start`, for the steps that may happen off the forest
         self._conversation: Conversation | None = None
         self._id = ""                        # the node's id, named by every record and notification
@@ -374,7 +375,10 @@ class Construction_Job(ABC):
         forest = self.node.forest()
         self._conversation, self._id = forest.conversation, forest.full_id(self.node)
         self.owner = owner
+        self.node.drop_evaluation_job("construction_start")   # and the stored check cleared (§3.3)
+        self.node._check_outcome = None
         self.outcome = RUNNING
+        self._attach = None
         self._store()
         self._log.construction_started(node=self._id, owner=owner.identity)
         earlier = [task for task in self._runs if not task.done()]
@@ -412,14 +416,17 @@ class Construction_Job(ABC):
     def _settle(self, outcome: Settled) -> None:
         """A run that ended on its own, in one synchronous stretch under no
         lock (§3.2): the outcome recorded and stored, the pending question
-        withdrawn, `finished_notification` posted to the owner, who wakes."""
+        withdrawn, an attach made from inside the run applied (§3.3),
+        `finished_notification` posted to the owner, who wakes."""
         if not isinstance(outcome, (Succeeded, Failed)):
             raise TAT_InternalError(f"{type(self).__name__}._run returned {outcome!r}, which is no outcome")
         self.outcome = outcome
         self._current = None
         self._withdraw()
         self._store()
-        # an attach made from inside `_run` is applied here (§3.3; evaluation jobs)
+        if self._attach is not None:
+            attach, self._attach = self._attach, None
+            self.node.attach_evaluation_job(attach)
         self._log.construction_settled(node=self._id, outcome=image(outcome)[0],
                                        message=outcome.message if isinstance(outcome, Failed) else None)
         post(self._log_of_conversation, Message(self._owned_by(), self.finished_notification(outcome),
@@ -439,6 +446,7 @@ class Construction_Job(ABC):
         run, self._current = self._current, None
         self._withdraw()
         self.outcome = NOT_STARTED
+        self._attach = None                      # discarded with the cancelled run (§3.3)
         if run is not None:
             run.cancelled = True
             if run.task is not None:
@@ -530,10 +538,7 @@ class Construction_Job(ABC):
         self.outcome = old.outcome if isinstance(old.outcome, (Succeeded, Failed)) else NOT_STARTED
 
     def _store(self) -> None:
-        """The node stored in a transaction of its own (ARCHITECTURE §4.1)."""
-        forest = self.node.forest()
-        with forest.store.transaction():
-            forest._store_node(self.node)
+        self.node._store_alone()
 
     def _bug(self, bug: BaseException) -> None:
         self._conversation_of().ending.end(bug)
@@ -557,6 +562,170 @@ class Construction_Job(ABC):
         return self.owner
 
 
+# --- evaluation jobs (CONSTRUCT_INTERACTION §3.3)
+
+class Passed:
+    """The check passed; `PASSED` is its one value."""
+
+    def __repr__(self) -> str:
+        return "PASSED"
+
+
+PASSED = Passed()
+Check_Outcome = Running | Passed | Failed
+Stored_Check = Passed | Failed            # what the node keeps of a settled check (the `check` row)
+
+Dropped_By = Literal["status_write", "delete", "amend", "construction_start", "attached", "ending"]
+
+
+def check_image(outcome: Stored_Check) -> list[Any]:
+    """The store's `check` row (ARCHITECTURE §4.1): a tag and, for a
+    failure, its message; a node without a stored check has no row."""
+    return ["FAILED", outcome.message] if isinstance(outcome, Failed) else ["PASSED"]
+
+
+def check_of_image(row: Any) -> Stored_Check | None:
+    """The stored check a `check` row holds; None for a row of no known
+    shape."""
+    match row:
+        case ["PASSED"]:
+            return PASSED
+        case ["FAILED", str(message)]:
+            return Failed(message)
+        case _:
+            return None
+
+
+class Evaluation_Job(ABC):
+    """The job an evaluation starts on a node it passes (CONSTRUCT_INTERACTION
+    §3.3): the class builds it, does the work through its own ML callback
+    and writes `outcome`; the framework attaches it, starts it, reads the
+    outcome and drops it.  The job is in the process's table from its
+    making (`id`) until its report, which `job_finished` hands to
+    `_report`."""
+
+    FRAMEWORK_MEMBERS: ClassVar[tuple[str, ...]] = ("_report", "dropped_for")
+
+    def __init__(self, node: Node, starter: Agent | None):
+        self.node = node
+        self.starter = starter                   # None when never started
+        self.id = register(self)
+        self.outcome: Check_Outcome = RUNNING
+        self.ended = False                       # settled by its report, or dropped
+        self.started_construction = False        # its failure started the node's construction (§3.3)
+        forest = node.forest()
+        self.conversation: Conversation = forest.conversation
+        self.node_id = forest.full_id(node)
+
+    @classmethod
+    @abstractmethod
+    def title(cls, plural: bool = False) -> str:
+        """The words for the work: `proof check`."""
+
+    @classmethod
+    def make(cls, node: Node, starter: Agent | None) -> Self:
+        """Builds the instance and begins nothing; a class whose constructor
+        takes more overrides it."""
+        return cls(node, starter)
+
+    @abstractmethod
+    async def _start(self) -> None:
+        """Begin the work through the class's own ML callback, passing
+        `self.id`, and return at once."""
+
+    def _finished(self, errors: list[str]) -> None:
+        """The ML report, synchronously, under no lock: `PASSED` on no
+        errors, else `FAILED` with the errors joined by newlines."""
+        self.outcome = PASSED if not errors else Failed("\n".join(errors))
+
+    @classmethod
+    @abstractmethod
+    def failure_header(cls, failure: Failed) -> str | None:
+        """The header of the check's failure block (§6), printed from a
+        `FAILED` check's outcome whether or not a job is on the node; None
+        prints nothing."""
+
+    @classmethod
+    @abstractmethod
+    def failure_notification(cls, ids: list[str], automatic: bool) -> str:
+        """The sentence its failure sends (§3.4) for these nodes, in §5's
+        forms; `automatic` says that the failure started their
+        construction."""
+
+    @final
+    def _report(self, errors: list[str]) -> None:
+        """The report's body for a job the table held (§3.3): a job off its
+        node is a dropped job's, `report_ignored`; else `_finished`, the
+        outcome stored as the node's check in a transaction of its own,
+        `evaluation_reported`, a failure posted to the starter — not
+        interrupting, merged at delivery with the class's others — the job
+        ended and the starter woken.  An outcome left `RUNNING` is a bug."""
+        log = self.conversation.log.job
+        if self.node.evaluation_job() is not self:
+            log.report_ignored(id=self.id)
+            return
+        self._finished(errors)
+        outcome = self.outcome
+        if not isinstance(outcome, (Passed, Failed)):
+            raise TAT_InternalError(f"{type(self).__name__}._finished left the job RUNNING")
+        self.node._store_check(outcome)
+        log.evaluation_reported(id=self.id, outcome=check_image(outcome)[0], failure=errors or None)
+        if isinstance(outcome, Failed) and self.starter is not None:
+            post(self.conversation.log, Message(
+                self.starter, self.failure_notification([self.node_id], self.started_construction),
+                interrupts=False, source=self))
+        self.ended = True
+        if self.starter is not None:
+            self.starter.wake()
+
+    @final
+    def dropped_for(self, message: Message) -> str | None:
+        return None if self.node.evaluation_job() is self else "the evaluation job is no longer on its node"
+
+    def __repr__(self) -> str:
+        return f"{self.title()} {self.id} on `{self.node_id}`"
+
+
+async def cancel_jobs(conversation: Conversation, ids: list[int]) -> None:
+    """One `cancel(ids)` round trip for dropped jobs' works, recorded
+    `cancel_sent` (§3.3; MODULE_STRUCTURE §2.4)."""
+    from . import isabelle_driver                 # isabelle_driver imports model, which imports this module
+    conversation.log.job.cancel_sent(ids=ids)
+    await isabelle_driver.job_cancel(conversation, ids)
+
+
+async def cancel_jobs_at_once(conversation: Conversation, ids: list[int]) -> None:
+    """`cancel_jobs` from synchronous code, in a task of the ending's: what
+    it raises ends the conversation, as every spawned task's does."""
+    try:
+        await cancel_jobs(conversation, ids)
+    except Exception as bug:
+        conversation.ending.end(bug)
+
+
+def _merged_failures(messages: list[Message]) -> list[str]:
+    """The texts of delivered messages, the failures of one evaluation job
+    class merged into one sentence for the nodes whose construction the
+    failure started and one for the others (§3.4), each where its first
+    message stood."""
+    texts: list[str] = []
+    groups: dict[tuple[type, bool], tuple[int, list[str]]] = {}
+    for message in messages:
+        job = message.source
+        if not isinstance(job, Evaluation_Job):
+            texts.append(message.text)
+            continue
+        key = (type(job), job.started_construction)
+        if key in groups:
+            groups[key][1].append(job.node_id)
+        else:
+            groups[key] = (len(texts), [job.node_id])
+            texts.append("")
+    for (cls, automatic), (at, ids) in groups.items():
+        texts[at] = cls.failure_notification(ids, automatic)
+    return texts
+
+
 # --- what a node still owes (ARCHITECTURE §3.2; CONSTRUCT_INTERACTION §3.1)
 
 class Unfinished(ABC):
@@ -575,6 +744,25 @@ class Unfinished_Construction(Unfinished):
 
     def title(self, plural: bool = False) -> str:
         return self.job.title(plural)
+
+
+@dataclass(frozen=True)
+class Unfinished_Check(Unfinished):
+    """The check's outcome is `RUNNING` or `FAILED`."""
+    outcome: Check_Outcome
+    job_class: type[Evaluation_Job]
+
+    def title(self, plural: bool = False) -> str:
+        return self.job_class.title(plural)
+
+
+@dataclass(frozen=True)
+class Unchecked(Unfinished):
+    """The construction succeeded and no check has an outcome."""
+    job_class: type[Evaluation_Job]
+
+    def title(self, plural: bool = False) -> str:
+        return self.job_class.title(plural)
 
 
 # --- the evaluation jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)

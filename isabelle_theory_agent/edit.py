@@ -55,14 +55,15 @@ def _fire(fired: list[Node], hook, *args) -> None:
     fired.append(hook.__self__)
 
 
-def _cancel_job(node: Node, reason: Cancel_Reason) -> None:
-    """The framework's own completed event (CONSTRUCT_INTERACTION §9): a
+def _jobs_of_leaving(node: Node, reason: Cancel_Reason, ev: Evaluation) -> None:
+    """The framework's own completed events (CONSTRUCT_INTERACTION §9): a
     deleted or amended node's running construction job is cancelled, its
-    owner told why; nothing for a node without one, or whose job does not
-    run."""
+    owner told why, and its evaluation job dropped, the id kept for the
+    edit's one `cancel(ids)` after the block."""
     job = node.job()
     if job is not None:
         job.cancel(reason)
+    node.drop_evaluation_job("delete" if reason == "NODE_DELETED" else "amend", ev)
 
 
 def _store_transaction(forest: Forest, ev: Evaluation,
@@ -85,8 +86,8 @@ def _store_transaction(forest: Forest, ev: Evaluation,
 
 async def _after_commit(forest: Forest, ev: Evaluation, vanished: list[str]) -> None:
     """The round trips after a commit's block (MODULE_STRUCTURE §4.2 step
-    4): the qualified names that vanished leave the ML theory table, and
-    the released slots are deleted."""
+    4): the qualified names that vanished leave the ML theory table, the
+    released slots are deleted, and the dropped jobs' works cancelled."""
     if vanished:
         await isabelle_driver.theory_delete(forest.conversation, vanished)
     await ev.flush(forest.conversation)
@@ -201,7 +202,7 @@ async def amend(old: Node, raws: list[RawAST],
     # Completed events (MODULE_STRUCTURE §4.1's order).
     fired: list[Node] = []
     _fire(fired, old.on_deleted, "amend")
-    _cancel_job(old, "NODE_AMENDED")
+    _jobs_of_leaving(old, "NODE_AMENDED", ev)
     for child in inherited:
         assert isinstance(replacement, NonLeaf_Node)
         _fire(fired, child.on_inherited, old)
@@ -249,7 +250,7 @@ async def delete(node: Node) -> NonLeaf_Node:
     fired: list[Node] = []
     for n in node._children_first():
         _fire(fired, n.on_deleted, "delete")
-        _cancel_job(n, "NODE_DELETED")
+        _jobs_of_leaving(n, "NODE_DELETED", ev)
     # the parent: its `children` row changed, and no completed hook fires on it
     _store_transaction(forest, ev, "delete", location, changed=[*fired, parent],
                        deleted=subtree, removed=removed, invalidated=invalidated)

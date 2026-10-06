@@ -1,11 +1,12 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 8 are committed since
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 9 are committed since
 2026-10-05, with the reviews of steps 1–2, 4–5 and 6–7 applied
-(review/DOC_SYNC_LIST.md entries 32–44; the second compaction check
-rebuilt on 2026-10-06 on the owner's rulings); the review of steps 8
-and 9 follows step 9; the rest is not implemented.
+(review/DOC_SYNC_LIST.md entries 32–45; the second compaction check
+rebuilt on 2026-10-06 on the owner's rulings); step 9's harness half —
+the test plugin's node class with both job classes — is owed before step
+11; the review of steps 8 and 9 is next; the rest is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -103,7 +104,7 @@ step 6 in, 446 pass and the same 13 fail; with the first fixes of
 the review of steps 4 and 5, 453 pass and the same 13 fail; with step 7
 in, 457 pass and the same 13 fail; with the fixes of the review of steps
 6 and 7, 466 pass and the same 13 fail; with step 8 in, 491 pass and 8
-fail.
+fail; with step 9 in, 498 pass and the same 8 fail.
 
 | case | waits for |
 | --- | --- |

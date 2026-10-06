@@ -209,7 +209,10 @@ registration, per class:
   `Construction_Job` subclass that implements `title`, `failure_header`
   and `_run`, and overrides none of the framework's members —
   `can_start`, `start`, `cancel`, `ask`, `receive_answer`,
-  `question_message` (CONSTRUCT_INTERACTION §3.2);
+  `question_message` (CONSTRUCT_INTERACTION §3.2); an
+  `evaluation_job_class` an `Evaluation_Job` subclass that implements
+  `title`, `_start`, `failure_header` and `failure_notification`, and
+  overrides neither `_report` nor `dropped_for` (§3.3);
 - the class does not override `is_finished` — `_unfinished` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
   `_own_statuses` (MODULE_STRUCTURE §4.1), nor `print` nor

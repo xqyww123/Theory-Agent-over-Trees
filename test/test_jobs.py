@@ -19,17 +19,24 @@ import pytest
 import invariants
 import stand_ins
 import test_model as tm
-from isabelle_theory_agent import edit, jobs, model as M
+from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M
 from isabelle_theory_agent.exceptions import BadAnswer, NoQuestionPending, TAT_InternalError, TAT_StartupError
-from isabelle_theory_agent.jobs import NOT_STARTED, RUNNING, Answered, Failed, Message, Succeeded
+from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Answered, Failed, Message, Succeeded
 from isabelle_theory_agent.store import Forest_Store
 from test_model import CONN, READY, Block, T, add, locked, run, slot
+
+CANCELS: list[list[int]] = []               # every `TAT.job_cancel` round trip's ids
 
 
 @pytest.fixture(autouse=True)
 def table(monkeypatch):
     tm.TABLE.clear()
     tm.TABLE.install(monkeypatch)
+    CANCELS.clear()
+
+    async def job_cancel(conversation, ids):
+        CANCELS.append(list(ids))
+    monkeypatch.setattr(isabelle_driver, "job_cancel", job_cancel)
     jobs._evaluation_jobs.clear()
     yield
     jobs._evaluation_jobs.clear()
@@ -97,6 +104,37 @@ class Lemma(T):
     construction_job_class = Proof
 
 
+class Check(jobs.Evaluation_Job):
+    """A check whose work is the case's to end: `_start` begins nothing, the
+    report settles it."""
+
+    @classmethod
+    def title(cls, plural=False):
+        return "proof checks" if plural else "proof check"
+
+    @classmethod
+    def failure_header(cls, failure):
+        return "The proof no longer holds:"
+
+    @classmethod
+    def failure_notification(cls, ids, automatic):
+        head = jobs.listed(ids, lambda on: f"The proof {on} no longer holds",
+                           "The following proofs no longer hold:")
+        return head + (", so its proof construction was started automatically." if automatic
+                       else ". Call `construct` to prove it again.")
+
+    def __init__(self, node, starter):
+        super().__init__(node, starter)
+        self.began = False
+
+    async def _start(self):
+        self.began = True
+
+
+class Checked(Lemma):
+    evaluation_job_class = Check
+
+
 class Carrying(Lemma):
     """A class whose amend carries the old job's outcome, as `Theorem` does
     when the statement is unchanged (THEOREM.md §4); its `gen` takes a
@@ -134,8 +172,9 @@ class Why(jobs.Interactive_Question):
         return Answered("Noted.")
 
 
-KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying}
+KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying, "checked": Checked}
 P = "block_Theory.lemma_P"
+P_CHECKED, Q_CHECKED = "block_Theory.checked_P", "block_Theory.checked_Q"
 
 
 def build(lemma=Lemma):
@@ -145,8 +184,9 @@ def build(lemma=Lemma):
     f.conversation.ending.forest = f
     thy = add(f, Block(f, slot(), "Theory", slot()))
     t1 = add(thy, T(thy, slot(), "T1"))
-    p = add(thy, lemma(thy, slot(), "P"), "carrying" if lemma is Carrying else "lemma")
-    q = add(thy, Lemma(thy, slot(), "Q"), "lemma")
+    kind = {Carrying: "carrying", Checked: "checked"}.get(lemma, "lemma")
+    p = add(thy, lemma(thy, slot(), "P"), kind)
+    q = add(thy, lemma(thy, slot(), "Q"), kind)
     return f, thy, t1, p, q
 
 
@@ -650,6 +690,261 @@ def test_the_bound_holds_a_run_which_is_running_meanwhile():
         q.job().release.set()
         await owner.sleep_until(lambda: q.job().outcome is not RUNNING)
         assert q.job().outcome == Succeeded("by simp")
+    run(scenario())
+
+
+# --- the evaluation jobs (§3.3; ARCHITECTURE §4.1) ---------------------------
+
+async def report(job, errors=()):
+    """The ML side's report of the job's work, as `job_finished` hands it on."""
+    await jobs.job_finished((job.id, ["messages", list(errors)] if errors else ["ok"]), None)   # type: ignore[arg-type]
+
+
+def test_an_evaluation_job_is_attached_started_and_settled_by_its_report():
+    """`start_evaluation_job`: `make`, the attach — the job on its node with
+    its id before any work begins, the node stored in a transaction of its
+    own — `evaluation_started`, `_start`; the report settles it: the
+    outcome the node's stored check, stored in a transaction of its own,
+    `evaluation_reported`, a failure posted to the starter, not
+    interrupting, a success silent.  `_unfinished` follows §3.1's table;
+    another job attached in its place drops the first, cancelling its work
+    at once, and clears the stored check."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        p._status = READY
+        assert p._unfinished() == jobs.Unfinished_Construction(p.job())
+        p.job().outcome = Succeeded("by simp")
+        assert p._unfinished() == jobs.Unchecked(Check) and not p.is_finished()
+        assert p._unfinished().title(plural=True) == "proof checks"
+        tm.TABLE.clear_writes()
+        await p.start_evaluation_job(starter)
+        job = p.evaluation_job()
+        assert isinstance(job, Check) and job.began and job.starter is starter and job.id in jobs._evaluation_jobs
+        assert p.check_outcome() is RUNNING and p._unfinished() == jobs.Unfinished_Check(RUNNING, Check)
+        assert tm.TABLE.transactions == 1 and "check" not in f.store.fields(p.identity)
+        assert records("evaluation_started") == [{"node": P_CHECKED, "id": job.id, "starter": "main"}]
+        await report(job)
+        assert job.outcome is PASSED and job.ended and p.check_outcome() is PASSED
+        assert p._unfinished() is None and p.is_finished()
+        assert f.store.get(p.identity, "check") == ["PASSED"] and tm.TABLE.transactions == 2
+        assert records("evaluation_reported") == [{"id": job.id, "outcome": "PASSED"}]
+        assert deliver(f, starter) == [] and job.id not in jobs._evaluation_jobs
+        await p.start_evaluation_job(starter)                 # another in its place
+        second = p.evaluation_job()
+        assert second is not job and p.check_outcome() is RUNNING and "check" not in f.store.fields(p.identity)
+        assert records("evaluation_dropped") == [{"id": job.id, "dropped_by": "attached"}]
+        await asyncio.sleep(0)
+        assert CANCELS == [[job.id]]
+        await report(second, ["bad", "worse"])
+        assert second.outcome == Failed("bad\nworse") and p.check_outcome() == Failed("bad\nworse")
+        assert p._unfinished() == jobs.Unfinished_Check(Failed("bad\nworse"), Check) and not p.is_finished()
+        assert f.store.get(p.identity, "check") == ["FAILED", "bad\nworse"]
+        assert records("evaluation_reported")[-1] == {"id": second.id, "outcome": "FAILED", "failure": ["bad", "worse"]}
+        assert deliver(f, starter) == [f"The proof on `{P_CHECKED}` no longer holds. Call `construct` to prove it again."]
+        posted = records("message_posted")[-1]
+        assert (posted["kind"], posted["interrupts"], posted["source"]) == (
+            "notification", False, f"proof check {second.id} on `{P_CHECKED}`")
+        q._status = READY
+        q.job().compulsory = False
+        assert q._unfinished() is None                        # not compulsory: nothing owed, check or none
+    run(scenario())
+
+
+def test_failures_of_one_class_merge_at_delivery():
+    """§3.4: one sentence for the nodes whose construction the failure
+    started, one for the others; a message of another kind keeps its
+    place; a failure whose job is no longer on its node is dropped."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        for node in (p, q):
+            await node.start_evaluation_job(starter)
+        await report(p.evaluation_job(), ["no"])
+        jobs.post(f.conversation.log, Message(starter, "meanwhile", interrupts=False))
+        q.evaluation_job().started_construction = True
+        await report(q.evaluation_job(), ["no"])
+        r = add(thy, Checked(thy, slot(), "R"), "checked")
+        await r.start_evaluation_job(starter)
+        await report(r.evaluation_job(), ["no"])
+        assert deliver(f, starter) == [
+            f"The proof on `{P_CHECKED}` and on `block_Theory.checked_R` no longer holds. Call `construct` to prove it again.",
+            "meanwhile",
+            f"The proof on `{Q_CHECKED}` no longer holds, so its proof construction was started automatically."]
+        await p.start_evaluation_job(starter)
+        await report(p.evaluation_job(), ["again"])
+        p.drop_evaluation_job("status_write", M.Evaluation(None, False))
+        assert deliver(f, starter) == []
+        assert records("message_dropped")[-1]["reason"] == "the evaluation job is no longer on its node"
+    run(scenario())
+
+
+def test_the_drops_and_the_stored_checks_clearings():
+    """§3.3: a job is dropped by a status write (a rerun's rewrite of
+    `ready` included), a delete, an amend, a construction starting, another
+    job attached, the ending — one synchronous step each, `evaluation_dropped`,
+    the starter woken; the walk and the edit send one `cancel(ids)` at
+    their flush, any other drop sends at once, the ending none.  The
+    stored check is cleared when the stored status leaves `Ready`, when a
+    construction starts and when another job is attached — not by a rerun
+    confirming `Ready`, nor by a drop by itself."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        await thy.evaluate_to(False)
+        assert p._status == READY and q._status == READY
+        for node in (p, q):
+            await node.start_evaluation_job(starter)
+            await report(node.evaluation_job())              # settled, still on its node, PASSED stored
+        CANCELS.clear()
+        settled = [p.evaluation_job(), q.evaluation_job()]
+        ev = M.Evaluation(None, False)
+        p._set_status(ev, M.Ready(), 0.1)                     # `ready` over `ready`: dropped, the check kept
+        assert p.evaluation_job() is None and settled[0].ended and p.check_outcome() is PASSED
+        assert ev.dropped == [settled[0].id] and CANCELS == []
+        q._set_status(ev, M.NOT_EVALUATED, None)              # leaves `Ready`: dropped, the check cleared
+        assert q.evaluation_job() is None and q.check_outcome() is None and ev.dropped == [settled[0].id, settled[1].id]
+        await ev.flush(f.conversation)
+        assert CANCELS == [[settled[0].id, settled[1].id]] and ev.dropped == []
+        assert records("cancel_sent") == [{"ids": [settled[0].id, settled[1].id]}]
+        assert [(r["id"], r["dropped_by"]) for r in records("evaluation_dropped")] == [
+            (settled[0].id, "status_write"), (settled[1].id, "status_write")]
+        await thy.evaluate_to(False)                          # q rerun, p kept
+        assert p.check_outcome() is PASSED and q.check_outcome() is None
+        p.job().start(starter)                                # a construction start clears the stored check
+        assert p.check_outcome() is None
+        p.job().cancel(None)
+        await p.start_evaluation_job(starter)                 # and drops the job on the node
+        third = p.evaluation_job()
+        p.job().start(starter)
+        assert p.evaluation_job() is None and p.check_outcome() is None and third.ended
+        assert records("evaluation_dropped")[-1] == {"id": third.id, "dropped_by": "construction_start"}
+        await asyncio.sleep(0)
+        assert CANCELS[-1] == [third.id]
+        p.job().cancel(None)
+        await q.start_evaluation_job(starter)
+        fourth = q.evaluation_job()
+        await locked(f, edit.delete(q))                       # the edit's one cancel after its block
+        assert fourth.ended and records("evaluation_dropped")[-1] == {"id": fourth.id, "dropped_by": "delete"}
+        assert CANCELS[-1] == [fourth.id]
+        await p.start_evaluation_job(starter)
+        fifth = p.evaluation_job()
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "checked", "name": "P2"}], KINDS))
+        assert fifth.ended and records("evaluation_dropped")[-1] == {"id": fifth.id, "dropped_by": "amend"}
+        assert CANCELS[-1] == [fifth.id] and p2.evaluation_job() is None
+        await p2.start_evaluation_job(starter)
+        sixth = p2.evaluation_job()
+        CANCELS.clear()
+        f.conversation.ending.end(RuntimeError("over"))
+        assert sixth.ended and p2.evaluation_job() is None
+        assert records("evaluation_dropped")[-1] == {"id": sixth.id, "dropped_by": "ending"}
+        await asyncio.sleep(0)
+        assert CANCELS == []
+        await report(sixth)                                   # a dropped job's report, the conversation ended
+        assert records("report_ignored") == [] and sixth.outcome is RUNNING
+    run(scenario())
+
+
+def test_a_report_for_a_job_off_its_node_is_ignored_and_a_stuck_finished_is_a_bug():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        await p.start_evaluation_job(starter)
+        job = p.evaluation_job()
+        p.drop_evaluation_job("status_write", M.Evaluation(None, False))
+        tm.TABLE.clear_writes()
+        await report(job)
+        assert records("report_ignored") == [{"id": job.id}] and job.outcome is RUNNING
+        assert tm.TABLE.transactions == 0 and p.check_outcome() is None and not f.conversation.ending.entered
+
+        class Stuck(Check):
+            def _finished(self, errors):
+                pass
+        q.__class__ = type("Stuck_Checked", (Checked,), {"evaluation_job_class": Stuck})
+        await q.start_evaluation_job(starter)
+        await report(q.evaluation_job())
+        ended_by = f.conversation.ending.ended_by
+        assert isinstance(ended_by, TAT_InternalError) and "left the job RUNNING" in str(ended_by)
+    run(scenario())
+
+
+def test_an_attach_from_inside_a_run_takes_effect_at_the_settlement():
+    """§3.3: from inside `_run`, `attach_evaluation_job` accepts a settled job
+    only, and the attach takes effect at the run's settlement, with the
+    outcome as the stored check; it is discarded with a cancelled run."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        gate = asyncio.Event()
+
+        async def checking(job):
+            check = Check(p, owner)
+            check._finished([])
+            p.attach_evaluation_job(check)
+            assert p.evaluation_job() is None             # not yet
+            await gate.wait()
+            return Succeeded("by simp")
+        job.ends_with = checking
+        gate.set()
+        await run_to_end(job, owner)
+        check = p.evaluation_job()
+        assert isinstance(check, Check) and check.outcome is PASSED and p.check_outcome() is PASSED
+        assert f.store.get(p.identity, "check") == ["PASSED"] and p._status is M.NOT_EVALUATED
+        p._status = READY
+        assert p.is_finished()
+        gate.clear()
+        job.release = asyncio.Event()
+        job.start(owner)                                      # drops the check on the node, clears the stored one
+        assert p.evaluation_job() is None and p.check_outcome() is None
+        job.release.set()
+        await asyncio.sleep(0)
+        job.cancel(None)                                      # the attach goes with the run
+        await runs_unwound(job)
+        assert p.evaluation_job() is None and p.check_outcome() is None
+        gate.set()
+
+        async def attaching_a_running_one(job):
+            p.attach_evaluation_job(Check(p, owner))
+            return Succeeded("by simp")
+        job.ends_with = attaching_a_running_one
+        await run_to_end(job, owner)
+        assert "a settled evaluation job alone" in str(f.conversation.ending.ended_by)
+    run(scenario())
+
+
+def test_a_job_class_raising_a_tat_error_at_its_start_is_a_bug():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+
+        class Fussy(Check):
+            async def _start(self):
+                raise NoQuestionPending("x")
+        p.__class__ = type("Fussy_Checked", (Checked,), {"evaluation_job_class": Fussy})
+        with pytest.raises(TAT_InternalError, match="raised a TAT_Error at its start"):
+            await p.start_evaluation_job(stand_ins.agent(f.conversation))
+        with pytest.raises(TAT_InternalError, match="names no evaluation job class"):
+            await t1.start_evaluation_job(stand_ins.agent(f.conversation))
+    run(scenario())
+
+
+def test_the_check_row_across_a_reload():
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        starter = stand_ins.agent(f.conversation)
+        await p.start_evaluation_job(starter)
+        invariants.assert_store_mirrors(f, KINDS)
+        twin = tm.OneTreeForest(CONN, f.store, KINDS)
+        loaded = twin.sub_nodes[0].sub_nodes[1]
+        assert loaded.evaluation_job() is None and loaded.check_outcome() is None   # a run is not stored
+        await report(p.evaluation_job(), ["no"])
+        twin = tm.OneTreeForest(CONN, f.store, KINDS)
+        assert twin.sub_nodes[0].sub_nodes[1].check_outcome() == Failed("no")
+        invariants.assert_store_mirrors(f, KINDS)
+        with f.store.transaction():
+            f.store.put(p.identity, "check", ["RUNNING"])
+        with pytest.raises(TAT_StartupError, match="not a check's image"):
+            tm.OneTreeForest(CONN, f.store, KINDS)
     run(scenario())
 
 

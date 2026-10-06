@@ -32,7 +32,7 @@ import jsoncomment
 import jsonschema
 
 from . import model
-from .jobs import Construction_Job
+from .jobs import Construction_Job, Evaluation_Job
 from .exceptions import (
     InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
     UnexpectedField)
@@ -276,20 +276,22 @@ def _check_class(cls: type[Node]) -> list[str]:
 
 
 def _check_job_class(cls: type[Node]) -> None:
-    """The construction job class a node class names (PLUGIN_SYSTEM §2,
-    §5): a `Construction_Job` subclass with every abstract member
-    implemented, overriding none of the framework's."""
-    job_class = cls.construction_job_class
-    if job_class is None:
-        return
-    if not (isinstance(job_class, type) and issubclass(job_class, Construction_Job)):
-        raise _refuse(cls, "`construction_job_class` is not a `Construction_Job` subclass")
-    if inspect.isabstract(job_class):
-        missing = ", ".join(f"`{name}`" for name in sorted(job_class.__abstractmethods__))
-        raise _refuse(cls, f"{job_class.__name__} does not implement {missing}")
-    for member in Construction_Job.FRAMEWORK_MEMBERS:
-        if _defined_by(job_class, member) is not Construction_Job:
-            raise _refuse(cls, f"{job_class.__name__} overrides `{member}`, which is the framework's")
+    """The job classes a node class names (PLUGIN_SYSTEM §2, §5): each a
+    subclass of its base with every abstract member implemented,
+    overriding none of the framework's."""
+    for attribute, base in (("construction_job_class", Construction_Job),
+                            ("evaluation_job_class", Evaluation_Job)):
+        job_class = getattr(cls, attribute)
+        if job_class is None:
+            continue
+        if not (isinstance(job_class, type) and issubclass(job_class, base)):
+            raise _refuse(cls, f"`{attribute}` is not a subclass of `{base.__name__}`")
+        if inspect.isabstract(job_class):
+            missing = ", ".join(f"`{name}`" for name in sorted(job_class.__abstractmethods__))
+            raise _refuse(cls, f"{job_class.__name__} does not implement {missing}")
+        for member in base.FRAMEWORK_MEMBERS:
+            if _defined_by(job_class, member) is not base:
+                raise _refuse(cls, f"{job_class.__name__} overrides `{member}`, which is the framework's")
 
 
 def _check_coroutines(cls: type[Node]) -> None:

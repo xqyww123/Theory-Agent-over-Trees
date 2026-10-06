@@ -32,7 +32,10 @@ from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent, DuplicateName,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
     ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError)
-from .jobs import RUNNING, Succeeded, Unfinished, Unfinished_Construction, image, outcome_of_image
+from .jobs import (
+    RUNNING, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check, Succeeded,
+    Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs, cancel_jobs_at_once,
+    check_image, check_of_image, image, outcome_of_image)
 from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
 
@@ -200,6 +203,7 @@ class Evaluation:
         self.checks = checks                 # "no" | "quick" | "blocking" (CONSTRUCT_INTERACTION §5)
         self.passed: list[Node] = []         # reached in `Evaluating`: a leaf when reached, a nesting node at its ending
         self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
+        self.dropped: list[int] = []         # the evaluation jobs dropped, their ids sent as cancel(ids) at flush
         self._released: set[str] = set()
         self.releases = 0                    # the slots deleted over every flush: `walk_ended`'s `slots_released`
 
@@ -207,10 +211,15 @@ class Evaluation:
         self._released.add(slot.name)
 
     async def flush(self, conversation: Conversation) -> None:
+        """The round trips a stretch ends on: the released slots deleted, the
+        dropped jobs' works cancelled (CONSTRUCT_INTERACTION §3.3)."""
         if self._released:
             await isabelle_driver.state_delete(conversation, sorted(self._released))
             self.releases += len(self._released)
             self._released.clear()
+        if self.dropped:
+            ids, self.dropped = self.dropped, []
+            await cancel_jobs(conversation, ids)
 
 
 @dataclass(frozen=True)
@@ -347,7 +356,7 @@ class Node(ABC):
     # the construction job `construct` starts on the node, built with the
     # node, and the evaluation job an evaluation starts on it.
     construction_job_class: ClassVar[type[Construction_Job] | None] = None
-    evaluation_job_class: ClassVar[Any] = None
+    evaluation_job_class: ClassVar[type[Evaluation_Job] | None] = None
 
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
@@ -394,6 +403,8 @@ class Node(ABC):
         job_class = type(self).construction_job_class
         self._construction_job = job_class(self) if job_class is not None else None
         self._carry_job_from: Node | None = None        # `carry_job_from`'s intent, for the commit
+        self._evaluation_job: Evaluation_Job | None = None
+        self._check_outcome: Stored_Check | None = None # the stored check (CONSTRUCT_INTERACTION §3.3)
 
     @final
     def last_evaluation_statuses(self) -> tuple[EvaluationStatus, ...]:
@@ -433,15 +444,21 @@ class Node(ABC):
         assigned (COMPILATION.md §4): the stored entry, the seen set's key
         of the operation's messages, the walk's store, and the `operation`
         record (LOGGING.md §4) — `duration` is how long the evaluation hook
-        ran, None when no run produced the write; and last, both fields
+        ran, None when no run produced the write; the node's evaluation
+        job dropped, and the stored check cleared when the stored status
+        leaves `Ready` (CONSTRUCT_INTERACTION §3.3); and last, both fields
         written, `on_invalidated` when the instant status, `old` before the
         write, left `Ready`."""
         new = self._own_statuses()[index]
+        stored_before = self._last_evaluation_statuses[index]
         self._last_evaluation_statuses[index] = new
         operation = self._operation_names()[index]
         forest = self.forest()
         forest.conversation.forget((self.identity, operation))
         ev.stored.add(self)
+        self.drop_evaluation_job("status_write", ev)
+        if isinstance(stored_before, Ready) and not isinstance(new, Ready):
+            self._check_outcome = None
         kind, messages = _status_to_store(new)
         forest.conversation.log.evaluation.operation(
             node=forest.full_id(self), operation=operation or "own", ran=duration is not None,
@@ -524,14 +541,24 @@ class Node(ABC):
     def _unfinished(self) -> Unfinished | None:
         """What the node itself still owes (CONSTRUCT_INTERACTION §3.1's
         table): None when it has no compulsory construction job, or that
-        job `SUCCEEDED`; else the `Unfinished` saying what — the
-        construction.  A class may override it; `Theorem` does not."""
+        job `SUCCEEDED` and the check, if its class names an evaluation
+        job, `PASSED`; else the `Unfinished` saying what — the construction,
+        the check, or a check not yet run.  A class may override it;
+        `Theorem` does not."""
         job = self.job()
         if job is None or not job.compulsory:
             return None
         if not isinstance(job.outcome, Succeeded):
             return Unfinished_Construction(job)
-        return None
+        job_class = type(self).evaluation_job_class
+        if job_class is None:
+            return None
+        check = self.check_outcome()
+        if isinstance(check, Passed):
+            return None
+        if check is None:
+            return Unchecked(job_class)
+        return Unfinished_Check(check, job_class)
 
     # --- The construction job (CONSTRUCT_INTERACTION §3.1): built with the
     # node when its class names a job class.
@@ -554,6 +581,90 @@ class Node(ABC):
         job, old_job = self.job(), old.job()
         if self._carry_job_from is old and job is not None and old_job is not None:
             job._carry_from(old_job)
+
+    def _store_alone(self) -> None:
+        """The node stored in a transaction of its own: a job's synchronous
+        step that changes the job or the check on it (ARCHITECTURE §4.1)."""
+        forest = self.forest()
+        with forest.store.transaction():
+            forest._store_node(self)
+
+    # --- The evaluation job (CONSTRUCT_INTERACTION §3.3): the class builds
+    # it; the framework attaches, starts, reads and drops it.
+
+    @final
+    def evaluation_job(self) -> Evaluation_Job | None:
+        return self._evaluation_job
+
+    @final
+    def check_outcome(self) -> Check_Outcome | None:
+        """The check's one accessor (§3.3): `RUNNING` while a running
+        evaluation job is on the node, else the stored check — None when
+        there is none."""
+        job = self._evaluation_job
+        return RUNNING if job is not None and job.outcome is RUNNING else self._check_outcome
+
+    @final
+    def attach_evaluation_job(self, job: Evaluation_Job) -> None:
+        """Put a job on the node, dropping the one there; a settled job's
+        outcome becomes the stored check, a running one clears it; the node
+        is stored.  From inside a construction run, a settled job alone,
+        and the attach takes effect at the run's settlement — discarded
+        with a cancelled run (§3.3)."""
+        construction = self.job()
+        if (construction is not None and construction._current is not None
+                and construction._current.task is asyncio.current_task()):
+            if job.outcome is RUNNING:
+                raise TAT_InternalError("from inside a run, a settled evaluation job alone is attached")
+            construction._attach = job
+            return
+        self.drop_evaluation_job("attached")
+        self._evaluation_job = job
+        self._check_outcome = job.outcome if isinstance(job.outcome, (Passed, Failed)) else None
+        self._store_alone()
+
+    @final
+    def drop_evaluation_job(self, dropped_by: Dropped_By, ev: Evaluation | None = None) -> None:
+        """One synchronous step (§3.3): the job taken off the node, marked
+        ended, its starter woken, `evaluation_dropped`; its work's cancel
+        is the id onto `ev.dropped`, for a walk's or an edit's one
+        `cancel(ids)`, else sent at once through a task of the ending's —
+        the ending itself sends none.  Nothing when no job is on the node."""
+        job = self._evaluation_job
+        if job is None:
+            return
+        self._evaluation_job = None
+        job.ended = True
+        conversation = job.conversation
+        conversation.log.job.evaluation_dropped(id=job.id, dropped_by=dropped_by)
+        if job.starter is not None:
+            job.starter.wake()
+        if ev is not None:
+            ev.dropped.append(job.id)
+        elif dropped_by != "ending":
+            conversation.ending.spawn(cancel_jobs_at_once(conversation, [job.id]))
+
+    @final
+    async def start_evaluation_job(self, starter: Agent) -> None:
+        """§3.3, in this order: `make`, the attach — the job on its node with
+        its id before any work begins — `evaluation_started`, `_start`.  A
+        `TAT_Error` from `make` or `_start` is the class's bug."""
+        job_class = type(self).evaluation_job_class
+        if job_class is None:
+            raise TAT_InternalError(f"{type(self).__name__} names no evaluation job class")
+        try:
+            job = job_class.make(self, starter)
+            self.attach_evaluation_job(job)
+            job.conversation.log.job.evaluation_started(node=job.node_id, id=job.id, starter=starter.identity)
+            await job._start()
+        except TAT_Error as e:
+            raise TAT_InternalError(f"{job_class.__name__} raised a TAT_Error at its start") from e
+
+    def _store_check(self, outcome: Stored_Check) -> None:
+        """The report's write (§3.3): the settled outcome kept as the stored
+        check, the node stored in a transaction of its own."""
+        self._check_outcome = outcome
+        self._store_alone()
 
     @abstractmethod
     def _own_statuses(self) -> list[EvaluationStatus]:
@@ -1314,6 +1425,8 @@ class Forest(Unchained_Node):
         if job is not None:                    # the job's image and its setting (ARCHITECTURE §4.1)
             self.store.put(node.identity, "job", image(job.outcome))
             self.store.put(node.identity, "auto_construct", job.auto_construct)
+        if node._check_outcome is not None:    # the stored check; none has no row
+            self.store.put(node.identity, "check", check_image(node._check_outcome))
         node.to_store(self.store.rows(node.identity))
 
     def _store_written(self, ev: Evaluation, changed: Sequence[Node] = (),
@@ -1356,15 +1469,21 @@ class Forest(Unchained_Node):
         if len(statuses) == len(node._last_evaluation_statuses):
             node._last_evaluation_statuses = [s for s in statuses if s is not None]
 
-    def _restore_job(self, node: Node, identity: int) -> None:
-        """The `job` and `auto_construct` rows (ARCHITECTURE §4.1), for a node
-        whose class names a construction job: a missing `job` row reads as
-        `NOT_STARTED`, a missing setting as off; a row of another shape is
-        refused."""
+    def _restore_jobs(self, node: Node, identity: int) -> None:
+        """The `job`, `auto_construct` and `check` rows (ARCHITECTURE §4.1): a
+        missing `job` row reads as `NOT_STARTED`, a missing setting as off,
+        a missing `check` as none; a row of another shape is refused.  A
+        loaded forest re-attaches no job."""
+        fields = self.store.fields(identity)
+        if "check" in fields:
+            check = check_of_image(fields["check"])
+            if check is None:
+                raise TAT_StartupError(
+                    f"the forest database's `check` row of node {identity} is not a check's image")
+            node._check_outcome = check
         job = node.job()
         if job is None:
             return
-        fields = self.store.fields(identity)
         if "job" in fields:
             outcome = outcome_of_image(fields["job"])
             if outcome is None:
@@ -1418,7 +1537,7 @@ class Forest(Unchained_Node):
         node.kind = kind
         node.identity = identity
         self._restore_statuses(node, identity)
-        self._restore_job(node, identity)
+        self._restore_jobs(node, identity)
         if isinstance(node, NonLeaf_Node):
             for child_identity in self._child_identities(identity, seen):
                 node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))

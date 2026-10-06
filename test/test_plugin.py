@@ -771,9 +771,30 @@ def test_a_construction_job_class_is_checked():
     class Overriding(Whole):
         def start(self, owner): pass
 
-    refused(leaf("Odd", ["odd"], construction_job_class=object), "not a `Construction_Job` subclass")
+    refused(leaf("Odd", ["odd"], construction_job_class=object), "not a subclass of `Construction_Job`")
     refused(leaf("Partial", ["partial"], construction_job_class=Half),
             "Half does not implement `_run`, `failure_header`")
     refused(leaf("Framework", ["framework"], construction_job_class=Overriding),
             "Overriding overrides `start`, which is the framework's")
     plugin.TAT_node(leaf("Constructed", ["constructed"], construction_job_class=Whole))
+
+    class Half_Check(jobs.Evaluation_Job):
+        @classmethod
+        def title(cls, plural=False): return "checks" if plural else "check"
+        async def _start(self): pass
+
+    class Check(Half_Check):
+        @classmethod
+        def failure_header(cls, failure): return None
+        @classmethod
+        def failure_notification(cls, ids, automatic): return "failed"
+
+    class Reporting(Check):
+        def _report(self, errors): pass
+
+    refused(leaf("Odd_Check", ["odd_check"], evaluation_job_class=Whole), "not a subclass of `Evaluation_Job`")
+    refused(leaf("Partial_Check", ["partial_check"], evaluation_job_class=Half_Check),
+            "Half_Check does not implement `failure_header`, `failure_notification`")
+    refused(leaf("Reporting_Check", ["reporting_check"], evaluation_job_class=Reporting),
+            "Reporting overrides `_report`, which is the framework's")
+    plugin.TAT_node(leaf("Checked", ["checked"], evaluation_job_class=Check))

@@ -393,9 +393,11 @@ class Ending:
         ending half entered: write the `ending` record (LOGGING.md §4),
         cancel every running construction job through its own
         `cancel(None)` — the run detached, its question withdrawn, nothing
-        told, no round trip (CONSTRUCT_INTERACTION §9) — and cancel every
-        spawned task; each tool handler answers its own call.  `forest` is
-        None when the start failed before it was built: nothing to walk."""
+        told, no round trip (CONSTRUCT_INTERACTION §9) — drop every
+        evaluation job, with `evaluation_dropped` and no `cancel(ids)`
+        sent, and cancel every spawned task; each tool handler answers its
+        own call.  `forest` is None when the start failed before it was
+        built: nothing to walk."""
         if self._ended_by is not None:
             return
         self._ended_by = ended_by
@@ -407,6 +409,7 @@ class Ending:
                 job = node.job()
                 if job is not None and job.outcome is RUNNING:
                     job.cancel(None)
+                node.drop_evaluation_job("ending")
         for task in self._tasks:
             task.cancel()
 

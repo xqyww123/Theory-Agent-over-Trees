@@ -187,4 +187,11 @@ def assert_store_mirrors(forest, kinds, shape=shape):
             assert store.get(n.identity, "job") == jobs.image(job.outcome), f"{n}: the job row"
             assert loaded[n.identity].job().outcome == jobs.outcome_of_image(jobs.image(job.outcome))
             assert loaded[n.identity].job().auto_construct == job.auto_construct
+        # the stored check is the `check` row, none when none; a loaded forest re-attaches no job
+        if n._check_outcome is not None:
+            assert store.get(n.identity, "check") == jobs.check_image(n._check_outcome), f"{n}: the check row"
+        else:
+            assert "check" not in store.fields(n.identity), f"{n}: a check row for no stored check"
+        assert loaded[n.identity]._check_outcome == n._check_outcome
+        assert loaded[n.identity].evaluation_job() is None
     package_invariants.assert_store_mirrors(forest, kinds)
