@@ -1542,14 +1542,17 @@ class Forest(Unchained_Node):
     ROOT_IDENTITY: ClassVar[Identity] = 0      # `next_identity` starts at 1
 
     def __init__(self, conversation: Conversation, store: Forest_Store,
-                 kinds: Mapping[str, type[Node]]):
+                 kinds: Mapping[str, type[Node]], imports: Sequence[str] = ()):
         """The forest the store holds, loaded whole: its trees are the root's
         `children` row, each rebuilt by `_load_subtree` with the classes of
         `kinds`; a fresh database, one without a row, is the empty forest.
         `not_evaluated` throughout, every slot fresh (ARCHITECTURE §4.1).
-        A database TAT could not have written is refused (`TAT_StartupError`)."""
+        A database TAT could not have written is refused (`TAT_StartupError`).
+        `imports` are the theories the loaded plugins declare, which
+        `Theory.header` writes (PLUGIN_SYSTEM §1)."""
         super().__init__(None, Isar_State_Slot.assign(conversation), [])
         self.conversation = conversation
+        self.imports = tuple(imports)
         self.identity = self.ROOT_IDENTITY
         self.store = store
         self.lock = asyncio.Lock()
@@ -2533,10 +2536,17 @@ class Theory(StdBlock):
         return self.session().folder() / f"{self.name}.thy"
 
     def header(self) -> str:
-        """The `theory … begin` span, as the tree's file will open; every
-        import quoted, so a hyphenated name is one token to Isabelle's
-        lexer."""
-        imports = " ".join(f'"{item}"' for item in self.imports)
+        """The `theory … begin` span, as the tree's file will open — the one
+        text its evaluation runs and its emission writes: every import
+        quoted, so a hyphenated name is one token to Isabelle's lexer; after
+        the agent's, on a theory none of whose imports resolves to a theory
+        of the forest, the imports the loaded plugins declare
+        (SESSION_AND_THEORY §2)."""
+        forest = self.forest()
+        items = list(self.imports)
+        if not forest._resolved_imports(self):
+            items += [item for item in forest.imports if item not in items]
+        imports = " ".join(f'"{item}"' for item in items)
         return f"theory {self.name}\n  imports {imports}\nbegin"
 
     def emit_beginning(self, indent, out):

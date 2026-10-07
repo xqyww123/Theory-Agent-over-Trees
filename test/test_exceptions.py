@@ -8,7 +8,7 @@ cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadAnswer, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
+    AmbiguousId, BadAnswer, BadEdit, BadSessionNodeParent, BadTheoremNodeParent, BadTheoryNodeParent,
     ChildrenNotInheritable, ConstructionError,
     ConstructNotSupported, ConstructOwnedByAnother, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
@@ -199,6 +199,11 @@ def test_bad_node_parent():
     check(BadTheoryNodeParent(kind="theory", parent_id="section_Basics"),
           "A `theory` cannot be placed under `section_Basics`; a theory lives"
           " directly under a session.")
+    check(BadTheoremNodeParent(kind="lemma", parent_id="session_Arith"),
+          "A `lemma` cannot be placed under `session_Arith`; it belongs inside a theory.")
+    check(InvalidName("rev-length", "fact name"),
+          "`rev-length` is not a valid fact name: a fact name starts with a letter and continues with"
+          " letters, digits, underscores and primes ('), and does not end with an underscore.")
 
 def test_move_into_own_subtree():
     check(MoveIntoOwnSubtree(id="theory_X.section_Basics",
@@ -324,13 +329,5 @@ def test_group_bases_are_abstract():
 
 # --- completeness: runs last, after every check() above ---------------------
 
-# Bad<Class>NodeParent renderings belong to the node classes
-# (EXCEPTIONS.md §3); this list is the checklist that fails loudly when
-# those classes land.
-EXEMPT = {
-    "A `lemma` cannot be placed under `session_Arith`; it belongs inside a"
-    " theory.",
-}
-
 def test_every_baseline_is_covered():
-    assert BASELINES - COVERED == EXEMPT
+    assert BASELINES - COVERED == set()

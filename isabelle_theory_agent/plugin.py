@@ -105,6 +105,22 @@ def TAT_compile_hook(hook: Compile_Hook) -> Compile_Hook:
     return hook
 
 
+# The theories the plugins declare the forest's theories import besides
+# what the agent wrote (PLUGIN_SYSTEM §1), each to the module declaring
+# it; like `registry`, kept while that module is in `sys.modules`.
+imports: dict[str, str] = {}
+
+
+def TAT_import(theory: str) -> None:
+    """Module-level call: declare a theory the forest's theories import, in
+    the `imports` field's qualified shape, `<session>.<short name>`
+    (PLUGIN_SYSTEM §1; node_classes/SESSION_AND_THEORY.md §2)."""
+    module = sys._getframe(1).f_globals.get("__name__")
+    if "." not in theory or not model.is_theory_name_item(theory):
+        raise CannotLoadPlugin(module, None, f"`{theory}` is not a theory name of the shape `<session>.<short name>`")
+    imports[theory] = str(module)
+
+
 @dataclass(frozen=True)
 class Loaded:
     """What `load` hands the conversation, or the compile: its kind table —
@@ -119,6 +135,7 @@ class Loaded:
     # construct tools' existence and descriptions follow (CONSTRUCT_INTERACTION §3.1, §5)
     construction_job_classes: tuple[type[Construction_Job], ...] = ()
     evaluation_job_classes: tuple[type[Evaluation_Job], ...] = ()
+    imports: tuple[str, ...] = ()             # the theories the listed packages declare (PLUGIN_SYSTEM §1)
 
 
 def load(python_packages: list[str]) -> Loaded:
@@ -133,6 +150,8 @@ def load(python_packages: list[str]) -> Loaded:
         del registry[cls]
     for hook in [h for h in compile_hooks if h.__module__ not in sys.modules]:
         del compile_hooks[hook]
+    for theory in [t for t, module in imports.items() if module not in sys.modules]:
+        del imports[theory]
     for cls in model.FRAMEWORK_NODE_CLASSES:
         if cls not in registry:
             TAT_node(cls)
@@ -148,7 +167,8 @@ def load(python_packages: list[str]) -> Loaded:
     return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes),
                   tuple(h for h in compile_hooks if _defined_in(h, python_packages)),
                   _job_classes(classes, lambda cls: cls.construction_job_class),
-                  _job_classes(classes, lambda cls: cls.evaluation_job_class))
+                  _job_classes(classes, lambda cls: cls.evaluation_job_class),
+                  tuple(t for t, module in imports.items() if _module_in(module, python_packages)))
 
 
 def _job_classes(classes: list[type[Node]], named_by: Callable[[type[Node]], Any]) -> tuple[Any, ...]:
@@ -159,9 +179,12 @@ def _job_classes(classes: list[type[Node]], named_by: Callable[[type[Node]], Any
 
 
 def _defined_in(defined: type | Compile_Hook, packages: list[str]) -> bool:
-    """Whether a class or a hook belongs to one of `packages`: its module
-    is the package or lies under it."""
-    module = defined.__module__
+    """Whether a class or a hook belongs to one of `packages`."""
+    return _module_in(defined.__module__, packages)
+
+
+def _module_in(module: str, packages: list[str]) -> bool:
+    """Whether `module` is one of `packages` or lies under one."""
     return any(module == p or module.startswith(p + ".") for p in packages)
 
 

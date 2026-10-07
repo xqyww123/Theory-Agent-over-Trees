@@ -842,3 +842,15 @@ def test_edit_takes_auto_construct_when_a_class_names_a_construction_job_class_i
     assert "auto_construct" not in plugin.edit_schema([plain])["properties"]
     for classes in ([plain, constructed], [plain, inheriting]):
         assert plugin.edit_schema(classes)["properties"]["auto_construct"] is plugin.AUTO_CONSTRUCT_PROPERTY
+
+
+def test_a_package_declares_the_theories_the_forests_theories_import(monkeypatch):
+    """PLUGIN_SYSTEM §1: `TAT_import(<session>.<short name>)` at import,
+    registered as a compile hook is and returned by `load` for the listed
+    packages; a name outside the shape is refused."""
+    monkeypatch.setattr(plugin, "imports", {})
+    plugin.TAT_import("Minilang_AoA.Minilang_AoA")
+    assert plugin.imports == {"Minilang_AoA.Minilang_AoA": __name__}
+    for bad in ("Minilang_AoA", "S..A", 'S."A"', ""):
+        with pytest.raises(CannotLoadPlugin, match="is not a theory name of the shape"):
+            plugin.TAT_import(bad)

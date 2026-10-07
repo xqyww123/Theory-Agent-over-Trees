@@ -110,11 +110,12 @@ the review of steps 8 and 9, 522 pass and the same 8 fail; with step 10
 in, 526 pass and 5 fail; with step 11 in, 541 pass and 2 fail; with
 step 12 in, 548 pass and the same 2 fail; with the fixes of the review
 of steps 10 and 11, 558 pass and the same 2 fail; with step 13 in, 560
-pass and 1 fails.
+pass and 1 fails; with step 14's Python half in, 572 pass and none
+fails.
 
-| case | waits for |
-| --- | --- |
-| `test_exceptions`: `test_every_baseline_is_covered` | step 14 (the fact name's line) |
+With step 14's Python half in, no case waits for a later step: every
+baseline of RENDER_BASELINES §1–§2 and every description of the shipped
+classes is covered.
 
 ## 3. The steps
 

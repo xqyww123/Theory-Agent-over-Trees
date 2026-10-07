@@ -287,14 +287,15 @@ class DuplicateName(BadEdit):
 
 
 class InvalidName(BadEdit):
-    """Raised against one of three grammars, which `grammar` names: the
+    """Raised against one of four grammars, which `grammar` names: the
     framework's name grammar (MCP_SPECIFICATION §2), by the framework; the
-    theory name's, by `Theory.gen`; the session name's, by `Session.gen`.
-    Each renders its own grammar, so the agent can correct the name from
-    the message."""
+    theory name's, by `Theory.gen`; the session name's, by `Session.gen`;
+    the fact name's, by `Theorem.gen` (node_classes/THEOREM.md §4).  Each
+    renders its own grammar, so the agent can correct the name from the
+    message."""
 
     def __init__(self, name: str,
-                 grammar: Literal["name", "theory name", "session name"] = "name"):
+                 grammar: Literal["name", "theory name", "session name", "fact name"] = "name"):
         super().__init__()
         self.name = name
         self.grammar = grammar
@@ -306,6 +307,7 @@ class InvalidName(BadEdit):
             "theory name": "letters, digits and underscores, with no hyphen and no dot",
             "session name": "letters, digits, underscores and interior hyphens, and does"
                             " not end with a hyphen or an underscore",
+            "fact name": "letters, digits, underscores and primes ('), and does not end with an underscore",
         }[self.grammar]
         return (f"`{self.name}` is not a valid {self.grammar}: a {self.grammar}"
                 f" starts with a letter and continues with {continues}.")
@@ -424,6 +426,20 @@ class BadTheoryNodeParent(BadEdit):
     def _cause(self) -> str:
         return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
                 " a theory lives directly under a session.")
+
+
+class BadTheoremNodeParent(BadEdit):
+    """`Theorem`'s parent check (EXCEPTIONS.md §3; node_classes/THEOREM.md
+    §4): raised by its gen for a parent outside a theory — a `Session` or
+    the root."""
+
+    def __init__(self, kind: str, parent_id: str):
+        super().__init__()
+        self.kind = kind
+        self.parent_id = parent_id
+
+    def _cause(self) -> str:
+        return f"A `{self.kind}` cannot be placed under `{self.parent_id}`; it belongs inside a theory."
 
 
 class MoveIntoOwnSubtree(BadEdit):

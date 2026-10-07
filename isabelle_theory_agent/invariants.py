@@ -24,7 +24,7 @@ def assert_store_mirrors(forest: Forest, kinds: Mapping[str, type[Node]]) -> Non
     compile's first step as text — every file's text by its path, the
     ROOT's, and the report's lines.  Raises `AssertionError`, naming the
     first difference."""
-    twin = Forest(forest.conversation, forest.store, kinds)
+    twin = Forest(forest.conversation, forest.store, kinds, forest.imports)
     mine, loaded = forest._all_nodes(), twin._all_nodes()
     _require([n.identity for n in loaded] == [n.identity for n in mine],
              "the database's nodes are not the forest's, in its order")

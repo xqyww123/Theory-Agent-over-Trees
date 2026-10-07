@@ -135,7 +135,7 @@ async def conversation(python_packages: list[str], working_directory: str, conne
                 loaded = plugin.load(python_packages)
                 log.conversation.plugins_loaded(
                     kinds={kind: cls.__module__ for kind, cls in loaded.kinds.items()})
-                forest = Forest(conv, store, loaded.kinds)
+                forest = Forest(conv, store, loaded.kinds, loaded.imports)
                 ending.forest = forest
                 yield forest, loaded, announce
 

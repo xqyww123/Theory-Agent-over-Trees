@@ -6,6 +6,7 @@ Running a real header needs Isabelle: test/test_conversation.py.
 Run: python -m pytest test/test_session_theory.py
 """
 
+import io
 import os
 from pathlib import Path
 
@@ -72,9 +73,9 @@ KINDS = {"session": Session, "theory": Theory, "fake_theory": Fake_Theory,
 
 
 class Forest_Under_Test(M.Forest):
-    def __init__(self, conn=CONN, store=None, kinds=KINDS):
+    def __init__(self, conn=CONN, store=None, kinds=KINDS, imports=()):
         super().__init__(stand_ins.conversation(conn),
-                         store if store is not None else Forest_Store(":memory:", stand_ins.log()), kinds)
+                         store if store is not None else Forest_Store(":memory:", stand_ins.log()), kinds, imports)
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +116,7 @@ def shape(forest):
             return tuple(n.imports)
         if isinstance(n, tm.Block):
             return (n.fail_beginning, n.fail_ending)
-        return n.fail
+        return getattr(n, "fail", None)      # a leaf of another class: its rows are its own tests'
     return [(n.identity, n.kind, n.name, fields(n),
              len(n.sub_nodes) if isinstance(n, M.NonLeaf_Node) else None)
             for n in forest._all_nodes()]
@@ -685,3 +686,21 @@ def test_a_parent_session_is_one_the_call_keeps_or_adds_before_or_one_the_layout
     assert app2.identity == app.identity
     assert f.sub_nodes == [s, lib, app2, b, p, q]
     inv(f)
+
+
+def test_the_header_adds_the_imports_the_plugins_declare_where_no_forest_theory_is_imported():
+    """SESSION_AND_THEORY §2, PLUGIN_SYSTEM §1: after the agent's imports,
+    on a theory none of whose imports resolves to a theory of the forest,
+    the declared theories; a theory importing a forest theory receives
+    them through it; `recall`'s line shows the agent's alone."""
+    f = Forest_Under_Test(imports=("Minilang_AoA.Minilang_AoA",))
+    (s,) = insert(f, f, 0, [session("S", theory("A", "Main", "HOL-Library.Multiset"), theory("B", "S.A"),
+                                    theory("C", "Minilang_AoA.Minilang_AoA"))])
+    a, b, c = s.sub_nodes
+    assert a.header() == 'theory A\n  imports "Main" "HOL-Library.Multiset" "Minilang_AoA.Minilang_AoA"\nbegin'
+    assert b.header() == 'theory B\n  imports "S.A"\nbegin'
+    assert c.header() == 'theory C\n  imports "Minilang_AoA.Minilang_AoA"\nbegin'      # written once
+    out = io.StringIO()
+    a.print_fields(0, out, M.RECALL, 0)
+    assert out.getvalue() == "imports: Main HOL-Library.Multiset\n"
+    assert Forest_Under_Test().imports == () and f.imports == ("Minilang_AoA.Minilang_AoA",)
