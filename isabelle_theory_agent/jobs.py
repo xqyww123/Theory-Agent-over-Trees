@@ -12,7 +12,7 @@ import asyncio
 import itertools
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -26,7 +26,7 @@ from .log import current_agent
 
 if TYPE_CHECKING:
     from .log import Log, _Job
-    from .model import Conversation, JSON_Schema, Node
+    from .model import Conversation, Forest, JSON_Schema, Node
 
 Key = tuple[int, str | None]            # a seen set's key: a node's identity and what of it was shown
 
@@ -230,11 +230,16 @@ class Answered:
     response: str | None = None
 
 
+def series(words: list[str], last: str) -> str:
+    """Words joined with commas and `last` before the last: `A`; `A and B`;
+    `A, B and C`."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
+
+
 def on_each(ids: list[str]) -> str:
     """`on \\`A\\``; `on \\`A\\` and on \\`B\\``; `on \\`A\\`, on \\`B\\` and on
     \\`C\\`` (§5)."""
-    parts = [f"on `{id}`" for id in ids]
-    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return series([f"on `{id}`" for id in ids], "and")
 
 
 def listed(ids: list[str], sentence: Callable[[str], str], header: str) -> str:
@@ -246,13 +251,25 @@ def listed(ids: list[str], sentence: Callable[[str], str], header: str) -> str:
     return header + "\n" + "\n".join(f"  - {id}" for id in ids)
 
 
+def phrased(cls: Job_Class, ids: list[str], opening: str, tail: str, plural_tail: str | None = None) -> str:
+    """§5's two forms for the nodes `ids` name under the job class `cls`:
+    `{opening} {title} {on}{tail}.` for up to three, `{opening} following
+    {plural title}{plural_tail}:` over one id per line for more — the
+    opening with its article (`Started the`, `The`), `plural_tail` the
+    tail's plural when it has one."""
+    return listed(ids, lambda on: f"{opening} {cls.title()} {on}{tail}.",
+                  f"{opening} following {cls.title(plural=True)}{tail if plural_tail is None else plural_tail}:")
+
+
 def with_message(header: str, message: str) -> str:
     """A header over a message on the lines below, two spaces deeper (§6):
-    the header ends in a colon — or, when the message is empty, in a
-    period with nothing below."""
+    the header as the documents write it, ending in a colon — which a
+    period replaces when the message is empty, nothing below."""
+    if not header.endswith(":"):
+        raise TAT_InternalError(f"a failure header ends in a colon: {header!r}")
     if not message:
-        return header + "."
-    return header + ":\n" + "\n".join("  " + line for line in message.splitlines())
+        return header[:-1] + "."
+    return header + "\n" + "\n".join("  " + line for line in message.splitlines())
 
 
 class _Run:
@@ -355,13 +372,11 @@ class Construction_Job(ABC):
 
     @classmethod
     def starting_notice(cls, ids: list[str]) -> str:
-        return listed(ids, lambda on: f"Started the {cls.title()} {on}; call `check_construct` before you exit.",
-                      f"Started the following {cls.title(plural=True)}; call `check_construct` before you exit:")
+        return phrased(cls, ids, "Started the", "; call `check_construct` before you exit")
 
     @classmethod
     def cancelling_notice(cls, ids: list[str]) -> str:
-        return listed(ids, lambda on: f"Cancelled the {cls.title()} {on}.",
-                      f"Cancelled the following {cls.title(plural=True)}:")
+        return phrased(cls, ids, "Cancelled the", "")
 
     @final
     @classmethod
@@ -369,10 +384,7 @@ class Construction_Job(ABC):
         """The framework's line for the constructions an evaluation started
         automatically (§5): `construct`'s forms opened with `Automatically
         started`."""
-        return listed(ids, lambda on: f"Automatically started the {cls.title()} {on}; call `check_construct`"
-                      " before you exit.",
-                      f"Automatically started the following {cls.title(plural=True)}; call `check_construct`"
-                      " before you exit:")
+        return phrased(cls, ids, "Automatically started the", "; call `check_construct` before you exit")
 
     def answered_notice(self) -> str:
         return f"Answered the {self.title()} on `{self.node_id}`; call `check_construct` before you exit."
@@ -384,7 +396,7 @@ class Construction_Job(ABC):
         head = f"The {self.title()} on `{self.node_id}`"
         if isinstance(outcome, Succeeded):
             return head + " succeeded."
-        return with_message(head + " failed", outcome.message)
+        return with_message(head + " failed:", outcome.message)
 
     def cancelled_notification(self, reason: Cancel_Reason) -> str:
         why = {"NODE_DELETED": "the node was deleted.", "NODE_AMENDED": "the node was amended.",
@@ -548,10 +560,14 @@ class Construction_Job(ABC):
 
     @final
     def repeat_question(self) -> None:
-        """The pending question posted to the owner again — for
-        `check_construct`, when the mailbox no longer holds it (§5)."""
-        if self.pending_question is not None and self._current is not None:
-            self._post_question(self.pending_question, self._current)
+        """The pending question posted to the owner again when the mailbox
+        no longer holds it — one entry per job at most (§5)."""
+        question = self.pending_question
+        if question is None:
+            return
+        assert self._current is not None             # a pending question has a run
+        if not any(m.question is question for m in self._owned_by().mailbox):
+            self._post(question, self._current)
 
     @final
     def question_message(self, question: Interactive_Question) -> str:
@@ -562,13 +578,17 @@ class Construction_Job(ABC):
 
     @final
     def _post_question(self, question: Interactive_Question, run: _Run) -> None:
-        """The job's pending question, posted to the owner from `run`."""
+        """A question validated and made the job's pending question, posted
+        to the owner from `run`."""
         from .plugin import validate_call_schema      # plugin imports model, which imports this module
         where = f"the question of the {self.title()} on `{self.node_id}`"
         validate_call_schema(question.schema, where)
         if "$defs" in question.schema:                # it stands in for `answer`'s property, which has none
             raise TAT_InternalError(f"{where}: the schema carries `$defs`")
         self.pending_question = question
+        self._post(question, run)
+
+    def _post(self, question: Interactive_Question, run: _Run) -> None:
         post(self._log_of_conversation, Message(self._owned_by(), self.question_message(question),
                                                 interrupts=True, source=run, question=question))
 
@@ -810,6 +830,10 @@ def _merged_failures(messages: list[Message]) -> list[str]:
 
 # --- what stands for an agent (CONSTRUCT_INTERACTION §4, §5, §7)
 
+Job = Construction_Job | Evaluation_Job                        # a job of either kind
+Job_Class = type[Construction_Job] | type[Evaluation_Job]
+
+
 @dataclass(frozen=True)
 class Standing:
     """An agent's jobs and messages at one moment, read off the forest and
@@ -825,31 +849,47 @@ class Standing:
     def nothing(self) -> bool:
         """`check_construct` would answer `No job is running.` and deliver
         no message: the stop is allowed (§7)."""
-        return not (self.waiting or self.running or self.checks or self.messages)
+        return not (self.jobs or self.messages)
+
+    @property
+    def jobs(self) -> list[Job]:
+        return [*self.waiting, *self.running, *self.checks]
+
+    def facts(self) -> dict[str, Any]:
+        """The `stop_judged` record's `stands` (LOGGING.md §4)."""
+        return {"waiting": [job.node_id for job in self.waiting], "running": [job.node_id for job in self.running],
+                "checks": [job.node_id for job in self.checks], "messages": len(self.messages)}
 
 
-def standing(nodes: list[Node], agent: Agent) -> Standing:
-    """What stands for `agent` over `nodes`, the forest in tree order (§4):
-    a job is the agent's by its owner, a check by its starter."""
-    waiting: list[Construction_Job] = []
-    running: list[Construction_Job] = []
-    checks: list[Evaluation_Job] = []
-    for node in nodes:
+def standings(forest: Forest | None, agents: Iterable[Agent]) -> dict[Agent, Standing]:
+    """What stands for each of `agents`, in one pass over the forest (§4) —
+    none before the forest is built: a job is an agent's by its owner, a
+    check by its starter."""
+    waiting: dict[Agent, list[Construction_Job]] = {agent: [] for agent in agents}
+    running: dict[Agent, list[Construction_Job]] = {agent: [] for agent in waiting}
+    checks: dict[Agent, list[Evaluation_Job]] = {agent: [] for agent in waiting}
+    for node in forest._tree_order() if forest is not None else []:
         job = node.job()
-        if job is not None and job.outcome is RUNNING and job.owner is agent:
-            (waiting if job.pending_question is not None else running).append(job)
+        if job is not None and job.outcome is RUNNING and job.owner in waiting:
+            (waiting if job.pending_question is not None else running)[job.owner].append(job)
         check = node.evaluation_job()
-        if check is not None and check.outcome is RUNNING and check.starter is agent:
-            checks.append(check)
-    return Standing(waiting, running, checks, [m for m in agent.mailbox if _dropped_for(m) is None])
+        if check is not None and check.outcome is RUNNING and check.starter in checks:
+            checks[check.starter].append(check)
+    return {agent: Standing(waiting[agent], running[agent], checks[agent],
+                            [m for m in agent.mailbox if _dropped_for(m) is None]) for agent in waiting}
 
 
-def _by_title(jobs_: list[Any]) -> list[tuple[Any, list[str]]]:
-    """The jobs' classes with their nodes' ids, titles alphabetical."""
-    groups: dict[str, tuple[Any, list[str]]] = {}
-    for job in jobs_:
+def standing(forest: Forest | None, agent: Agent) -> Standing:
+    return standings(forest, [agent])[agent]
+
+
+def by_title(jobs: Sequence[Job]) -> list[tuple[str, Job_Class, list[str]]]:
+    """The jobs grouped by title, alphabetical: each group's title, the
+    class of its first job — which words the group — and its nodes' ids."""
+    groups: dict[str, tuple[Job_Class, list[str]]] = {}
+    for job in jobs:
         groups.setdefault(type(job).title(), (type(job), []))[1].append(job.node_id)
-    return [groups[title] for title in sorted(groups)]
+    return [(title, *groups[title]) for title in sorted(groups)]
 
 
 def state_lines(stands: Standing) -> list[str]:
@@ -858,22 +898,18 @@ def state_lines(stands: Standing) -> list[str]:
     then evaluation titles — up to three nodes as one sentence, more as a
     header over one full id per line."""
     lines: list[str] = []
-    waiting = dict(_by_title(stands.waiting))
-    running = dict(_by_title(stands.running))
-    for cls in sorted(waiting | running, key=lambda cls: cls.title()):
-        if cls in waiting:
-            lines.append(listed(waiting[cls], lambda on, c=cls: f"The {c.title()} {on} is waiting for your answer.",
-                                f"The following {cls.title(plural=True)} are waiting for your answer:"))
-        if cls in running:
-            lines.append(listed(running[cls], lambda on, c=cls: f"The {c.title()} {on} is still running.",
-                                f"The following {cls.title(plural=True)} are still running:"))
-    for cls, ids in _by_title(stands.checks):
-        lines.append(listed(ids, lambda on, c=cls: f"The {c.title()} {on} is still running.",
-                            f"The following {cls.title(plural=True)} are still running:"))
+    waiting = {title: (cls, ids) for title, cls, ids in by_title(stands.waiting)}
+    running = {title: (cls, ids) for title, cls, ids in by_title(stands.running)}
+    for title in sorted(waiting | running):
+        if title in waiting:
+            lines.append(phrased(*waiting[title], "The", " is waiting for your answer", " are waiting for your answer"))
+        if title in running:
+            lines.append(phrased(*running[title], "The", " is still running", " are still running"))
+    for _, cls, ids in by_title(stands.checks):
+        lines.append(phrased(cls, ids, "The", " is still running", " are still running"))
     return lines
 
 
-NO_JOB = "No job is running."                    # `check_construct`'s one-line body when nothing stands (§5)
 BLOCKED = "The `TAT` server blocked your exit:"  # the stop reason's opening line (§7)
 
 
@@ -881,10 +917,9 @@ def running_titles(stands: Standing) -> str:
     """The titles of the running jobs in their own numbers — construction
     titles first, then evaluation titles, alphabetical within, the same
     title merged — joined with commas and `and` (§7)."""
-    def words(jobs_: list[Any]) -> list[str]:
-        return [cls.title(plural=len(ids) > 1) for cls, ids in _by_title(jobs_)]
-    titles = words(stands.running) + words(stands.checks)
-    return titles[0] if len(titles) == 1 else ", ".join(titles[:-1]) + " and " + titles[-1]
+    def words(jobs: Sequence[Job]) -> list[str]:
+        return [cls.title(plural=len(ids) > 1) for _, cls, ids in by_title(jobs)]
+    return series(words(stands.running) + words(stands.checks), "and")
 
 
 def blocked_reason(stands: Standing) -> str | None:

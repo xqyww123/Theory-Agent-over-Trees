@@ -670,3 +670,68 @@ def test_the_index_lives_as_long_as_the_rendering_and_changes_no_id():
     with pytest.raises(RuntimeError):
         render(f, f, focus(broken))
     assert f._index is None and f._agent is None       # dropped on the way out too
+
+
+# --- the summary's bounds and the check's failure block (the review of steps 10–11, §3) --
+
+def test_the_summary_names_five_ids_and_counts_six_each_title_in_its_number():
+    """PRINT.md §2: ids up to five, the count alone past five; a group of
+    one node in the singular."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    s = section(x, "S")
+    for i in range(5):
+        leaf(Lemma, s, "lemma", f"A{i}", status=READY)                     # owes its construction
+    for i in range(6):
+        leaf(Lemma, s, "lemma", f"K{i}", status=READY).job().outcome = jobs.Succeeded("by simp")   # owes its check
+    leaf(Lemma, s, "lemma", "E")
+    rendered = render(f, f, RECALL)
+    at = rendered.index("  - section_S (incomplete)")
+    assert rendered[at + 1:] == [
+        "    5 proof constructions incomplete: lemma_A0, lemma_A1, lemma_A2, lemma_A3, lemma_A4",
+        "    6 proof checks incomplete",
+        "    1 node not evaluated: lemma_E"]
+
+
+class Constructed_Section(Section):     # a nesting node that owes a construction of its own
+    construction_job_class = Proof_Construction
+
+
+def test_the_summary_reads_a_nesting_node_stopped_inside_as_in_no_group():
+    """PRINT.md §1, §2: a nesting node whose beginning ran and whose ending
+    did not is `incomplete`, not `not evaluated`, and is not `ready`, so it
+    is counted in no group, whatever it owes."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    s = section(x, "S")
+    section(s, "T", ending=NOT_EVALUATED)
+    u = Constructed_Section(s, slot(), [], slot()); u.name = "U"
+    u.evaluation_status_beginning, u.evaluation_status_ending = READY, NOT_EVALUATED
+    enter(s, u, "section")
+    leaf(Lemma, s, "lemma", "P", status=READY)
+    rendered = render(f, f, RECALL)
+    at = rendered.index("  - section_S (incomplete)")
+    assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_P"]
+
+
+def test_the_checks_failure_block_under_its_own_header_after_the_constructions():
+    """CONSTRUCT_INTERACTION §6, PRINT.md §2: one block for the
+    construction job when its outcome is `FAILED` and one for the check
+    when `check_outcome()` is `FAILED`, each under its job class's header,
+    the construction's first; a header without its colon is the class's
+    bug."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    p = leaf(Lemma, x, "lemma", "P", status=READY)
+    p.job().outcome = jobs.Succeeded("by simp")
+    p._check_outcome = jobs.Failed("the replay broke")
+    assert render(f, p, focus(p)) == [
+        "- lemma_P (valid statement, bad proof)", "  The proof no longer holds:", "    the replay broke"]
+    p.job().outcome = jobs.Failed("Sledgehammer timed out.")         # a later run failed; the stored check stays
+    assert render(f, p, focus(p))[1:] == [
+        "  No proof was found:", "    Sledgehammer timed out.", "  The proof no longer holds:", "    the replay broke"]
+    with pytest.raises(TAT_InternalError, match="a failure header ends in a colon"):
+        jobs.with_message("No proof was found", "Sledgehammer timed out.")

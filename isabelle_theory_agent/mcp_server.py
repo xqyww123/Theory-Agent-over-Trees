@@ -46,7 +46,7 @@ from starlette.requests import Request
 from .compile import _create, _is_folder
 from .exceptions import TAT_DisasterError, TAT_Error, TAT_InternalError, TAT_StartupError
 from .guard import ALLOW
-from .jobs import Agent, Standing, blocked_reason, deliver, standing, waiting
+from .jobs import Agent, blocked_reason, deliver, standing, standings, waiting
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
 
@@ -282,8 +282,10 @@ class Stop:
 @dataclass(frozen=True)
 class Interruption:
     """A `PreToolUse` on the client's tool that stops a subagent
-    (CONSTRUCT_INTERACTION §7): the caller, looked up and never created."""
-    caller: Agent | None
+    (CONSTRUCT_INTERACTION §7, §8): the agents the call may stop — every
+    agent but the caller and the main conversation, looked up and never
+    created; an empty set is allowed."""
+    agents: frozenset[Agent]
 
 
 # The interruption's denial (CONSTRUCT_INTERACTION §7), the parent's error result.
@@ -578,40 +580,31 @@ class TAT_Server:
             return self._compaction_of_hook(payload)
         tool = str(payload.get("tool_name", ""))
         if tool == self.interrupting_tool:
-            return Interruption(self._known(self._identity(payload)))
+            caller = self._known(self._identity(payload))
+            return Interruption(frozenset(a for a in self.agents.values() if a is not caller and not a.main))
         if not tool.startswith(TOOL_PREFIX):
             return None
         return Announcement(str(_field(payload, "tool_use_id")), self._identity(payload),
                             main=not payload.get("agent_id"),
                             transcript_path=_text(payload.get("transcript_path")))
 
-    def _standing(self, agent: Agent) -> Standing:
-        """What stands for the agent (CONSTRUCT_INTERACTION §5), over the
-        forest once it is built."""
-        forest = self.ending.forest
-        return standing(forest._tree_order() if forest is not None else [], agent)
-
     def _stop_answer(self, agent: Agent | None) -> Any:
         """The stop rule (CONSTRUCT_INTERACTION §7): allowed — nothing
         answered — when `check_construct` would answer `No job is running.`
         and deliver no message; else blocked with the reason."""
-        reason = blocked_reason(self._standing(agent)) if agent is not None else None
-        stands = self._standing(agent) if agent is not None and reason is not None else None
+        stands = standing(self.ending.forest, agent) if agent is not None else None
+        reason = blocked_reason(stands) if stands is not None else None
         self.ending.log.agent.stop_judged(
-            allowed=reason is None,
-            stands=None if stands is None else {
-                "waiting": [job.node_id for job in stands.waiting],
-                "running": [job.node_id for job in stands.running],
-                "checks": [job.node_id for job in stands.checks], "messages": len(stands.messages)})
+            allowed=reason is None, stands=stands.facts() if stands is not None and reason is not None else None)
         return None if reason is None else {"decision": "block", "reason": reason}
 
-    def _interruption_answer(self, caller: Agent | None) -> Any:
+    def _interruption_answer(self, agents: frozenset[Agent]) -> Any:
         """The interruption judgement (CONSTRUCT_INTERACTION §7): denied when
-        any agent other than the caller and the main conversation would be
-        held, or has a call still working; else allowed — nothing answered."""
+        any of the agents the call may stop would be held, or has a call
+        still working; else allowed — nothing answered."""
+        stands = standings(self.ending.forest, agents)
         holding = [agent.identity for agent in self.agents.values()
-                   if agent is not caller and not agent.main
-                   and (agent.working_calls > 0 or not self._standing(agent).nothing())]
+                   if agent in agents and (agent.working_calls > 0 or not stands[agent].nothing())]
         self.ending.log.agent.interruption_judged(allowed=not holding, holding_work=holding or None)
         if not holding:
             return None
@@ -902,7 +895,7 @@ class TAT_Server:
         if isinstance(event, Stop):
             return "stop", self._stop_answer(event.agent)
         if isinstance(event, Interruption):
-            return "interruption", self._interruption_answer(event.caller)
+            return "interruption", self._interruption_answer(event.agents)
         if isinstance(event, Compaction):
             self._compaction(event.agent, event.learned_from, **event.facts)
             return ("session_start" if event.learned_from == "session_start" else "compaction"), None
@@ -1271,7 +1264,7 @@ class Claude_Code_Server(TAT_Server):
                         "network": {"allowAllUnixSockets": True, "allowedDomains": ["*"]},
                         "filesystem": {"denyRead": [str(working_directory), "/run"]}},
             "hooks": {
-                "PreToolUse": [hook("hook.py", TOOL_PREFIX + ".*"), hook("hook.py", "TaskStop"),
+                "PreToolUse": [hook("hook.py", TOOL_PREFIX + ".*"), hook("hook.py", self.interrupting_tool),
                                hook("guard.py", "Write|Edit|NotebookEdit|MultiEdit"),
                                hook("guard.py", "Agent|Task")],
                 "Stop": [hook("hook.py")],
@@ -1367,7 +1360,7 @@ class Codex_Server(TAT_Server):
         hook = self._hook(working_directory, "hook.py")
         hooks = {"hooks": {
             "PreToolUse": [self._hook(working_directory, "hook.py", TOOL_PREFIX + ".*"),
-                           self._hook(working_directory, "hook.py", "collaborationinterrupt_agent")],
+                           self._hook(working_directory, "hook.py", self.interrupting_tool)],
             "Stop": [hook], "SubagentStop": [hook], "SessionStart": [hook],
             "PreCompact": [hook], "PostCompact": [hook]}}
         return {".codex/config.toml": "\n".join(config), ".codex/hooks.json": _json(hooks)}

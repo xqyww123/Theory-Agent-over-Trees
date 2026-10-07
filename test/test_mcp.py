@@ -88,10 +88,11 @@ def loaded(kinds) -> plugin.Loaded:
     and `auto_construct` on `edit` when one is a construction job class
     (TOOL_SCHEMAS §1) — on the envelope, its `$defs` left empty."""
     classes = list(kinds.values())
-    constructions = plugin._job_classes(classes, "construction_job_class")
+    constructions = plugin._job_classes(classes, lambda cls: cls.construction_job_class)
     schema = EDIT_SCHEMA if not constructions else {
         **EDIT_SCHEMA, "properties": {**EDIT_SCHEMA["properties"], "auto_construct": plugin.AUTO_CONSTRUCT_PROPERTY}}
-    return plugin.Loaded(kinds, schema, (), constructions, plugin._job_classes(classes, "evaluation_job_class"))
+    return plugin.Loaded(kinds, schema, (), constructions,
+                         plugin._job_classes(classes, lambda cls: cls.evaluation_job_class))
 
 
 def forest(kinds=KINDS) -> tm.OneTreeForest:
@@ -330,7 +331,7 @@ def test_the_success_lines_of_render_baselines_section_6():
         await tools["edit"].run(me, dict(action="append", target_id="theory_X", evaluate=False,
                                          auto_construct=True, constructs=[{"kind": "lemma", "name": "A"}]))
         result = await tools["evaluate_to"].run(me, {"node_id": "theory_X"})
-        assert body(result).splitlines()[0] == evaluation[1] and result.trailer() is None
+        assert body(result).splitlines()[0] == evaluation[1] and result.trailer() == ""
         result = await tools["evaluate_to"].run(me, {"node_id": "theory_X", "ignore_error": True})
         assert body(result).splitlines()[0] == evaluation[0] and result.trailer() == automatic
         assert f.resolve("theory_X.lemma_A").job().owner is me
@@ -383,7 +384,7 @@ def test_evaluate_to_s_result_the_background_line_and_blocking():
         assert result.trailer() == "1 counterexample search and 1 proof check are running in the background."
         # a walk starting nothing for an agent with nothing running: no trailer at all
         result = await tools["evaluate_to"].run(c, {"node_id": "theory_X", "checks": "no"})
-        assert isinstance(result, With_Trailer) and result.trailer() is None
+        assert isinstance(result, With_Trailer) and result.trailer() == ""
         # an edit's own evaluation runs with `quick`: T, proven and unchecked, gets c's check
         t = add(y, Checked(y, slot(), "T"), "lemma")
         t.job().outcome = Succeeded("by simp")
@@ -826,7 +827,7 @@ def test_the_nodes_of_a_call_the_skipping_and_the_one_refusal():
         construct, cancel = tools["construct"], tools["cancel_construct"]
         tm.TABLE.clear_writes()
         text = await construct.run(me, {"node_ids": ["theory_X", Q], "auto_construct": True})
-        assert tm.TABLE.transactions == 6                # each node once: its setting stored, then its start
+        assert tm.TABLE.transactions == 3                # each node once, stored by its start
         assert text.splitlines() == [
             "Started the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on"
             " `theory_X.lemma_R`; call `check_construct` before you exit.",
@@ -919,9 +920,9 @@ def test_check_construct_answers_no_job_at_once_and_returns_on_an_interrupting_m
         f, tools, n = theories()
         me = Agent("main", True)
         check = tools["check_construct"]
-        assert await asyncio.wait_for(check.run(me, {"wait_seconds": 3600}), 1.0) == jobs.NO_JOB
+        assert await asyncio.wait_for(check.run(me, {"wait_seconds": 3600}), 1.0) == mcp.NO_JOB
         jobs.post(f.conversation.log, Message(me, "hello", interrupts=True))
-        assert await asyncio.wait_for(check.run(me, {"wait_seconds": 3600}), 1.0) == jobs.NO_JOB
+        assert await asyncio.wait_for(check.run(me, {"wait_seconds": 3600}), 1.0) == mcp.NO_JOB
         me.mailbox.clear()
         n(P).job().start(me)
         task = calling(check, me, wait_seconds=3600)
@@ -1165,5 +1166,83 @@ def test_answer_s_four_refusals_and_its_results():
         assert (e.field, e.reason) == ("answer", "must be an object")
         e, _ = await refused(NodeNotFound, me, node_id="theory_X.lemma_Z", answer={})
         assert e.id == "theory_X.lemma_Z"
+        await settled(f)
+    tm.run(scenario())
+
+
+# --- from the review of steps 10–11 (§3's surviving mutations) -----------------
+
+def test_check_construct_counts_no_job_of_another_agent_s_ended():
+    """CONSTRUCT_INTERACTION §5 condition 3 and the `All … have finished.`
+    line: a job of the caller's; another agent's construction ending, a
+    title the caller never had, neither returns the call nor is named."""
+    async def scenario():
+        f, tools, n = theories()
+        me, other = Agent("main", True), Agent("a9f3c2d1e4b5", False)
+        check = tools["check_construct"]
+        n(P).job().start(other)
+        await n(P).start_evaluation_job(me)
+        task = calling(check, me, wait_seconds=3600)
+        await still_waiting(task)
+        n(P).job().cancel(None)                                    # another agent's: counts for nothing
+        await still_waiting(task)
+        await report(n(P).evaluation_job())
+        result = await returned(task)
+        assert result.trailer() == "All proof checks have finished."
+        await settled(f)
+    tm.run(scenario())
+
+
+def test_check_construct_counts_a_job_started_during_the_call():
+    """CONSTRUCT_INTERACTION §5: condition 3 and the `All …` line count the
+    titles the caller had a job of during the call — a job started after
+    the call began included."""
+    async def scenario():
+        f, tools, n = theories()
+        me = Agent("main", True)
+        check = tools["check_construct"]
+        n(P).job().start(me)
+        task = calling(check, me, wait_seconds=3600)
+        await still_waiting(task)
+        await n(Q).start_evaluation_job(me)                        # started during the call
+        await still_waiting(task)
+        await report(n(Q).evaluation_job())
+        result = await returned(task)
+        assert result.trailer() == ("The proof construction on `theory_X.lemma_P` is still running.\n"
+                                    "All proof checks have finished.")
+        await settled(f)
+    tm.run(scenario())
+
+
+def test_auto_construct_is_written_on_the_nodes_the_call_skipped_too():
+    """CONSTRUCT_INTERACTION §5: on each node of the call `auto_construct`
+    is written as the call gives it — one running under another agent and
+    one whose class's condition fails included — and stored; on
+    `cancel_construct`'s nodes with no run too."""
+    async def scenario():
+        f, tools, n = theories()
+        me, other = Agent("main", True), Agent("a9f3c2d1e4b5", False)
+        n(P).job().start(other)
+        await tools["construct"].run(me, {"node_ids": [P, U], "auto_construct": True})
+        for id in (P, U):
+            assert n(id).job().auto_construct is True and f.store.get(n(id).identity, "auto_construct") is True
+        assert n(P).job().owner is other and n(U).job().outcome is NOT_STARTED
+        await tools["cancel_construct"].run(me, {"node_ids": [U], "auto_construct": False})
+        assert n(U).job().auto_construct is False and f.store.get(n(U).identity, "auto_construct") is False
+        await settled(f)
+    tm.run(scenario())
+
+
+def test_answer_on_another_agent_s_run_that_asked_nothing_is_no_question_pending():
+    """CONSTRUCT_INTERACTION §5: a run that has asked nothing is
+    `NoQuestionPending`, whoever owns it; `ConstructOwnedByAnother` is for
+    a question that is another agent's."""
+    async def scenario():
+        f, tools, n = theories()
+        me, other = Agent("main", True), Agent("a9f3c2d1e4b5", False)
+        n(P).job().start(other)
+        with pytest.raises(NoQuestionPending) as e:
+            await tools["answer"].run(me, {"node_id": P, "answer": {"verdict": "accept"}})
+        assert e.value.id == P and n(P).job().outcome is RUNNING
         await settled(f)
     tm.run(scenario())

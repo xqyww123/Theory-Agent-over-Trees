@@ -94,8 +94,8 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     every new node's construction job (CONSTRUCT_INTERACTION §3.2)."""
     forest = parent.forest()
     before = forest._record()
-    nodes = await _construct_siblings(parent, raws, "constructs",
-                                      Edit_Call(forest, kinds, auto_construct=auto_construct), Insertion())
+    nodes = await _construct_siblings(parent, raws, "constructs", Edit_Call(forest, kinds, auto_construct),
+                                      Insertion())
     # Commit: first the one copy of ARCHITECTURE §3.4 into the first new
     # node's slot — only when the predecessor operation wrote it, judged
     # with no round trip; every other new slot stays empty, as befits
@@ -134,7 +134,7 @@ async def amend(old: Node, raws: list[RawAST],
     forest = parent.forest()
     before = forest._record()
     removed = [forest.full_id(old)]
-    call = Edit_Call(forest, kinds, Amendment(old), auto_construct)
+    call = Edit_Call(forest, kinds, auto_construct, Amendment(old))
     nodes = await _construct_siblings(parent, raws, "constructs", call, call.role)
     replacement = nodes[0]
     inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []
@@ -329,10 +329,10 @@ class Edit_Call:
     """What every construct built in one edit call shares."""
     forest: Forest
     kinds: Mapping[str, type[Node]]
+    auto_construct: bool             # written on every built node's construction job
+                                     # (CONSTRUCT_INTERACTION §3.2); off when the call says nothing
     role: Role = Insertion()         # the call's: an amendment's `old` is left out
                                      # of every uniqueness check of the call
-    auto_construct: bool = False     # written on every built node's construction job
-                                     # (CONSTRUCT_INTERACTION §3.2); off when the call says nothing
     taken: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
                                      # the names the constructs built so far have
                                      # taken in each forest-wide namespace:

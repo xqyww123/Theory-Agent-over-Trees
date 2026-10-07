@@ -2,11 +2,12 @@
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
 (review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 12 are committed since
-2026-10-07, with the reviews of steps 1–2, 4–5 and 6–7 applied
-(review/DOC_SYNC_LIST.md entries 32–50; the second compaction check
-rebuilt on 2026-10-06 on the owner's rulings, the review of steps 8 and 9
-applied on 2026-10-07 but for its eight questions to the owner,
-review/STEPS_8_9_REVIEW.md §4); the rest is not implemented.
+2026-10-07, with the reviews of steps 1–2, 4–5, 6–7, 8–9 and 10–11
+applied (review/DOC_SYNC_LIST.md entries 32–51; the second compaction
+check rebuilt on 2026-10-06 on the owner's rulings; the questions the
+reviews of steps 8–9 and 10–11 leave to the owner are
+review/STEPS_8_9_REVIEW.md §4's R7–R14 and review/STEPS_10_11_REVIEW.md
+§4's R15–R20); the rest is not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
@@ -107,7 +108,8 @@ in, 457 pass and the same 13 fail; with the fixes of the review of steps
 fail; with step 9 in, 498 pass and the same 8 fail; with the fixes of
 the review of steps 8 and 9, 522 pass and the same 8 fail; with step 10
 in, 526 pass and 5 fail; with step 11 in, 541 pass and 2 fail; with
-step 12 in, 548 pass and the same 2 fail.
+step 12 in, 548 pass and the same 2 fail; with the fixes of the review
+of steps 10 and 11, 558 pass and the same 2 fail.
 
 | case | waits for |
 | --- | --- |

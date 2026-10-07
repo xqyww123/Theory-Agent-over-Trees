@@ -1169,8 +1169,9 @@ validates the schema as the tool is built (`plugin.validate_call_schema`)
 and checks every call against it before the entry runs
 (`plugin.check_call`, §4.4), enums and `minItems` included — so no entry
 can skip the check, and none retypes anything off the schema; `edit`'s
-dispatches on an `action` the check let through; `answer`'s bare `answer`
-property is replaced by the pending question's schema before the check;
+dispatches on an `action` the check let through; `answer`'s entry checks
+the call once more, against the schema with the pending question's in
+the bare `answer` property's place (CONSTRUCT_INTERACTION §5);
 `read_only` is MCP's `readOnlyHint`, true for `recall` and
 `check_construct`, which change no node and no job; the schemas
 come from `tools/*.jsonc`, `edit`'s the assembled one of

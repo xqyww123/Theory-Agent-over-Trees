@@ -457,22 +457,24 @@ def test_a_tool_schema_may_say_nothing_the_check_does_not_enforce():
 
 def test_the_one_bare_object_the_grammar_admits():
     """MODULE_STRUCTURE §4.4: a property declared as a bare `object` passes
-    only where the builder names it (`answer`'s `answer`), with at most a
-    `description` on it and at the top alone; the check reads it as "an
-    object" and no deeper."""
+    in one place, `answer`'s `answer` — the grammar's own fact, nothing a
+    builder passes — with at most a `description` on it and at the top
+    alone; the check reads it as "an object" and no deeper."""
     bare = {"type": "object", "description": "the answer"}
     schema = call_schema({"node_id": {"type": "string"}, "answer": bare}, required=["node_id", "answer"])
     with pytest.raises(TAT_InternalError, match="t.answer: an object schema needs"):
-        plugin.validate_call_schema(schema, "t")
-    plugin.validate_call_schema(schema, "t", bare=("answer",))
-    plugin.check_call(schema, "t", {"node_id": "x", "answer": {"anything": [1, 2]}})
+        plugin.validate_call_schema(schema, "t")                       # another tool's `answer`
+    plugin.validate_call_schema(schema, "answer")
+    plugin.check_call(schema, "answer", {"node_id": "x", "answer": {"anything": [1, 2]}})
     with pytest.raises(InvalidField) as e:
-        plugin.check_call(schema, "t", {"node_id": "x", "answer": "yes"})
+        plugin.check_call(schema, "answer", {"node_id": "x", "answer": "yes"})
     assert (e.value.field, e.value.reason) == ("answer", "must be an object")
-    for wrong, where in [({**bare, "required": []}, "t.answer"),
-                         (call_schema({"o": bare}, required=["o"]), "t.answer.o")]:
+    for wrong, where in [({**bare, "required": []}, "answer.answer"),
+                         (call_schema({"o": bare}, required=["o"]), "answer.answer.o")]:
         with pytest.raises(TAT_InternalError, match=f"{where}: an object schema needs"):
-            plugin.validate_call_schema(call_schema({"answer": wrong}), "t", bare=("answer",))
+            plugin.validate_call_schema(call_schema({"answer": wrong}), "answer")
+    with pytest.raises(TAT_InternalError, match="answer.node_id: an object schema needs"):
+        plugin.validate_call_schema(call_schema({"node_id": bare}), "answer")   # another property of the tool's
 
 
 # --- assembly ----------------------------------------------------------------
@@ -818,3 +820,25 @@ def test_a_construction_job_class_is_checked():
     refused(leaf("Reporting_Check", ["reporting_check"], evaluation_job_class=Reporting),
             "Reporting overrides `_report`, which is the framework's")
     plugin.TAT_node(leaf("Checked", ["checked"], evaluation_job_class=Check))
+
+
+def test_edit_takes_auto_construct_when_a_class_names_a_construction_job_class_inherited_or_not():
+    """TOOL_SCHEMAS §1: `edit`'s `auto_construct` is there when a loaded
+    class names a construction job class — one it inherits included — and
+    absent otherwise."""
+    class Whole(jobs.Construction_Job):
+        @classmethod
+        def title(cls, plural=False): return "wholes" if plural else "whole"
+        @classmethod
+        def failure_header(cls, failure): return None
+        async def _run(self): return jobs.Succeeded(None)
+
+    plain = leaf("Plain", ["plain"])
+    constructed = leaf("Constructed", ["constructed"], construction_job_class=Whole)
+    inheriting = type("Inheriting", (constructed,), {"construct_schema": leaf_schema(["inheriting"]),
+                                                       "__module__": __name__})
+    for cls in (plain, constructed, inheriting):
+        plugin.TAT_node(cls)
+    assert "auto_construct" not in plugin.edit_schema([plain])["properties"]
+    for classes in ([plain, constructed], [plain, inheriting]):
+        assert plugin.edit_schema(classes)["properties"]["auto_construct"] is plugin.AUTO_CONSTRUCT_PROPERTY

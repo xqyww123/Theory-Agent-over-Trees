@@ -1146,10 +1146,10 @@ def test_an_interruption_is_denied_for_a_held_agent_and_for_a_working_call(trans
             # a call still working
             await announce(url, "toolu_slow", transcript_path, CC_SUBAGENT)
             call = asyncio.ensure_future(session.call_tool("slow", {}, meta={"claudecode/toolUseId": "toolu_slow"}))
-            await bodies.began("slow").wait()
+            await asyncio.wait_for(bodies.began("slow").wait(), 2.0)
             assert await judged() == denied
             bodies.release.set()
-            assert text_of(await call) == "slow done"
+            assert text_of(await asyncio.wait_for(call, 2.0)) == "slow done"
             assert await judged() is None
             assert judgements("interruption_judged") == [
                 ("main", {"allowed": True}), ("main", {"allowed": False, "holding_work": [CC_SUBAGENT]}),
@@ -1161,6 +1161,60 @@ def test_an_interruption_is_denied_for_a_held_agent_and_for_a_working_call(trans
         async with serving(free_port(), [], server_class=Codex_Server) as (server, serve):
             payload = {**codex("echo", "c1"), "tool_name": "collaborationinterrupt_agent",
                        "tool_input": {"path": "/work/.codex/agents/worker"}}
-            assert server.event_of_hook(payload) == Interruption(None)
+            assert server.event_of_hook(payload) == Interruption(frozenset())
             assert server.event_of_hook({**payload, "tool_name": "TaskStop"}) is None
+    run(scenario)
+
+
+def test_an_interruption_by_a_caller_tat_never_met_is_judged_like_any_other(transcript_path):
+    """CONSTRUCT_INTERACTION §7: the caller is looked up and never created;
+    one TAT has not met is no agent to leave out, so the judgement still
+    reads every agent but the main conversation."""
+    async def scenario():
+        subagent_file(transcript_path, CC_SUBAGENT)
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            await announce(url, "toolu_m", transcript_path)
+            await announce(url, "toolu_s", transcript_path, CC_SUBAGENT)
+            f, (p,) = lemmas("P")
+            server.ending.forest = f
+            p.job().start(server.agents[CC_SUBAGENT])
+            r = await post_hook(url, task_stop("c0ffee000000"))      # a caller TAT never met
+            assert r.status_code == 200 and "c0ffee000000" not in server.agents
+            assert r.json() == {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                       "permissionDecisionReason": INTERRUPTION_DENIED}}
+            p.job().cancel(None)
+    run(scenario)
+
+
+def test_codex_s_stop_and_interruption_are_judged_end_to_end(tmp_path):
+    """CLIENT_HOOKS.md §1 on Codex: a subagent's `Stop` answered the block
+    with CONSTRUCT_INTERACTION §7's reason while its job runs, and the main
+    conversation's `collaborationinterrupt_agent` denied meanwhile; both
+    empty once the job is gone."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools(), server_class=Codex_Server) as (server, serve), \
+                plain_client(server.url, info(Codex_Server)) as session:
+            server.configure(tmp_path)
+            url = hook_url(server.url)
+            for call_id, thread in (("c1", CX_SESSION), ("c2", CX_SUBAGENT)):
+                await post_hook(url, codex("echo", call_id, None if thread == CX_SESSION else thread))
+                await session.call_tool("echo", {"text": "a"}, meta=codex_meta(call_id, thread, tmp_path))
+            f, (p,) = lemmas("P")
+            server.ending.forest = f
+            p.job().start(server.agents[CX_SUBAGENT])
+            stop = {**codex("echo", "c3", CX_SUBAGENT), "hook_event_name": "Stop", "stop_hook_active": False}
+            interrupt = {**codex("echo", "c4"), "tool_name": "collaborationinterrupt_agent",
+                         "tool_input": {"path": "/work/.codex/agents/worker"}}
+            r = await post_hook(url, stop)
+            assert r.json() == {"decision": "block", "reason": "\n".join([
+                BLOCKED, "The proof construction on `theory_X.lemma_P` is still running.",
+                "Call `check_construct` to wait for the running proof construction before you exit."])}
+            r = await post_hook(url, interrupt)
+            assert r.json()["hookSpecificOutput"]["permissionDecision"] == "deny"
+            p.job().cancel(None)
+            for payload in (stop, interrupt):
+                r = await post_hook(url, payload)
+                assert r.status_code == 200 and r.content == b"", payload
     run(scenario)

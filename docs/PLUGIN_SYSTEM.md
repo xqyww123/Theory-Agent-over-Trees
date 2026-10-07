@@ -208,7 +208,7 @@ registration, per class:
 - a `construction_job_class`, when the class declares one, is a
   `Construction_Job` subclass that implements `title`, `failure_header`
   and `_run`, and overrides none of the framework's members —
-  `can_start`, `start`, `cancel`, `ask`, `receive_answer`,
+  `can_start`, `start`, `cancel`, `ask`, `receive_answer`, `repeat_question`,
   `question_message` (CONSTRUCT_INTERACTION §3.2); an
   `evaluation_job_class` an `Evaluation_Job` subclass that implements
   `title`, `_start`, `failure_header` and `failure_notification`, and

@@ -5,7 +5,7 @@ builds what the server advertises and runs for one conversation.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -16,7 +16,7 @@ from . import edit
 from .exceptions import (
     ConstructNotSupported, ConstructOwnedByAnother, HoldsNoChildren, MoveBesideItself, NoQuestionPending,
     ProtectedNode, TAT_Error, TAT_InternalError)
-from .jobs import NO_JOB, RUNNING, Agent, Construction_Job, Evaluation_Job, Standing, standing, state_lines
+from .jobs import RUNNING, Agent, Construction_Job, Job_Class, Standing, by_title, series, standing, state_lines
 from .mcp_server import Body, Tool, Trailer, With_Trailer
 from .model import (
     BRIEFING, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus, Theory)
@@ -26,6 +26,7 @@ from .plugin import Loaded, check_call, validate_call_schema
 # least 3 seconds, and a minute under the clients' twelve-hour tool limit
 WAIT_AT_LEAST = 3
 WAIT_AT_MOST = 12 * 3600 - 60
+NO_JOB = "No job is running."     # `check_construct`'s one-line body when nothing stands (CONSTRUCT_INTERACTION §5)
 
 _TOOLS = Path(__file__).parent / "tools"
 
@@ -78,22 +79,20 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             ev = await _evaluate(forest, node, agent) if arguments["evaluate"] else None
             return _done(forest, agent, what, ev, [node], -1)
 
-    async def run_evaluate_to(agent: Agent, arguments: dict[str, Any]) -> With_Trailer:
+    async def run_evaluate_to(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         """The walk up to the node named — the root and a session standing
         for their trees (ARCHITECTURE §3.5) — under the lock, held through
-        `blocking`'s wait and the quickview; the opening line, the order
-        constraint's sentence under a stop of that kind, the quickview of
-        the destination at depth 0 (TOOL_SCHEMAS.md §4, PRINT.md §5)."""
-        node = forest.resolve(arguments["node_id"])
-        ev = Evaluation(node, arguments.get("ignore_error", False), agent, arguments.get("checks", "quick"))
+        `blocking`'s wait and the quickview; the opening line over the
+        quickview of the destination at depth 0 (TOOL_SCHEMAS.md §4, PRINT.md
+        §5)."""
         async with forest.lock:
+            node = forest.resolve(arguments["node_id"])
+            ev = Evaluation(destination=node, ignore_error=arguments.get("ignore_error", False),
+                            starter=agent, checks=arguments.get("checks", "quick"))
             await forest._run(ev)
-            stop = ev.stopped_at
-            line = f"Evaluation reached {forest.id_of(node)}." if stop is None \
-                else f"Evaluation stopped at {forest.id_of(stop)}."
-            lines = [line, *_order_constraint_sentence(forest, stop),
-                     forest.render(forest, Relative_Focus(frozenset({node}), 0), agent)]
-            return With_Trailer("\n".join(lines), _evaluation_trailer(forest, agent, ev))
+            line = f"Evaluation reached {forest.id_of(node)}." if ev.stopped_at is None \
+                else f"Evaluation stopped at {forest.id_of(ev.stopped_at)}."
+            return _answer(forest, agent, line, ev, [node], 0)
 
     async def run_delete(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         node_id = arguments["node_id"]
@@ -111,98 +110,86 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
     # --- the construct tools (CONSTRUCT_INTERACTION §5): no lock, each
     # synchronous from its checks to its change, the quickview as `recall`'s
 
-    def quickview(named: list[Node]) -> str:
+    def quickview(named: list[Node], agent: Agent) -> str:
         """The nodes the call named as focuses at depth 0, an id under
         another named id left out."""
         focuses = [n for n in named if not any(n._is_under(other) for other in named)]
-        return forest.render(forest, Relative_Focus(frozenset(focuses), 0), agent_of_rendering[0])
+        return forest.render(forest, Relative_Focus(frozenset(focuses), 0), agent)
 
-    agent_of_rendering: list[Agent] = []
-
-    def nodes_of_call(agent: Agent, arguments: dict[str, Any]) -> tuple[list[Node], list[Node]]:
-        """The nodes the ids name — a non-leaf node standing for every node
-        under it — those without a construction job left out, and the
-        named nodes themselves; `ConstructNotSupported` when none has a
-        job.  Each job takes the call's `auto_construct`, stored at once."""
-        agent_of_rendering[:] = [agent]
-        ids = arguments["node_ids"]
+    def jobs_of_call(ids: list[str]) -> tuple[list[Construction_Job], list[Node]]:
+        """The construction jobs of the nodes the ids name — a non-leaf node
+        standing for every node under it — each once, in tree order, and
+        the named nodes; `ConstructNotSupported` when there is none."""
         named = [_resolve(forest, id) for id in ids]
-        nodes = [n for root in named for n in root._tree_order() if n.job() is not None]
-        nodes = list(dict.fromkeys(nodes))
-        if not nodes:
+        nodes = dict.fromkeys(n for root in named for n in root._tree_order())
+        jobs = [job for n in nodes if (job := n.job()) is not None]
+        if not jobs:
             raise ConstructNotSupported(ids[0] if len(ids) == 1 else None)
-        for node in nodes:
-            job = node.job()
-            assert job is not None
-            job.auto_construct = arguments.get("auto_construct", False)
-            node._store_alone()
-        return nodes, named
+        return jobs, named
 
     async def run_construct(agent: Agent, arguments: dict[str, Any]) -> str:
-        nodes, named = nodes_of_call(agent, arguments)
+        """`auto_construct` written on every job of the call and stored on
+        every node — by the start on those it starts, here on the skipped —
+        the `Started …` line over the quickview (CONSTRUCT_INTERACTION §5)."""
+        jobs, named = jobs_of_call(arguments["node_ids"])
         started: list[Construction_Job] = []
-        for node in nodes:
-            job = node.job()
-            assert job is not None
+        for job in jobs:
+            job.auto_construct = arguments.get("auto_construct", False)
             if job.can_start():                   # not ready, constructed, running: skipped, the mark says
                 job.start(agent)
                 started.append(job)
-        notice = _notices(started, "starting_notice") or "No construction job was started."
-        return notice + "\n" + quickview(named)
+            else:
+                job.node._store_alone()
+        notice = _notices(started, lambda cls, ids: cls.starting_notice(ids)) or "No construction job was started."
+        return notice + "\n" + quickview(named, agent)
 
     async def run_cancel_construct(agent: Agent, arguments: dict[str, Any]) -> str:
-        nodes, named = nodes_of_call(agent, arguments)
+        """`auto_construct` written and stored on every node of the call,
+        every run of the caller's among them cancelled, the `Cancelled …`
+        line over the quickview (CONSTRUCT_INTERACTION §5)."""
+        jobs, named = jobs_of_call(arguments["node_ids"])
         cancelled: list[Construction_Job] = []
-        for node in nodes:
-            job = node.job()
-            assert job is not None
+        for job in jobs:
+            job.auto_construct = arguments.get("auto_construct", False)
             if job.outcome is RUNNING and job.owner is agent:   # another agent's run is skipped and goes on
                 job.cancel(None)
                 cancelled.append(job)
-        notice = _notices(cancelled, "cancelling_notice") or "No construction job was running."
-        return notice + "\n" + quickview(named)
+            job.node._store_alone()
+        notice = _notices(cancelled, lambda cls, ids: cls.cancelling_notice(ids)) or "No construction job was running."
+        return notice + "\n" + quickview(named, agent)
 
     async def run_check_construct(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         """Returns on one of four conditions, judged at the start and on every
         wake of the caller: an interrupting message waiting; a question
-        waiting — delivered again when the mailbox no longer holds it; a
-        job of the caller's ended since the start with none of its title
-        left running; the deadline (CONSTRUCT_INTERACTION §5)."""
+        waiting — delivered again where the mailbox no longer holds it; a
+        title the caller had a job of during the call and has none of now;
+        the deadline (CONSTRUCT_INTERACTION §5)."""
         wait = min(max(arguments["wait_seconds"], WAIT_AT_LEAST), WAIT_AT_MOST)
-        at_start = standing(forest._tree_order(), agent)
-        if not (at_start.waiting or at_start.running or at_start.checks):
+        if not standing(forest, agent).jobs:
             return NO_JOB
-        had = {*at_start.waiting, *at_start.running, *at_start.checks}
-        titles_had = {type(job).title() for job in had}
+        had: dict[str, Job_Class] = {}            # the titles the caller had a job of during the call, each with the class wording it
 
-        def now() -> Standing:
-            return standing(forest._tree_order(), agent)
+        def finished(stands: Standing) -> list[Job_Class]:
+            """The classes of the titles the caller had and has none of now."""
+            for job in stands.jobs:
+                had.setdefault(type(job).title(), type(job))
+            left = {type(job).title() for job in stands.jobs}
+            return [cls for title, cls in sorted(had.items()) if title not in left]
 
         def returns() -> bool:
-            stands = now()
-            for job in stands.waiting:                # a question waiting: delivered again where it is gone
-                if not any(m.question is job.pending_question for m in agent.mailbox):
-                    job.repeat_question()
-            if stands.waiting or any(m.interrupts for m in stands.messages):
-                return True
-            left = {*stands.waiting, *stands.running, *stands.checks}
-            titles_left = {type(job).title() for job in left}
-            return any(type(job).title() not in titles_left for job in had - left)
+            stands = standing(forest, agent)
+            return bool(stands.waiting or any(m.interrupts for m in stands.messages) or finished(stands))
         try:
             await asyncio.wait_for(agent.sleep_until(returns), wait)
         except TimeoutError:
             pass
+        for job in standing(forest, agent).waiting:
+            job.repeat_question()
 
         def trailer() -> str:
-            stands = now()
-            lines = state_lines(stands)
-            titles_left = {type(job).title() for job in (*stands.waiting, *stands.running, *stands.checks)}
-            for job in sorted(had, key=lambda job: type(job).title()):
-                title = type(job).title()
-                if title in titles_had and title not in titles_left:
-                    lines.append(f"All {type(job).title(plural=True)} have finished.")
-                    titles_had.discard(title)
-            return "\n".join(lines)
+            stands = standing(forest, agent)
+            return "\n".join([*state_lines(stands),
+                              *(f"All {cls.title(plural=True)} have finished." for cls in finished(stands))])
         return With_Trailer("", trailer)
 
     async def run_answer(agent: Agent, arguments: dict[str, Any]) -> str:
@@ -240,7 +227,7 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                                      _schema("check_construct"), run_check_construct, read_only=True))
     if constructions:
         construct_tools.append(_tool("answer", "Answer the question a construction job asked you",
-                                     answer_schema, run_answer, read_only=False, bare=("answer",)))
+                                     answer_schema, run_answer, read_only=False))
 
     return [_tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit,
                   read_only=False),
@@ -256,25 +243,21 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             *construct_tools]
 
 
-def _series(words: list[str], last: str) -> str:
-    """Words joined with commas and `last` before the last."""
-    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
-
-
 def _joined(words: list[str], last: str) -> str:
     """Distinct words, alphabetical, joined with commas and `last` before
     the last (CONSTRUCT_INTERACTION §5)."""
-    return _series(sorted(set(words)), last)
+    return series(sorted(set(words)), last)
 
 
-def _notices(jobs_: list[Construction_Job], notice: str) -> str:
+def _notices(jobs: list[Construction_Job],
+             notice: Callable[[type[Construction_Job], list[str]], str]) -> str:
     """The jobs' nodes named by their classes' `notice` — `starting_notice`,
     `cancelling_notice`, `automatic_notice` — one line or list per class
     (CONSTRUCT_INTERACTION §5); empty for none."""
     by_class: dict[type[Construction_Job], list[str]] = {}
-    for job in jobs_:
+    for job in jobs:
         by_class.setdefault(type(job), []).append(job.node_id)
-    return "\n".join(getattr(cls, notice)(ids) for cls, ids in by_class.items())
+    return "\n".join(notice(cls, ids) for cls, ids in by_class.items())
 
 
 def _order_constraint_sentence(forest: Forest, stop: Node | None) -> list[str]:
@@ -293,9 +276,9 @@ def _evaluation_trailer(forest: Forest, agent: Agent, ev: Evaluation) -> Trailer
     """What a call that ran an evaluation adds after its messages
     (CONSTRUCT_INTERACTION §5): the constructions the walk started
     automatically, by class, then the background line."""
-    def trailer() -> str | None:
-        parts = [_notices(ev.started, "automatic_notice"), _background_line(forest, agent)]
-        return "\n\n".join(part for part in parts if part) or None
+    def trailer() -> str:
+        parts = [_notices(ev.started, lambda cls, ids: cls.automatic_notice(ids)), _background_line(forest, agent)]
+        return "\n\n".join(part for part in parts if part)
     return trailer
 
 
@@ -304,15 +287,12 @@ def _background_line(forest: Forest, agent: Agent) -> str:
     (CONSTRUCT_INTERACTION §5) — nothing at zero; the first time for the
     agent, keyed `(0, "background")` in its seen set, the line also says
     what to call."""
-    counts: dict[str, tuple[type[Evaluation_Job], int]] = {}
-    for job in standing(forest._tree_order(), agent).checks:
-        cls, n = counts.get(type(job).title(), (type(job), 0))
-        counts[type(job).title()] = (cls, n + 1)
-    if not counts:
+    groups = by_title(standing(forest, agent).checks)
+    if not groups:
         return ""
-    words = [f"{n} {cls.title(plural=n > 1)}" for _, (cls, n) in sorted(counts.items())]
-    total = sum(n for _, n in counts.values())
-    line = f"{_series(words, 'and')} {'are' if total > 1 else 'is'} running in the background"
+    words = [f"{len(ids)} {cls.title(plural=len(ids) > 1)}" for _, cls, ids in groups]
+    total = sum(len(ids) for _, _, ids in groups)
+    line = f"{series(words, 'and')} {'are' if total > 1 else 'is'} running in the background"
     key = (0, "background")
     if key in agent.seen:
         return line + "."
@@ -335,15 +315,13 @@ def _check_construct_description(constructions: tuple[Any, ...], checks: tuple[A
             " nothing is running. To ensure all jobs have finished, call it repeatedly.")
 
 
-def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool,
-          bare: tuple[str, ...] = ()) -> Tool:
+def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:
     """One object per tool is what the agent is told and what a call is
     held to: the schema validated as the tool is built
-    (`plugin.validate_call_schema`; `bare` the properties declared as a
-    bare object, `answer`'s), and every call checked against it before
-    `run` sees it (`plugin.check_call`); the constructs inside `edit`'s
-    are `edit.py`'s to check, element by element."""
-    validate_call_schema(schema, name, bare)
+    (`plugin.validate_call_schema`), and every call checked against it
+    before `run` sees it (`plugin.check_call`); the constructs inside
+    `edit`'s are `edit.py`'s to check, element by element."""
+    validate_call_schema(schema, name)
 
     async def checked(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         check_call(schema, name, arguments)
@@ -402,24 +380,31 @@ async def _evaluate(forest: Forest, destination: Node, agent: Agent) -> Evaluati
     natural destination under the lock the call holds, `ignore_error`
     unset, the checks `quick` (MODULE_STRUCTURE §4.2 step 4); the walk,
     with where it stopped and what it started."""
-    ev = Evaluation(destination, False, agent, "quick")
+    ev = Evaluation(destination=destination, ignore_error=False, starter=agent, checks="quick")
     await forest._run(ev)
     return ev
 
 
 def _done(forest: Forest, agent: Agent, what: str, ev: Evaluation | None, nodes: list[Node],
           depth: int) -> str | With_Trailer:
-    """A successful call's result (TOOL_SCHEMAS.md §4): the `Done` line,
-    naming the stop when evaluation did not reach its destination, the
-    order constraint's sentence under a stop of that kind, over the
-    quickview for the caller (PRINT.md §5); a call that evaluated asks
-    for the evaluation's trailer (CONSTRUCT_INTERACTION §5)."""
-    assert forest.lock.locked(), "a call's answer is rendered under the forest lock"
+    """A successful change's result (TOOL_SCHEMAS.md §4): the `Done` line,
+    naming the stop when evaluation did not reach its destination, over
+    the quickview."""
     line = f"Done: {what}"
+    if ev is not None and ev.stopped_at is not None:
+        line += f"; evaluation stopped at {forest.id_of(ev.stopped_at)}"
+    return _answer(forest, agent, line + ".", ev, nodes, depth)
+
+
+def _answer(forest: Forest, agent: Agent, line: str, ev: Evaluation | None, focuses: list[Node],
+            depth: int) -> str | With_Trailer:
+    """A successful call's result over the quickview (TOOL_SCHEMAS.md §4,
+    PRINT.md §5): its opening line, the order constraint's sentence under
+    a stop of that kind, the quickview of `focuses` at `depth` for the
+    caller; a call that evaluated asks for the evaluation's trailer
+    (CONSTRUCT_INTERACTION §5)."""
+    assert forest.lock.locked(), "a call's answer is rendered under the forest lock"
     stop = ev.stopped_at if ev is not None else None
-    if stop is not None:
-        line += f"; evaluation stopped at {forest.id_of(stop)}"
-    lines = [f"{line}.", *_order_constraint_sentence(forest, stop),
-             forest.render(forest, Relative_Focus(frozenset(nodes), depth), agent)]
-    text = "\n".join(lines)
+    text = "\n".join([line, *_order_constraint_sentence(forest, stop),
+                      forest.render(forest, Relative_Focus(frozenset(focuses), depth), agent)])
     return text if ev is None else With_Trailer(text, _evaluation_trailer(forest, agent, ev))

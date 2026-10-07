@@ -147,14 +147,14 @@ def load(python_packages: list[str]) -> Loaded:
                if cls in model.FRAMEWORK_NODE_CLASSES or _defined_in(cls, python_packages)]
     return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes),
                   tuple(h for h in compile_hooks if _defined_in(h, python_packages)),
-                  _job_classes(classes, "construction_job_class"),
-                  _job_classes(classes, "evaluation_job_class"))
+                  _job_classes(classes, lambda cls: cls.construction_job_class),
+                  _job_classes(classes, lambda cls: cls.evaluation_job_class))
 
 
-def _job_classes(classes: list[type[Node]], attribute: str) -> tuple[Any, ...]:
-    """The job classes the node classes name under `attribute`, each once,
-    in the alphabetical order of their titles."""
-    named = {job_class for cls in classes if (job_class := getattr(cls, attribute)) is not None}
+def _job_classes(classes: list[type[Node]], named_by: Callable[[type[Node]], Any]) -> tuple[Any, ...]:
+    """The job classes the node classes name, `named_by` reading the name
+    off a class, each once, in the alphabetical order of their titles."""
+    named = {job_class for cls in classes if (job_class := named_by(cls)) is not None}
     return tuple(sorted(named, key=lambda job_class: job_class.title()))
 
 
@@ -615,20 +615,17 @@ def check_call(schema: JSON_Schema, tool: str, arguments: Mapping[str, Any]) -> 
         raise
 
 
-def validate_call_schema(schema: JSON_Schema, where: str, bare: Collection[str] = ()) -> None:
+def validate_call_schema(schema: JSON_Schema, where: str) -> None:
     """Refuse a tool schema saying anything `check_call` does not enforce,
     or its sentences cannot say, or too little for the check to read —
     where the tools are built (MODULE_STRUCTURE §4.6), so that what the
     agent is told and what it is held to cannot drift apart.  `where`
-    names the schema in the refusal.  `bare` names the top-level
-    properties the grammar admits as a bare `object` — `answer`'s
-    `answer` — which the check reads as "an object" (MODULE_STRUCTURE
-    §4.4)."""
+    names the schema in the refusal."""
     try:
         jsonschema.Draft202012Validator.check_schema(schema)
     except jsonschema.SchemaError as e:
         raise TAT_InternalError(f"{where}: not a well-formed JSON schema: {e.message}") from e
-    _validate_schema(schema, where, top=True, bare=frozenset(bare))
+    _validate_schema(schema, where, top=True)
 
 
 def _check_arguments(schema: JSON_Schema, tool: str, mapping: Mapping[str, Any],
@@ -652,14 +649,19 @@ def _check_argument(value: Any, schema: JSON_Schema, tool: str, path: str) -> No
         raise InvalidField(path, "must be one of " + ", ".join(f"`{a}`" for a in schema["enum"]))
     if "minItems" in schema and not value:
         raise InvalidField(path, "must not be empty")
-    if json_type == "object" and "properties" in schema:     # a bare object is "an object", no more
+    if json_type == "object" and not _is_bare_object(schema):     # a bare object is "an object", no more
         _check_arguments(schema, tool, value, path + ".")
     elif json_type == "array" and schema["items"] != _CONSTRUCTS:
         for i, v in enumerate(value):
             _check_argument(v, schema["items"], tool, f"{path}[{i}]")
 
 
-def _validate_schema(schema: Any, where: str, top: bool, bare: frozenset[str] = frozenset()) -> None:
+# The one property the grammar admits as a bare `object` (MODULE_STRUCTURE
+# §4.4): the tool's name and the property's.
+_BARE_OBJECTS = {("answer", "answer")}
+
+
+def _validate_schema(schema: Any, where: str, top: bool) -> None:
     def refuse(what: str) -> TAT_InternalError:
         return TAT_InternalError(f"{where}: {what}")
     json_type = schema.get("type") if isinstance(schema, dict) else None
@@ -683,7 +685,7 @@ def _validate_schema(schema: Any, where: str, top: bool, bare: frozenset[str] = 
             raise refuse("an object schema needs `properties`, `additionalProperties: false`"
                          " and a `required` within its properties")
         for field, property in schema["properties"].items():
-            if top and field in bare and _is_bare_object(property):
+            if top and (where, field) in _BARE_OBJECTS and _is_bare_object(property):
                 continue
             _validate_schema(property, f"{where}.{field}", top=False)
 

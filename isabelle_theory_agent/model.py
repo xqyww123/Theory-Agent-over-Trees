@@ -277,6 +277,7 @@ RECALL = Recall()
 PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 
 INDENT = "  "                            # one level
+LAST_PRINTED_DEPTH = 3                   # under `Recall`: the level below the grandchildren (PRINT.md §2)
 
 
 def _indented(indent: int, text: str) -> list[str]:
@@ -695,6 +696,7 @@ class Node(ABC):
         except TAT_Error as e:
             raise TAT_InternalError(f"{job_class.__name__}.make raised a TAT_Error") from e
         self.attach_evaluation_job(job)
+        starter.wake()                                   # its jobs changed (CONSTRUCT_INTERACTION §4)
         job.conversation.log.job.evaluation_started(node=job.node_id, id=job.id, starter=starter.identity)
         try:
             await job._start()
@@ -759,9 +761,11 @@ class Node(ABC):
         self._print_failures(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
-        if mode is RECALL and depth == 3 and mark == "incomplete" and isinstance(self, NonLeaf_Node):
+        if (mode is RECALL and depth == LAST_PRINTED_DEPTH and isinstance(self, NonLeaf_Node)
+                and self._default_mark() == "incomplete"):
             self._print_summary(below, out)
 
+    @final
     def _tags(self, agent: Agent) -> list[str]:
         """The framework's tags after the mark (CONSTRUCT_INTERACTION §6):
         `automatic construction` for every agent; after it, for the owner
@@ -774,30 +778,29 @@ class Node(ABC):
             tags.append("needs your answer, call `check_construct` to see it")
         return tags
 
+    @final
     def _print_failures(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The failure blocks (PRINT.md §2; CONSTRUCT_INTERACTION §6): where
         the node is detailed and is not itself an obstacle, the job class's
         `failure_header` over the message for the construction job whose
         outcome is `FAILED` and for the check whose outcome is `FAILED`; a
         None header prints nothing; the seen set does not apply."""
-        if mode is BRIEFING or not self.detailed(mode, depth):
+        if mode is BRIEFING or not self.detailed(mode, depth) or self._own_row() == "failed":
             return
-        if any(isinstance(s, CannotEvaluate) for s in self._own_statuses()):
-            return
-        blocks: list[tuple[str | None, str]] = []
+        failures: list[tuple[Any, Failed]] = []
         job = self.job()
         if job is not None and isinstance(job.outcome, Failed):
-            blocks.append((type(job).failure_header(job.outcome), job.outcome.message))
+            failures.append((type(job), job.outcome))
         check, job_class = self.check_outcome(), type(self).evaluation_job_class
         if isinstance(check, Failed) and job_class is not None:
-            blocks.append((job_class.failure_header(check), check.message))
-        for header, message in blocks:
-            if header is None:
-                continue
-            text = with_message(header[:-1] if header.endswith(":") else header, message)
-            for line in text.splitlines():
-                out.write(INDENT * indent + line + "\n")
+            failures.append((job_class, check))
+        for cls, failure in failures:
+            header = cls.failure_header(failure)
+            if header is not None:
+                for line in with_message(header, failure.message).splitlines():
+                    out.write(INDENT * indent + line + "\n")
 
+    @final
     def _print_summary(self, indent: int, out: TextIO) -> None:
         """The summary under a cut-off `incomplete` nesting node (PRINT.md
         §2): one line per group with members — the nodes below that are
@@ -808,34 +811,39 @@ class Node(ABC):
         failed: list[Node] = []
         not_evaluated: list[Node] = []
         for node in self._tree_order()[1:]:
-            statuses = node._own_statuses()
-            if any(isinstance(s, CannotEvaluate) for s in statuses):
+            row = node._own_row()
+            if row == "failed":
                 failed.append(node)
-            elif statuses and statuses[0] is NOT_EVALUATED:
+            elif row == "not evaluated":
                 not_evaluated.append(node)
             elif node._operations_ready() and (unfinished := node._unfinished()) is not None:
                 owed.setdefault(unfinished.title(plural=True), (unfinished, []))[1].append(node)
+        groups = [(f"{unfinished.title()} incomplete", f"{unfinished.title(plural=True)} incomplete", nodes)
+                  for unfinished, nodes in owed.values()]
+        groups += [("node failed", "nodes failed", failed), ("node not evaluated", "nodes not evaluated", not_evaluated)]
+        for singular, plural, nodes in groups:
+            if nodes:
+                ids = ": " + ", ".join(self._id_below(n) for n in nodes) if len(nodes) <= 5 else ""
+                out.write(INDENT * indent + f"{len(nodes)} {singular if len(nodes) == 1 else plural}{ids}\n")
 
-        def line(count: int, what: str, nodes: list[Node]) -> None:
-            ids = ": " + ", ".join(self._id_below(n) for n in nodes) if len(nodes) <= 5 else ""
-            out.write(INDENT * indent + f"{count} {what}{ids}\n")
-        for unfinished, nodes in owed.values():
-            line(len(nodes), f"{unfinished.title(plural=len(nodes) != 1)} incomplete", nodes)
-        if failed:
-            line(len(failed), "node failed" if len(failed) == 1 else "nodes failed", failed)
-        if not_evaluated:
-            line(len(not_evaluated), "node not evaluated" if len(not_evaluated) == 1 else "nodes not evaluated",
-                 not_evaluated)
-
+    @final
     def _id_below(self, node: Node) -> str:
         """`node`'s id relative to this node, an ancestor: the components
         below this one, dotted."""
-        components: list[str] = []
-        n: Node | None = node
-        while n is not None and n is not self:
-            components.append(n.id_component())
+        return ".".join(n.id_component() for n in node._chain_below(self))
+
+    @final
+    def _chain_below(self, ancestor: Node) -> list[Node]:
+        """This node and its ancestors below `ancestor`, outermost first."""
+        chain: list[Node] = []
+        n: Node | None = self
+        while n is not None and n is not ancestor:
+            chain.append(n)
             n = n.parent
-        return ".".join(reversed(components))
+        if n is not ancestor:
+            raise TAT_InternalError("not in this forest")
+        chain.reverse()
+        return chain
 
     def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The class's: its fields, one per line at `indent`, under `Recall`
@@ -869,14 +877,28 @@ class Node(ABC):
     def mark(self, mode: PrintMode, depth: int) -> str | None:
         """The default of PRINT.md §1, its four rows, the first that applies
         winning; a class overrides it to say more."""
+        return self._default_mark()
+
+    @final
+    def _default_mark(self) -> str:
+        """PRINT.md §1's four rows — the framework's classification of the
+        node, which the default `mark`, the failure blocks and the summary
+        read: `complete`, else the own operations' row, else `incomplete`."""
         if self.is_finished():
             return "complete"
+        return self._own_row() or "incomplete"
+
+    @final
+    def _own_row(self) -> str | None:
+        """What the node's own operations say of PRINT.md §1's rows:
+        `failed` under an obstacle, `not evaluated` when the first has not
+        run, else None."""
         statuses = self._own_statuses()
         if any(isinstance(s, CannotEvaluate) for s in statuses):
             return "failed"
         if statuses and statuses[0] is NOT_EVALUATED:
             return "not evaluated"
-        return "incomplete"
+        return None
 
     def _children_to_print(self, mode: PrintMode, depth: int) -> list[tuple[Node, PrintMode]]:
         """The children `print` descends into and the mode each gets
@@ -1100,7 +1122,7 @@ class NonLeaf_Node(Node):
         pairs: list[tuple[Node, PrintMode]] = []
         if mode is BRIEFING:
             pairs = [(c, BRIEFING) for c in self.sub_nodes]
-        elif mode is RECALL and depth < 3:
+        elif mode is RECALL and depth < LAST_PRINTED_DEPTH:
             pairs = [(c, RECALL) for c in self.sub_nodes]
         elif isinstance(mode, Relative_Focus):
             if self in mode.nodes:                   # a focus: its children are focuses one level shallower
@@ -1705,15 +1727,7 @@ class Forest(Unchained_Node):
 
     def _chain(self, node: Node) -> list[Node]:
         """The node's ancestors below the root and itself, outermost first."""
-        chain: list[Node] = []
-        n: Node | None = node
-        while n is not None and n is not self:
-            chain.append(n)
-            n = n.parent
-        if n is not self:
-            raise TAT_InternalError("not in this forest")
-        chain.reverse()
-        return chain
+        return node._chain_below(self)
 
     def _bearing(self, component: Id_Component) -> list[Node]:
         """The nodes whose own component is `component`, in tree order: from
