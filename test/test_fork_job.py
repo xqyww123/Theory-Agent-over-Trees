@@ -220,7 +220,7 @@ async def test_the_notes_jobs_over_the_wire(conversation):
                        "children": [note("P"), note("Q", "fail"), note("R", "wait")]}]}])
     (thy,) = sess.sub_nodes
     p, q, r = thy.sub_nodes
-    await thy.evaluate_to(False)
+    await thy.evaluate_to(None, False)
     assert all(isinstance(n._status, M.Ready) for n in (p, q, r)), [n._status for n in (p, q, r)]
     for n in (p, q, r):
         await n.start_evaluation_job(agent)

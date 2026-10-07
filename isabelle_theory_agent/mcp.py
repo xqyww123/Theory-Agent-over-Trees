@@ -16,9 +16,10 @@ from . import edit
 from .exceptions import (
     ConstructNotSupported, ConstructOwnedByAnother, HoldsNoChildren, MoveBesideItself, NoQuestionPending,
     ProtectedNode, TAT_Error, TAT_InternalError)
-from .jobs import NO_JOB, RUNNING, Agent, Construction_Job, Standing, standing, state_lines
-from .mcp_server import Body, Tool, With_Trailer
-from .model import BRIEFING, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus
+from .jobs import NO_JOB, RUNNING, Agent, Construction_Job, Evaluation_Job, Standing, standing, state_lines
+from .mcp_server import Body, Tool, Trailer, With_Trailer
+from .model import (
+    BRIEFING, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus, Theory)
 from .plugin import Loaded, check_call, validate_call_schema
 
 # `check_construct`'s clamps on `wait_seconds` (CONSTRUCT_INTERACTION §5, §8): at
@@ -42,12 +43,14 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
     forest's lock across the change, the evaluation the call asks for and
     the quickview, names the refused operation on a `TAT_Error` the change
     raises (EXCEPTIONS.md §4), and answers the `Done` line over the
-    quickview (PRINT.md §5).  And `recall` (RECALL.md), which renders the
-    node in `Recall`, or the briefing when no node is named, under no lock.
-    Every rendering is for the calling agent; every call is checked
-    against its tool's schema before the entry runs (`_tool`)."""
+    quickview (PRINT.md §5).  `evaluate_to` (MCP_SPECIFICATION §4), the
+    walk under the lock, its opening line over the quickview.  And
+    `recall` (RECALL.md), which renders the node in `Recall`, or the
+    briefing when no node is named, under no lock.  Every rendering is
+    for the calling agent; every call is checked against its tool's
+    schema before the entry runs (`_tool`)."""
 
-    async def run_edit(agent: Agent, arguments: dict[str, Any]) -> str:
+    async def run_edit(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         action, target_id = arguments["action"], arguments["target_id"]
         constructs = arguments["constructs"]
         auto_construct = arguments.get("auto_construct", False)     # off when left out (TOOL_SCHEMAS.md §1)
@@ -60,10 +63,10 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                     nodes = await edit.insert(parent, index, constructs, loaded.kinds, auto_construct)
                 else:
                     raise TAT_InternalError(f"unknown action {action!r}")
-            stopped = await _evaluate(forest, nodes[-1]) if arguments["evaluate"] else None
-            return _done(forest, agent, what, stopped, nodes, -1)
+            ev = await _evaluate(forest, nodes[-1], agent) if arguments["evaluate"] else None
+            return _done(forest, agent, what, ev, nodes, -1)
 
-    async def run_move(agent: Agent, arguments: dict[str, Any]) -> str:
+    async def run_move(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         source_id, location = arguments["source_id"], arguments["location"]
         position, node_id = location["position"], location["node_id"]
         where = f"{source_id} {position} {node_id}"   # the target phrase (TOOL_SCHEMAS.md §4)
@@ -72,10 +75,27 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                 node = _resolve(forest, source_id)
                 parent, index = _location(forest, position, node_id, moving=node)
                 await edit.move(node, parent, index)
-            stopped = await _evaluate(forest, node) if arguments["evaluate"] else None
-            return _done(forest, agent, what, stopped, [node], -1)
+            ev = await _evaluate(forest, node, agent) if arguments["evaluate"] else None
+            return _done(forest, agent, what, ev, [node], -1)
 
-    async def run_delete(agent: Agent, arguments: dict[str, Any]) -> str:
+    async def run_evaluate_to(agent: Agent, arguments: dict[str, Any]) -> With_Trailer:
+        """The walk up to the node named — the root and a session standing
+        for their trees (ARCHITECTURE §3.5) — under the lock, held through
+        `blocking`'s wait and the quickview; the opening line, the order
+        constraint's sentence under a stop of that kind, the quickview of
+        the destination at depth 0 (TOOL_SCHEMAS.md §4, PRINT.md §5)."""
+        node = forest.resolve(arguments["node_id"])
+        ev = Evaluation(node, arguments.get("ignore_error", False), agent, arguments.get("checks", "quick"))
+        async with forest.lock:
+            await forest._run(ev)
+            stop = ev.stopped_at
+            line = f"Evaluation reached {forest.id_of(node)}." if stop is None \
+                else f"Evaluation stopped at {forest.id_of(stop)}."
+            lines = [line, *_order_constraint_sentence(forest, stop),
+                     forest.render(forest, Relative_Focus(frozenset({node}), 0), agent)]
+            return With_Trailer("\n".join(lines), _evaluation_trailer(forest, agent, ev))
+
+    async def run_delete(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         node_id = arguments["node_id"]
         async with forest.lock:
             with _operation("delete", node_id) as what:
@@ -118,14 +138,6 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             node._store_alone()
         return nodes, named
 
-    def notices(jobs_: list[Construction_Job], notice: str, none: str) -> str:
-        if not jobs_:
-            return none
-        by_class: dict[type[Construction_Job], list[str]] = {}
-        for job in jobs_:
-            by_class.setdefault(type(job), []).append(job.node_id)
-        return "\n".join(getattr(cls, notice)(ids) for cls, ids in by_class.items())
-
     async def run_construct(agent: Agent, arguments: dict[str, Any]) -> str:
         nodes, named = nodes_of_call(agent, arguments)
         started: list[Construction_Job] = []
@@ -135,7 +147,8 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             if job.can_start():                   # not ready, constructed, running: skipped, the mark says
                 job.start(agent)
                 started.append(job)
-        return notices(started, "starting_notice", "No construction job was started.") + "\n" + quickview(named)
+        notice = _notices(started, "starting_notice") or "No construction job was started."
+        return notice + "\n" + quickview(named)
 
     async def run_cancel_construct(agent: Agent, arguments: dict[str, Any]) -> str:
         nodes, named = nodes_of_call(agent, arguments)
@@ -146,7 +159,8 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             if job.outcome is RUNNING and job.owner is agent:   # another agent's run is skipped and goes on
                 job.cancel(None)
                 cancelled.append(job)
-        return notices(cancelled, "cancelling_notice", "No construction job was running.") + "\n" + quickview(named)
+        notice = _notices(cancelled, "cancelling_notice") or "No construction job was running."
+        return notice + "\n" + quickview(named)
 
     async def run_check_construct(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         """Returns on one of four conditions, judged at the start and on every
@@ -206,6 +220,13 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
 
     constructions, checks = loaded.construction_job_classes, loaded.evaluation_job_classes
     answer_schema = _schema("answer")
+    evaluate_schema = _schema("evaluate_to")
+    if checks:                                    # `checks` completed at start, absent without a class (TOOL_SCHEMAS.md §5)
+        property = evaluate_schema["properties"]["checks"]
+        property["description"] = property["description"].replace(
+            "{titles}", _joined([cls.title(plural=True) for cls in checks], "and"))
+    else:
+        del evaluate_schema["properties"]["checks"]
     construct_tools: list[Tool] = []
     if constructions:
         construct_tools += [
@@ -230,14 +251,74 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
             _tool("recall", "Read an Isabelle theory construct with what is under it, briefer the"
                   " deeper, or an outline of everything.", _schema("recall"), run_recall,
                   read_only=True),
+            _tool("evaluate_to", "Evaluate Isabelle theory constructs up to a node. Already evaluated"
+                  " constructs are skipped.", evaluate_schema, run_evaluate_to, read_only=False),
             *construct_tools]
+
+
+def _series(words: list[str], last: str) -> str:
+    """Words joined with commas and `last` before the last."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
 
 
 def _joined(words: list[str], last: str) -> str:
     """Distinct words, alphabetical, joined with commas and `last` before
     the last (CONSTRUCT_INTERACTION §5)."""
-    words = sorted(set(words))
-    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
+    return _series(sorted(set(words)), last)
+
+
+def _notices(jobs_: list[Construction_Job], notice: str) -> str:
+    """The jobs' nodes named by their classes' `notice` — `starting_notice`,
+    `cancelling_notice`, `automatic_notice` — one line or list per class
+    (CONSTRUCT_INTERACTION §5); empty for none."""
+    by_class: dict[type[Construction_Job], list[str]] = {}
+    for job in jobs_:
+        by_class.setdefault(type(job), []).append(job.node_id)
+    return "\n".join(getattr(cls, notice)(ids) for cls, ids in by_class.items())
+
+
+def _order_constraint_sentence(forest: Forest, stop: Node | None) -> list[str]:
+    """RENDER_BASELINES §3's sentence under the order constraint's stop —
+    a tree importing a forest tree placed after it, or itself — composed
+    from the forest's answer; nothing under any other stop."""
+    item = forest._order_violation(stop) if stop is not None else None
+    if not isinstance(stop, Theory) or item is None:
+        return []
+    if forest._resolved_imports(stop) == [stop]:
+        return [f"`{forest.id_of(stop)}` imports itself. Remove `{item}` from its imports."]
+    return [f"Since `{forest.id_of(stop)}` imports `{item}`, you cannot put it before `{item}`. Move it later."]
+
+
+def _evaluation_trailer(forest: Forest, agent: Agent, ev: Evaluation) -> Trailer:
+    """What a call that ran an evaluation adds after its messages
+    (CONSTRUCT_INTERACTION §5): the constructions the walk started
+    automatically, by class, then the background line."""
+    def trailer() -> str | None:
+        parts = [_notices(ev.started, "automatic_notice"), _background_line(forest, agent)]
+        return "\n\n".join(part for part in parts if part) or None
+    return trailer
+
+
+def _background_line(forest: Forest, agent: Agent) -> str:
+    """The caller's running evaluation jobs, all of them, counted by title
+    (CONSTRUCT_INTERACTION §5) — nothing at zero; the first time for the
+    agent, keyed `(0, "background")` in its seen set, the line also says
+    what to call."""
+    counts: dict[str, tuple[type[Evaluation_Job], int]] = {}
+    for job in standing(forest._tree_order(), agent).checks:
+        cls, n = counts.get(type(job).title(), (type(job), 0))
+        counts[type(job).title()] = (cls, n + 1)
+    if not counts:
+        return ""
+    words = [f"{n} {cls.title(plural=n > 1)}" for _, (cls, n) in sorted(counts.items())]
+    total = sum(n for _, n in counts.values())
+    line = f"{_series(words, 'and')} {'are' if total > 1 else 'is'} running in the background"
+    key = (0, "background")
+    if key in agent.seen:
+        return line + "."
+    agent.seen.add(key)
+    forest.conversation.log.agent.seen(key=key)
+    return line + "; call `check_construct` to wait for them."
 
 
 def _check_construct_description(constructions: tuple[Any, ...], checks: tuple[Any, ...]) -> str:
@@ -316,20 +397,29 @@ def _location(forest: Forest, position: str, anchor_id: str,
     return parent, index + (1 if position == "after" else 0)
 
 
-async def _evaluate(forest: Forest, destination: Node) -> Node | None:
+async def _evaluate(forest: Forest, destination: Node, agent: Agent) -> Evaluation:
     """`evaluate` true (MCP_SPECIFICATION §3.2): run up to the change's
     natural destination under the lock the call holds, `ignore_error`
-    unset; the node the walk stopped at, if it stopped."""
-    return (await forest._run(destination, False)).stopped_at
+    unset, the checks `quick` (MODULE_STRUCTURE §4.2 step 4); the walk,
+    with where it stopped and what it started."""
+    ev = Evaluation(destination, False, agent, "quick")
+    await forest._run(ev)
+    return ev
 
 
-def _done(forest: Forest, agent: Agent, what: str, stopped: Node | None, nodes: list[Node],
-          depth: int) -> str:
+def _done(forest: Forest, agent: Agent, what: str, ev: Evaluation | None, nodes: list[Node],
+          depth: int) -> str | With_Trailer:
     """A successful call's result (TOOL_SCHEMAS.md §4): the `Done` line,
-    naming the stop when evaluation did not reach its destination, over
-    the quickview for the caller (PRINT.md §5)."""
+    naming the stop when evaluation did not reach its destination, the
+    order constraint's sentence under a stop of that kind, over the
+    quickview for the caller (PRINT.md §5); a call that evaluated asks
+    for the evaluation's trailer (CONSTRUCT_INTERACTION §5)."""
     assert forest.lock.locked(), "a call's answer is rendered under the forest lock"
     line = f"Done: {what}"
-    if stopped is not None:
-        line += f"; evaluation stopped at {forest.id_of(stopped)}"
-    return f"{line}.\n" + forest.render(forest, Relative_Focus(frozenset(nodes), depth), agent)
+    stop = ev.stopped_at if ev is not None else None
+    if stop is not None:
+        line += f"; evaluation stopped at {forest.id_of(stop)}"
+    lines = [f"{line}.", *_order_constraint_sentence(forest, stop),
+             forest.render(forest, Relative_Focus(frozenset(nodes), depth), agent)]
+    text = "\n".join(lines)
+    return text if ev is None else With_Trailer(text, _evaluation_trailer(forest, agent, ev))

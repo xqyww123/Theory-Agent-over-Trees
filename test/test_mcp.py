@@ -57,6 +57,16 @@ class Only_Checked(T):                  # an evaluation job class and no constru
     evaluation_job_class = Check
 
 
+class Search_Check(Check):              # a second evaluation job class, for the counts and the descriptions
+    @classmethod
+    def title(cls, plural=False):
+        return "counterexample searches" if plural else "counterexample search"
+
+
+class Searched_Checked(Lemma):
+    evaluation_job_class = Search_Check
+
+
 KINDS = {"t": T, "block": Block}
 JOB_KINDS = {**KINDS, "lemma": Lemma, "checked": Checked}
 EDIT_SCHEMA = mcp._schema("edit")       # the envelope, its `$defs` empty: the check reads no construct
@@ -108,8 +118,14 @@ def agent() -> Agent:
     return Agent("main", True)
 
 
+def body(result) -> str:
+    """A body's text, with or without the trailer it asks for."""
+    return result.text if isinstance(result, With_Trailer) else result
+
+
 def call(tool, **arguments) -> list[str]:
-    return asyncio.run(tool.run(agent(), arguments)).splitlines()
+    """The body's lines, for a fresh caller."""
+    return body(asyncio.run(tool.run(agent(), arguments))).splitlines()
 
 
 _E = typing.TypeVar("_E", bound=TAT_Error)
@@ -140,31 +156,33 @@ def names(parent):
 def test_the_tools_their_descriptions_and_schemas_as_the_documents_state_them():
     """TOOL_SCHEMAS §1–§3, §5 and RECALL.md §3, with the two job classes of
     test_jobs loaded — titled as `Theorem`'s, so the descriptions completed
-    at start read as CONSTRUCT_INTERACTION §5's `Theorem` examples.
-    `evaluate_to` is step 12's."""
+    at start read as CONSTRUCT_INTERACTION §5's `Theorem` examples."""
     f, *_, _ = build(JOB_KINDS)
     ld = loaded(JOB_KINDS)
     tools = {t.name: t for t in mcp.tools(f, ld)}
-    assert list(tools) == ["edit", "move", "delete", "recall",
+    assert list(tools) == ["edit", "move", "delete", "recall", "evaluate_to",
                            "construct", "cancel_construct", "check_construct", "answer"]
     assert [tools[n].description for n in ("edit", "move", "delete", "recall")] == \
         stated(TOOL_SCHEMAS, "Tool description") + stated(RECALL, "Tool description")
-    assert [tools[n].description for n in ("construct", "cancel_construct", "check_construct", "answer")] == [
+    assert [tools[n].description for n in ("evaluate_to", "construct", "cancel_construct", "check_construct",
+                                           "answer")] == [
+        "Evaluate Isabelle theory constructs up to a node. Already evaluated constructs are skipped.",
         "Start the construction jobs of nodes, such as proof constructions.",
         "Cancel the running construction jobs of nodes.",
         "Wait until any proof construction or all proof checks have finished, or a message arrives. Returns at"
         " once when nothing is running. To ensure all jobs have finished, call it repeatedly.",
         "Answer the question a construction job asked you"]
-    assert [t.read_only for t in tools.values()] == [False, False, False, True, False, False, True, False]
+    assert [t.read_only for t in tools.values()] == [False, False, False, True, False, False, False, True, False]
     parse = jsoncomment.JsonComment().loads
     [edit], [move], [delete] = (fenced_blocks(TOOL_SCHEMAS, s) for s in ("1.", "2.", "3."))
-    _evaluate_to, construct, cancel_construct, check_construct, answer = fenced_blocks(TOOL_SCHEMAS, "5.")
+    evaluate_to, construct, cancel_construct, check_construct, answer = fenced_blocks(TOOL_SCHEMAS, "5.")
     recall, _ = fenced_blocks(RECALL, "3.")
     assert ld.edit_schema == parse("\n".join(edit))        # the envelope `Loaded.edit_schema` fills
     assert tools["edit"].input_schema is ld.edit_schema    # `Loaded.edit_schema`, as given
-    for name, block in (("move", move), ("delete", delete), ("recall", recall), ("construct", construct),
-                        ("cancel_construct", cancel_construct), ("check_construct", check_construct),
-                        ("answer", answer)):
+    evaluate_to = [line.replace("{titles}", "proof checks") for line in evaluate_to]   # completed at start
+    for name, block in (("move", move), ("delete", delete), ("recall", recall), ("evaluate_to", evaluate_to),
+                        ("construct", construct), ("cancel_construct", cancel_construct),
+                        ("check_construct", check_construct), ("answer", answer)):
         assert tools[name].input_schema == parse("\n".join(block)), name
     # `tools` validates what it advertises (`plugin.validate_call_schema`), naming the tool.
     broken = {**EDIT_SCHEMA, "properties": {**EDIT_SCHEMA["properties"], "extra": {"type": "null"}}}
@@ -181,16 +199,23 @@ def test_the_construct_tools_exist_by_the_job_classes_loaded():
     tail = (" have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs"
             " have finished, call it repeatedly.")
     *_, tools = build()
-    assert list(tools) == ["edit", "move", "delete", "recall"]
+    assert list(tools) == ["edit", "move", "delete", "recall", "evaluate_to"]
     assert "auto_construct" not in tools["edit"].input_schema["properties"]
+    assert "checks" not in tools["evaluate_to"].input_schema["properties"]
     *_, tools = build({**KINDS, "checked": Only_Checked})
-    assert list(tools)[4:] == ["check_construct"]
+    assert list(tools)[5:] == ["check_construct"]
     assert "auto_construct" not in tools["edit"].input_schema["properties"]
     assert tools["check_construct"].description == "Wait until all proof checks" + tail
+    assert tools["evaluate_to"].input_schema["properties"]["checks"]["description"].startswith(
+        'Whether to run the proof checks of the nodes: "no" runs none;')
     *_, tools = build({**KINDS, "lemma": Lemma})
-    assert list(tools)[4:] == ["construct", "cancel_construct", "check_construct", "answer"]
+    assert list(tools)[5:] == ["construct", "cancel_construct", "check_construct", "answer"]
     assert tools["edit"].input_schema["properties"]["auto_construct"] is plugin.AUTO_CONSTRUCT_PROPERTY
     assert tools["check_construct"].description == "Wait until any proof construction" + tail
+    assert "checks" not in tools["evaluate_to"].input_schema["properties"]
+    *_, tools = build({**JOB_KINDS, "searched": Searched, "searched_checked": Searched_Checked})
+    assert tools["evaluate_to"].input_schema["properties"]["checks"]["description"].startswith(
+        'Whether to run the counterexample searches and proof checks of the nodes: "no" runs none;')
     *_, tools = build({**JOB_KINDS, "searched": Searched})
     assert tools["construct"].description == (
         "Start the construction jobs of nodes, such as counterexample searches and proof constructions.")
@@ -225,8 +250,8 @@ def test_a_tool_renders_for_the_agent_that_called_it():
     one, other = Agent("main", True), Agent("a9f3c2d1e4b5", False)
 
     def append(caller, construct, evaluate) -> str:
-        return asyncio.run(edit.run(caller, dict(action="append", target_id="block_Theory",
-                                                 constructs=[construct], evaluate=evaluate)))
+        return body(asyncio.run(edit.run(caller, dict(action="append", target_id="block_Theory",
+                                                      constructs=[construct], evaluate=evaluate))))
     assert "it broke" in append(one, {"kind": "loud", "name": "x"}, True)
     assert "it broke" not in append(one, t("y"), False)        # shown to this agent already
     assert "it broke" in append(other, t("z"), False)
@@ -246,10 +271,11 @@ def entries(block: list[str]) -> list[str]:
 
 def test_the_success_lines_of_render_baselines_section_6():
     """RENDER_BASELINES §6's three blocks: the `Done` lines; `evaluate_to`'s
-    two (step 12's, owed); the eight forms of `construct`'s and
+    two opening lines; the eight forms of `construct`'s and
     `cancel_construct`'s lines over theory_X > [P, Q, R] and theory_Y >
-    [S], each the text above the quickview — `Automatically started …`
-    (step 12's, owed) — which are CONSTRUCT_INTERACTION §5's block."""
+    [S], each the text above the quickview, and `Automatically started …`
+    before the trailer of a call whose walk started a construction
+    (CONSTRUCT_INTERACTION §5, whose block the last eight are)."""
     kinds = {"theory": Block, "section": Block, "lemma": Lemma, "definition": T}
     done, evaluation, construction = fenced_blocks(RB, "6.")
     f = forest(kinds)
@@ -299,8 +325,116 @@ def test_the_success_lines_of_render_baselines_section_6():
         await notice("cancel_none", "cancel_construct", me, "theory_X.lemma_P")  # another agent's run: skipped
         assert said == expected
         assert f.resolve("theory_X.lemma_P").job().owner is other
+        # `evaluate_to`: definition_f, an obstacle, is the stop again; passed under `ignore_error`,
+        # the walk reaches lemma_A, whose automatic construction is on
+        await tools["edit"].run(me, dict(action="append", target_id="theory_X", evaluate=False,
+                                         auto_construct=True, constructs=[{"kind": "lemma", "name": "A"}]))
+        result = await tools["evaluate_to"].run(me, {"node_id": "theory_X"})
+        assert body(result).splitlines()[0] == evaluation[1] and result.trailer() is None
+        result = await tools["evaluate_to"].run(me, {"node_id": "theory_X", "ignore_error": True})
+        assert body(result).splitlines()[0] == evaluation[0] and result.trailer() == automatic
+        assert f.resolve("theory_X.lemma_A").job().owner is me
         await settled(f)
     tm.run(scenario())
+
+
+def test_evaluate_to_s_result_the_background_line_and_blocking():
+    """MCP_SPECIFICATION §4, CONSTRUCT_INTERACTION §5: the opening line over
+    the quickview of the destination at depth 0, the root and a theory as
+    destinations; the walk's checks under `quick`, the caller's running
+    checks counted in the background line — titles alphabetical, the call
+    to make the first time, nothing at zero; `"no"` starting none;
+    `"blocking"` keeping the lock until every check running on a passed
+    node has ended, whoever started it, its failure posted to its
+    starter."""
+    kinds = {"theory": Block, "lemma": Checked, "searched": Searched_Checked}
+    f = forest(kinds)
+    x = add(f, Block(f, slot(), "X", slot()), "theory")
+    for name in "PQR":
+        add(x, Checked(x, slot(), name), "lemma")
+    y = add(f, Block(f, slot(), "Y", slot()), "theory")
+    add(y, Checked(y, slot(), "S"), "lemma")
+    add(y, Searched_Checked(y, slot(), "W"), "searched")
+    for node in f._tree_order():
+        if node.job() is not None:
+            node.job().outcome = Succeeded("by simp")           # proven, unchecked: the walk starts the check
+    tools = {t.name: t for t in mcp.tools(f, loaded(kinds))}
+    n = f.resolve
+
+    async def scenario():
+        a, b, c = Agent("main", True), Agent("a9f3c2d1e4b5", False), Agent("b7e2d4c6a8f0", False)
+        result = await tools["evaluate_to"].run(a, {"node_id": P})
+        assert body(result).splitlines() == [
+            "Evaluation reached lemma_P.", "Sessions:", "- theory_X (incomplete)", "  - lemma_P (incomplete)",
+            "  - lemma_Q (not evaluated)", "  - lemma_R (not evaluated)", "- theory_Y (not evaluated)"]
+        assert result.trailer() == "1 proof check is running in the background; call `check_construct` to wait for them."
+        check = n(P).evaluation_job()
+        assert isinstance(check, Check) and check.starter is a and check.began
+        result = await tools["evaluate_to"].run(a, {"node_id": "theory_X"})
+        assert body(result).splitlines()[:2] == ["Evaluation reached theory_X.", "Sessions:"]
+        assert result.trailer() == "3 proof checks are running in the background."
+        assert n(P).evaluation_job() is check                       # a check on the node already: no second
+        result = await tools["evaluate_to"].run(b, {"node_id": "theory_Y"})
+        assert result.trailer() == ("1 counterexample search and 1 proof check are running in the background;"
+                                    " call `check_construct` to wait for them.")
+        result = await tools["evaluate_to"].run(b, {"node_id": "Sessions"})
+        assert body(result).splitlines() == ["Evaluation reached Sessions.", "Sessions:", "- theory_X (incomplete)",
+                                             "- theory_Y (incomplete)"]
+        assert result.trailer() == "1 counterexample search and 1 proof check are running in the background."
+        # a walk starting nothing for an agent with nothing running: no trailer at all
+        result = await tools["evaluate_to"].run(c, {"node_id": "theory_X", "checks": "no"})
+        assert isinstance(result, With_Trailer) and result.trailer() is None
+        # an edit's own evaluation runs with `quick`: T, proven and unchecked, gets c's check
+        t = add(y, Checked(y, slot(), "T"), "lemma")
+        t.job().outcome = Succeeded("by simp")
+        result = await tools["edit"].run(c, dict(action="append", target_id="theory_Y", evaluate=True,
+                                                 constructs=[{"kind": "lemma", "name": "U"}]))
+        assert isinstance(result, With_Trailer) and t.evaluation_job().starter is c
+        assert result.trailer() == "1 proof check is running in the background; call `check_construct` to wait for them."
+        u = n("theory_Y.lemma_U")
+        u.job().outcome = Succeeded("by simp")
+        result = await tools["evaluate_to"].run(c, {"node_id": "theory_Y.lemma_U", "checks": "no"})
+        assert u.evaluation_job() is None and result.trailer() == "1 proof check is running in the background."
+        # a construction started automatically is named before the background line
+        await tools["edit"].run(c, dict(action="append", target_id="theory_Y", evaluate=False, auto_construct=True,
+                                        constructs=[{"kind": "lemma", "name": "V"}]))
+        result = await tools["evaluate_to"].run(c, {"node_id": "theory_Y"})        # U's check starts now too
+        assert n("theory_Y.lemma_V").job().owner is c and u.evaluation_job().starter is c
+        assert result.trailer() == ("Automatically started the proof construction on `theory_Y.lemma_V`; call"
+                                    " `check_construct` before you exit.\n\n"
+                                    "2 proof checks are running in the background.")
+        # blocking: the passed nodes' checks are a's; b waits for them under the lock
+        task = calling(tools["evaluate_to"], b, node_id="theory_X", checks="blocking")
+        await still_waiting(task)
+        assert f.lock.locked()
+        for id in (P, Q):
+            await report(n(id).evaluation_job())
+        await still_waiting(task)
+        await report(n(R).evaluation_job(), ["bad"])
+        result = await asyncio.wait_for(task, 2.0)
+        assert body(result).splitlines()[0] == "Evaluation reached theory_X." and not f.lock.locked()
+        assert result.trailer() == "1 counterexample search and 1 proof check are running in the background."
+        assert [m.text for m in a.mailbox] == [
+            "The proof on `theory_X.lemma_R` no longer holds. Call `construct` to prove it again."]
+        assert b.mailbox == []
+        await settled(f)
+    tm.run(scenario())
+
+
+def test_evaluate_to_s_refusals_render_the_cause_alone():
+    """TOOL_SCHEMAS §4: a failed `evaluate_to` has no opening line — an id no
+    node bears, a malformed call."""
+    *_, tools = build(JOB_KINDS)
+    evaluate_to = tools["evaluate_to"]
+    e, lines = refused(evaluate_to, NodeNotFound, node_id="block_Z")
+    assert e.id == "block_Z" and len(lines) == 1
+    e, lines = refused(evaluate_to, InvalidField, node_id="t_c", checks="later")
+    assert (e.field, e.of_tool) == ("checks", True)
+    assert lines == ["The argument `checks` must be one of `no`, `quick`, `blocking`."]
+    e, lines = refused(evaluate_to, MissingField)
+    assert (e.holder, e.field, e.of_tool, len(lines)) == ("evaluate_to", "node_id", True, 1)
+    e, lines = refused(evaluate_to, InvalidField, node_id="t_c", ignore_error="yes")
+    assert (e.field, len(lines)) == ("ignore_error", 1)
 
 
 # --- edit ---------------------------------------------------------------------

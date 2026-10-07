@@ -149,7 +149,7 @@ def test_insert_nested_and_completed_order():
 
 def test_batch_aborts_whole_with_the_path(  ):
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     EVENTS.clear()
     before = list(thy.sub_nodes)
     before_table = dict(tm.TABLE.values)
@@ -360,7 +360,7 @@ def test_children_field_must_be_a_list():
 
 def test_insert_moves_the_value_from_the_source_slot():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     (u,) = run(locked(f, edit.insert(thy,
         1, [{"kind": "t", "name": "u"}], KINDS)))
     # The predecessor's result moved: it is u's input now, and the slot it
@@ -370,7 +370,7 @@ def test_insert_moves_the_value_from_the_source_slot():
 
 def test_insert_after_an_obstacle_receives_the_written_input():
     f, thy, sec, t1, t2, t3, t4 = tm.build(T1=True)
-    run(t4.evaluate_to(True))
+    run(t4.evaluate_to(None, True))
     assert st(t1) is CANNOT_EVALUATE
     (n,) = run(locked(f, edit.insert(sec,
         1, [{"kind": "t", "name": "N"}], {"t": T})))
@@ -410,7 +410,7 @@ def test_duplicate_name_inside_a_children_list():
 
 def test_amend_inherits_position_slot_identity_children():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     old_slot, old_identity, old_sbe = sec.state.name, sec.identity, \
         sec._state_before_ending.name
     EVENTS.clear()
@@ -456,7 +456,7 @@ def test_amending_a_childless_block_counts_each_deleted_slot_once():
     `walk_started` (LOGGING.md §4)."""
     f, thy, sec, a, b, c = rbuild()
     (e,) = run(locked(f, edit.insert(thy, 1, [{"kind": "block", "name": "E"}], KINDS)))
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     assert st(e) == (READY, READY)
     tm.TABLE.calls.clear()
     walks = stand_ins.events("evaluation").count("walk_started")
@@ -702,7 +702,7 @@ def test_each_edit_is_one_transaction_touching_what_it_changed():
 
 def test_move_between_parents():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     EVENTS.clear()
     written = len(stand_ins.events("evaluation"))
     run(locked(f, edit.move(b, thy, 0)))   # to the front of the theory
@@ -729,7 +729,7 @@ def test_move_between_parents():
 
 def test_move_within_one_parent():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     run(locked(f, edit.move(a, sec, 1)))
     assert sec.sub_nodes == [b, a]
     # b's input survives, written by the section's still-ready beginning;
@@ -744,7 +744,7 @@ def test_move_within_one_parent():
 
 def test_move_carries_the_subtree_reset():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     run(locked(f, edit.move(sec, thy, 1)))
     assert thy.sub_nodes == [c, sec]
     assert st(sec) == (NOT_EVALUATED, NOT_EVALUATED)
@@ -752,7 +752,7 @@ def test_move_carries_the_subtree_reset():
 
 def test_on_invalidated_distinguishes_the_operation():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     EVENTS.clear()
     tm.invalidate(a)                             # invalidate from a on
     inv = events("invalidated")
@@ -763,7 +763,7 @@ def test_on_invalidated_distinguishes_the_operation():
 
 def test_on_invalidated_fires_once_per_operation():
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     EVENTS.clear()
     run(locked(f, edit.insert(thy,         # everything after u leaves ready
         0, [{"kind": "t", "name": "u"}], KINDS)))
@@ -779,17 +779,17 @@ def test_blocked_beginning_reruns_when_unblocked():
     d = add(thy, T(thy, slot(), "d", fail=True))
     sec = add(thy, Block(thy, slot(), "Sec", slot()))
     a = add(sec, T(sec, slot(), "a"))
-    r = run(a.evaluate_to(False))                # strict: d stops, sec blocked
+    r = run(a.evaluate_to(None, False))                # strict: d stops, sec blocked
     assert r.stopped_at is d
     assert st(sec)[0] is NOT_EVALUATED and sec.begin_runs == 0
-    r = run(a.evaluate_to(True))                 # resumes past the obstacle
+    r = run(a.evaluate_to(None, True))                 # resumes past the obstacle
     assert sec.begin_runs == 1 and st(sec)[0] is READY and st(a) is READY
     assert tm.TABLE.values[a.state.name] == "begin Sec"
 
 def test_failed_opening_repeated_pass_keeps_the_result():
     f, thy, sec, t1, t2, t3, t4 = tm.build(Section="begin")
     for _ in range(3):
-        run(t4.evaluate_to(False))
+        run(t4.evaluate_to(None, False))
     assert st(sec) == (CANNOT_EVALUATE, READY)
     assert tm.TABLE.values[sec.resulting_state().name] == "begin Theory"
     assert sec.begin_runs == 1                   # an obstacle is not rerun
@@ -809,18 +809,18 @@ def build_x_sec_c():
 
 def test_delete_before_a_nesting_successor_invalidates_it_whole():
     f, thy, x, sec, a, b, c = build_x_sec_c()
-    run(c.evaluate_to(False)); inv(f)
+    run(c.evaluate_to(None, False)); inv(f)
     run(locked(f, edit.delete(x)))
     assert st(sec) == (NOT_EVALUATED, NOT_EVALUATED)
     assert st(a) is NOT_EVALUATED and st(b) is NOT_EVALUATED and st(c) is NOT_EVALUATED
     inv(f)
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     assert sec.begin_runs == 2 and a.runs == 2    # rerun against the new input
     inv(f)
 
 def test_move_past_a_nesting_successor_invalidates_it_whole():
     f, thy, x, sec, a, b, c = build_x_sec_c()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     run(locked(f, edit.move(x, thy, 2)))    # -> [Section, c, x]
     assert thy.sub_nodes == [sec, c, x]
     assert st(sec) == (NOT_EVALUATED, NOT_EVALUATED) and st(a) is NOT_EVALUATED
@@ -834,7 +834,7 @@ def test_amend_with_a_nesting_first_child_invalidates_it_whole():
     inner = add(sec, Block(sec, slot(), "Inner", slot()))
     a = add(inner, T(inner, slot(), "a"))
     b = add(sec, T(sec, slot(), "b"))
-    run(b.evaluate_to(False)); inv(f)
+    run(b.evaluate_to(None, False)); inv(f)
     (s9,) = run(locked(f, edit.amend(
         sec, [{"kind": "block", "name": "S9"}], {"block": Block, "t": T})))
     assert s9.sub_nodes == [inner, b]
@@ -851,12 +851,12 @@ def test_a_beginning_failing_after_its_block_was_invalidated_copies_the_input_th
     b = add(thy, Block(thy, slot(), "B", slot(), fail_ending=True))
     z = add(b, T(b, slot(), "z"))
     y = add(thy, T(thy, slot(), "Y"))
-    run(y.evaluate_to(True)); inv(f)
+    run(y.evaluate_to(None, True)); inv(f)
     assert st(b) == (READY, CANNOT_EVALUATE)
-    run(y.evaluate_to(False)); inv(f)            # A stops: everything after it is invalidated
+    run(y.evaluate_to(None, False)); inv(f)            # A stops: everything after it is invalidated
     assert st(b) == (NOT_EVALUATED, NOT_EVALUATED)
     record(b, fail_beginning=True)
-    run(y.evaluate_to(True)); inv(f)             # B's beginning reruns and fails
+    run(y.evaluate_to(None, True)); inv(f)             # B's beginning reruns and fails
     assert st(b) == (CANNOT_EVALUATE, READY) and st(y) is READY
     assert (tm.TABLE.values[b.resulting_state().name]
             == tm.TABLE.values[b.state.name])
@@ -869,13 +869,13 @@ def test_an_obstacle_after_a_strict_stop_runs_again_when_a_walk_reaches_it():
     thy = add(f, Block(f, slot(), "Theory", slot()))
     a = add(thy, T(thy, slot(), "A", fail=True)); p = add(thy, T(thy, slot(), "P"))
     x = add(thy, T(thy, slot(), "X", fail=True)); y = add(thy, T(thy, slot(), "Y"))
-    run(y.evaluate_to(True)); inv(f)
+    run(y.evaluate_to(None, True)); inv(f)
     assert (p.runs, x.runs) == (1, 1)
-    run(y.evaluate_to(False)); inv(f)            # A stops: P, X and Y are invalidated
+    run(y.evaluate_to(None, False)); inv(f)            # A stops: P, X and Y are invalidated
     assert st(p) is NOT_EVALUATED and st(x) is NOT_EVALUATED
-    run(y.evaluate_to(True)); inv(f)             # P runs again, and X after it
+    run(y.evaluate_to(None, True)); inv(f)             # P runs again, and X after it
     assert (p.runs, x.runs) == (2, 2) and st(x) is CANNOT_EVALUATE
-    run(y.evaluate_to(True)); inv(f)             # nothing rewritten: nothing reruns
+    run(y.evaluate_to(None, True)); inv(f)             # nothing rewritten: nothing reruns
     assert (p.runs, x.runs) == (2, 2)
 
 def test_the_root_has_no_parent():
@@ -895,7 +895,7 @@ def test_on_invalidated_fires_before_the_other_completed_hooks():
     }
     for name, change in changes.items():
         f, thy, sec, a, b, c = rbuild()
-        run(c.evaluate_to(False))
+        run(c.evaluate_to(None, False))
         EVENTS.clear()
         run(locked(f, change(f, thy, sec, a)))
         kinds = [e[1] for e in EVENTS]
@@ -910,7 +910,7 @@ def test_a_repeated_invalidation_stores_and_logs_nothing():
     for an operation whose stored status is already `not_evaluated` writes
     nothing — no transaction, no `operation` record, nothing released."""
     f, thy, sec, a, b, c = rbuild()
-    run(c.evaluate_to(False))
+    run(c.evaluate_to(None, False))
     tm.invalidate(a)
     assert st(a) is NOT_EVALUATED and st(c) is NOT_EVALUATED
     tm.TABLE.clear_writes(); tm.TABLE.calls.clear(); EVENTS.clear()
@@ -1059,7 +1059,7 @@ def test_random_interleavings_keep_the_invariants():
                     async with f.lock:
                         await edit.move(n, p, i)
             elif op == "evaluate":
-                await rng.choice(nodes).evaluate_to(rng.random() < 0.5)
+                await rng.choice(nodes).evaluate_to(None, rng.random() < 0.5)
             elif op == "invalidate":
                 await tm._invalidate(rng.choice(nodes))
 

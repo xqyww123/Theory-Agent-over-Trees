@@ -578,7 +578,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     # into the slot before the ending, `end` into the resulting slot the
     # tree owns, and the theory value into the theory table; the input
     # slot stays what nobody wrote
-    r = await ta.evaluate_to(False)
+    r = await ta.evaluate_to(None, False)
     assert r == M.EvaluationResult(None, None), r
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)
     assert ta.evaluation_status_beginning == READY and ta.evaluation_status_ending == READY
@@ -598,7 +598,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     # a second tree importing the first by its bare name: resolved through
     # the conversation's theory table, under the session's name
     (tb,) = await insert(sess, 1, [theory("TAT_E2E_B", "TAT_E2E_A")])
-    r = await tb.evaluate_to(False)
+    r = await tb.evaluate_to(None, False)
     assert r == M.EvaluationResult(None, None), r
     assert tb.is_finished() and tb.evaluation_status_beginning == READY
     assert tb.import_sessions == ["TAT_E2E"]                   # a tree of the forest: its `Session`
@@ -610,7 +610,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     # holds nothing, so the owned resulting slot stays empty under a
     # `ready` ending
     (tc,) = await insert(sess, 2, [theory("TAT_E2E_C", "TAT_E2E_Nowhere")])
-    r = await tc.evaluate_to(False)
+    r = await tc.evaluate_to(None, False)
     assert r == M.EvaluationResult(None, None), r   # its successors are not blocked
     beginning = tc.evaluation_status_beginning
     assert isinstance(beginning, M.CannotEvaluate)
@@ -637,7 +637,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
         (NOT_EVALUATED, NOT_EVALUATED)
     assert not await tb._state_after_ending.is_initialized()
     assert theory_deletes == [["TAT_E2E.TAT_E2E_A"]], theory_deletes
-    r = await tb.evaluate_to(False)
+    r = await tb.evaluate_to(None, False)
     assert r == M.EvaluationResult(None, None), r
     beginning = tb.evaluation_status_beginning
     assert isinstance(beginning, M.CannotEvaluate)
@@ -676,7 +676,7 @@ async def test_a_session_folder_that_cannot_be_made_stops_the_header_before_it_r
     for session, sentence in ((blocked, not_a_directory), (linked, a_link)):
         (tree,) = session.sub_nodes
         with pytest.raises(M.CannotUseWorkingDirectory) as refused:
-            await tree.evaluate_to(False)
+            await tree.evaluate_to(None, False)
         assert isinstance(refused.value, TAT_StartupError)
         assert str(refused.value) == (sentence.replace("<working directory>", str(directory))
                                       .replace("<Session name>", session.name))
@@ -715,7 +715,7 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
     # what the run before the restart stored: the statuses, and the session of each import
     assert ta.last_evaluation_statuses() == (READY, READY)
     assert ta.import_sessions == ["HOL", "HOL-Library"]
-    r = await ta.evaluate_to(False)
+    r = await ta.evaluate_to(None, False)
     assert r.stopped_at is None, r
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)
 

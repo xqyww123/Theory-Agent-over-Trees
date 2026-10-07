@@ -363,6 +363,17 @@ class Construction_Job(ABC):
         return listed(ids, lambda on: f"Cancelled the {cls.title()} {on}.",
                       f"Cancelled the following {cls.title(plural=True)}:")
 
+    @final
+    @classmethod
+    def automatic_notice(cls, ids: list[str]) -> str:
+        """The framework's line for the constructions an evaluation started
+        automatically (§5): `construct`'s forms opened with `Automatically
+        started`."""
+        return listed(ids, lambda on: f"Automatically started the {cls.title()} {on}; call `check_construct`"
+                      " before you exit.",
+                      f"Automatically started the following {cls.title(plural=True)}; call `check_construct`"
+                      " before you exit:")
+
     def answered_notice(self) -> str:
         return f"Answered the {self.title()} on `{self.node_id}`; call `check_construct` before you exit."
 
@@ -654,7 +665,7 @@ class Evaluation_Job(ABC):
         self.starter = starter                   # None when never started
         self.id = register(self)
         self.outcome: Check_Outcome = RUNNING
-        self.ended = False                       # settled by its report, or dropped
+        self._ended = asyncio.Event()            # settled by its report, or dropped
         self.started_construction = False        # its failure started the node's construction (§3.3)
         forest = node.forest()
         self.conversation: Conversation = forest.conversation
@@ -665,6 +676,20 @@ class Evaluation_Job(ABC):
         """The node's full id as the forest gives it; once the node has left
         the forest, the id recorded when the job was built."""
         return self.node.current_id() or self._id
+
+    @property
+    def ended(self) -> bool:
+        """Settled by its report, or dropped (§3.3)."""
+        return self._ended.is_set()
+
+    @final
+    def mark_ended(self) -> None:
+        self._ended.set()
+
+    @final
+    async def wait_ended(self) -> None:
+        """Until the job has ended — `blocking`'s wait (§5)."""
+        await self._ended.wait()
 
     @classmethod
     @abstractmethod
@@ -707,8 +732,11 @@ class Evaluation_Job(ABC):
         node is a dropped job's, `report_ignored`; else `_finished`, the
         outcome stored as the node's check in a transaction of its own,
         `evaluation_reported`, a failure posted to the starter — not
-        interrupting, merged at delivery with the class's others — the job
-        ended and the starter woken.  An outcome left `RUNNING` is a bug."""
+        interrupting, merged at delivery with the class's others; carrying
+        no job when the failure starts the node's construction under
+        automatic construction (§3.4), which the body then does, the
+        starter its owner — the job ended and the starter woken.  An
+        outcome left `RUNNING` is a bug."""
         log = self.conversation.log.job
         if self.node.evaluation_job() is not self:
             log.report_ignored(id=self.id)
@@ -719,11 +747,17 @@ class Evaluation_Job(ABC):
             raise TAT_InternalError(f"{type(self).__name__}._finished left the job RUNNING")
         self.node._store_check(outcome)
         log.evaluation_reported(id=self.id, outcome=check_image(outcome)[0], failure=errors or None)
+        construction = None
         if isinstance(outcome, Failed) and self.starter is not None:
+            job = self.node.job()
+            if job is not None and job.auto_construct and job.can_start():
+                construction, self.started_construction = job, True
             post(self.conversation.log, Message(
                 self.starter, self.failure_notification([self.node_id], self.started_construction),
-                interrupts=False, source=self))
-        self.ended = True
+                interrupts=False, source=None if self.started_construction else self))
+            if construction is not None:
+                construction.start(self.starter)          # drops this job from its node
+        self.mark_ended()
         if self.starter is not None:
             self.starter.wake()
 

@@ -198,11 +198,16 @@ class Evaluation:
     `destination` is the node an evaluating walk runs up to and including;
     an edit's invalidation has none."""
 
-    def __init__(self, destination: Node | None, ignore_error: bool, checks: str = "no"):
+    def __init__(self, destination: Node | None, ignore_error: bool, starter: Agent | None = None,
+                 checks: str = "no"):
         self.destination = destination
         self.ignore_error = ignore_error
+        self.starter = starter               # the caller: the starter of the jobs the walk starts; None starts none
         self.checks = checks                 # "no" | "quick" | "blocking" (CONSTRUCT_INTERACTION §5)
         self.passed: list[Node] = []         # reached in `Evaluating`: a leaf when reached, a nesting node at its ending
+        self.stopped_at: Node | None = None  # where the walk stopped, once it ended (`Forest._run`)
+        self.started: list[Construction_Job] = []   # the constructions the walk started automatically (§3.3)
+        self.was_not_ready: set[Node] = set()       # a stored status of these was not `ready` before the walk wrote it
         self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
         self.dropped: list[int] = []         # the evaluation jobs dropped, their ids sent as cancel(ids) at flush
         self._released: set[str] = set()
@@ -460,6 +465,8 @@ class Node(ABC):
         self.drop_evaluation_job("status_write", ev)
         if isinstance(stored_before, Ready) and not isinstance(new, Ready):
             self._clear_check()
+        if not isinstance(stored_before, Ready) and isinstance(new, Ready):
+            ev.was_not_ready.add(self)
         kind, messages = _status_to_store(new)
         forest.conversation.log.evaluation.operation(
             node=forest.full_id(self), operation=operation or "own", ran=duration is not None,
@@ -652,7 +659,7 @@ class Node(ABC):
             return
         self._evaluation_job = None
         running = job.outcome is RUNNING
-        job.ended = True
+        job.mark_ended()
         conversation = job.conversation
         conversation.log.job.evaluation_dropped(id=job.id, dropped_by=dropped_by)
         if job.starter is not None:
@@ -973,22 +980,42 @@ class Node(ABC):
             return None
         return Evaluating()
 
-    def _reached(self, ev: Evaluation) -> EvaluationResult:
+    async def _reached(self, ev: Evaluation) -> EvaluationResult:
         """The walk reached the node, its last operation settled: the node
-        joins `ev.passed`, and is the walk's stop when that operation is
-        not `Ready` and `ignore_error` is unset."""
+        joins `ev.passed`, its jobs start (`_jobs_of_passing`), and it is
+        the walk's stop when that operation is not `Ready` and
+        `ignore_error` is unset."""
         ev.passed.append(self)
+        await self._jobs_of_passing(ev)
         stop = self if not isinstance(self._resulting_status(), Ready) and not ev.ignore_error else None
         return EvaluationResult(stop, self._mode_after(ev, stop))
 
-    async def evaluate_to(self, ignore_error: bool) -> EvaluationResult:
-        """The `evaluate_to` tool's entry: run up to and including this
-        node.  Takes the forest's lock itself — an edit, whose tool entry
-        already holds it, drives the walk through `Forest._run` instead
-        (MODULE_STRUCTURE §4.1)."""
+    async def _jobs_of_passing(self, ev: Evaluation) -> None:
+        """What an evaluation starts on a node it passes (CONSTRUCT_INTERACTION
+        §3.3), the node `ready`: the evaluation job — its class naming one,
+        none on the node, `_unfinished()` answering `Unchecked`, `checks`
+        allowing — and, under automatic construction, the construction job
+        — `can_start()`, and a `FAILED` job only after an invalidation since
+        its failure.  A walk with no caller starts nothing."""
+        if ev.starter is None or not self._operations_ready():
+            return
+        if (ev.checks != "no" and type(self).evaluation_job_class is not None
+                and self.evaluation_job() is None and isinstance(self._unfinished(), Unchecked)):
+            await self.start_evaluation_job(ev.starter)
+        job = self.job()
+        if (job is not None and job.auto_construct and job.can_start()
+                and not (isinstance(job.outcome, Failed) and self not in ev.was_not_ready)):
+            job.start(ev.starter)
+            ev.started.append(job)
+
+    async def evaluate_to(self, agent: Agent | None, ignore_error: bool, checks: str = "no") -> EvaluationResult:
+        """A walk up to and including this node for `agent`, the starter of
+        the jobs it starts, taking the forest's lock itself; the tool
+        entries hold the lock already and drive the walk through
+        `Forest._run` (MODULE_STRUCTURE §4.1)."""
         forest = self.forest()
         async with forest.lock:
-            return await forest._run(self, ignore_error)
+            return await forest._run(Evaluation(self, ignore_error, agent, checks))
 
 
 class Leaf(Node):
@@ -1038,7 +1065,7 @@ class Leaf(Node):
             if isinstance(status, CannotEvaluate):
                 await self.state.copy_to(self.resulting_state())
             self._set_status(ev, status, duration)
-        return self._reached(ev)
+        return await self._reached(ev)
 
 
 class NonLeaf_Node(Node):
@@ -1292,7 +1319,7 @@ class StdBlock(NonLeaf_Node):
             if not isinstance(self.evaluation_status_ending, Ready):
                 await self.state.copy_to(self.resulting_state())
                 self._set_ending(ev, READY_CLEAN, None)
-            return self._reached(ev)
+            return await self._reached(ev)
 
         r = await self._evaluate_children(ev, mode)
         if r.mode is None:                        # the destination or a stop lies under: nothing more runs
@@ -1302,7 +1329,7 @@ class StdBlock(NonLeaf_Node):
             if isinstance(status, CannotEvaluate):
                 await self._state_before_ending.copy_to(self.resulting_state())
             self._set_ending(ev, status, duration)
-        return self._reached(ev)
+        return await self._reached(ev)
 
 
 class Unchained_Node(NonLeaf_Node):
@@ -1857,19 +1884,22 @@ class Forest(Unchained_Node):
     # `Theory.gen` judges nothing about what an item names, and every
     # reading of it is finite under cycles.
 
-    async def _run(self, destination: Node, ignore_error: bool, checks: str = "no"
-                   ) -> EvaluationResult:
-        """The evaluating walk up to and including `destination`, under the
-        lock, already held; it makes the walk's `Evaluation`.  Each tree
-        stores and flushes at its end (`_handle_tree`), and the walk once
-        more when it ends.  A `TAT_Error` escaping the walk comes from an
-        evaluation hook and is its class's bug, so that none is rendered to
-        the agent; anything else passes as it is (EXCEPTIONS.md §1)."""
+    async def _run(self, ev: Evaluation) -> EvaluationResult:
+        """The evaluating walk `ev` describes, up to and including its
+        destination, under the lock, already held.  Each tree stores and
+        flushes at its end (`_handle_tree`), and the walk once more when it
+        ends; under `blocking` the walk then waits, the lock kept, until
+        every evaluation job running on a node it passed has ended
+        (CONSTRUCT_INTERACTION §5).  A `TAT_Error` escaping the walk comes
+        from an evaluation hook and is its class's bug, so that none is
+        rendered to the agent; anything else passes as it is (EXCEPTIONS.md
+        §1)."""
         assert self.lock.locked(), "a walk runs under the forest lock"
-        ev = Evaluation(destination, ignore_error, checks)
+        destination = ev.destination
+        assert destination is not None, "an evaluating walk has a destination"
         log = self.conversation.log.evaluation
         log.walk_started(destination=self.full_id(destination),
-                         ignore_error=ignore_error, checks=checks)
+                         ignore_error=ev.ignore_error, checks=ev.checks)
         started = time.monotonic()
         try:
             r = await self._evaluate(ev, Evaluating())
@@ -1877,8 +1907,13 @@ class Forest(Unchained_Node):
             raise TAT_InternalError("an evaluation hook raised a TAT_Error") from e
         self._store_written(ev)
         await ev.flush(self.conversation)
+        ev.stopped_at = r.stopped_at
         log.walk_ended(outcome="continue" if r.stopped_at is None else self.full_id(r.stopped_at),
                        slots_released=ev.releases, duration=time.monotonic() - started)
+        if ev.checks == "blocking":
+            running = [job for node in ev.passed
+                       if (job := node.evaluation_job()) is not None and job.outcome is RUNNING]
+            await asyncio.gather(*(job.wait_ended() for job in running))
         return r
 
     def _invalidate_from(self, position: Location, ev: Evaluation) -> None:

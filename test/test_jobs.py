@@ -187,7 +187,7 @@ class Why(jobs.Interactive_Question):
 
 
 KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying, "checked": Checked}
-P = "block_Theory.lemma_P"
+P, Q = "block_Theory.lemma_P", "block_Theory.lemma_Q"
 P_CHECKED, Q_CHECKED = "block_Theory.checked_P", "block_Theory.checked_Q"
 
 
@@ -546,7 +546,7 @@ def test_a_write_of_the_status_by_the_walk_tells_the_running_job():
     async def scenario():
         f, thy, t1, p, q = build()
         owner = stand_ins.agent(f.conversation)
-        await thy.evaluate_to(False)                         # takes the lock itself
+        await thy.evaluate_to(None, False)                         # takes the lock itself
         assert p._status == READY
         job = p.job()
         job.start(owner)
@@ -805,7 +805,7 @@ def test_the_drops_and_the_stored_checks_clearings():
     async def scenario():
         f, thy, t1, p, q = build(Checked)
         starter = stand_ins.agent(f.conversation)
-        await thy.evaluate_to(False)
+        await thy.evaluate_to(None, False)
         assert p._status == READY and q._status == READY
         for node in (p, q):
             await node.start_evaluation_job(starter)
@@ -820,7 +820,7 @@ def test_the_drops_and_the_stored_checks_clearings():
         assert ev.dropped == [] and CANCELS == []             # a settled job's work is not cancelled
         assert [(r["id"], r["dropped_by"]) for r in records("evaluation_dropped")] == [
             (settled[0].id, "status_write"), (settled[1].id, "status_write")]
-        await thy.evaluate_to(False)                          # q rerun, p kept
+        await thy.evaluate_to(None, False)                          # q rerun, p kept
         assert p.check_outcome() is PASSED and q.check_outcome() is None
         for node in (p, q):
             await node.start_evaluation_job(starter)          # running: a drop cancels the work
@@ -832,7 +832,7 @@ def test_the_drops_and_the_stored_checks_clearings():
         await ev.flush(f.conversation)
         assert CANCELS == [[running[0].id, running[1].id]] and ev.dropped == []
         assert records("cancel_sent") == [{"ids": [running[0].id, running[1].id]}]
-        await thy.evaluate_to(False)                          # q rerun again
+        await thy.evaluate_to(None, False)                          # q rerun again
         p.job().start(starter)                                # a construction start clears the stored check
         assert p.check_outcome() is None
         p.job().cancel(None)
@@ -1457,3 +1457,163 @@ def test_a_framework_member_overridden_higher_up_is_refused(monkeypatch):
         pass
     tp.refused(tp.leaf("Inherits", ["inherits"], construction_job_class=Inheriting),
                "Inheriting overrides `cancel`, which is the framework's")
+
+
+# --- the walk starting jobs (CONSTRUCT_INTERACTION §3.3; ARCHITECTURE §3.5) --
+
+class Careful(Proof):
+    """`Theorem`'s way (THEOREM.md §7): while a proof stands on the node it
+    is checked, not constructed again; a `FAILED` check opens the way."""
+    def _check(self):
+        return not isinstance(self.outcome, Succeeded) or isinstance(self.node.check_outcome(), Failed)
+
+
+class Careful_Lemma(Checked):
+    construction_job_class = Careful
+
+
+class Never(Proof):                     # a class whose own condition for a start never holds
+    def _check(self):
+        return False
+
+
+class Never_Lemma(Checked):
+    construction_job_class = Never
+
+
+async def walk(node, agent, checks="no", ignore_error=False):
+    return await node.evaluate_to(agent, ignore_error, checks)
+
+
+def test_the_walk_starts_a_check_where_unchecked_and_none_under_no():
+    """§3.3 "Where a job starts": on a node the walk passes that is ready,
+    whose class names an evaluation job, with none on it and
+    `_unfinished()` answering `Unchecked`, when `checks` allows — once;
+    none under `"no"`, on an unproven node, on a node not ready, on a
+    `PASSED` one, or for a walk with no caller."""
+    async def scenario():
+        f, thy, t1, p, q = build(Careful_Lemma)
+        me = stand_ins.agent(f.conversation)
+        p.job().outcome = Succeeded("by simp")
+        await walk(thy, me, "no")
+        assert p._operations_ready() and p.evaluation_job() is None and q.evaluation_job() is None
+        await walk(thy, me, "quick")                      # P proven and unchecked; Q unproven; T1 names no class
+        check = p.evaluation_job()
+        assert isinstance(check, Check) and check.starter is me and check.began and check.outcome is RUNNING
+        assert q.evaluation_job() is None and t1.evaluation_job() is None
+        assert records("evaluation_started") == [{"node": P, "id": check.id, "starter": "main"}]
+        await walk(thy, me, "quick")                      # a check on it already: no second
+        assert p.evaluation_job() is check
+        await report(check)
+        await walk(thy, me, "quick")                      # `PASSED`, the settled job still on the node: nothing owed
+        assert p.evaluation_job() is check and p.check_outcome() is PASSED
+        r = add(thy, Careful_Lemma(thy, slot(), "R", fail=True), "lemma")
+        s = add(thy, Careful_Lemma(thy, slot(), "S"), "lemma")
+        for node in (r, s):
+            node.job().outcome = Succeeded("by simp")
+        await walk(thy, None, "quick", ignore_error=True)    # no caller: nothing started
+        assert r.evaluation_job() is None and s.evaluation_job() is None
+        await walk(thy, me, "quick", ignore_error=True)
+        assert r.evaluation_job() is None and s.evaluation_job() is not None   # R is not ready
+        await report(s.evaluation_job())
+    run(scenario())
+
+
+def test_automatic_construction_at_a_passed_node():
+    """§3.3 "Automatic construction": at a ready node whose `auto_construct`
+    is on and whose job `can_start()`, the walk starts the construction,
+    the caller its owner, whatever `checks` says; a job that failed is
+    started again only after an invalidation since; nothing with the
+    setting off or on a node that is not ready."""
+    async def scenario():
+        f, thy, t1, p, q = build()
+        me = stand_ins.agent(f.conversation)
+        other = stand_ins.agent(f.conversation, "a9f3c2d1e4b5", False)
+        p.job().auto_construct = True
+        await walk(thy, me)
+        assert p.job().outcome is RUNNING and p.job().owner is me and q.job().outcome is NOT_STARTED
+        p.job().cancel(None)
+        p.job().outcome = Failed("no proof")             # as a run that failed leaves it
+        await walk(thy, me)                              # ready and not invalidated since: not again
+        assert p.job().outcome == Failed("no proof")
+        await tm._invalidate(p)
+        await walk(thy, me)                              # rerun to ready after the invalidation: again
+        assert p.job().outcome is RUNNING
+        p.job().cancel(None)
+        p.job().outcome = Failed("no proof")
+        await tm._invalidate(p)
+        await walk(p, other)                             # the owner is the caller
+        assert p.job().outcome is RUNNING and p.job().owner is other
+        p.job().cancel(None)
+        r = add(thy, Lemma(thy, slot(), "R", fail=True), "lemma")
+        r.job().auto_construct = True
+        await walk(thy, me, ignore_error=True)
+        assert r.job().outcome is NOT_STARTED and p.job().outcome is RUNNING   # R not ready; P, `NOT_STARTED`, started
+        for node in (p, q):
+            node.job().cancel(None)
+    run(scenario())
+
+
+def test_a_failed_report_starts_the_construction_under_automatic_construction():
+    """§3.3: a `FAILED` report on a node whose `auto_construct` is on and
+    whose job `can_start()` — the check stored first, which `Careful`
+    reads — starts the construction, the starter its owner; the
+    notification says so and carries no job (§3.4), so it stands though
+    the start dropped the job; with the setting off it carries the job."""
+    async def scenario():
+        f, thy, t1, p, q = build(Careful_Lemma)
+        me = stand_ins.agent(f.conversation)
+        for node in (p, q):
+            node.job().outcome = Succeeded("by simp")
+        p.job().auto_construct = True
+        await walk(thy, me, "quick")
+        check = p.evaluation_job()
+        await report(check, ["broken"])
+        assert check.started_construction and check.ended
+        assert p.job().outcome is RUNNING and p.job().owner is me
+        assert p.evaluation_job() is None and p.check_outcome() is None    # dropped by the start, the check cleared
+        posted = records("message_posted")[-1]
+        assert "source" not in posted and posted["kind"] == "notification"
+        assert deliver(f, me) == [
+            f"The proof on `{P}` no longer holds, so its proof construction was started automatically."]
+        await report(q.evaluation_job(), ["broken"])
+        assert not q.evaluation_job().started_construction and q.job().outcome == Succeeded("by simp")
+        assert q.check_outcome() == Failed("broken")
+        assert deliver(f, me) == [f"The proof on `{Q}` no longer holds. Call `construct` to prove it again."]
+        r = add(thy, Never_Lemma(thy, slot(), "R"), "lemma")     # the setting on, the class's condition failing
+        r.job().outcome = Succeeded("by simp")
+        r.job().auto_construct = True
+        await walk(thy, me, "quick")
+        await report(r.evaluation_job(), ["broken"])
+        assert not r.evaluation_job().started_construction and r.job().outcome == Succeeded("by simp")
+        assert deliver(f, me) == [
+            "The proof on `block_Theory.lemma_R` no longer holds. Call `construct` to prove it again."]
+        p.job().cancel(None)
+    run(scenario())
+
+
+def test_blocking_waits_for_the_passed_nodes_checks_whoever_started_them():
+    """§5 under `blocking`: the walk keeps the lock until every evaluation
+    job running on a node it passed has ended, another agent's included;
+    a failure goes to its starter."""
+    async def scenario():
+        f, thy, t1, p, q = build(Careful_Lemma)
+        me = stand_ins.agent(f.conversation)
+        other = stand_ins.agent(f.conversation, "a9f3c2d1e4b5", False)
+        for node in (p, q):
+            node.job().outcome = Succeeded("by simp")
+        await walk(p, me)
+        await p.start_evaluation_job(other)
+        task = asyncio.ensure_future(walk(thy, me, "blocking"))
+        await asyncio.sleep(0.05)
+        assert not task.done() and f.lock.locked()
+        assert q.evaluation_job().starter is me
+        await report(p.evaluation_job())
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        await report(q.evaluation_job(), ["bad"])
+        await asyncio.wait_for(task, 2.0)
+        assert not f.lock.locked()
+        assert deliver(f, me) == [f"The proof on `{Q}` no longer holds. Call `construct` to prove it again."]
+        assert deliver(f, other) == []
+    run(scenario())

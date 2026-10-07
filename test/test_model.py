@@ -309,21 +309,21 @@ def table(monkeypatch):
 
 def test_a_evaluate_inside_block():
     f, thy, sec, t1, t2, t3, t4 = build()
-    r = run(t2.evaluate_to(False))
+    r = run(t2.evaluate_to(None, False))
     assert r == M.EvaluationResult(None, None)
     assert st(thy) == (READY, NOT_EVALUATED) and st(sec) == (READY, NOT_EVALUATED)
     assert st(t1) is READY and st(t2) is READY and st(t3) is NOT_EVALUATED
     # (e) a later call runs the ending, never the beginning again
-    r = run(t3.evaluate_to(False))
+    r = run(t3.evaluate_to(None, False))
     assert sec.begin_runs == 1 and sec.end_runs == 1 and thy.begin_runs == 1
     assert st(sec) == (READY, READY) and st(t3) is READY and st(t4) is NOT_EVALUATED
-    run(t3.evaluate_to(False))
+    run(t3.evaluate_to(None, False))
     assert t3.runs == 1 and sec.end_runs == 1        # nothing reruns
 
 
 def test_b_a_stop_strict_then_ignore():
     f, thy, sec, t1, t2, t3, t4 = build(T1=True)
-    r = run(t1.evaluate_to(False))
+    r = run(t1.evaluate_to(None, False))
     assert r.stopped_at is t1 and st(t1) is CANNOT_EVALUATE
     assert TABLE.values[t1.resulting_state().name] == "begin Section"   # the input copied through
     # the walk's outcome names the stop (LOGGING.md §4); the `stopped` record
@@ -331,19 +331,19 @@ def test_b_a_stop_strict_then_ignore():
     assert stand_ins.events("evaluation")[-1] == "walk_ended"
     assert stand_ins.records("evaluation")[-1]["data"]["outcome"] == f.full_id(t1)
     written = len(stand_ins.records("evaluation"))
-    r = run(t4.evaluate_to(False))
+    r = run(t4.evaluate_to(None, False))
     assert r.stopped_at is t1 and t1.runs == 1                          # not rerun
     assert st(t2) is NOT_EVALUATED and st(t3) is NOT_EVALUATED and st(t4) is NOT_EVALUATED
     assert st(sec) == (READY, NOT_EVALUATED)
     # past the same stop again: what is already stored as not evaluated is
     # not written again (MODULE_STRUCTURE §4.1)
     assert stand_ins.events("evaluation")[written:] == ["walk_started", "walk_ended"]
-    r = run(t4.evaluate_to(True))
+    r = run(t4.evaluate_to(None, True))
     assert r == M.EvaluationResult(None, None)
     assert st(t2) is READY and st(t3) is READY and st(t4) is READY and st(sec) == (READY, READY)
     # a strict call again reports the stop and tears the tail down (R2 stance)
     written = len(stand_ins.records("evaluation"))
-    r = run(t4.evaluate_to(False))
+    r = run(t4.evaluate_to(None, False))
     assert r.stopped_at is t1 and st(t4) is NOT_EVALUATED
     assert t4.resulting_state().name in TABLE.deleted
     # each status it changed is written, by no run: no messages, no duration
@@ -357,30 +357,30 @@ def test_c_failed_opening():
     f, thy, sec, t1, t2, t3, t4 = build(Section="begin")
     # a destination under the failed opening: the tree's walk ends at the
     # block, the stop this call reports (ARCHITECTURE §3.3)
-    r = run(t2.evaluate_to(False))
+    r = run(t2.evaluate_to(None, False))
     assert r == M.EvaluationResult(sec, None)
     assert st(sec) == (CANNOT_EVALUATE, NOT_EVALUATED)
     assert st(t1) is NOT_EVALUATED and st(t2) is NOT_EVALUATED
     # a destination after the block: the walk goes on past it
-    r = run(t4.evaluate_to(False))
+    r = run(t4.evaluate_to(None, False))
     assert r == M.EvaluationResult(None, None) and sec.begin_runs == 1   # not rerun
     assert st(sec) == (CANNOT_EVALUATE, READY) and st(t3) is READY and st(t4) is READY
     assert TABLE.values[sec.resulting_state().name] == "begin Theory"           # input stands as result
     # under it again: no rerun of the opening, and everything after the
     # destination is invalidated, the block's ending included
-    r = run(t1.evaluate_to(False))
+    r = run(t1.evaluate_to(None, False))
     assert r.stopped_at is sec and st(t1) is NOT_EVALUATED and sec.begin_runs == 1
     assert st(sec) == (CANNOT_EVALUATE, NOT_EVALUATED)
     assert st(t3) is NOT_EVALUATED and st(t4) is NOT_EVALUATED
     # with ignore_error the destination stays not evaluated and no stop is reported
-    r = run(t1.evaluate_to(True))
+    r = run(t1.evaluate_to(None, True))
     assert r == M.EvaluationResult(None, None) and st(t1) is NOT_EVALUATED
     assert sec.begin_runs == 1
 
 
 def test_d_invalidate_only():
     f, thy, sec, t1, t2, t3, t4 = build()
-    run(t4.evaluate_to(False))
+    run(t4.evaluate_to(None, False))
     assert all(st(n) is READY for n in (t1, t2, t3, t4))
     TABLE.deleted.clear()
     invalidate(t1)
@@ -389,7 +389,7 @@ def test_d_invalidate_only():
     assert sec._state_after_beginning().name not in TABLE.deleted        # the opening's state stands
     assert t1.resulting_state().name in TABLE.deleted
     # deletion of the last child: the destination is the block itself
-    run(t4.evaluate_to(False))
+    run(t4.evaluate_to(None, False))
     run(locked(f, edit.delete(t2)))
     assert sec.sub_nodes == [t1] and st(t1) is READY
     assert st(sec) == (READY, NOT_EVALUATED) and st(t3) is NOT_EVALUATED
@@ -398,13 +398,13 @@ def test_d_invalidate_only():
 
 def test_insert_into_evaluated_tree():
     f, thy, sec, t1, t2, t3, t4 = build()
-    run(t4.evaluate_to(False))
+    run(t4.evaluate_to(None, False))
     kinds = {"t": T}
 
     async def insert_and_run(parent, index, raws):     # the tool entry's flow
         async with f.lock:
             nodes = await edit.insert(parent,index, raws, kinds)
-            return nodes, await f._run(nodes[-1], False)
+            return nodes, await f._run(M.Evaluation(nodes[-1], False))
 
     (new,), r = run(insert_and_run(sec, 1, [{"kind": "t", "name": "N"}]))
     assert r == M.EvaluationResult(None, None)
@@ -427,9 +427,9 @@ def test_states_inside_gathers_the_subtree_into_the_accumulator():
 def test_finished_is_derived_and_owes_nothing_is_the_classes_part():
     f, thy, sec, t1, t2, t3, t4 = build()
     assert not thy.is_finished() and not f.is_finished()
-    run(t4.evaluate_to(False))
+    run(t4.evaluate_to(None, False))
     assert sec.is_finished() and not thy.is_finished()   # the theory's ending has not run
-    run(thy.evaluate_to(False))
+    run(thy.evaluate_to(None, False))
     assert thy.is_finished() and f.is_finished()
     class Owing(jobs.Unfinished):
         def title(self, plural=False): return "debts" if plural else "debt"
@@ -441,10 +441,10 @@ def test_finished_is_derived_and_owes_nothing_is_the_classes_part():
 
 def test_failed_ending_is_a_stop():
     f, thy, sec, t1, t2, t3, t4 = build(Section="end")
-    r = run(t4.evaluate_to(False))
+    r = run(t4.evaluate_to(None, False))
     assert r.stopped_at is sec and st(sec) == (READY, CANNOT_EVALUATE)
     assert st(t3) is NOT_EVALUATED
-    r = run(t4.evaluate_to(False))
+    r = run(t4.evaluate_to(None, False))
     assert r.stopped_at is sec and sec.end_runs == 1
 
 
@@ -464,7 +464,7 @@ def test_a_tat_error_from_an_evaluation_hook_is_the_classes_bug():
         thy = add(f, Block(f, slot(), "Theory", slot()))
         x = add(thy, cls(thy, slot(), "x"))
         with pytest.raises(raised) as e:
-            run(x.evaluate_to(False))
+            run(x.evaluate_to(None, False))
         assert cause is None or isinstance(e.value.__cause__, cause)
 
 
@@ -503,7 +503,7 @@ def test_on_invalidated_sees_both_fields_written():
     thy = add(f, Block(f, slot(), "Theory", slot()))
     blk = add(thy, Looking_Block(thy, slot(), "B", slot()))
     x = add(blk, Looking_T(blk, slot(), "x"))
-    run(thy.evaluate_to(False))
+    run(thy.evaluate_to(None, False))
     invalidate(blk)
     NE = NOT_EVALUATED
     assert seen == [("B", "beginning", [NE, READY], (NE, READY)),
@@ -521,7 +521,7 @@ def test_a_status_write_forgets_the_operations_seen_key_for_every_agent():
     for agent in agents:
         agent.seen.update(kept | {(thy.identity, "beginning"), (sec.identity, "beginning"),
                                   (t1.identity, None)})
-    run(t1.evaluate_to(False))         # writes both beginnings and T1; what follows is unwritten already
+    run(t1.evaluate_to(None, False))         # writes both beginnings and T1; what follows is unwritten already
     assert [agent.seen for agent in agents] == [kept, kept]
     f.conversation.forget((t3.identity, None))
     f.conversation.forget((t3.identity, None))        # a key not there is no error
@@ -584,7 +584,7 @@ def test_a_slot_of_the_classes_own_is_released_with_its_writers_result_and_delet
     assert o._states_inside() == [o.state, o.goal_state]
     names = [s.name for s in thy._states_inside()]
     assert len(set(names)) == len(names)              # no other slot's name
-    run(x.evaluate_to(False))
+    run(x.evaluate_to(None, False))
     assert TABLE.values[o.goal_state.name] == "goal o" and TABLE.values[p.goal_state.name] == "goal p"
     ev = M.Evaluation(None, False)
     p._set_status(ev, READY, 0.0)                     # a rerun's rewrite releases nothing
@@ -628,10 +628,10 @@ def test_slots_released_counts_each_deleted_name_once():
             {"kind": "t", "name": "d"},
             {"kind": "owning_block", "name": "O", "children": [{"kind": "t", "name": "z"}]}]}], kinds)))
     d, o = thy.sub_nodes
-    run(thy.evaluate_to(False))
+    run(thy.evaluate_to(None, False))
     assert st(o) == (READY, READY)
     TABLE.calls.clear()
-    run(d.evaluate_to(False))                         # everything after d is invalidated
+    run(d.evaluate_to(None, False))                         # everything after d is invalidated
     [(_, names)] = [c for c in TABLE.calls if c[0] == "delete"]
     assert o.scratch.name in names and len(set(names)) == len(names) == 5
     walk_ended = stand_ins.records("evaluation")[-1]
@@ -653,13 +653,13 @@ def test_a_nesting_class_names_the_operation_that_writes_its_slot():
             {"kind": "t", "name": "d"}]}], kinds)))
     p, d = thy.sub_nodes
     a, b = p.sub_nodes
-    run(d.evaluate_to(False))
+    run(d.evaluate_to(None, False))
     assert p.read_at_the_ending == "scratch P"
     TABLE.deleted.clear()
-    run(a.evaluate_to(False))                 # past a: b, P's ending and d are invalidated
+    run(a.evaluate_to(None, False))                 # past a: b, P's ending and d are invalidated
     assert st(p) == (READY, NOT_EVALUATED)
     assert p.scratch.name not in TABLE.deleted and TABLE.values[p.scratch.name] == "scratch P"
-    run(d.evaluate_to(False))                 # the ending runs again, the beginning does not
+    run(d.evaluate_to(None, False))                 # the ending runs again, the beginning does not
     assert (p.begin_runs, p.end_runs) == (1, 2) and p.read_at_the_ending == "scratch P"
     invalidate(p)                             # the beginning goes unwritten: its slot with its result
     assert p.scratch.name in TABLE.deleted and p.scratch.name not in TABLE.values
@@ -687,7 +687,7 @@ def test_reopen_restores_the_forest_not_evaluated(tmp_path):
                 {"kind": "t", "name": "T2"}]},
             {"kind": "t", "name": "T3"}]}], KINDS)))
     t3 = thy.sub_nodes[1]
-    run(t3.evaluate_to(True))
+    run(t3.evaluate_to(None, True))
     assert st(t3) is READY
     slots_before = {s.name for n in f._all_nodes() for s in n._states_inside()}
     store.close()
@@ -703,7 +703,7 @@ def test_reopen_restores_the_forest_not_evaluated(tmp_path):
     # the loaded forest evaluates like the original did
     from invariants import assert_invariants     # here: invariants.py imports this module
     thy2 = f2.sub_nodes[0]
-    r = run(thy2.sub_nodes[1].evaluate_to(True))
+    r = run(thy2.sub_nodes[1].evaluate_to(None, True))
     assert r == M.EvaluationResult(None, None)
     assert st(thy2) == (READY, NOT_EVALUATED) and st(thy2.sub_nodes[0]) == (READY, READY)
     assert st(thy2.sub_nodes[0].sub_nodes[0]) is CANNOT_EVALUATE      # T1 still fails
@@ -731,7 +731,7 @@ def test_reopen_restores_the_stored_statuses_and_a_walk_reruns_what_it_reaches(t
             {"kind": "t", "name": "T4"}]}], KINDS)))
     t1, sec, t4 = thy.sub_nodes
     t2, t3 = sec.sub_nodes
-    run(thy.evaluate_to(True))                        # the whole tree, past the obstacle
+    run(thy.evaluate_to(None, True))                        # the whole tree, past the obstacle
     stored = {n.name: n.last_evaluation_statuses() for n in f._all_nodes()}
     assert stored["T2"] == (CANNOT_EVALUATE,) and stored["T4"] == (READY,)
     assert stored["Theory"] == (READY, READY) and stored["Section"] == (READY, READY)
@@ -749,7 +749,7 @@ def test_reopen_restores_the_stored_statuses_and_a_walk_reruns_what_it_reaches(t
         assert by_name[name].last_evaluation_statuses() == statuses
         assert all(s is NOT_EVALUATED for s in by_name[name]._own_statuses())
     TABLE.calls.clear()
-    r = run(by_name["T1"].evaluate_to(True))
+    r = run(by_name["T1"].evaluate_to(None, True))
     assert r == M.EvaluationResult(None, None)
     # On a loaded node the setter finds nothing written: it releases
     # nothing, and no status "truly left `ready`" (COMPILATION.md §4).
@@ -778,7 +778,7 @@ def test_a_beginning_failing_after_a_restart_invalidates_what_its_children_store
                 {"kind": "block", "name": "Section", "children": [
                     {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]},
                 {"kind": "t", "name": "c"}]}], KINDS)))
-        run(thy.evaluate_to(False))
+        run(thy.evaluate_to(None, False))
         sec = thy.sub_nodes[0]
         sec.fail_beginning = True                     # the verdict changes between the runs
         with f.store.transaction():
@@ -790,7 +790,7 @@ def test_a_beginning_failing_after_a_restart_invalidates_what_its_children_store
         def stored(name):
             return by_name[name].last_evaluation_statuses()
         assert stored("a") == stored("b") == (READY,)
-        r = run(by_name[destination].evaluate_to(False))
+        r = run(by_name[destination].evaluate_to(None, False))
         assert stored("a") == stored("b") == (NOT_EVALUATED,), destination
         if destination == "c":
             assert r == M.EvaluationResult(None, None)
@@ -811,7 +811,7 @@ def test_a_statuses_row_missing_or_short_reads_not_evaluated_and_a_malformed_one
     (thy,) = run(locked(f, edit.insert(f,0, [
         {"kind": "block", "name": "Theory", "children": [{"kind": "t", "name": "T1"}]}], KINDS)))
     t1 = thy.sub_nodes[0]
-    run(thy.evaluate_to(True))
+    run(thy.evaluate_to(None, True))
     assert thy.last_evaluation_statuses() == (READY, READY)
     with store.transaction():
         store.put(thy.identity, "last_evaluation_statuses", [["ready", []]])   # short: two operations

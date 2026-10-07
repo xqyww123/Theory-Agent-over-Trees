@@ -195,8 +195,8 @@ def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(t
     (s,) = insert(f, f, 0, [session(
         "S", theory("Good", kind="fake_theory"), theory("BadHeader", kind="failing_header_theory"))])
     good, bad = s.sub_nodes
-    run(good.evaluate_to(False))
-    run(bad.evaluate_to(True))
+    run(good.evaluate_to(None, False))
+    run(bad.evaluate_to(None, True))
     assert tm.st(good) == (READY, READY)
     assert isinstance(tm.st(bad)[0], M.CannotEvaluate)
     store.close()
@@ -206,7 +206,7 @@ def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(t
     beginning = bad2.last_evaluation_statuses()[0]
     assert isinstance(beginning, M.CannotEvaluate)
     assert [m.unicode for m in beginning.messages] == ["No such file: TAT_Nowhere.thy"]
-    run(good2.evaluate_to(False))                         # reruns Good alone
+    run(good2.evaluate_to(None, False))                         # reruns Good alone
     assert tm.st(good2) == (READY, READY) and good2.last_evaluation_statuses() == (READY, READY)
     assert tm.st(bad2) == (NOT_EVALUATED, NOT_EVALUATED)   # not entered: instant untouched
     assert bad2.last_evaluation_statuses()[0] == beginning  # and the stored status kept
@@ -259,7 +259,7 @@ class Real_Theories:
         store = self.forest.store
         calls, rows = len(self.calls), {n: store.fields(n) for n in store.nodes()}
         with pytest.raises(M.CannotUseWorkingDirectory) as e:
-            run(tree.evaluate_to(False))
+            run(tree.evaluate_to(None, False))
         assert isinstance(e.value, TAT_StartupError)
         assert str(e.value) == (sentence.replace("<working directory>", str(self.directory))
                                 .replace("<Session name>", s.name))
@@ -276,7 +276,7 @@ def test_a_theorys_beginning_makes_its_sessions_folder_or_ends_the_conversation(
     arith, taken, linked = case.sessions
     (x,) = arith.sub_nodes
     assert not (case.directory / "Arith").exists()            # creating the session makes nothing
-    run(x.evaluate_to(False))
+    run(x.evaluate_to(None, False))
     assert (case.directory / "Arith").is_dir() and tm.st(x) == (READY, READY)
     name, (_, (_, master_dir, _)) = case.calls[0]
     assert (name, master_dir) == ("TAT.Theory.begin", str(case.directory / "Arith"))
@@ -336,7 +336,7 @@ def test_a_tree_emits_its_header_its_nodes_and_its_end(tmp_path):
                        'end\n')
     assert written.startswith(y.header() + "\n")           # the header the evaluation runs
     assert not any(n.can_emit() for n in y._tree_order())
-    run(y.evaluate_to(False))
+    run(y.evaluate_to(None, False))
     assert all(n.can_emit() for n in y._tree_order())
     f.store.close()
     f2 = Forest_Under_Test(store=Forest_Store(path, stand_ins.log()))
@@ -393,21 +393,21 @@ def test_the_owned_slot_under_each_outcome_of_a_tree():
     (a,) = insert(f, good, 0, [{"kind": "t", "name": "a"}])
     values = tm.TABLE.values
 
-    r = run(good.evaluate_to(False))
+    r = run(good.evaluate_to(None, False))
     assert r == EvaluationResult(None, None)
     assert tm.st(good) == (READY, READY) and good.is_finished()
     assert values[a.state.name] == "begin Good" and a.consumed == "begin Good"
     assert values[good._state_after_ending.name] == "end Good"
     inv(f)
 
-    r = run(bad_end.evaluate_to(False))
+    r = run(bad_end.evaluate_to(None, False))
     assert r.stopped_at is bad_end                           # a stop at the ending
     assert tm.st(bad_end)[0] is READY and isinstance(tm.st(bad_end)[1], M.CannotEvaluate)
     assert tm.st(bad_end)[1].messages
     assert values[bad_end._state_after_ending.name] == "begin BadEnd"   # copied through
     inv(f)
 
-    r = run(bad_header.evaluate_to(False))
+    r = run(bad_header.evaluate_to(None, False))
     assert r == EvaluationResult(None, None)                  # not a stop for its successors
     assert isinstance(tm.st(bad_header)[0], M.CannotEvaluate) and tm.st(bad_header)[1] is READY
     assert tm.st(bad_header)[0].messages and not bad_header.is_finished()

@@ -770,15 +770,20 @@ and the nodes it passed travel in one `Evaluation`; where the walk is
 travels in an `Evaluating`:
 
 ```python
-class Evaluation:                    # one walk: made by `Forest._run` for the walks it drives and
+class Evaluation:                    # one walk: made by the walk's entry for `Forest._run`, and
     destination: Node | None         # by an edit for its commit; its released slots, `dropped` and
                                      # `stored` emptied at each tree's end, `passed` kept
                                      # — `destination`: the node an evaluating walk runs up to and
                                      # including; none for an edit's invalidation
     ignore_error: bool
-    starter: Agent | None            # the caller, starter of the evaluation jobs the walk starts
+    starter: Agent | None            # the caller, starter of the jobs the walk starts; None starts none
     checks: str                      # "no" | "quick" | "blocking" (CONSTRUCT_INTERACTION §5)
     passed: list[Node]               # the nodes reached in Evaluating, for `blocking` to wait on
+    stopped_at: Node | None          # where the walk stopped, written by `_run` when it ends
+    started: list[Construction_Job]  # the constructions the walk started automatically, for the
+                                     # result's `Automatically started …` line (CONSTRUCT_INTERACTION §5)
+    was_not_ready: set[Node]         # a stored status of these was not `ready` before the walk wrote it:
+                                     # the invalidation since a failure that automatic construction asks for
     dropped: list[int]               # the evaluation jobs dropped, their ids sent as cancel(ids) at flush
     stored: set[Node]                # the nodes whose status the walk wrote — a setter adds each —
                                      # stored whole at each tree's end and when the walk ends
@@ -982,8 +987,10 @@ call; `recall`, the future `query`, and the four construct tools —
 `construct`, `cancel_construct`, `check_construct`, `answer`, each
 synchronous from its checks to its change — take none (MCP_SPECIFICATION
 §5, CONSTRUCT_INTERACTION §9). A call is cancelled only by the
-conversation's ending (ARCHITECTURE §9). `evaluate_to`'s entry is
-`Node.evaluate_to`, which takes it itself; an edit's tool entry takes it
+conversation's ending (ARCHITECTURE §9). `evaluate_to`'s tool entry
+takes it and drives the walk through `Forest._run`, holding it through
+`blocking`'s wait and the quickview — `Node.evaluate_to` takes it itself
+for a caller outside the tools; an edit's tool entry takes it
 and calls `insert`, `amend`, `delete` or `move`, which assume it held, as
 does the walk each ends with. One ordering fact: `gen` awaits the ML
 side's loader lock (§2.3) while the forest lock is held; nothing on the

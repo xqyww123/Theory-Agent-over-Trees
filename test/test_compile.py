@@ -101,7 +101,7 @@ def sorting(directory):
         theory("Late"),
         description="Sorting, verified.",
         options=[{"name": "quick_and_dirty", "value": "true"}, {"name": "document", "value": "false"}]))
-    run(f.evaluate_to(True))
+    run(f.evaluate_to(None, True))
     perm = f.sub_nodes[0].sub_nodes[3]
     insert(f, perm, 0, [lemma("perm_length")])              # an edit left unevaluated
     return f
@@ -147,7 +147,7 @@ def test_the_report_and_the_root_of_compilation_md_section_2(tmp_path):
 def test_a_files_text_is_converted_once_and_ends_every_line(tmp_path):
     f = forest(tmp_path / "work", session("S", theory("A") | {"children": [
         lemma("x"), {"kind": "block", "name": "B", "children": [lemma("y")]}]}))
-    run(f.evaluate_to(False))
+    run(f.evaluate_to(None, False))
     rendering = C.render(f)
     (text,) = rendering.files.values()
     assert list(rendering.files) == [C.Path("S/A.thy")]
@@ -191,7 +191,7 @@ def test_the_store_mirror_catches_what_a_compile_could_not_read(tmp_path):
 
     def mirrored(case, tree, message, ignore_error=False):
         f = forest(tmp_path / case, session("S", tree), kinds=kinds)
-        run(f.evaluate_to(ignore_error))
+        run(f.evaluate_to(None, ignore_error))
         with pytest.raises(AssertionError, match=message):
             invariants.assert_store_mirrors(f, kinds)
         return f
@@ -247,11 +247,11 @@ def test_the_reasons_in_their_order(tmp_path):
         theory("Ordered", "After"),
         theory("After")))
     bad, both, quiet, failing_importer, failed, refusing, ordered, after = f._trees()
-    run(f.evaluate_to(True))
+    run(f.evaluate_to(None, True))
     # `Failed` and `Refusing` ran before a move put `After` behind them:
     # what they stored keeps its line
     run(locked(f, edit.move(after, f.sub_nodes[0], 0)))
-    run(f.evaluate_to(True))
+    run(f.evaluate_to(None, True))
     run(locked(f, edit.move(after, f.sub_nodes[0], 7)))
     reasons = dict(C.render(f).trees)
     assert reasons[bad] == C.Does_Not_Emit(bad.sub_nodes[0])
@@ -284,7 +284,7 @@ def test_which_tree_a_reason_names(tmp_path):
         theory("W1"), theory("W2"),
         theory("U") | {"children": [lemma("u", fail=True)]}))
     p, q, importer, early, earlier, w1, w2, u = f._trees()
-    run(f.evaluate_to(True))
+    run(f.evaluate_to(None, True))
     report = C.Compile_Report(C.render(f).trees, ())
     reasons = dict(report.trees)
     assert reasons[w1] is reasons[w2] is None
@@ -309,7 +309,7 @@ def test_a_nesting_node_is_met_at_its_beginning_when_that_did_not_pass(tmp_path)
         theory("Closing") | {"children": [
             {"kind": "block", "name": "E", "children": [lemma("inner", fail=True)]}]}))
     opening, closing = f._trees()
-    run(f.evaluate_to(True))
+    run(f.evaluate_to(None, True))
     reasons = dict(C.render(f).trees)
     assert reasons[opening] == C.Does_Not_Emit(opening.sub_nodes[0])    # the block, not `inside`
     assert reasons[closing] == C.Does_Not_Emit(closing.sub_nodes[0].sub_nodes[0])
@@ -334,9 +334,9 @@ def test_the_roots_clauses_and_quoting(tmp_path):
         session("Uses", theory("B", "HOL-Extras.A"), parent_session="HOL-Library"))
     extras, bare, uses = f.sub_nodes
     a, own, failing, unrun = extras.sub_nodes
-    run(own.evaluate_to(False))
-    run(failing.evaluate_to(True))
-    run(uses.evaluate_to(False))
+    run(own.evaluate_to(None, False))
+    run(failing.evaluate_to(None, True))
+    run(uses.evaluate_to(None, False))
     # as they arrive: neither sorted nor each once, the parent and the session itself among them
     assert a.import_sessions == ["HOL", "HOL-Library", "HOL-Algebra", "HOL-Library"]
     assert (own.import_sessions, failing.import_sessions, unrun.import_sessions) == \
@@ -398,7 +398,7 @@ def test_the_directory_after_a_compile(tmp_path):
     empty folders compile did not make go, a `Session`'s stays."""
     directory, outside = tmp_path / "work", tmp_path / "outside"
     f = forest(directory, session("S", theory("A")), session("Empty"))
-    run(f.evaluate_to(False))
+    run(f.evaluate_to(None, False))
     outside.mkdir()
     (outside / "kept.thy").write_text("outside")
     # `notes/S`: a folder is a `Session`'s by what it is, not by its last name
@@ -456,7 +456,7 @@ def test_what_is_refused_before_anything_is_removed(tmp_path):
             ("sibling", folder, "ROOT.new.thy", a_folder)):
         directory = tmp_path / case
         f = forest(directory, session("Good", theory("A")), session("Taken"))
-        run(f.evaluate_to(False))
+        run(f.evaluate_to(None, False))
         if path != "ROOT":
             (directory / "ROOT").write_text("the previous compile's")
         (directory / "stray.thy").write_text("stale")
@@ -504,7 +504,7 @@ def test_the_root_goes_through_a_sibling_the_next_compile_removes(tmp_path, monk
     left of the sibling goes with the next compile's `.thy` removal."""
     directory = tmp_path / "work"
     f = forest(directory, session("S", theory("A")))
-    run(f.evaluate_to(False))
+    run(f.evaluate_to(None, False))
 
     def killed(src, dst):
         raise KeyboardInterrupt("killed before the move")
@@ -544,7 +544,7 @@ def test_every_file_is_created_afresh(tmp_path):
     the compile ends without a ROOT, which Isabelle refuses."""
     directory = tmp_path / "work"
     f = forest(directory, session("S", theory("A")))
-    run(f.evaluate_to(False))
+    run(f.evaluate_to(None, False))
     C.compile(f, [])
     def plants_a_folder(forest):
         (directory / "S" / "A.thy").unlink()
@@ -564,7 +564,7 @@ def test_every_file_is_created_afresh(tmp_path):
 def test_a_hook_runs_after_the_files_and_before_the_empty_folders_and_the_root(tmp_path):
     directory = tmp_path / "work"
     f = forest(directory, session("S", theory("A")))
-    run(f.evaluate_to(False))
+    run(f.evaluate_to(None, False))
     (directory / "hollow").mkdir()
     (directory / "S").mkdir()
     (directory / "S" / "Gone.proof-store").write_text("of a theory that is gone")

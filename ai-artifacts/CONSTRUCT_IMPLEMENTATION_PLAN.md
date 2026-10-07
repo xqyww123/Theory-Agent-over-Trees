@@ -1,9 +1,9 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 11 are committed since
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 12 are committed since
 2026-10-07, with the reviews of steps 1–2, 4–5 and 6–7 applied
-(review/DOC_SYNC_LIST.md entries 32–49; the second compaction check
+(review/DOC_SYNC_LIST.md entries 32–50; the second compaction check
 rebuilt on 2026-10-06 on the owner's rulings, the review of steps 8 and 9
 applied on 2026-10-07 but for its eight questions to the owner,
 review/STEPS_8_9_REVIEW.md §4); the rest is not implemented.
@@ -106,19 +106,13 @@ in, 457 pass and the same 13 fail; with the fixes of the review of steps
 6 and 7, 466 pass and the same 13 fail; with step 8 in, 491 pass and 8
 fail; with step 9 in, 498 pass and the same 8 fail; with the fixes of
 the review of steps 8 and 9, 522 pass and the same 8 fail; with step 10
-in, 526 pass and 5 fail; with step 11 in, 541 pass and 2 fail.
+in, 526 pass and 5 fail; with step 11 in, 541 pass and 2 fail; with
+step 12 in, 548 pass and the same 2 fail.
 
 | case | waits for |
 | --- | --- |
 | `test_exceptions`: `test_every_baseline_is_covered` | step 14 (the fact name's line) |
 | `test_descriptions`: `test_descriptions_are_the_documents_fenced_lines` | step 13 |
-
-Two test_mcp cases pass and name what step 12 owes them, so that no
-fenced line goes unread meanwhile: `test_the_tools_their_descriptions_and_schemas_as_the_documents_state_them`
-leaves TS §5's `evaluate_to` block aside, and
-`test_the_success_lines_of_render_baselines_section_6` pins RB §6's
-`evaluate_to` block and its `Automatically started …` line as text
-alone. Step 12 makes both produce them.
 
 ## 3. The steps
 

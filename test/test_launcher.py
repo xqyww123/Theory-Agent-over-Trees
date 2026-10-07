@@ -139,7 +139,7 @@ async def leave(harness, request, wd, session, *theories, evaluate):
             (created,) = await edit.insert(forest, 0, [
                 {"kind": "session", "name": session, "parent_session": "HOL",
                  "children": list(theories)}], handle.kinds)
-        result = await created.sub_nodes[evaluate - 1].evaluate_to(False)
+        result = await created.sub_nodes[evaluate - 1].evaluate_to(None, False)
         assert result.stopped_at is None, result
     finally:
         await harness.await_ending()

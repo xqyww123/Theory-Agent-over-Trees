@@ -262,7 +262,7 @@ async def leave(directory: Path, *theories: str) -> None:
                 {"kind": "session", "name": "S", "parent_session": "HOL",
                  "children": [{"kind": "theory", "name": name, "imports": ["Main"]}
                               for name in theories]}], loaded.kinds)
-        await session.evaluate_to(True)
+        await session.evaluate_to(None, True)
 
 
 def test_a_compile_writes_the_stored_forest_and_returns_its_report(tmp_path):
