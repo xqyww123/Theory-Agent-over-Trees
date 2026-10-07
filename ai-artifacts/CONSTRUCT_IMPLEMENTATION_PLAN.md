@@ -1,9 +1,9 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 12 are committed since
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 13 are committed since
 2026-10-07, with the reviews of steps 1–2, 4–5, 6–7, 8–9 and 10–11
-applied (review/DOC_SYNC_LIST.md entries 32–51; the second compaction
+applied (review/DOC_SYNC_LIST.md entries 32–52; the second compaction
 check rebuilt on 2026-10-06 on the owner's rulings; the questions the
 reviews of steps 8–9 and 10–11 leave to the owner are
 review/STEPS_8_9_REVIEW.md §4's R7–R14 and review/STEPS_10_11_REVIEW.md
@@ -109,12 +109,12 @@ fail; with step 9 in, 498 pass and the same 8 fail; with the fixes of
 the review of steps 8 and 9, 522 pass and the same 8 fail; with step 10
 in, 526 pass and 5 fail; with step 11 in, 541 pass and 2 fail; with
 step 12 in, 548 pass and the same 2 fail; with the fixes of the review
-of steps 10 and 11, 558 pass and the same 2 fail.
+of steps 10 and 11, 558 pass and the same 2 fail; with step 13 in, 560
+pass and 1 fails.
 
 | case | waits for |
 | --- | --- |
 | `test_exceptions`: `test_every_baseline_is_covered` | step 14 (the fact name's line) |
-| `test_descriptions`: `test_descriptions_are_the_documents_fenced_lines` | step 13 |
 
 ## 3. The steps
 

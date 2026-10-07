@@ -136,8 +136,8 @@ def session(forest, name, parent_session="HOL", options=(), description=""):
 
 
 def theory(sess, name, imports=("Main",), beginning: M.EvaluationStatus = NOT_EVALUATED,
-           ending: M.EvaluationStatus = NOT_EVALUATED):
-    t = enter(sess, M.Theory(sess, slot(), name, list(imports), slot(), slot()), "theory")
+           ending: M.EvaluationStatus = NOT_EVALUATED, description=""):
+    t = enter(sess, M.Theory(sess, slot(), name, list(imports), slot(), slot(), description), "theory")
     t.evaluation_status_beginning, t.evaluation_status_ending = beginning, ending
     return t
 
@@ -319,9 +319,13 @@ def test_the_field_lines_of_session_and_theory_section_4():
     a = session(f, "A", options=[{"name": "quick_and_dirty", "value": "true"},
                                  {"name": "document", "value": "false"}],
                 description="Sorting, verified.")
-    theory(a, "X", imports=("Main", "HOL-Library.Multiset"))
+    x = theory(a, "X", imports=("Main", "HOL-Library.Multiset"), description="Sorting, verified.")
     assert render(f, f, RECALL)[1:] == lines[:2] + ["- theory_X (not evaluated)", "  " + lines[4]]
-    assert render(f, a, RECALL)[1:5] == ["  " + line for line in lines[:4]]   # depth 0: the description too
+    assert render(f, a, RECALL)[1:] == ["  " + line for line in lines[:4]] + [   # depth 0: the description too
+        "  - theory_X (not evaluated)", "    " + lines[4]]                        # the theory at depth 1: imports alone
+    assert render(f, x, RECALL)[1:] == ["  " + line for line in lines[2:]]    # the theory's at depth 0 likewise
+    x.description = ""
+    assert render(f, x, RECALL)[1:] == ["  " + lines[4]]                      # left out when empty
     bare = new_forest()
     session(bare, "B")
     assert render(bare, bare, RECALL) == ["session_B (complete)", "parent_session: HOL"]

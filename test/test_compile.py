@@ -589,3 +589,21 @@ def test_a_hook_runs_after_the_files_and_before_the_empty_folders_and_the_root(t
     with pytest.raises(ZeroDivisionError):
         C.compile(f, [broken])
     assert not (directory / "ROOT").exists()                # the compile did not complete
+
+
+def test_a_theorys_description_is_a_text_block_before_the_header(tmp_path):
+    """SESSION_AND_THEORY §2: a non-empty `description` is emitted as a
+    `text ‹…›` block before the `theory` line, as written and with no
+    period added, `‹`, `›`, `\\<open>` and `\\<close>` in it replaced by
+    `"`; nothing for an empty one."""
+    f = forest(tmp_path / "work", session("S", theory("A") | {
+        "description": 'A ‹quoted› word \\<open>and\\<close> a second line\nhere',
+        "children": [lemma("x")]}, theory("B")))
+    run(f.evaluate_to(None, False))
+    files = C.render(f).files
+    assert files[C.Path("S/A.thy")] == (
+        'text \\<open>A "quoted" word "and" a second line\nhere\\<close>\n'
+        'theory A\n  imports "Main"\nbegin\n'
+        'text \\<open>x\\<close>\n'
+        'end\n')
+    assert files[C.Path("S/B.thy")].startswith("theory B\n")

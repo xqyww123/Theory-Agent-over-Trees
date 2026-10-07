@@ -291,6 +291,14 @@ def _emit_lines(indent: int, out: TextIO, text: str) -> None:
     out.write("".join(line + "\n" for line in _indented(indent, text)))
 
 
+def cartouche(text: str) -> str:
+    """`text` as one cartouche that closes where it should (SESSION_AND_THEORY
+    §1, §2): `‹`, `›`, `\\<open>` and `\\<close>` in it replaced by `"`."""
+    for mark in ("‹", "›", "\\<open>", "\\<close>"):
+        text = text.replace(mark, '"')
+    return f"‹{text}›"
+
+
 def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
     """The message block (PRINT.md §3): `header` at `indent`, every line of
     the message one level deeper."""
@@ -2400,6 +2408,7 @@ class Theory_RawAST(TypedDict):
     kind: Literal["theory"]
     name: str
     imports: list[str]
+    description: NotRequired[str]
 
 
 class Theory(StdBlock):
@@ -2418,6 +2427,7 @@ class Theory(StdBlock):
             "name": {"type": "string", "description": "The theory's short name"},
             "imports": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                         "description": "Theories to import"},
+            "description": {"type": "string", "description": "A summary of the theory, as LaTeX text"},
             "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},
                          "description": "The theory's declarations"},
         },
@@ -2431,6 +2441,7 @@ class Theory(StdBlock):
 
     name: str                           # the short name; the qualified name is computed
     imports: list[str]
+    description: str                    # as written, empty by default (SESSION_AND_THEORY §2)
     import_sessions: list[str]          # recorded when the header runs: the session of each
                                         # import, which the ROOT's `sessions` clause is written
                                         # from (COMPILATION.md §2); stored
@@ -2438,10 +2449,12 @@ class Theory(StdBlock):
                                             # input is (`Unchained_Node`); nothing reads it
 
     def __init__(self, parent, state, name: str, imports: list[str],
-                 state_before_ending: Isar_State_Slot, state_after_ending: Isar_State_Slot):
+                 state_before_ending: Isar_State_Slot, state_after_ending: Isar_State_Slot,
+                 description: str = ""):
         super().__init__(parent, state, [], state_before_ending)
         self.name = name
         self.imports = imports
+        self.description = description
         self.import_sessions = []
         self._state_after_ending = state_after_ending
 
@@ -2473,7 +2486,8 @@ class Theory(StdBlock):
                 raise InvalidField(f"imports[{i}]",
                                    "must be a theory name without quotes; a path is not allowed")
         return cls(config.parent, config.state, name, list(raw["imports"]),
-                   Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation))
+                   Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation),
+                   raw.get("description", ""))
 
     def on_moving(self, new_location):
         if not isinstance(new_location.parent, Session):
@@ -2482,14 +2496,16 @@ class Theory(StdBlock):
     def to_store(self, rows):
         rows.put("name", self.name)
         rows.put("imports", self.imports)
+        rows.put("description", self.description)
         rows.put("import_sessions", self.import_sessions)
 
     @classmethod
     def from_store(cls, config, rows):
         conversation = config.parent.forest().conversation
+        # a missing row reads as empty (COMPILATION.md §4, "Storage")
         node = cls(config.parent, config.state, rows.get("name"), rows.get("imports"),
-                   Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation))
-        # a missing row reads as the empty list (COMPILATION.md §4, "Storage")
+                   Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation),
+                   rows.fields().get("description", ""))
         node.import_sessions = rows.fields().get("import_sessions", [])
         return node
 
@@ -2524,7 +2540,10 @@ class Theory(StdBlock):
         return f"theory {self.name}\n  imports {imports}\nbegin"
 
     def emit_beginning(self, indent, out):
-        """The header, the one `_eval_beginning_opr` runs."""
+        """A non-empty `description` as a `text ‹…›` block, then the header,
+        the one `_eval_beginning_opr` runs (SESSION_AND_THEORY §2)."""
+        if self.description:
+            _emit_lines(indent, out, f"text {cartouche(self.description)}")
         _emit_lines(indent, out, self.header())
         return indent
 
@@ -2548,8 +2567,11 @@ class Theory(StdBlock):
                 importer._invalidate(ev)
 
     def print_fields(self, indent, out, mode, depth):
-        """SESSION_AND_THEORY §4: under `Recall`, `imports` to depth 2.  The
-        operations' messages are the framework's (PRINT.md §3)."""
+        """SESSION_AND_THEORY §4: under `Recall`, `description` at depth 0
+        when there is one, `imports` to depth 2.  The operations' messages
+        are the framework's (PRINT.md §3)."""
+        if mode is RECALL and depth == 0 and self.description:
+            print_error(indent, out, self.description, "description:")
         if mode is RECALL and depth <= 2:
             out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
 

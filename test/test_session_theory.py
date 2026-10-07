@@ -126,8 +126,8 @@ def inv(f):
     assert_store_mirrors(f, KINDS, shape=shape)
 
 
-def theory(name, *imports, kind="theory"):
-    return {"kind": kind, "name": name, "imports": list(imports) or ["Main"]}
+def theory(name, *imports, kind="theory", **fields):
+    return {"kind": kind, "name": name, "imports": list(imports) or ["Main"], **fields}
 
 
 def session(name, *children, **fields):
@@ -171,11 +171,11 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session(
-        "Arith", theory("X", "Main", "HOL-Library.Multiset"),
+        "Arith", theory("X", "Main", "HOL-Library.Multiset", description="Sums,\nverified."),
         options=[{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}],
         description="Arithmetic")])
     assert s.options == [{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}]
-    assert s.description == "Arithmetic"
+    assert s.description == "Arithmetic" and s.sub_nodes[0].description == "Sums,\nverified."   # as written
     assert s.sub_nodes[0].header() == 'theory X\n  imports "Main" "HOL-Library.Multiset"\nbegin'
     before = shape(f)
     store.close()
@@ -185,6 +185,7 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     assert isinstance(s2, Session) and s2.parent is f2
     assert isinstance(s2.sub_nodes[0], Theory) and s2.sub_nodes[0].parent is s2
     assert tm.st(s2.sub_nodes[0]) == (NOT_EVALUATED, NOT_EVALUATED)
+    assert (s2.description, s2.sub_nodes[0].description) == ("Arithmetic", "Sums,\nverified.")
 
 
 def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(tmp_path):
@@ -559,8 +560,8 @@ def test_a_theory_short_name_is_unique_everywhere():
         insert(f, f, 2, [session("More", theory("Queue")), session("Yet", theory("QUEUE"))])
     assert (e.value.short_name, e.value.holder) == ("QUEUE", "constructs[0].children[0]")
     # an amend may keep the short name: the node it replaces is leaving
-    (x2,) = run(locked(f, edit.amend(x, [theory("X", "Main", "HOL.Rat")], KINDS)))
-    assert x2.imports == ["Main", "HOL.Rat"] and x2.identity == x.identity
+    (x2,) = run(locked(f, edit.amend(x, [theory("X", "Main", "HOL.Rat", description="renamed")], KINDS)))
+    assert x2.imports == ["Main", "HOL.Rat"] and x2.identity == x.identity and x2.description == "renamed"
     assert s.sub_nodes == [x2, y]
     inv(f)
 

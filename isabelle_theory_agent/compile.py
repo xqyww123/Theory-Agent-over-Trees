@@ -26,7 +26,7 @@ from Isabelle_RPC_Host.unicode import ascii_of_unicode
 from .exceptions import TAT_InternalError, TAT_StartupError
 from .model import (
     INDENT, CannotEvaluate, EvaluationStatus, Forest, Node, NotEvaluated, Ready, Session,
-    StdBlock, Theory, _indented, _option_value, make_session_folder, session_folder_refusal)
+    StdBlock, Theory, _indented, _option_value, cartouche, make_session_folder, session_folder_refusal)
 
 
 # ---------------------------------------------------------------------------
@@ -174,13 +174,6 @@ def _quoted(name: str) -> str:
     return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _cartouche(text: str) -> str:
-    """`text` as one cartouche that closes where it should."""
-    for mark in ("‹", "›", "\\<open>", "\\<close>"):
-        text = text.replace(mark, '"')
-    return f"‹{text}›"
-
-
 def _root(forest: Forest, written: dict[Theory, bool]) -> str:
     """The ROOT's text (COMPILATION.md §2): one entry per `Session`, in the
     forest's order, the clauses in the order Isabelle's grammar fixes."""
@@ -191,7 +184,7 @@ def _root(forest: Forest, written: dict[Theory, bool]) -> str:
         lines = [f"session {_quoted(session.name)} in {_quoted(str(session.folder()))}"
                  f" = {_quoted(session.parent_session)} +"]
         if session.description:
-            lines.append(f"{INDENT}description {_cartouche(session.description)}")
+            lines.append(f"{INDENT}description {cartouche(session.description)}")
         if session.options:
             options = ", ".join(f"{_quoted(o['name'])} = {_quoted(_option_value(o))}"
                                 for o in session.options)
