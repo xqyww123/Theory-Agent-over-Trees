@@ -1,12 +1,14 @@
-"""`POST /hook` and the agents (CONSTRUCT_INTERACTION §4, §8; MODULE_STRUCTURE
-§4.6): the announcement that names a call's agent, the unannounced call,
-the two clients' agents, the working-call count, the path while the
-conversation is ending and on a bug, the `clientInfo` check, Codex's
-sandbox check, and the compaction events — Codex's three hooks, and
-Claude Code's transcripts read at each announcement with the two checks
-(CLIENT_HOOKS.md §2, §3).  The payloads and the transcript lines are
-written in the shapes AGENT_CLIENTS_MEASURED.md records, with invented
-ids (the Claude Code builders are the harness's).
+"""`POST /hook` and the agents (CONSTRUCT_INTERACTION §4, §7, §8;
+MODULE_STRUCTURE §4.6): the announcement that names a call's agent, the
+unannounced call, the two clients' agents, the working-call count, the
+path while the conversation is ending and on a bug, the `clientInfo`
+check, Codex's sandbox check, the compaction events — Codex's three
+hooks, and Claude Code's transcripts read at each announcement with the
+two checks (CLIENT_HOOKS.md §2, §3) — and the two judgements of §7, the
+stop rule and the interruption, over a forest of test_jobs's job classes.
+The payloads and the transcript lines are written in the shapes
+AGENT_CLIENTS_MEASURED.md records, with invented ids (the Claude Code
+builders are the harness's).
 Run: python -m pytest test/test_hooks.py
 """
 
@@ -25,22 +27,39 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 
 import stand_ins
+import test_jobs
+import test_model as tm
+from baselines import DOCS, fenced_blocks
 from harness import (
     CLIENT_INFO, SESSION_ID, claude_code, client, compact_boundary, free_port, hook_url, post_hook, text_of,
     transcript, transcript_line)
 from isabelle_theory_agent.exceptions import TAT_InternalError
-from isabelle_theory_agent.jobs import Message, post
+from isabelle_theory_agent.jobs import BLOCKED, Message, post
 from isabelle_theory_agent.mcp_server import (
-    AGENTS, SANDBOX_STATE, SAVES_NO_TRANSCRIPT, TOOL_PREFIX, Claude_Code_Server, ClientRefused,
-    Codex_Server, Tool, boundary_before_announcement, post_compact_without_boundary,
-    sandbox_is_the_profile)
+    AGENTS, INTERRUPTION_DENIED, SANDBOX_STATE, SAVES_NO_TRANSCRIPT, TOOL_PREFIX, Claude_Code_Server,
+    ClientRefused, Codex_Server, Interruption, Tool, boundary_before_announcement,
+    post_compact_without_boundary, sandbox_is_the_profile)
+from test_jobs import Checked, report
+from test_mcp import Block, asked, forest
 from test_mcp_server import (
     INTERNAL, NO_TRANSCRIPT, NOT_CONNECTED, NOT_SANDBOXED, SCHEMA, Bodies, ended, hold_accepting, run,
     serving)
+from test_model import add, slot
 
 CC_SUBAGENT = "a9f3c2d1e4b5"
+CC_OTHER_SUBAGENT = "b7e2d4c6a8f0"
 CX_SESSION = "019a7c3e-5b2d-7f41-8e6a-3c9d1b0f2a47"
 CX_SUBAGENT = "019a7c3e-9d8c-7a12-b4f0-6e1d2c3b4a59"
+CI = DOCS / "CONSTRUCT_INTERACTION.md"
+
+
+@pytest.fixture(autouse=True)
+def table(monkeypatch):
+    """`test_model`'s stand-ins and `test_jobs`'s isolation, for the cases
+    that build a forest with jobs."""
+    tm.TABLE.clear()
+    tm.TABLE.install(monkeypatch)
+    yield from test_jobs.isolated(monkeypatch)
 
 # The two messages of CONSTRUCT_INTERACTION §8 and CONSTRUCT_DECISIONS §10
 # for the client's hooks failing TAT; the launcher prints them.
@@ -972,4 +991,176 @@ def test_a_message_reaches_its_recipient_alone(transcript_path):
             [delivered] = [r for r in stand_ins.records("job") if r["event"] == "message_delivered"]
             assert (delivered["agent"], delivered["call"], delivered["data"]) == (
                 CC_SUBAGENT, "toolu_s2", {"recipient": CC_SUBAGENT})
+    run(scenario)
+
+
+# --- leaving (CONSTRUCT_INTERACTION §7) ------------------------------------------
+
+def stop(agent_id: str | None = None, transcript_path: str = "/work/none.jsonl") -> dict:
+    """Claude Code's `Stop` of the main conversation, or a subagent's
+    `SubagentStop`, in the measured shape."""
+    payload = {"session_id": SESSION_ID, "transcript_path": transcript_path, "cwd": "/work/TAT.agents",
+               "permission_mode": "default", "hook_event_name": "Stop", "stop_hook_active": False}
+    if agent_id is not None:
+        payload |= {"hook_event_name": "SubagentStop", "agent_id": agent_id, "agent_type": "general-purpose",
+                    "agent_transcript_path": f"/work/subagents/agent-{agent_id}.jsonl"}
+    return payload
+
+
+def task_stop(agent_id: str | None = None, target: str = CC_SUBAGENT) -> dict:
+    """The parent's `PreToolUse` on `TaskStop`, the caller `agent_id` or the
+    main conversation."""
+    return {**claude_code("echo", "toolu_ts", agent_id), "tool_name": "TaskStop", "tool_input": {"task_id": target}}
+
+
+def lemmas(*names: str):
+    """theory_X > lemmas of `names`, each carrying both jobs (test_jobs's
+    `Checked`); the forest and the lemmas."""
+    f = forest({"theory": Block, "lemma": Checked})
+    x = add(f, Block(f, slot(), "X", slot()), "theory")
+    return f, [add(x, Checked(x, slot(), name), "lemma") for name in names]
+
+
+def judgements(event: str) -> list[tuple]:
+    """Each `agent.<event>` record's agent and data."""
+    return [(r["agent"], r["data"]) for r in stand_ins.records("agent") if r["event"] == event]
+
+
+def test_the_stop_rule_s_reason_per_row_of_section_7(transcript_path):
+    """CONSTRUCT_INTERACTION §7: a stop is allowed, with nothing answered,
+    when `check_construct` would answer `No job is running.` and deliver
+    no message; else blocked with the opening line, the state lines and
+    the instruction of the table's row — the two fenced examples among
+    them.  Judged for the agent the hook names alone.  A message that no
+    longer stands holds nobody."""
+    async def scenario():
+        subagent_file(transcript_path, CC_SUBAGENT)
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            await announce(url, "toolu_m", transcript_path)
+            await announce(url, "toolu_s", transcript_path, CC_SUBAGENT)
+            main, sub = server.agents["main"], server.agents[CC_SUBAGENT]
+            f, (p, a, b, c) = lemmas("P", "A", "B", "C")
+            server.ending.forest = f
+            first, second, _ = fenced_blocks(CI, "7.")
+
+            async def judged(payload: dict):
+                r = await post_hook(url, payload)
+                assert r.status_code == 200
+                return r.json() if r.content else None
+
+            def blocked(*lines: str) -> dict:
+                return {"decision": "block", "reason": "\n".join([BLOCKED, *lines])}
+            assert await judged(stop()) is None and await judged(stop(CC_SUBAGENT)) is None
+            # a question, and jobs running: the first example
+            await asked(p.job(), main)
+            await a.start_evaluation_job(main)
+            await b.start_evaluation_job(main)
+            assert await judged(stop()) == blocked(*first[1:]) == {"decision": "block", "reason": "\n".join(first)}
+            assert await judged(stop(CC_SUBAGENT)) is None             # nothing of the subagent's stands
+            # a question only; two questions
+            await report(a.evaluation_job())
+            await report(b.evaluation_job())
+            assert await judged(stop()) == blocked(
+                "The proof construction on `theory_X.lemma_P` is waiting for your answer.",
+                "Call `check_construct` to see the question; answer it before you exit.")
+            await asked(c.job(), main)
+            assert await judged(stop()) == blocked(
+                "The proof construction on `theory_X.lemma_P` and on `theory_X.lemma_C` is waiting for your answer.",
+                "Call `check_construct` to see the questions; answer them before you exit.")
+            # jobs running only — the withdrawn questions still in the mailbox stand no more
+            p.job().cancel(None)
+            c.job().cancel(None)
+            assert [m.question is not None for m in main.mailbox] == [True, True]
+            a.job().start(main)
+            assert await judged(stop()) == blocked(
+                "The proof construction on `theory_X.lemma_A` is still running.",
+                "Call `check_construct` to wait for the running proof construction before you exit.")
+            await b.start_evaluation_job(main)
+            await c.start_evaluation_job(main)
+            assert await judged(stop()) == blocked(
+                "The proof construction on `theory_X.lemma_A` is still running.",
+                "The proof check on `theory_X.lemma_B` and on `theory_X.lemma_C` is still running.",
+                "Call `check_construct` to wait for the running proof construction and proof checks before you exit.")
+            # messages only: the second example, for each agent its own
+            a.job().cancel(None)
+            await report(b.evaluation_job())
+            await report(c.evaluation_job())
+            assert await judged(stop()) is None
+            post(server.ending.log, Message(main, "for you", interrupts=False))
+            assert await judged(stop()) == {"decision": "block", "reason": "\n".join(second)}
+            assert await judged(stop(CC_SUBAGENT)) is None
+            post(server.ending.log, Message(sub, "for the subagent", interrupts=False))
+            assert await judged(stop(CC_SUBAGENT)) == {"decision": "block", "reason": "\n".join(second)}
+            main.mailbox.clear()
+            assert await judged(stop()) is None
+            assert judgements("stop_judged")[:4] == [
+                ("main", {"allowed": True}), (CC_SUBAGENT, {"allowed": True}),
+                ("main", {"allowed": False, "stands": {      # the message: P's question
+                    "waiting": ["theory_X.lemma_P"], "running": [], "checks": ["theory_X.lemma_A", "theory_X.lemma_B"],
+                    "messages": 1}}),
+                (CC_SUBAGENT, {"allowed": True})]
+            assert judgements("stop_judged")[-2] == (CC_SUBAGENT, {"allowed": False, "stands": {
+                "waiting": [], "running": [], "checks": [], "messages": 1}})
+            assert set(answers()[2:]) == {("stop", 200)}
+    run(scenario)
+
+
+def test_an_interruption_is_denied_for_a_held_agent_and_for_a_working_call(transcript_path):
+    """CONSTRUCT_INTERACTION §7: the parent's `TaskStop` is denied, with the
+    two fenced lines as the reason, when any agent other than the caller
+    and the main conversation would be held by the stop rule or has a call
+    still working; else allowed with nothing answered.  On Codex the tool
+    is `collaborationinterrupt_agent`."""
+    async def scenario():
+        bodies = Bodies()
+        subagent_file(transcript_path, CC_SUBAGENT)
+        subagent_file(transcript_path, CC_OTHER_SUBAGENT)
+        async with serving(free_port(), bodies.tools()) as (server, serve), plain_client(server.url) as session:
+            url = hook_url(server.url)
+            for tool_use_id, agent_id in (("toolu_m", None), ("toolu_s", CC_SUBAGENT), ("toolu_o", CC_OTHER_SUBAGENT)):
+                await announce(url, tool_use_id, transcript_path, agent_id)
+            main, sub, other = server.agents["main"], server.agents[CC_SUBAGENT], server.agents[CC_OTHER_SUBAGENT]
+            f, (p,) = lemmas("P")
+            server.ending.forest = f
+            denied = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                             "permissionDecisionReason": INTERRUPTION_DENIED}}
+            assert INTERRUPTION_DENIED.splitlines() == fenced_blocks(CI, "7.")[2]
+
+            async def judged(caller: str | None = None):
+                r = await post_hook(url, task_stop(caller))
+                assert r.status_code == 200
+                return r.json() if r.content else None
+            assert await judged() is None                               # nobody held
+            p.job().start(sub)                                           # the subagent holds work
+            assert await judged() == denied
+            assert await judged(CC_SUBAGENT) is None                    # the caller itself counts for nothing
+            assert await judged(CC_OTHER_SUBAGENT) == denied
+            p.job().cancel(None)
+            p.job().start(main)                                          # the main conversation counts for nothing
+            assert await judged() is None and await judged(CC_SUBAGENT) is None
+            p.job().cancel(None)
+            post(server.ending.log, Message(other, "unread", interrupts=False))     # a message holds too
+            assert await judged() == denied and await judged(CC_OTHER_SUBAGENT) is None
+            other.mailbox.clear()
+            # a call still working
+            await announce(url, "toolu_slow", transcript_path, CC_SUBAGENT)
+            call = asyncio.ensure_future(session.call_tool("slow", {}, meta={"claudecode/toolUseId": "toolu_slow"}))
+            await bodies.began("slow").wait()
+            assert await judged() == denied
+            bodies.release.set()
+            assert text_of(await call) == "slow done"
+            assert await judged() is None
+            assert judgements("interruption_judged") == [
+                ("main", {"allowed": True}), ("main", {"allowed": False, "holding_work": [CC_SUBAGENT]}),
+                (CC_SUBAGENT, {"allowed": True}), (CC_OTHER_SUBAGENT, {"allowed": False, "holding_work": [CC_SUBAGENT]}),
+                ("main", {"allowed": True}), (CC_SUBAGENT, {"allowed": True}),
+                ("main", {"allowed": False, "holding_work": [CC_OTHER_SUBAGENT]}), (CC_OTHER_SUBAGENT, {"allowed": True}),
+                ("main", {"allowed": False, "holding_work": [CC_SUBAGENT]}), ("main", {"allowed": True})]
+            assert set(answers()[3:]) == {("interruption", 200), ("announcement", 200)}
+        async with serving(free_port(), [], server_class=Codex_Server) as (server, serve):
+            payload = {**codex("echo", "c1"), "tool_name": "collaborationinterrupt_agent",
+                       "tool_input": {"path": "/work/.codex/agents/worker"}}
+            assert server.event_of_hook(payload) == Interruption(None)
+            assert server.event_of_hook({**payload, "tool_name": "TaskStop"}) is None
     run(scenario)

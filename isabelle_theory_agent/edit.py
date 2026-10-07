@@ -85,16 +85,17 @@ async def _after_commit(forest: Forest, ev: Evaluation, vanished: list[str]) -> 
 # The four entries
 
 async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
-                 kinds: Mapping[str, type[Node]]) -> list[Node]:
+                 kinds: Mapping[str, type[Node]], auto_construct: bool = False) -> list[Node]:
     """`append`/`insert_before`/`insert_after`: construct the batch detached
     — `gen` is insertion's gate, there is no other — and commit it before
     position `index` of `parent`: invalidate, fire the completed events,
     store.  Returns the batch; its last element is the natural destination
-    (MCP_SPECIFICATION §3.2)."""
+    (MCP_SPECIFICATION §3.2).  `auto_construct` is the call's, written on
+    every new node's construction job (CONSTRUCT_INTERACTION §3.2)."""
     forest = parent.forest()
     before = forest._record()
-    nodes = await _construct_siblings(parent, raws, "constructs", Edit_Call(forest, kinds),
-                                      Insertion())
+    nodes = await _construct_siblings(parent, raws, "constructs",
+                                      Edit_Call(forest, kinds, auto_construct=auto_construct), Insertion())
     # Commit: first the one copy of ARCHITECTURE §3.4 into the first new
     # node's slot — only when the predecessor operation wrote it, judged
     # with no round trip; every other new slot stays empty, as befits
@@ -125,15 +126,15 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
 
 
 async def amend(old: Node, raws: list[RawAST],
-                kinds: Mapping[str, type[Node]]) -> list[Node]:
+                kinds: Mapping[str, type[Node]], auto_construct: bool = False) -> list[Node]:
     """`amend`: `nodes[0]` is built as the replacement (`NodeConfig.replaces`)
     and takes `old`'s position, state slot, identity number and children;
-    `nodes[1:]` follow it."""
+    `nodes[1:]` follow it.  `auto_construct` as `insert`'s."""
     parent = parent_of(old)
     forest = parent.forest()
     before = forest._record()
     removed = [forest.full_id(old)]
-    call = Edit_Call(forest, kinds, Amendment(old))
+    call = Edit_Call(forest, kinds, Amendment(old), auto_construct)
     nodes = await _construct_siblings(parent, raws, "constructs", call, call.role)
     replacement = nodes[0]
     inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []

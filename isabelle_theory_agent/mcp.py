@@ -50,13 +50,14 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
     async def run_edit(agent: Agent, arguments: dict[str, Any]) -> str:
         action, target_id = arguments["action"], arguments["target_id"]
         constructs = arguments["constructs"]
+        auto_construct = arguments.get("auto_construct", False)     # off when left out (TOOL_SCHEMAS.md §1)
         async with forest.lock:
             with _operation(action, target_id) as what:
                 if action == "amend":
-                    nodes = await edit.amend(_resolve(forest, target_id), constructs, loaded.kinds)
+                    nodes = await edit.amend(_resolve(forest, target_id), constructs, loaded.kinds, auto_construct)
                 elif action in _ACTION_POSITION:
                     parent, index = _location(forest, _ACTION_POSITION[action], target_id)
-                    nodes = await edit.insert(parent, index, constructs, loaded.kinds)
+                    nodes = await edit.insert(parent, index, constructs, loaded.kinds, auto_construct)
                 else:
                     raise TAT_InternalError(f"unknown action {action!r}")
             stopped = await _evaluate(forest, nodes[-1]) if arguments["evaluate"] else None
@@ -165,10 +166,10 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
 
         def returns() -> bool:
             stands = now()
-            for job in stands.waiting:
+            for job in stands.waiting:                # a question waiting: delivered again where it is gone
                 if not any(m.question is job.pending_question for m in agent.mailbox):
                     job.repeat_question()
-            if any(m.interrupts for m in stands.messages):
+            if stands.waiting or any(m.interrupts for m in stands.messages):
                 return True
             left = {*stands.waiting, *stands.running, *stands.checks}
             titles_left = {type(job).title() for job in left}
@@ -218,7 +219,7 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
                                      _schema("check_construct"), run_check_construct, read_only=True))
     if constructions:
         construct_tools.append(_tool("answer", "Answer the question a construction job asked you",
-                                     answer_schema, run_answer, read_only=False))
+                                     answer_schema, run_answer, read_only=False, bare=("answer",)))
 
     return [_tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit,
                   read_only=False),
@@ -253,13 +254,15 @@ def _check_construct_description(constructions: tuple[Any, ...], checks: tuple[A
             " nothing is running. To ensure all jobs have finished, call it repeatedly.")
 
 
-def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:
+def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool,
+          bare: tuple[str, ...] = ()) -> Tool:
     """One object per tool is what the agent is told and what a call is
     held to: the schema validated as the tool is built
-    (`plugin.validate_call_schema`), and every call checked against it
-    before `run` sees it (`plugin.check_call`); the constructs inside
-    `edit`'s are `edit.py`'s to check, element by element."""
-    validate_call_schema(schema, name)
+    (`plugin.validate_call_schema`; `bare` the properties declared as a
+    bare object, `answer`'s), and every call checked against it before
+    `run` sees it (`plugin.check_call`); the constructs inside `edit`'s
+    are `edit.py`'s to check, element by element."""
+    validate_call_schema(schema, name, bare)
 
     async def checked(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
         check_call(schema, name, arguments)

@@ -35,10 +35,10 @@ async def until(agent, holds) -> None:
 CANCELS: list[list[int]] = []               # every `TAT.job_cancel` round trip's ids
 
 
-@pytest.fixture(autouse=True)
-def table(monkeypatch):
-    tm.TABLE.clear()
-    tm.TABLE.install(monkeypatch)
+def isolated(monkeypatch):
+    """A case's jobs with no Isabelle: `TAT.job_cancel`'s round trips land
+    in CANCELS, and the process's table of evaluation jobs is the case's
+    own.  For a fixture's `yield from`."""
     CANCELS.clear()
 
     async def job_cancel(conversation, ids):
@@ -47,6 +47,13 @@ def table(monkeypatch):
     jobs._evaluation_jobs.clear()
     yield
     jobs._evaluation_jobs.clear()
+
+
+@pytest.fixture(autouse=True)
+def table(monkeypatch):
+    tm.TABLE.clear()
+    tm.TABLE.install(monkeypatch)
+    yield from isolated(monkeypatch)
 
 
 # --- the case's classes -----------------------------------------------------

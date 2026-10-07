@@ -455,6 +455,26 @@ def test_a_tool_schema_may_say_nothing_the_check_does_not_enforce():
     refused(call_schema({"o": {**call_schema({}), "$defs": {}}}), r"t.o: \['\$defs'\] is outside")
 
 
+def test_the_one_bare_object_the_grammar_admits():
+    """MODULE_STRUCTURE §4.4: a property declared as a bare `object` passes
+    only where the builder names it (`answer`'s `answer`), with at most a
+    `description` on it and at the top alone; the check reads it as "an
+    object" and no deeper."""
+    bare = {"type": "object", "description": "the answer"}
+    schema = call_schema({"node_id": {"type": "string"}, "answer": bare}, required=["node_id", "answer"])
+    with pytest.raises(TAT_InternalError, match="t.answer: an object schema needs"):
+        plugin.validate_call_schema(schema, "t")
+    plugin.validate_call_schema(schema, "t", bare=("answer",))
+    plugin.check_call(schema, "t", {"node_id": "x", "answer": {"anything": [1, 2]}})
+    with pytest.raises(InvalidField) as e:
+        plugin.check_call(schema, "t", {"node_id": "x", "answer": "yes"})
+    assert (e.value.field, e.value.reason) == ("answer", "must be an object")
+    for wrong, where in [({**bare, "required": []}, "t.answer"),
+                         (call_schema({"o": bare}, required=["o"]), "t.answer.o")]:
+        with pytest.raises(TAT_InternalError, match=f"{where}: an object schema needs"):
+            plugin.validate_call_schema(call_schema({"answer": wrong}), "t", bare=("answer",))
+
+
 # --- assembly ----------------------------------------------------------------
 
 def test_assembly_hoists_defs_builds_the_union_and_changes_nothing_else():
