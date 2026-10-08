@@ -515,7 +515,7 @@ def test_a_runs_own_notification_is_dropped_once_the_run_is_cancelled():
         gate = asyncio.Event()
 
         async def telling(job):
-            jobs.post(f.conversation.log, Message(owner, "halfway", interrupts=False, source=job._current))
+            jobs.post(f.conversation.log, Message(owner, "halfway", interrupts=False, subject=job._current))
             await gate.wait()
             return Succeeded("by simp")
         job.ends_with = telling
@@ -891,16 +891,17 @@ def test_the_drops_and_the_stored_checks_clearings():
     run(scenario())
 
 
-def test_a_report_for_a_job_off_its_node_is_ignored_and_a_stuck_finished_is_a_bug():
+def test_a_dropped_jobs_late_report_is_ignored_and_a_stuck_finished_is_a_bug():
     async def scenario():
         f, thy, t1, p, q = build(Checked)
         starter = stand_ins.agent(f.conversation)
         await p.start_evaluation_job(starter)
         job = p.evaluation_job()
         p.drop_evaluation_job("status_write", M.Evaluation(None, False))
+        assert job.id not in jobs._evaluation_jobs             # the drop discarded it (§3.3, R9)
         tm.TABLE.clear_writes()
-        await report(job)
-        assert records("report_ignored") == [{"id": job.id}] and job.outcome is RUNNING
+        await report(job)                                      # its late report is nobody's: no record, no settle
+        assert records("report_ignored") == [] and job.outcome is RUNNING
         assert tm.TABLE.transactions == 0 and p.check_outcome() is None and not f.conversation.ending.entered
 
         class Stuck(Check):
@@ -1017,7 +1018,8 @@ class Job:
         self.reports: list[list[str]] = []
         self.in_the_table_at_the_report: bool | None = None
         self.raises = raises
-        self.id = jobs.register(self)       # type: ignore[arg-type]
+        self.id = next(jobs._ids)
+        jobs.register(self)                 # type: ignore[arg-type]  # a started job: in the table
 
     def _report(self, errors: list[str]) -> None:
         self.in_the_table_at_the_report = self.id in jobs._evaluation_jobs

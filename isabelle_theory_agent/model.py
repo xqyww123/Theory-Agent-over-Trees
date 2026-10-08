@@ -35,8 +35,8 @@ from .exceptions import (
 from .jobs import (
     RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
     Succeeded, Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs,
-    cancel_jobs_at_once, check_image, check_of_image, current_run, job_image, job_of_image,
-    with_message)
+    cancel_jobs_at_once, check_image, check_of_image, current_run, discard, job_image, job_of_image,
+    register, with_message)
 from .log import Log
 from .store import Forest_Store, MissingRow, Node_Rows
 
@@ -667,6 +667,7 @@ class Node(ABC):
         if job is None:
             return
         self._evaluation_job = None
+        discard(job.id)                                  # out of the process table at every drop (§3.3)
         running = job.outcome is RUNNING
         job.mark_ended()
         conversation = job.conversation
@@ -706,6 +707,7 @@ class Node(ABC):
         self.attach_evaluation_job(job)
         starter.wake()                                   # its jobs changed (CONSTRUCT_INTERACTION §4)
         job.conversation.log.job.evaluation_started(node=job.node_id, id=job.id, starter=starter.identity)
+        register(job)                                    # in the table only now, just before the work (§3.3)
         try:
             await job._start()
         except TAT_Error as e:

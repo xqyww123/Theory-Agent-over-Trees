@@ -882,6 +882,28 @@ def test_the_nodes_of_a_call_the_skipping_and_the_one_refusal():
     tm.run(scenario())
 
 
+def test_the_root_is_a_target_of_construct_cancel_and_answer():
+    """R15: `Sessions`, the root, stands for every tree — `construct` starts
+    every startable job of the forest, `answer` on it is `NoQuestionPending`,
+    `cancel_construct` cancels the caller's runs forest-wide — in place of
+    the old `ProtectedNode`."""
+    async def scenario():
+        f, tools, n = theories()
+        me = Agent("main", True)
+        startable = [node for node in f._tree_order()
+                     if node.job() is not None and node.job().can_start()]
+        assert startable                                       # the fixture has some
+        await tools["construct"].run(me, {"node_ids": ["Sessions"]})
+        assert all(node.job().outcome is RUNNING and node.job().owner is me for node in startable)
+        with pytest.raises(NoQuestionPending):
+            await tools["answer"].run(me, {"node_id": "Sessions", "answer": {"verdict": "accept"}})
+        await tools["cancel_construct"].run(me, {"node_ids": ["Sessions"]})
+        assert not any(node.job() is not None and node.job().outcome is RUNNING
+                       for node in f._tree_order())
+        await settled(f)
+    tm.run(scenario())
+
+
 def test_edit_writes_auto_construct_on_each_new_nodes_job():
     """TOOL_SCHEMAS §1, MODULE_STRUCTURE §4.2: `edit`'s `auto_construct` is
     written on every new node's construction job after `gen`, off when

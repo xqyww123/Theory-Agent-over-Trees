@@ -120,7 +120,7 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
         """The construction jobs of the nodes the ids name — a non-leaf node
         standing for every node under it — each once, in tree order, and
         the named nodes; `ConstructNotSupported` when there is none."""
-        named = [_resolve(forest, id) for id in ids]
+        named = [_resolve(forest, id, root_ok=True) for id in ids]   # the root stands for every tree (CI §5)
         nodes = dict.fromkeys(n for root in named for n in root._tree_order())
         jobs = [job for n in nodes if (job := n.job()) is not None]
         if not jobs:
@@ -196,7 +196,7 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
 
     async def run_answer(agent: Agent, arguments: dict[str, Any]) -> str:
         node_id = arguments["node_id"]
-        node = _resolve(forest, node_id)
+        node = _resolve(forest, node_id, root_ok=True)       # the root answers NoQuestionPending (CI §5)
         job = node.job()
         if job is None or job.pending_question is None:
             raise NoQuestionPending(node_id)
@@ -344,10 +344,12 @@ def _operation(opr: str, target: str) -> Generator[str]:
 
 
 def _resolve(forest: Forest, id: str, *, root_ok: bool = False) -> Node:
-    """The node an id names — one the call edits: `Sessions` only where the
-    call may take the root, `ProtectedNode` elsewhere (TOOL_SCHEMAS.md §1,
-    §2).  `_location` is the one caller that says `root_ok`; a tool that
-    reads, and so may name the root, must not resolve through here."""
+    """The node an id names: `Sessions` only where the caller says
+    `root_ok` — `into` for `_location`, and `construct`/`cancel_construct`/
+    `answer`, for which the root stands for every tree (CI §5) —,
+    `ProtectedNode` elsewhere (TOOL_SCHEMAS.md §1, §2).  A tool that reads
+    the root (`recall`, `evaluate_to`) resolves through `forest.resolve`,
+    not here."""
     node = forest.resolve(id)
     if node is forest and not root_ok:
         raise ProtectedNode(id)

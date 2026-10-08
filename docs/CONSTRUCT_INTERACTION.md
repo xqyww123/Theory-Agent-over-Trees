@@ -305,12 +305,16 @@ takes no lock; the table from a job's id to the job is the process's —
 the report arrives on a pooled connection of the RPC host's, which
 belongs to no conversation — and the job holds the `Conversation` it
 was made in, through which the report reaches the conversation and its
-log.
-A report that carries a `Bug` raises `TAT_InternalError` with the
-`Bug`'s message before the job is looked up, on its node or off it, and
+log. A job is in the table from its start (`start_evaluation_job`
+registers it just before the work begins) until its report or a drop:
+every drop discards it (§4.2), so a report whose job the table no longer
+holds — dropped, or its conversation already ended — is **nobody's**,
+and is ignored whole, a `Bug` included: nothing is stored, nothing is
+told, the conversation does not end.
+For a job the table still holds — one still on its node — a report that
+carries a `Bug` raises `TAT_InternalError` with the `Bug`'s message and
 so enters the ending (§9): `_finished` never sees it, nothing is stored
-and nothing is told to the starter.
-When the job with this id is still on its node, the body calls
+and nothing is told to the starter. Otherwise the body calls
 the job's `_finished(errors)`, then reads `outcome` — on `FAILED` it
 posts `failure_notification` to the starter and, under automatic
 construction, starts the node's construction job (above); a success is
@@ -343,8 +347,9 @@ report is ignored, as above.
 ### 3.4 Messages and questions
 
 A message has a recipient, a text, whether it interrupts the recipient's
-`check_construct`, and optionally what it comes from — an evaluation
-job, or a construction job's run — and the question it carries.
+`check_construct`, optionally what it is about — its **subject**: an
+evaluation job, or a construction job's run, asked at delivery whether
+the message still stands — and the question it carries.
 Anything may post one. A message is delivered at the tool boundary,
 after the body of the recipient's next tool result, whatever the tool
 (§5): the handler takes the mailbox only after its cancellation
@@ -363,9 +368,13 @@ run and are always delivered.
 The framework's notifications: a construction job finished
 (`finished_notification`) or was cancelled by the framework
 (`cancelled_notification`), both interrupting; an evaluation job failed
-(`failure_notification`, carrying the job — or none when the failure
-started the node's construction, whose `start` drops the job), not
-interrupting; at delivery the failures of one class are merged into one
+(`failure_notification`), not interrupting. A failure notification
+carries the facts its merge needs — the class that words it, the node it
+is for, whether the failure started that node's construction — fixed at
+posting, so the merge needs no live job; its subject is the job while
+the failure did not start the construction, and none — it then always
+stands — when it did, the construction's `start` having dropped the job.
+At delivery the failures of one class are merged into one
 sentence for the nodes whose construction the failure started and one
 for the others. A job
 class posting a notification of its own sets the flag itself. Questions
@@ -535,8 +544,9 @@ changed had its job dropped and, when the walk reran it, a new one
 started, so every job waited for belongs to a current context.
 
 - `construct`: the nodes of the call are the nodes its ids name and,
-  for a non-leaf node, every node under it, those without a construction
-  job left out; no class arguments. On each, `auto_construct` is written
+  for a non-leaf node, every node under it — `Sessions`, the root,
+  standing for every tree —, those without a construction job left out;
+  no class arguments. On each, `auto_construct` is written
   as the call gives it; each whose job `can_start()` is started, the
   caller its owner; a node that cannot be started now — not `ready`,
   already constructed, running — is skipped, not refused, and its mark
@@ -619,7 +629,8 @@ started, so every job waited for belongs to a current context.
   then evaluation titles, alphabetical within. A return at the deadline
   has the same shape as any other. No quickview.
 - `answer`: refused when no question of a run of the caller's waits on
-  the node — no construction job, a job not running, a run that has
+  the node — no construction job (`Sessions`, the root, among them), a
+  job not running, a run that has
   asked nothing — with `` `theory_X.definition_f` has no question
   waiting for an answer. `` (`NoQuestionPending`, the framework's
   sentence), when the question is another agent's run's

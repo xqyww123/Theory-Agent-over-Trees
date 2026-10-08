@@ -78,8 +78,8 @@ class Agent:
 
 # --- messages (CONSTRUCT_INTERACTION §3.4)
 
-class Source(Protocol):
-    """What a message comes from — an evaluation job, or a construction
+class Subject(Protocol):
+    """What a message is about — an evaluation job, or a construction
     job's run — asked at delivery whether the message still stands."""
 
     def dropped_for(self, message: Message) -> str | None:
@@ -90,14 +90,26 @@ class Source(Protocol):
 @dataclass(frozen=True)
 class Message:
     """A message: its recipient, its text, whether it interrupts the
-    recipient's `check_construct`, and optionally what it comes from — an
+    recipient's `check_construct`, and optionally what it is about — an
     evaluation job, or a construction job's run — and the question it
     carries."""
     recipient: Agent
     text: str
     interrupts: bool
-    source: Source | None = None
+    subject: Subject | None = None
     question: Interactive_Question | None = None
+    failure: Failure | None = None
+
+
+@dataclass(frozen=True)
+class Failure:
+    """What a failure notification carries for its delivery-time merge
+    (§3.4), fixed at posting so the merge needs no live job: the class that
+    words it, the node it is for, whether the failure started that node's
+    construction."""
+    job_class: type[Evaluation_Job]
+    node_id: str
+    automatic: bool
 
 
 def post(log: Log, message: Message) -> None:
@@ -108,14 +120,14 @@ def post(log: Log, message: Message) -> None:
     log.job.message_posted(
         recipient=message.recipient.identity,
         kind="notification" if message.question is None else "question",
-        source=repr(message.source) if message.source is not None else None,
+        source=repr(message.subject) if message.subject is not None else None,
         interrupts=message.interrupts, text=message.text)
     message.recipient.wake()
 
 
 def _dropped_for(message: Message) -> str | None:
     """Why delivery would drop the message now, or None while it stands."""
-    return message.source.dropped_for(message) if message.source is not None else None
+    return message.subject.dropped_for(message) if message.subject is not None else None
 
 
 def waiting(agent: Agent) -> list[str]:
@@ -126,7 +138,7 @@ def waiting(agent: Agent) -> list[str]:
 
 def deliver(log: Log, agent: Agent) -> list[str]:
     """Take the agent's mailbox: the texts its tool result carries after the
-    body's, less each message its source says no longer stands — a run no
+    body's, less each message its subject says no longer stands — a run no
     longer its job's, a question no longer pending — recorded
     `message_dropped` (§3.4).  Called by the tool boundary alone, past its
     cancellation checkpoint (MODULE_STRUCTURE §4.6)."""
@@ -273,7 +285,7 @@ def with_message(header: str, message: str) -> str:
 
 
 class _Run:
-    """One run of a construction job — the source of the run's messages
+    """One run of a construction job — the subject of the run's messages
     (§3.4): a message stands unless the run was cancelled, so is no
     longer its job's, or its question, if it carries one, is no longer
     the job's pending question.  `attach` is an evaluation job attached
@@ -590,7 +602,7 @@ class Construction_Job(ABC):
 
     def _post(self, question: Interactive_Question, run: _Run) -> None:
         post(self._log_of_conversation, Message(self._owned_by(), self.question_message(question),
-                                                interrupts=True, source=run, question=question))
+                                                interrupts=True, subject=run, question=question))
 
     @final
     def _withdraw(self) -> None:
@@ -676,14 +688,16 @@ class Evaluation_Job(ABC):
     """The job an evaluation starts on a node it passes (CONSTRUCT_INTERACTION
     §3.3): the class builds it, does the work through its own ML callback
     and writes `outcome`; the framework attaches it, starts it, reads the
-    outcome and drops it.  The job is in the process's table from its
-    making (`id`) until its report, which `job_finished` hands to
-    `_report`."""
+    outcome and drops it.  The job holds a process-unique `id` from its
+    making; it is in the process's table only from its start
+    (`start_evaluation_job`, which `register`s it just before the work
+    begins) until its report or drop, so a report for a dropped job is
+    nobody's (§3.3)."""
 
     def __init__(self, node: Node, starter: Agent | None):
         self.node = node
         self.starter = starter                   # None when never started
-        self.id = register(self)
+        self.id = next(_ids)
         self.outcome: Check_Outcome = RUNNING
         self._ended = asyncio.Event()            # settled by its report, or dropped
         self.started_construction = False        # its failure started the node's construction (§3.3)
@@ -748,8 +762,8 @@ class Evaluation_Job(ABC):
 
     @final
     def _report(self, errors: list[str]) -> None:
-        """The report's body for a job the table held (§3.3): a job off its
-        node is a dropped job's, `report_ignored`; else `_finished`, the
+        """The report's body, run only for a job the table still held — one
+        still on its node, since a drop discards it (§3.3): `_finished`, the
         outcome stored as the node's check in a transaction of its own,
         `evaluation_reported`, a failure posted to the starter — not
         interrupting, merged at delivery with the class's others; carrying
@@ -758,9 +772,6 @@ class Evaluation_Job(ABC):
         starter its owner — the job ended and the starter woken.  An
         outcome left `RUNNING` is a bug."""
         log = self.conversation.log.job
-        if self.node.evaluation_job() is not self:
-            log.report_ignored(id=self.id)
-            return
         self._finished(errors)
         outcome = self.outcome
         if not isinstance(outcome, (Passed, Failed)):
@@ -774,7 +785,8 @@ class Evaluation_Job(ABC):
                 construction, self.started_construction = job, True
             post(self.conversation.log, Message(
                 self.starter, self.failure_notification([self.node_id], self.started_construction),
-                interrupts=False, source=None if self.started_construction else self))
+                interrupts=False, subject=None if self.started_construction else self,
+                failure=Failure(type(self), self.node_id, self.started_construction)))
             if construction is not None:
                 construction.start(self.starter)          # drops this job from its node
         self.mark_ended()
@@ -813,15 +825,15 @@ def _merged_failures(messages: list[Message]) -> list[str]:
     texts: list[str] = []
     groups: dict[tuple[type, bool], tuple[int, list[str]]] = {}
     for message in messages:
-        job = message.source
-        if not isinstance(job, Evaluation_Job):
+        failure = message.failure
+        if failure is None:
             texts.append(message.text)
             continue
-        key = (type(job), job.started_construction)
+        key = (failure.job_class, failure.automatic)
         if key in groups:
-            groups[key][1].append(job.node_id)
+            groups[key][1].append(failure.node_id)
         else:
-            groups[key] = (len(texts), [job.node_id])
+            groups[key] = (len(texts), [failure.node_id])
             texts.append("")
     for (cls, automatic), (at, ids) in groups.items():
         texts[at] = cls.failure_notification(ids, automatic)
@@ -986,10 +998,11 @@ class Unchecked(Unfinished):
 # --- the evaluation jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)
 
 class Reported(Protocol):
-    """What the report needs of an evaluation job: the conversation it was
-    made in — the report arrives on a pooled connection, which belongs to
-    no conversation — and the body that takes the work's errors, none when
-    it passed."""
+    """What the report needs of an evaluation job: its `id` (the table's
+    key), the conversation it was made in — the report arrives on a pooled
+    connection, which belongs to no conversation — and the body that takes
+    the work's errors, none when it passed."""
+    id: int
     conversation: Conversation
 
     def _report(self, errors: list[str]) -> None: ...
@@ -1002,18 +1015,18 @@ _ids = itertools.count(1)
 _evaluation_jobs: dict[int, Reported] = {}
 
 
-def register(job: Reported) -> int:
-    """Enter `job` into the table under a fresh id, which its ML work is
-    forked with (`fork_job`): made before any work begins, so no report
-    arrives for a job the table does not hold."""
-    id = next(_ids)
-    _evaluation_jobs[id] = job
-    return id
+def register(job: Reported) -> None:
+    """Enter `job` into the table under its id, just before its ML work is
+    forked (`start_evaluation_job`, §3.3), so that no report arrives for a
+    job the table does not hold; discarded at every drop and at the
+    ending."""
+    _evaluation_jobs[job.id] = job
 
 
 def discard(id: int) -> None:
     """Take a job out of the table whose report will not come, or is not
-    wanted; one that is not there is not an error."""
+    wanted — every drop and the ending (§3.3); one that is not there is not
+    an error."""
     _evaluation_jobs.pop(id, None)
 
 
