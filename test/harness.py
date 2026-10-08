@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import traceback
 import uuid
-from collections.abc import AsyncGenerator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -299,13 +299,13 @@ class Harness:
 
     def __init__(self, logger: logging.Logger, directory: Path, plugin: str = PLUGIN,
                  registered: list[str] = PACKAGES, packages: list[str] | None = None,
-                 logic: str | None = None, dirs: Sequence[Path] = ()):
+                 logic: str | None = None):
         loop = asyncio.get_running_loop()
         self.logger = logger
         self.plugin = plugin                                # what `TAT_new -P` records
         self.registered = registered                        # what the plugin's registrations name: the wire's packages
         self.packages = registered if packages is None else packages   # what the conversations load
-        self.logic, self.dirs = logic, list(dirs)           # `isabelle TAT_mcp`'s -l and -d
+        self.logic = logic                                  # `isabelle TAT_mcp`'s -l (the base heap)
         self.launcher_directory = directory / "launcher"    # what `isabelle TAT_mcp` is started on
         self.log_path = directory / "isabelle_TAT_mcp.log"
         self.port = free_port()                             # the conversations' MCP port
@@ -478,8 +478,6 @@ class Harness:
                                 ["isabelle", "TAT_new", "-P", self.plugin, str(self.launcher_directory)],
                                 check=True)
         options = ["-p", str(self.port)] + (["-l", self.logic] if self.logic else [])
-        for directory in self.dirs:
-            options += ["-d", str(directory)]
         with self.log_path.open("wb") as log:
             self.child = subprocess.Popen(
                 ["isabelle", "TAT_mcp", *options, str(self.launcher_directory)],

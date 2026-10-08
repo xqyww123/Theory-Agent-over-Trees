@@ -18,7 +18,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
-Isabelle_Std/                 the plugin of Isabelle's standard commands, an Isabelle component of its own (§4.5): etc/settings, a ROOT declaring the session `TAT_Isabelle_Std`, TAT_Isabelle_Std.thy, and ML/ with one file per node class
+Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -1122,13 +1122,14 @@ against the declaration; `edit.py` runs it before the class's `gen`
 The node classes of Isabelle's standard commands (ARCHITECTURE §2.2)
 are one plugin, `Isabelle_Std`; `Session` and `Theory`, which carry the
 forest's structure, are the framework's and live in `model.py`
-(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The plugin's directory
-`Isabelle_Std/` is an Isabelle component of its own. Its `ROOT`
-declares the session `TAT_Isabelle_Std`, whose parent is `Minilang_AoA`
-and which imports the session `Theory_Agent_over_Trees`; TAT's own
-`ROOT` does not name it, since Isabelle refuses the whole session
-structure over a `ROOT` whose parent session is unknown, and TAT works
-where AoA is absent. Its theory `TAT_Isabelle_Std` imports
+(ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The plugin's theories
+and ML live under `Isabelle_Std/`. TAT's own `ROOT` declares the session
+`TAT_Isabelle_Std in Isabelle_Std`, whose parent is `Minilang_AoA` and
+which imports the session `Theory_Agent_over_Trees`. The parent being
+`Minilang_AoA`, TAT's whole session structure requires `Minilang_AoA` to
+resolve — so TAT requires Isa-Mini present, which is no loss, since the
+`aoa` proof method the plugin needs lives there and TAT without it does
+nothing (EVALUATOR_DESIGN §5). Its theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and
 `Minilang_AoA.Minilang_AoA` and loads one ML file per node class from
 `Isabelle_Std/ML/`; the Python half is the subpackage
@@ -1136,7 +1137,8 @@ where AoA is absent. Its theory `TAT_Isabelle_Std` imports
 (§2.5), one module per class. A working directory takes the plugin with
 `isabelle TAT_new -P TAT_Isabelle_Std.TAT_Isabelle_Std` (§5) and is
 launched on the base heap `Minilang_AoA` (`-l`), so that AoA's theory is
-not loaded from source at every launch. The plugin declares the import
+not loaded from source at every launch; `TAT_Isabelle_Std` being on the
+session search path, no `-d` is needed. The plugin declares the import
 `Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined, for the
 forest's theories (PLUGIN_SYSTEM §1, node_classes/THEOREM.md §5).
 

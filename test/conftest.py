@@ -5,7 +5,6 @@ import functools
 import inspect
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
-from pathlib import Path
 
 import pytest
 
@@ -65,8 +64,7 @@ async def std_harness(anyio_backend, tmp_path_factory):
     loading the package its registrations do not name yet."""
     async with started(H.Harness(logging.getLogger("tat.test.std_harness"), tmp_path_factory.mktemp("std_harness"),
                                  plugin="TAT_Isabelle_Std.TAT_Isabelle_Std", registered=[],
-                                 packages=["isabelle_theory_agent.std"], logic="Minilang_AoA",
-                                 dirs=[Path(__file__).resolve().parent.parent / "Isabelle_Std"])) as h:
+                                 packages=["isabelle_theory_agent.std"], logic="Minilang_AoA")) as h:
         yield h
 
 
