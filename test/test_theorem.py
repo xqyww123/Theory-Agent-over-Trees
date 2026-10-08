@@ -17,7 +17,8 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
-from isabelle_theory_agent import edit, model as M, plugin
+from harness import text_of
+from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadTheoremNodeParent, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.std import statement, theorem
 from isabelle_theory_agent.std.theorem import Statement, Theorem
@@ -235,3 +236,66 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
                                   "    fixes n", '    shows "length (rev xs) = length xs"', "    sorry")
     (r,) = insert(f, x, 2, [lemma("r", english="Bang!", kind="corollary", for_any=(), premises=())])
     assert emitted(r)[:2] == expected("  text ‹Corollary r. Bang!›", "  corollary r:")
+
+
+# --- the evaluation, in the plugin's run of the harness (§6, §8) -----------------
+
+def over_the_wire(*theorems):
+    """session_TAT_Std > theory_TAT_Std_A > the theorems, as the `edit` tool takes them."""
+    return ts.session("TAT_Std", ts.theory("TAT_Std_A") | {"children": list(theorems)})
+
+
+async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversation):
+    """§6 through `TAT.Theorem.evaluate`: a theory of theorems built through
+    `edit` and evaluated, each statement admitted — the `goal_state` slot
+    holding the open goal and the resulting slot the admitted fact; a
+    statement Isabelle refuses makes its node an obstacle with Isabelle's
+    message, `goal_state` empty; a reserved name recorded; the rows of §8
+    under `recall`; the plugin's declared import in the theory's header.
+    Last, the callback alone: a failure empties a `goal_state` an earlier
+    run had written."""
+    forest, kinds = std_conversation.forest, std_conversation.kinds
+    assert set(theorem.KINDS) <= set(kinds)
+    async with std_conversation.client() as session:
+        result = await session.call_tool("edit", {
+            "action": "append", "target_id": "Sessions", "evaluate": True,
+            "constructs": [over_the_wire(
+                lemma("rev_length"),
+                lemma("shows_it", for_any=({"name": "shows", "type": "'a list"},), premises=(),
+                      conclusion="length (rev shows) = length shows", english="A reserved name"),
+                lemma("clash", for_any=({"name": "xs", "type": "'a list"},), premises=(),
+                      conclusion="xs = (0::nat)", english="Refused"))]})
+        text = text_of(result)
+        assert not result.isError and text.count("Error:") == 1, text
+        (s,) = forest.sub_nodes
+        (x,) = s.sub_nodes
+        p, q, r = x.sub_nodes
+        assert x.import_sessions == ["HOL", "Minilang_AoA"]                 # the declared import ran
+        for node in (p, q):
+            assert isinstance(node._status, M.Ready) and node._status.messages == ()
+            assert await node.goal_state.is_initialized() and await node.resulting_state().is_initialized()
+        assert (p.reserved_names, q.reserved_names) == (frozenset(), frozenset({"shows"}))
+        assert isinstance(r._status, M.CannotEvaluate) and not await r.goal_state.is_initialized()
+        assert r._status.messages[0].unicode.startswith("Type unification failed"), r._status.messages
+        recalled = await session.call_tool("recall", {"node_id": "theory_TAT_Std_A"})
+        lines = text_of(recalled).splitlines()
+        assert not recalled.isError and lines[:12] == [
+            "- theory_TAT_Std_A (incomplete)",
+            "  imports: Main",
+            "  - lemma_rev_length (valid statement)",
+            "    ⋀xs::'a list. xs ≠ [] ⟹ length (rev xs) = length xs",
+            "    The length of a reversed list",
+            "  - lemma_shows_it (valid statement)",
+            "    ⋀shows::'a list. length (rev shows) = length shows",
+            "    A reserved name",
+            "  - lemma_clash (invalid statement)",
+            "    ⋀xs::'a list. xs = (0::nat)",
+            "    Refused",
+            "    Error:"], lines
+        assert lines[12].startswith("      Type unification failed"), lines
+    passed, messages, reserved = await isabelle_driver.call(
+        forest.conversation, "TAT.Theorem.evaluate",
+        (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(),
+         ("lemma", "again", [["xs", "'a list"]], [], "xs = (0::nat)")))
+    assert (passed, reserved) == (False, []) and messages
+    assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()

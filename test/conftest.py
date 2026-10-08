@@ -4,7 +4,8 @@
 import functools
 import inspect
 import logging
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path
 
 import pytest
 
@@ -36,12 +37,11 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest.fixture(scope="session")
-async def harness(anyio_backend, tmp_path_factory):
-    """One `isabelle TAT_mcp` for the run, started when first asked for: three
-    stages, each releasing itself in reverse when the run ends."""
+@asynccontextmanager
+async def started(h: H.Harness):
+    """The harness's three stages, each releasing itself in reverse when the
+    run ends."""
     async with AsyncExitStack() as stack:
-        h = H.Harness(logging.getLogger("tat.test.harness"), tmp_path_factory.mktemp("harness"))
         h.start_host()
         stack.enter_context(h.server)
         await h.start_child()
@@ -51,11 +51,40 @@ async def harness(anyio_backend, tmp_path_factory):
         yield h
 
 
+@pytest.fixture(scope="session")
+async def harness(anyio_backend, tmp_path_factory):
+    """One `isabelle TAT_mcp` for the run, started when first asked for."""
+    async with started(H.Harness(logging.getLogger("tat.test.harness"), tmp_path_factory.mktemp("harness"))) as h:
+        yield h
+
+
+@pytest.fixture(scope="session")
+async def std_harness(anyio_backend, tmp_path_factory):
+    """The run of the plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5): on the
+    base heap `Minilang_AoA`, the plugin's directory given, the conversations
+    loading the package its registrations do not name yet."""
+    async with started(H.Harness(logging.getLogger("tat.test.std_harness"), tmp_path_factory.mktemp("std_harness"),
+                                 plugin="TAT_Isabelle_Std.TAT_Isabelle_Std", registered=[],
+                                 packages=["isabelle_theory_agent.std"], logic="Minilang_AoA",
+                                 dirs=[Path(__file__).resolve().parent.parent / "Isabelle_Std"])) as h:
+        yield h
+
+
+HARNESSES = ("harness", "std_harness")
+
+
 @pytest.fixture
 async def conversation(harness, request, tmp_path):
     """A fresh conversation for the case, on a fresh working directory."""
     yield await harness.converse(tmp_path, request.node.nodeid)
     await harness.await_ending()
+
+
+@pytest.fixture
+async def std_conversation(std_harness, request, tmp_path):
+    """A fresh conversation of the plugin's run."""
+    yield await std_harness.converse(tmp_path, request.node.nodeid)
+    await std_harness.await_ending()
 
 
 def pytest_configure(config):
@@ -64,28 +93,29 @@ def pytest_configure(config):
         "fixture closure; written by hand only on such a case, to override its deadline")
 
 
-def _under_deadline(item, seconds):
+def _under_deadline(item, seconds, harness_fixture):
     original = item.obj
 
     @functools.wraps(original)
     async def case(**kwargs):
-        with item.funcargs["harness"].deadline(seconds, f"the body of {item.nodeid}"):
+        with item.funcargs[harness_fixture].deadline(seconds, f"the body of {item.nodeid}"):
             await original(**kwargs)
     return case
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
-    """Using the harness is the marker.  Every such case is `async def` and
+    """Using a harness is the marker.  Every such case is `async def` and
     runs under a deadline; the Isabelle-backed cases run last."""
     for item in items:
         marker = item.get_closest_marker("isabelle")
-        if isinstance(item, pytest.Function) and "harness" in item.fixturenames:
+        used = [name for name in HARNESSES if name in item.fixturenames] if isinstance(item, pytest.Function) else []
+        if used:
             if not inspect.iscoroutinefunction(item.obj):
                 raise pytest.UsageError(f"{item.nodeid}: an Isabelle-backed case must be `async def`")
             seconds = marker.kwargs.get("deadline", H.DEADLINE) if marker else H.DEADLINE
             item.add_marker(pytest.mark.isabelle)
-            item.obj = _under_deadline(item, seconds)
+            item.obj = _under_deadline(item, seconds, used[0])
         elif marker is not None:
             raise pytest.UsageError(f"{item.nodeid}: marked `isabelle` but uses no harness")
     items.sort(key=lambda item: item.get_closest_marker("isabelle") is not None)

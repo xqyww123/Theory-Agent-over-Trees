@@ -10,3 +10,6 @@ build/
 *.egg-info/
 .tmp/
 *.swp
+*.proof-store
+*.proof-store.lock
+*.proof-store.tmp*

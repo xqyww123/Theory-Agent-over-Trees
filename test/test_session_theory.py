@@ -79,7 +79,11 @@ class Forest_Under_Test(M.Forest):
 
 
 @pytest.fixture(autouse=True)
-def table(monkeypatch):
+def table(monkeypatch, request):
+    # An Isabelle-backed case talks to the real wire; the fake would answer
+    # `state_exists` and the checks in place of Isabelle (conftest `HARNESSES`).
+    if any(name in request.fixturenames for name in ("harness", "std_harness")):
+        return
     tm.TABLE.clear()
     tm.TABLE.install(monkeypatch)
     async def check_new_theory_short_name(conversation, name):

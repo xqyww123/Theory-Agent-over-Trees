@@ -116,10 +116,4 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
 
 end
 
-(*** Theorem ***)
-
-(*** Define ***)
-
-(*** Section ***)
-
 end
