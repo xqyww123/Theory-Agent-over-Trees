@@ -698,6 +698,23 @@ def test_the_summary_names_five_ids_and_counts_six_each_title_in_its_number():
         "    1 node not evaluated: lemma_E"]
 
 
+def test_the_summary_s_groups_come_construction_titles_first_whatever_the_tree_order():
+    """PRINT.md §2, CONSTRUCT_INTERACTION §6: the groups in the order
+    construction titles, then evaluation titles, alphabetical within — a
+    node owing its check before one owing its construction in tree order
+    does not put the checks first."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    s = section(x, "S")
+    leaf(Lemma, s, "lemma", "K", status=READY).job().outcome = jobs.Succeeded("by simp")   # owes its check
+    leaf(Lemma, s, "lemma", "A", status=READY)                                             # owes its construction
+    rendered = render(f, f, RECALL)
+    at = rendered.index("  - section_S (incomplete)")
+    assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_A",
+                                 "    1 proof check incomplete: lemma_K"]
+
+
 class Constructed_Section(Section):     # a nesting node that owes a construction of its own
     construction_job_class = Proof_Construction
 

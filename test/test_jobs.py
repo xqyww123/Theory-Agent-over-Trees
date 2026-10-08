@@ -707,6 +707,30 @@ def test_the_bound_holds_a_run_which_is_running_meanwhile():
     run(scenario())
 
 
+def test_the_bound_holds_a_run_s_place_while_it_waits_for_an_answer():
+    """§3.2: the place is held for the whole of `_run`, the wait in `ask`
+    included — a second run begins only once the first's question is
+    answered and its run has returned."""
+    async def scenario():
+        f = Bounded(CONN)
+        f.conversation.ending.forest = f
+        thy = add(f, Block(f, slot(), "Theory", slot()))
+        p = add(thy, Lemma(thy, slot(), "P"), "lemma")
+        q = add(thy, Lemma(thy, slot(), "Q"), "lemma")
+        owner = stand_ins.agent(f.conversation)
+        p.job().ends_with = asking
+        p.job().release.set()
+        q.job().release.set()
+        p.job().start(owner)
+        q.job().start(owner)
+        await until(owner, lambda: p.job().pending_question is not None)
+        assert (p.job().began, q.job().began) == (1, 0) and q.job().outcome is RUNNING
+        p.job().receive_answer({"verdict": "accept"})
+        await until(owner, lambda: q.job().outcome is not RUNNING)
+        assert (p.job().outcome, q.job().outcome) == (Succeeded("by simp"), Succeeded("by simp"))
+    run(scenario())
+
+
 # --- the evaluation jobs (§3.3; ARCHITECTURE §4.1) ---------------------------
 
 async def report(job, errors=()):

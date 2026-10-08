@@ -379,8 +379,8 @@ Evaluation stopped at definition_f.
 When the stop is the order constraint's, its sentence (§3) follows on
 the line after the stop line — after an edit's `Done` line just the same.
 
-A successful `construct` or `cancel_construct` opens instead with the job
-class's `starting_notice` or `cancelling_notice`, composed from its title
+A successful `construct` or `cancel_construct` opens instead with each job
+class's `starting_notice` or `cancelling_notice`, one per class, composed from its title
 by default (CONSTRUCT_INTERACTION §3.2), above the quickview. Each names
 every node the call started or cancelled: one node; two or three, `on`
 repeated and `and` before the last; more, a header and one full id per

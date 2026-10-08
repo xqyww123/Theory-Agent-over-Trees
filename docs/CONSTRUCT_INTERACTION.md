@@ -162,7 +162,7 @@ not.
 | `repeat_question()` | framework | posts the pending question to the owner again when the mailbox no longer holds it — `check_construct`'s delivery of a question again (§5) |
 | `start(owner)` | framework, synchronous | called only when `can_start()`: records the owner; drops the node's evaluation job, clearing the stored check; sets `RUNNING`; stores the node in a transaction of its own; spawns the run |
 | `cancel(reason)` | framework, synchronous | detaches the run, withdraws its pending question (§3.4), sets `NOT_STARTED`, cancels the task; `reason` is `NODE_DELETED`, `NODE_AMENDED` or `CONTEXT_CHANGED` when the framework cancels, and the owner is then told, even when the owner deleted or amended the node itself; `cancel_construct` passes `None`, and nothing is told |
-| wording | class, overridable defaults from `title` | `starting_notice(nodes)`, `cancelling_notice(nodes)`, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
+| wording | class, overridable defaults from `title` | `starting_notice(ids)`, `cancelling_notice(ids)` — `ids` the nodes' full ids —, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed when the outcome is `FAILED`; `None` prints nothing |
 
 The defaults, for the title `proof construction`: `Started the proof
@@ -185,13 +185,17 @@ inherit none; `call` it inherits, the `construct`'s or none; waits for
 every earlier run's task of the job that has not unwound yet
 (`asyncio.wait` over them — an `await` of a cancelled task would cancel
 this run too); `result = await self._run()`, under the bound on runs
-when the conversation has one (THEOREM.md §7) — a run waiting for its
-place is `RUNNING`, and a cancellation while it waits detaches it like
-any other; then asks one thing: is
+when the conversation has one (THEOREM.md §7) — the place is held from
+the start of `_run` until it returns or its cancellation has propagated
+out of it, the wait in `ask` and a cancelled run's cleanup included; a
+run waiting for its place is `RUNNING`, and a cancellation while it
+waits detaches it like any other; then asks one thing: is
 the run still the job's? Every legitimate cancellation — `cancel`, by
 `cancel_construct`, the framework or the ending — detaches the run
 first, so a run that is no longer the job's is one somebody cancelled,
-and the wrapper does nothing. A run that is still the job's has ended
+and the wrapper neither settles, reports nor tells anything; what its
+cleanup raises is still its class's bug and enters the ending (§9) —
+lost when the ending is already entered. A run that is still the job's has ended
 on its own: a return settles it, in one synchronous stretch under no
 lock — records the outcome and the product, persists them, withdraws
 its pending question (§3.4), applies an attach made from inside `_run`
@@ -226,7 +230,7 @@ the instance, does the work, and writes the outcome.
 | `_start()` | hook, async, abstract | begins the work through the class's own ML callback, passing `self.id`, and returns at once; called by the framework once the job is on its node |
 | `_finished(errors)` | hook, default given | called by the framework on the ML report, synchronously, under no lock; default: `PASSED` on no errors, else `FAILED` with the errors joined by newlines |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed from a `FAILED` check's outcome whether or not a job is on the node; `None` prints nothing |
-| `failure_notification(nodes, automatic)` | class, abstract | the sentence its failure sends (§3.4) for these nodes — one, two or three, or more, in the forms of §5 — `automatic` saying that the failure started their construction |
+| `failure_notification(ids, automatic)` | class, abstract | the sentence its failure sends (§3.4) for the nodes these full ids name — one, two or three, or more, in the forms of §5 — `automatic` saying that the failure started their construction |
 
 **Where a job starts.** A node the walk **passes** is one it reaches in
 the `Evaluating` mode (MODULE_STRUCTURE §4.1) — rerun, or `ready` and
@@ -349,9 +353,10 @@ before then leaves the mailbox as it was, for the next call; a
 cancellation arriving in the moment between the taking and the
 client's reading of the result loses the messages, which TAT cannot
 see, MCP carrying no receipt. At delivery a message whose evaluation job is no longer on its node, or
-whose run is no longer its job's, or whose question is no longer its
+whose run was cancelled, or whose question is no longer its
 job's pending question, is dropped; a cancelled or dropped job so
-leaves no question or notification of its own behind. The two
+leaves no question or notification of its own behind, and a settled
+run's own notifications stand. The two
 notifications the framework posts about a construction job come from no
 run and are always delivered.
 
@@ -393,8 +398,9 @@ A job has at most one pending question; while it waits, no other message
 of that job arrives. `ask(question)` validates the schema — a failure is
 a bug in `_run` — posts the question to the owner's mailbox, and
 suspends the run until some `receive` returns `Answered`; the job then
-reads its data off the question object. A question asked instead is
-posted the same way. `receive` runs in the `answer` tool's body, under
+reads its data off the question whose `receive` accepted — a
+replacement being the class's own, built in its `receive`. A question
+asked instead is posted the same way. `receive` runs in the `answer` tool's body, under
 no lock, synchronously. A question stops pending when an answer to it
 is accepted, when its `ask` is cancelled, when the job is cancelled, and
 when the run settles; **withdrawing** it clears it as the job's pending
@@ -445,7 +451,7 @@ shown to everyone.
 | --- | --- | --- |
 | `construct` | `node_ids`, `auto_construct` | completed at start: `Start the construction jobs of nodes, such as {construction titles}.` — the titles plural, distinct, alphabetical, joined with commas and `and`; with `Theorem` alone `Start the construction jobs of nodes, such as proof constructions.` |
 | `cancel_construct` | `node_ids`, `auto_construct` | `Cancel the running construction jobs of nodes.` |
-| `check_construct` | `wait_seconds` | completed at start: `Wait until any {construction titles} or all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` — each slot's titles distinct, alphabetical, the first slot's singular, the second's plural, joined with commas and `or` before the last; the `or all …` part absent when no evaluation job class is loaded; with no construction job class loaded `Wait until all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.`; with `Theorem` alone `Wait until any proof construction or all proof checks have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` |
+| `check_construct` | `wait_seconds` | completed at start: `Wait until any {construction titles} or all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` — each slot's titles distinct, alphabetical, the first slot's singular, the second's plural, joined with commas and `or` before the last; with no evaluation job class loaded, the `or all …` part absent and the verb singular: `Wait until any {construction titles} has finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.`; with no construction job class loaded `Wait until all {evaluation titles} have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.`; with `Theorem` alone `Wait until any proof construction or all proof checks have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.` |
 | `answer` | `node_id`, `answer` | `Answer the question a construction job asked you` |
 
 Argument descriptions: `node_ids`, a list of ids, required: `The ids of
@@ -546,7 +552,11 @@ started, so every job waited for belongs to a current context.
 
   The two lines take the forms of `check_construct`'s state lines: one
   node; two or three, `on` repeated and `and` before the last; more, a
-  header and one full id per line; and a fixed sentence for none.
+  header and one full id per line; and a fixed sentence for none. Each
+  is one line or list per job class, worded by that class, so two
+  classes of one title give two; the classes in the order their first
+  nodes come in tree order. The `Automatically started` line (§3.3) is
+  one per class the same way.
 
   ```
   Started the proof construction on `theory_X.lemma_P`; call `check_construct` before you exit.
@@ -584,7 +594,8 @@ started, so every job waited for belongs to a current context.
   grouped by title and situation — a construction job waiting for its
   answer or still running, an evaluation job still running — each node
   once, one sentence or list per group, groups in the order construction
-  titles then evaluation titles, alphabetical within; up to three nodes
+  titles then evaluation titles, alphabetical within, a construction
+  title's waiting group before its running group; up to three nodes
   as one sentence with `on` repeated and `and` before the last,
   `The proof construction on \`theory_X.lemma_P\` and on
   \`theory_X.lemma_Q\` is waiting for your answer.` / `… is still
@@ -604,8 +615,9 @@ started, so every job waited for belongs to a current context.
 
   and, for a title the caller had a job of during the call and now has
   none of, `All proof constructions have finished.` / `All proof checks
-  have finished.`. A return at the deadline has the same shape as any
-  other. No quickview.
+  have finished.` — one line per such title, construction titles first,
+  then evaluation titles, alphabetical within. A return at the deadline
+  has the same shape as any other. No quickview.
 - `answer`: refused when no question of a run of the caller's waits on
   the node — no construction job, a job not running, a run that has
   asked nothing — with `` `theory_X.definition_f` has no question
@@ -656,7 +668,7 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
 - **The failure blocks.** When a node is detailed (PRINT.md §2) and is
   not itself an obstacle, the framework prints after the class's
   `print_fields`, for the construction job when its outcome is `FAILED`
-  and for the check when `check_outcome()` is `FAILED`, the job class's
+  and for the check when `check_outcome()` is `FAILED`, in that order, the job class's
   `failure_header(failure)` — `failure` the `FAILED` outcome — and
   the message on the lines below, one level (two spaces) deeper; a `None` header
   prints nothing. A header ends in a colon; when the message is empty
@@ -669,7 +681,8 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
   `incomplete` nesting node at the last printed depth (3) writes one
   line per group: the nodes below it that are `ready` grouped by the
   title their `Unfinished` carries — the construction job's, or the
-  evaluation job class's; one group per title —, then the nodes `failed`, then the
+  evaluation job class's; one group per title, construction titles
+  first, then evaluation titles, alphabetical within —, then the nodes `failed`, then the
   nodes `not evaluated`, nesting nodes counted among them; ids in tree
   order, up to five, relative to the node; more than five the count
   alone; a group with no members writes no line; no period; not in a
@@ -897,8 +910,8 @@ subagents as much as for the main conversation
   transcripts matches — each hook matched with one boundary, timestamped
   within 10 seconds before the hook or appearing within 10 seconds after
   it — `TAT received a PostCompact hook but found no compaction boundary
-  in any transcript within 10 seconds; its reading of Claude Code's
-  transcripts cannot be trusted.`; a `PostCompact` for a session TAT
+  in its session's transcripts within 10 seconds; its reading of Claude
+  Code's transcripts cannot be trusted.`; a `PostCompact` for a session TAT
   does not read yet starts no check. Neither check clears a seen set.
 
 `SessionEnd` is not handled: the process's end is the ending's (§9),

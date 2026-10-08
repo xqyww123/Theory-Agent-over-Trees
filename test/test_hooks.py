@@ -818,7 +818,7 @@ def test_a_post_compact_is_matched_with_a_boundary_of_its_session_or_fails_the_s
     announcement still, and none for an agent nothing was shown to.  A
     `PostCompact` for a session TAT does not read starts no check."""
     assert post_compact_without_boundary(Claude_Code_Server.boundary_wait) == (
-        "TAT received a PostCompact hook but found no compaction boundary in any transcript within "
+        "TAT received a PostCompact hook but found no compaction boundary in its session's transcripts within "
         "10 seconds; its reading of Claude Code's transcripts cannot be trusted.")
     monkeypatch.setattr(Claude_Code_Server, "boundary_wait", 0.4)
     monkeypatch.setattr(Claude_Code_Server, "boundary_poll", 0.05)

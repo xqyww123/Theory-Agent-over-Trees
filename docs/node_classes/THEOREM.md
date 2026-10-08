@@ -309,8 +309,8 @@ and the budget are what Isabelle's configuration gives AoA
 (`AoA_driver`, Minilang's default budget), TAT setting neither. The
 report brings the product: the method text and its two times in the
 store's standard-machine form, which `hammer_or_AoA` is extended to
-return beside the text. How many runs are inside their AoA call at once
-is bounded by the Isabelle environment variable
+return beside the text. How many runs are inside `_run` at once
+(CONSTRUCT_INTERACTION §3.2) is bounded by the Isabelle environment variable
 `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, unbounded when it is unset or
 empty; a value that is not a positive integer refuses the start, with
 `TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a positive

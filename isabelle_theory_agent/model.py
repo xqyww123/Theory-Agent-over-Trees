@@ -812,8 +812,9 @@ class Node(ABC):
     def _print_summary(self, indent: int, out: TextIO) -> None:
         """The summary under a cut-off `incomplete` nesting node (PRINT.md
         §2): one line per group with members — the nodes below that are
-        `ready`, by the title their `Unfinished` carries, then the nodes
-        `failed`, then the nodes `not evaluated` — ids in tree order,
+        `ready`, by the title their `Unfinished` carries, construction
+        titles first, then evaluation titles, alphabetical within; then the
+        nodes `failed`, then the nodes `not evaluated` — ids in tree order,
         relative to this node, up to five, the count alone past five."""
         owed: dict[str, tuple[Unfinished, list[Node]]] = {}
         failed: list[Node] = []
@@ -827,7 +828,8 @@ class Node(ABC):
             elif node._operations_ready() and (unfinished := node._unfinished()) is not None:
                 owed.setdefault(unfinished.title(plural=True), (unfinished, []))[1].append(node)
         groups = [(f"{unfinished.title()} incomplete", f"{unfinished.title(plural=True)} incomplete", nodes)
-                  for unfinished, nodes in owed.values()]
+                  for unfinished, nodes in sorted(owed.values(), key=lambda owing: (
+                      not isinstance(owing[0], Unfinished_Construction), owing[0].title()))]
         groups += [("node failed", "nodes failed", failed), ("node not evaluated", "nodes not evaluated", not_evaluated)]
         for singular, plural, nodes in groups:
             if nodes:

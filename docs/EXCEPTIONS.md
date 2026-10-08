@@ -111,7 +111,8 @@ The same line sorts what node classes raise:
 - a construction job's `_run` has no tool call on the stack: it reports
   through the messages of CONSTRUCT_INTERACTION §3.4 and, while its run is
   still the job's, anything it raises is its class's bug, a cancellation
-  it brought on itself included (CONSTRUCT_INTERACTION §3.2); so is
+  it brought on itself included, and so is what its cleanup raises after
+  a cancellation (CONSTRUCT_INTERACTION §3.2); so is
   anything its `_on_context_change` raises, `TAT_Error` included, which
   the status setter fires through `_completed` as it fires a completed
   hook; so is

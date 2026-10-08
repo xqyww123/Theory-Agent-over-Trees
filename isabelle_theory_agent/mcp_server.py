@@ -84,7 +84,7 @@ def boundary_before_announcement(identity: str) -> str:
 
 
 def post_compact_without_boundary(wait: float) -> str:
-    return ("TAT received a PostCompact hook but found no compaction boundary in any transcript within "
+    return ("TAT received a PostCompact hook but found no compaction boundary in its session's transcripts within "
             f"{wait:g} seconds; its reading of Claude Code's transcripts cannot be trusted.")
 
 

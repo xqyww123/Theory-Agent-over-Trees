@@ -109,13 +109,14 @@ writes under a line: after `print_fields`, the operations' messages
 (§3), and then (CONSTRUCT_INTERACTION §6), when the
 node is detailed and not itself an obstacle, one **failure block** for
 the construction job when its outcome is `FAILED` and one for the check
-when `check_outcome()` is `FAILED` — the job class's `failure_header`, then the
+when `check_outcome()` is `FAILED`, in that order — the job class's `failure_header`, then the
 message one level deeper, the header's colon a period when the message
 is empty; a `None` header prints nothing; on
 every detailed rendering, the seen set aside — and, under `Recall`, below
 an `incomplete` nesting node at the last printed depth, the **summary**:
 one line per group that has members — the nodes below it that are
-`ready`, grouped by the title their `Unfinished` carries,
+`ready`, grouped by the title their `Unfinished` carries, construction
+titles first, then evaluation titles, alphabetical within;
 then the nodes `failed`, then the nodes `not evaluated`, nesting nodes
 counted among them; ids in tree order, relative to the node, up to five,
 the count alone past five; no period:

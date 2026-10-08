@@ -246,8 +246,11 @@ nodes' automatic construction takes, and leaving it out means off.
 `check_construct`. Tool description, completed at start: `Wait until any
 {construction titles, singular} or all {evaluation titles, plural} have
 finished, or a message arrives. Returns at once when nothing is running.
-To ensure all jobs have finished, call it repeatedly.` — the `or all …`
-part absent when no evaluation job class is loaded. With no
+To ensure all jobs have finished, call it repeatedly.` — with no
+evaluation job class loaded, the `or all …` part absent and the verb
+singular: `Wait until any {construction titles, singular} has finished,
+or a message arrives. Returns at once when nothing is running. To ensure
+all jobs have finished, call it repeatedly.` With no
 construction job class loaded: `Wait until all {evaluation titles,
 plural} have finished, or a message arrives. Returns at once when
 nothing is running. To ensure all jobs have finished, call it

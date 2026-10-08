@@ -197,7 +197,7 @@ def test_the_construct_tools_exist_by_the_job_classes_loaded():
     job class of either kind, `edit`'s `auto_construct` with a construction
     job class; the two completed descriptions with one and with several
     titles, `check_construct`'s in its three forms."""
-    tail = (" have finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs"
+    tail = (" finished, or a message arrives. Returns at once when nothing is running. To ensure all jobs"
             " have finished, call it repeatedly.")
     *_, tools = build()
     assert list(tools) == ["edit", "move", "delete", "recall", "evaluate_to"]
@@ -206,14 +206,17 @@ def test_the_construct_tools_exist_by_the_job_classes_loaded():
     *_, tools = build({**KINDS, "checked": Only_Checked})
     assert list(tools)[5:] == ["check_construct"]
     assert "auto_construct" not in tools["edit"].input_schema["properties"]
-    assert tools["check_construct"].description == "Wait until all proof checks" + tail
+    assert tools["check_construct"].description == "Wait until all proof checks have" + tail
     assert tools["evaluate_to"].input_schema["properties"]["checks"]["description"].startswith(
         'Whether to run the proof checks of the nodes: "no" runs none;')
     *_, tools = build({**KINDS, "lemma": Lemma})
     assert list(tools)[5:] == ["construct", "cancel_construct", "check_construct", "answer"]
     assert tools["edit"].input_schema["properties"]["auto_construct"] is plugin.AUTO_CONSTRUCT_PROPERTY
-    assert tools["check_construct"].description == "Wait until any proof construction" + tail
+    assert tools["check_construct"].description == "Wait until any proof construction has" + tail
     assert "checks" not in tools["evaluate_to"].input_schema["properties"]
+    *_, tools = build({**KINDS, "lemma": Lemma, "searched": Searched})
+    assert tools["check_construct"].description == (
+        "Wait until any counterexample search or proof construction has" + tail)
     *_, tools = build({**JOB_KINDS, "searched": Searched, "searched_checked": Searched_Checked})
     assert tools["evaluate_to"].input_schema["properties"]["checks"]["description"].startswith(
         'Whether to run the counterexample searches and proof checks of the nodes: "no" runs none;')
@@ -221,7 +224,7 @@ def test_the_construct_tools_exist_by_the_job_classes_loaded():
     assert tools["construct"].description == (
         "Start the construction jobs of nodes, such as counterexample searches and proof constructions.")
     assert tools["check_construct"].description == (
-        "Wait until any counterexample search or proof construction or all proof checks" + tail)
+        "Wait until any counterexample search or proof construction or all proof checks have" + tail)
     *_, tools = build(THEORIES)                             # two classes of one title: the title once
     assert tools["construct"].description == (
         "Start the construction jobs of nodes, such as counterexample searches and proof constructions.")
@@ -1027,6 +1030,27 @@ def test_check_construct_returns_once_a_title_of_the_callers_has_no_job_left():
         n(R).job().cancel(None)
         await still_waiting(task)
         task.cancel()
+        await settled(f)
+    tm.run(scenario())
+
+
+def test_check_construct_s_all_finished_lines_construction_titles_first():
+    """CONSTRUCT_INTERACTION §5: one `All … have finished.` line per title
+    the caller had a job of and has none of, construction titles first,
+    then evaluation titles — here both titles ending in one wake of the
+    call, the check reported before the construction was cancelled."""
+    async def scenario():
+        f, tools, n = theories()
+        me = Agent("main", True)
+        p, t = n(P), n(T_)
+        p.job().start(me)
+        await t.start_evaluation_job(me)
+        task = calling(tools["check_construct"], me, wait_seconds=3600)
+        await still_waiting(task)
+        await report(t.evaluation_job())
+        p.job().cancel(None)
+        result = await returned(task)
+        assert result.trailer() == "All proof constructions have finished.\nAll proof checks have finished."
         await settled(f)
     tm.run(scenario())
 

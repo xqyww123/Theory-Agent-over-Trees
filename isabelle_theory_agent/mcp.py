@@ -170,11 +170,13 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
         had: dict[str, Job_Class] = {}            # the titles the caller had a job of during the call, each with the class wording it
 
         def finished(stands: Standing) -> list[Job_Class]:
-            """The classes of the titles the caller had and has none of now."""
+            """The classes of the titles the caller had and has none of now,
+            construction titles first, then evaluation titles, alphabetical within."""
             for job in stands.jobs:
                 had.setdefault(type(job).title(), type(job))
             left = {type(job).title() for job in stands.jobs}
-            return [cls for title, cls in sorted(had.items()) if title not in left]
+            return sorted((cls for title, cls in had.items() if title not in left),
+                          key=lambda cls: (not issubclass(cls, Construction_Job), cls.title()))
 
         def returns() -> bool:
             stands = standing(forest, agent)
@@ -304,15 +306,15 @@ def _background_line(forest: Forest, agent: Agent) -> str:
 def _check_construct_description(constructions: tuple[Any, ...], checks: tuple[Any, ...]) -> str:
     """Completed at start (TOOL_SCHEMAS.md §5): the construction titles
     singular, the evaluation titles plural, the `or all …` part absent
-    without evaluation job classes, the first slot absent without
-    construction job classes."""
+    without evaluation job classes — the verb then singular —, the first
+    slot absent without construction job classes."""
     slots = []
     if constructions:
         slots.append("any " + _joined([cls.title() for cls in constructions], "or"))
     if checks:
         slots.append("all " + _joined([cls.title(plural=True) for cls in checks], "or"))
-    return (f"Wait until {' or '.join(slots)} have finished, or a message arrives. Returns at once when"
-            " nothing is running. To ensure all jobs have finished, call it repeatedly.")
+    return (f"Wait until {' or '.join(slots)} {'have' if checks else 'has'} finished, or a message arrives."
+            " Returns at once when nothing is running. To ensure all jobs have finished, call it repeatedly.")
 
 
 def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:
