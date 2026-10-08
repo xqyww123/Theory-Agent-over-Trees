@@ -1,13 +1,16 @@
 # Implementation plan: agents, hooks, jobs, the construct tools and `Theorem`
 
 Written 2026-10-03, revised on 2026-10-04 after four readers' checks
-(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 13 are committed since
+(review/IMPLEMENTATION_PLAN_REVIEW_2.md). Steps 1 to 14 are committed since
 2026-10-07, with the reviews of steps 1–2, 4–5, 6–7, 8–9 and 10–11
-applied (review/DOC_SYNC_LIST.md entries 32–52; the second compaction
-check rebuilt on 2026-10-06 on the owner's rulings; the questions the
-reviews of steps 8–9 and 10–11 leave to the owner are
-review/STEPS_8_9_REVIEW.md §4's R7–R14 and review/STEPS_10_11_REVIEW.md
-§4's R15–R20); the rest is not implemented.
+applied (review/DOC_SYNC_LIST.md entries 32–55; the second compaction
+check rebuilt on 2026-10-06 on the owner's rulings; the detail questions
+of the reviews of steps 8–9 and 10–11 verified and applied on 2026-10-08,
+entry 54; the design questions they leave to the owner are
+review/STEPS_8_9_REVIEW.md §4's R7, R9, R14 and
+review/STEPS_10_11_REVIEW.md §4's R15, R16, plus R21 and whether a bug
+raised once the ending is entered should be recorded); steps 15 to 17
+are not implemented.
 The design is in the documents under `docs/`; this plan gives only the
 order of the work, what each step needs before it starts, the files it
 touches, what it is tested with and when it is done. Where a section is
