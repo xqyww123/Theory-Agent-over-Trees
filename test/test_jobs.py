@@ -446,6 +446,71 @@ def test_the_questions_round_trip():
     run(scenario())
 
 
+def test_a_runs_two_questions_queue_fifo_only_the_front_visible():
+    """§3.4, the FIFO question queue: a run asking two questions at once —
+    two branches — queues them; only the front is posted and answerable;
+    answering it wakes that branch alone and posts the next; each branch
+    wakes on its own answer."""
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        woke: list[str] = []
+
+        async def two_branches(job):
+            async def branch(name, question):
+                await job.ask(question)
+                woke.append(name)
+            await asyncio.gather(branch("a", Verdict()), branch("b", Why()))
+            return Succeeded("by simp")
+
+        job.ends_with = two_branches
+        job.start(owner)
+        job.release.set()
+        await until(owner, lambda: len(job._questions) == 2)
+        front, behind = (s.question for s in job._questions)
+        assert isinstance(front, Verdict) and isinstance(behind, Why)
+        assert [m.question for m in owner.mailbox] == [front]        # only the front is posted
+        job.receive_answer({"verdict": "accept"})                    # front popped, the second posted (synchronous)
+        assert job.pending_question is behind and [m.question for m in owner.mailbox][-1:] == [behind]
+        assert woke == []                                            # branch a has not run yet
+        job.receive_answer({"reason": "because"})                    # the second answered
+        await until(owner, lambda: job.outcome is not RUNNING)       # both branches wake, the run settles
+        assert woke == ["a", "b"] and job.outcome == Succeeded("by simp") and not job._questions
+        assert [r["outcome"] for r in records("question_answered")] == ["accepted", "accepted"]
+    run(scenario())
+
+
+def test_a_cancel_drains_the_whole_question_queue():
+    """§3.4: a cancel drains every queued question — `question_withdrawn`
+    per slot, each branch cancelled — so a run asking several questions at
+    once unwinds whole."""
+    async def scenario():
+        f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        ended: list[str] = []
+
+        async def two_branches(job):
+            async def branch(name, question):
+                try:
+                    await job.ask(question)
+                except asyncio.CancelledError:
+                    ended.append(name)
+                    raise
+            await asyncio.gather(branch("a", Verdict()), branch("b", Why()))
+
+        job.ends_with = two_branches
+        job.start(owner)
+        job.release.set()
+        await until(owner, lambda: len(job._questions) == 2)
+        job.cancel(None)
+        await runs_unwound(job)
+        assert job._questions == [] and sorted(ended) == ["a", "b"]
+        assert records("question_withdrawn") == [{"node": P}, {"node": P}]
+    run(scenario())
+
+
 def test_a_question_is_withdrawn_by_a_cancel_and_by_the_settlement_and_delivery_drops_it():
     """A cancel withdraws the pending question — `question_withdrawn`, the
     `ask` cancelled — and delivery drops the question, the run being no

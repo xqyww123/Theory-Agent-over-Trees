@@ -248,7 +248,7 @@ def test_the_lines_of_render_baselines_section_5():
     q.job().auto_construct = True
     rev = leaf(Lemma, x, "lemma", "rev_length", status=READY)
     rev.job().outcome = jobs.RUNNING
-    rev.job().pending_question = object()
+    rev.job()._questions.append(jobs._Pending(object(), None))  # type: ignore[arg-type]  # a pending question, for the tag
     rev.job().owner = agent(f)
     other = stand_ins.agent(f.conversation, "other", False)
     assert render(f, rev, OUT_FOCUS, to=other) == ["- lemma_rev_length (valid statement, proving)"]

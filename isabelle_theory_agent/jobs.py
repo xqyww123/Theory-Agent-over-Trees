@@ -112,6 +112,16 @@ class Failure:
     automatic: bool
 
 
+@dataclass
+class _Pending:
+    """One entry of a construction job's FIFO question queue (§3.4): the
+    question and the future its `ask` waits on.  A replacement keeps the
+    future and swaps the question, so the waiting `ask` is released by the
+    answer to the replacement."""
+    question: Interactive_Question
+    answered: asyncio.Future[None]
+
+
 def post(log: Log, message: Message) -> None:
     """Put a message into its recipient's mailbox, and wake the recipient;
     anything may post one.  It is delivered with the recipient's next tool
@@ -334,10 +344,9 @@ class Construction_Job(ABC):
         self.outcome: Outcome = NOT_STARTED
         self.auto_construct = False          # written by `edit`, `construct` and `cancel_construct` (§3.2)
         self.owner: Agent | None = None      # the agent whose `start` the last run was
-        self.pending_question: Interactive_Question | None = None
+        self._questions: list[_Pending] = []  # the FIFO question queue (§3.4); only the front is delivered/answerable
         self._current: _Run | None = None    # the job's run; None when none is
         self._runs: set[asyncio.Task[None]] = set()     # every run's task not yet unwound
-        self._answered: asyncio.Future[None] | None = None   # what `ask` waits on
         # recorded at `start`, for the steps that may happen off the forest
         self._conversation: Conversation | None = None
         self._id = ""
@@ -356,6 +365,13 @@ class Construction_Job(ABC):
         full id once the node has left the forest."""
         node = self.node
         return node.forest().id_of(node) if node.current_id() is not None else self._id
+
+    @property
+    def pending_question(self) -> Interactive_Question | None:
+        """The front of the FIFO question queue — the one question the agent
+        sees and `answer` answers — or None when the queue is empty; the job
+        is `waiting` exactly when it is not None (§3.4, §5)."""
+        return self._questions[0].question if self._questions else None
 
     # --- the class's (§3.2)
 
@@ -491,7 +507,7 @@ class Construction_Job(ABC):
             raise TAT_InternalError(f"{type(self).__name__}._run returned {outcome!r}, which is no outcome")
         self.outcome = outcome
         self._current = None
-        self._withdraw()
+        self._drain()
         if run.attach is not None:
             self.node._attach_now(run.attach)
         self._store()
@@ -512,7 +528,7 @@ class Construction_Job(ABC):
         if self.outcome is not RUNNING:
             return
         run, self._current = self._current, None
-        self._withdraw()
+        self._drain()
         self.outcome = NOT_STARTED
         if run is not None:                      # its attach goes with it (§3.3)
             run.cancelled = True
@@ -528,67 +544,79 @@ class Construction_Job(ABC):
     @final
     async def ask(self, question: Interactive_Question) -> None:
         """For `_run` (§3.4): the question's schema validated — a failure is
-        a bug in `_run` — the question posted to the owner's mailbox as the
-        job's pending question, and the run suspended until some `receive`
-        accepts an answer; the job then reads its data off the question.  A
-        cancellation while it waits withdraws the question.  A job has at
-        most one pending question, and a run asks only while it is the
+        a bug in `_run` — enqueued on the job's FIFO question queue, and the
+        run suspended until some `receive` accepts an answer to it.  Only
+        the front question is posted to the owner and answerable; one
+        enqueued behind others (a run asking from several branches at once)
+        is posted when it reaches the front.  A cancellation while it waits
+        withdraws this question alone.  A run asks only while it is the
         job's: an `ask` otherwise is a bug of `_run`."""
         run = current_run()
         if run is None or run is not self._current:
             raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` asks a question from no run of its")
-        if self.pending_question is not None:
-            raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` asks while a question is pending")
-        self._post_question(question, run)
-        answered = self._answered = asyncio.get_running_loop().create_future()
+        self._validate_question(question)
+        slot = _Pending(question, asyncio.get_running_loop().create_future())
+        self._questions.append(slot)
+        if self._questions[0] is slot:               # it is the front: deliver it now
+            self._post(question, run)
         try:
-            await answered
+            await slot.answered
         finally:
-            if self._answered is answered:
-                self._answered = None
-                self._withdraw()
+            if slot in self._questions:              # not answered: a cancellation withdraws this slot alone
+                was_front = self._questions[0] is slot
+                self._questions.remove(slot)
+                self._log.question_withdrawn(node=self.node_id)
+                if not slot.answered.done():
+                    slot.answered.cancel()
+                if was_front and self._questions:    # the next question becomes the visible one
+                    self._post(self._questions[0].question, run)
 
     @final
     def receive_answer(self, value: Any) -> str | None:
         """The `answer` tool's judgement of a shape-valid answer to the
-        pending question (§3.4, §5): `receive` accepts it — the pending
-        question cleared, the `ask` released, the result the question's
+        FRONT question (§3.4, §5): `receive` accepts it — the front popped,
+        its `ask` released, the next question delivered, the result the
         response or `answered_notice` — refuses it with `BadAnswer`, which
-        propagates and leaves the question pending, or asks instead — the
-        new question pending and posted, the result None."""
-        question = self.pending_question
-        if question is None:
+        propagates and leaves the front, or asks instead — the front's
+        question replaced, its `ask` still waiting on the same future, and
+        reposted, the result None."""
+        if not self._questions:
             raise TAT_InternalError(f"the {self.title()} on `{self.node_id}` has no pending question to answer")
+        slot = self._questions[0]
         try:
-            judged = question.receive(value)
+            judged = slot.question.receive(value)
         except BadAnswer:
             self._log.question_answered(node=self.node_id, outcome="refused")
             raise
         if isinstance(judged, Answered):
-            self.pending_question = None
-            if self._answered is not None and not self._answered.done():
-                self._answered.set_result(None)
+            self._questions.pop(0)
+            if not slot.answered.done():
+                slot.answered.set_result(None)
             self._log.question_answered(node=self.node_id, outcome="accepted")
+            if self._questions:                      # the next question becomes the visible one
+                assert self._current is not None
+                self._post(self._questions[0].question, self._current)
             return judged.response if judged.response is not None else self.answered_notice()
         if isinstance(judged, Interactive_Question):
-            if judged is question:
-                raise TAT_InternalError(f"{type(question).__name__}.receive returned the pending question itself")
+            if judged is slot.question:
+                raise TAT_InternalError(f"{type(slot.question).__name__}.receive returned the pending question itself")
             self._log.question_answered(node=self.node_id, outcome="replaced")
             assert self._current is not None             # a pending question has a run
-            self._post_question(judged, self._current)
+            slot.question = judged                   # the same slot and future: the waiting `ask` still waits
+            self._post(judged, self._current)
             return None
-        raise TAT_InternalError(f"{type(question).__name__}.receive returned {judged!r}")
+        raise TAT_InternalError(f"{type(slot.question).__name__}.receive returned {judged!r}")
 
     @final
     def repeat_question(self) -> None:
-        """The pending question posted to the owner again when the mailbox
-        no longer holds it — one entry per job at most (§5)."""
-        question = self.pending_question
-        if question is None:
+        """The front question posted to the owner again when the mailbox no
+        longer holds it — one entry per job at most (§5)."""
+        if not self._questions:
             return
         assert self._current is not None             # a pending question has a run
-        if not any(m.question is question for m in self._owned_by().mailbox):
-            self._post(question, self._current)
+        front = self._questions[0].question
+        if not any(m.question is front for m in self._owned_by().mailbox):
+            self._post(front, self._current)
 
     @final
     def question_message(self, question: Interactive_Question) -> str:
@@ -598,33 +626,32 @@ class Construction_Job(ABC):
                 + json.dumps(question.schema, indent=2))
 
     @final
-    def _post_question(self, question: Interactive_Question, run: _Run) -> None:
-        """A question validated and made the job's pending question, posted
-        to the owner from `run`."""
+    def _validate_question(self, question: Interactive_Question) -> None:
+        """A question's schema validated at enqueue (`ask`): a failure is a
+        bug in `_run`, raised where it is asked, not when it reaches the
+        front."""
         from .plugin import validate_call_schema      # plugin imports model, which imports this module
         where = f"the question of the {self.title()} on `{self.node_id}`"
         validate_call_schema(question.schema, where)
         if "$defs" in question.schema:                # it stands in for `answer`'s property, which has none
             raise TAT_InternalError(f"{where}: the schema carries `$defs`")
-        self.pending_question = question
-        self._post(question, run)
 
     def _post(self, question: Interactive_Question, run: _Run) -> None:
         post(self._log_of_conversation, Message(self._owned_by(), self.question_message(question),
                                                 interrupts=True, subject=run, question=question))
 
     @final
-    def _withdraw(self) -> None:
-        """The pending question withdrawn (§3.4): cleared,
-        `question_withdrawn`, the `ask` waiting on it cancelled, so a stray
-        asking branch ends with it; nothing when none is pending.  No
-        mailbox is touched: delivery drops the question."""
-        if self.pending_question is None:
-            return
-        self.pending_question = None
-        self._log.question_withdrawn(node=self.node_id)
-        if self._answered is not None and not self._answered.done():
-            self._answered.cancel()
+    def _drain(self) -> None:
+        """Every pending question withdrawn (§3.4), at a cancel or a
+        settlement: the queue emptied and each `ask` waiting on a slot
+        cancelled, so every asking branch ends; `question_withdrawn` per
+        slot; nothing when the queue is empty.  No mailbox is touched:
+        delivery drops a question no longer the front."""
+        slots, self._questions = self._questions, []
+        for slot in slots:
+            self._log.question_withdrawn(node=self.node_id)
+            if not slot.answered.done():
+                slot.answered.cancel()
 
     @final
     def _carry_from(self, old: Construction_Job) -> None:

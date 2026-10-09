@@ -285,9 +285,12 @@ verbatim, `X` standing for a full node id.
   (the job's data stays on the question; `response` is the tool's text,
   `None` the default `answered_notice`); a returned question replaces
   the pending one and is delivered in the same result; `BadAnswer(
-  message)` refuses, the question stays. One pending question per job,
-  and while it waits no other message of that job arrives; `ask` posts
-  it to the owner's mailbox and suspends until an `Answered`
+  message)` refuses, the question stays. A job holds a FIFO queue of
+  questions (2026-10-09, superseding "one pending question per job"):
+  a run may ask several at once from branches it forks, only the front
+  is posted and answerable, and the agent answers them one at a time;
+  other messages of the job may arrive meanwhile. `ask` enqueues,
+  posts the front to the owner's mailbox and suspends until an `Answered`
   *(author: a schema failing validation is a bug in `_run`;
   `check_construct` puts a delivered question back)*. `receive` is
   synchronous, in the tool body, under no lock.

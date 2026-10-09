@@ -158,10 +158,10 @@ not.
 | `auto_construct` | framework, a boolean, false by default | automatic construction, on or off; written by `edit`, `construct` and `cancel_construct` on every node of the call that has a construction job (§5); persisted in a reserved framework field of its own, which the call that writes it stores at once, in a transaction of its own, on every node it wrote — started, cancelled or skipped — and read back at load; no class reads or writes it |
 | `can_start() -> bool` | framework | not `RUNNING`, and `_check()` |
 | `_on_context_change()` | class, hook | called from the status setter on every write of the node's own evaluation status by the walk while the job runs — a rewrite of `ready` on a rerun included — independently of the node's `on_invalidated`, through `_completed` as a completed hook is, after the write; whatever it raises, a `TAT_Error` included, is its class's bug — `TAT_InternalError`, the conversation ends (EXCEPTIONS.md §1); default: cancel with `CONTEXT_CHANGED` |
-| `ask(question) -> None` | framework, for `_run` | posts an `Interactive_Question` to the owner's mailbox and suspends until an answer is accepted (§3.4); a cancellation while it waits withdraws the question |
-| `repeat_question()` | framework | posts the pending question to the owner again when the mailbox no longer holds it — `check_construct`'s delivery of a question again (§5) |
+| `ask(question) -> None` | framework, for `_run` | enqueues an `Interactive_Question` on the job's FIFO queue, posts it to the owner's mailbox when it is the front, and suspends until an answer to it is accepted (§3.4); a cancellation while it waits withdraws that question |
+| `repeat_question()` | framework | posts the front question to the owner again when the mailbox no longer holds it — `check_construct`'s delivery of a question again (§5) |
 | `start(owner)` | framework, synchronous | called only when `can_start()`: records the owner; drops the node's evaluation job, clearing the stored check; sets `RUNNING`; stores the node in a transaction of its own; spawns the run |
-| `cancel(reason)` | framework, synchronous | detaches the run, withdraws its pending question (§3.4), sets `NOT_STARTED`, cancels the task; `reason` is `NODE_DELETED`, `NODE_AMENDED` or `CONTEXT_CHANGED` when the framework cancels, and the owner is then told, even when the owner deleted or amended the node itself; `cancel_construct` passes `None`, and nothing is told |
+| `cancel(reason)` | framework, synchronous | detaches the run, drains its question queue (§3.4), sets `NOT_STARTED`, cancels the task; `reason` is `NODE_DELETED`, `NODE_AMENDED` or `CONTEXT_CHANGED` when the framework cancels, and the owner is then told, even when the owner deleted or amended the node itself; `cancel_construct` passes `None`, and nothing is told |
 | wording | class, overridable defaults from `title` | `starting_notice(ids)`, `cancelling_notice(ids)` — `ids` the nodes' ids in their shortest form (§5) —, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed when the outcome is `FAILED`; `None` prints nothing |
 
@@ -197,8 +197,8 @@ and the wrapper neither settles, reports nor tells anything; what its
 cleanup raises is still its class's bug and enters the ending (§9) —
 lost when the ending is already entered. A run that is still the job's has ended
 on its own: a return settles it, in one synchronous stretch under no
-lock — records the outcome and the product, persists them, withdraws
-its pending question (§3.4), applies an attach made from inside `_run`
+lock — records the outcome and the product, persists them, drains its
+question queue (§3.4), applies an attach made from inside `_run`
 (§3.3), posts `finished_notification` and wakes the owner — and
 anything raised, a `CancelledError` the run brought on itself included,
 is a bug that enters the ending (§9). So a run settles exactly once, at
@@ -359,7 +359,7 @@ cancellation arriving in the moment between the taking and the
 client's reading of the result loses the messages, which TAT cannot
 see, MCP carrying no receipt. At delivery a message whose evaluation job is no longer on its node, or
 whose run was cancelled, or whose question is no longer its
-job's pending question, is dropped; a cancelled or dropped job so
+job's front question, is dropped; a cancelled or dropped job so
 leaves no question or notification of its own behind, and a settled
 run's own notifications stand. The two
 notifications the framework posts about a construction job come from no
@@ -403,21 +403,29 @@ class Answered:
     response: str | None = None
 ```
 
-A job has at most one pending question; while it waits, no other message
-of that job arrives. `ask(question)` validates the schema — a failure is
-a bug in `_run` — posts the question to the owner's mailbox, and
-suspends the run until some `receive` returns `Answered`; the job then
-reads its data off the question whose `receive` accepted — a
-replacement being the class's own, built in its `receive`. A question
-asked instead is posted the same way. `receive` runs in the `answer` tool's body, under
-no lock, synchronously. A question stops pending when an answer to it
-is accepted, when its `ask` is cancelled, when the job is cancelled, and
-when the run settles; **withdrawing** it clears it as the job's pending
-question and cancels the `ask` waiting on it, so a stray asking branch
-ends with it. No withdrawal touches a mailbox: at delivery a question
-that is no longer its job's pending question is dropped, by the same
-filter as above. So a job that is not `RUNNING` has no pending question,
-whatever its `_run` did.
+A job holds a **FIFO queue** of questions: a run may ask several at once
+— from branches it forks — and each waits for its own answer. Only the
+**front** is posted to the owner and answerable; the one the owner sees
+and `answer` answers is the front, and the agent answers them one at a
+time. `ask(question)` validates the schema — a failure is a bug in
+`_run` — enqueues the question, posts it only when it is the front, and
+suspends the run until some `receive` accepts an answer to it; the job
+then reads its data off the question whose `receive` accepted — a
+replacement being the class's own, built in its `receive`, which keeps
+the front's place and its waiting `ask`. A question asked instead is
+posted the same way. `receive` runs in the `answer` tool's body, under
+no lock, synchronously, so answers do not interleave. A question leaves
+the queue when an answer to it is accepted — the next question, if any,
+is then posted —, when its `ask` is cancelled, when the job is
+cancelled, and when the run settles; **withdrawing** it removes it from
+the queue and cancels the `ask` waiting on it, so a stray asking branch
+ends with it, and a cancel or a settlement **drains** the whole queue.
+No withdrawal touches a mailbox: at delivery a question that is no
+longer the job's front is dropped, by the same filter as above. So a job
+that is not `RUNNING` has no pending question, whatever its `_run` did.
+A job may post other messages while a question of its waits; a class
+that posts one contradicting its pending question is a bug, not
+something the framework guards against.
 
 Delivered, a question reads:
 
