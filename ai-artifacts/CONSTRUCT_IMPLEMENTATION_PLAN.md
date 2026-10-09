@@ -726,6 +726,35 @@ what COMPILATION.md §5 says it removes and nothing else.
 
 Done when: `isabelle TAT_compile` writes a theory Isabelle reads.
 
+Status 2026-10-10 (the jobs/construct session, before a compaction):
+steps 1–15 and their reviews are committed (HEAD fb66b4c: the review of
+14–15 applied; 548 + 36 → 551 in-process and 37 Isabelle-backed tests
+pass, pyright clean). Isa-Mini's two changes are committed by the AoA
+session (contrib/Isa-Mini 62f6b89), the main repository's pointer
+bumped. Of this step, `Theorem.emit` is done since step 14 (`sorry` /
+`by aoa`, tested in test_theorem.py). Left: the hook —
+`@plugin.TAT_compile_hook` in `isabelle_theory_agent/std/theorem.py`,
+a plain function of the forest root: for each `Entry` of
+`compile.paths(forest.conversation.working_directory)` whose kind is
+not `folder` and whose name is `<T>.proof-store` or starts with
+`<T>.proof-store.`, remove it when `entry.path.parent / f"{T}.thy"` is
+no tree's `file_path()` (`Theory.file_path()`, `<Session folder>/<short
+name>.thy`, relative to the working directory; the trees are
+`forest._trees()`); nothing else. Its test, in test_theorem.py: a
+compile (`compile.compile(forest, hooks)`; see test_compile.py for the
+forest-on-disk pattern) of a forest with a proven, an unchecked and an
+unproven theorem writes TH §5's text (`by aoa` / `sorry` / `sorry`), and
+the hook removes a stray `X.proof-store`, `X.proof-store.lock` and
+`Gone.proof-store` where `Gone.thy` is no tree's, keeps `X.proof-store`
+beside a tree's `X.thy`, and touches no `.thy`. Then the pair-review of
+steps 16–17 after step 17. Open with the owner: the end-to-end case can
+call a language model only where `~/.isabelle/Isabelle2025-2/etc/settings`
+opens AoA's gate unconditionally (lines 19 and 24 on the owner's
+machine); the owner decides whether to make those lines
+`${VAR-default}`, after which the harness sets
+`AOA_ALLOW_NONINTERACTIVE=no` for the child (test/harness.py, the
+child's `env` near line 485).
+
 ### Step 17. The live run
 
 Needs: steps 1 to 12 and LIP steps 9 to 12; one run per client, the
