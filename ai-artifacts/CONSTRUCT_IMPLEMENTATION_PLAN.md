@@ -741,8 +741,12 @@ process, and the tool's Isabelle reads the ROOT (`sessions
 the `Minilang_AoA` heap out of date against Isa-Mini's uncommitted
 edits (the AoA session's, in `Agent/agent*.ML`), and the launcher's
 rebuild failed in them, leaving no heap; every Isabelle-backed case
-waits for Isa-Mini to compile again. Isa-Mini's two changes for step
-15 are committed by the AoA session (contrib/Isa-Mini 62f6b89).
+waits for Isa-Mini to compile again, and so does the one ML change
+since: `TAT.Theorem.construct`'s two handler arms now call
+`MiniLang_Agent_AoA.method_error` (Isa-Mini ca26050, the review's
+shared give-up renderer), uncommitted until that run. Isa-Mini's two
+changes for step 15 are committed by the AoA session (contrib/Isa-Mini
+62f6b89).
 Open with the owner: the end-to-end case can call a language model only
 where `~/.isabelle/Isabelle2025-2/etc/settings` opens AoA's gate
 unconditionally (lines 19 and 24 on the owner's machine); the owner
