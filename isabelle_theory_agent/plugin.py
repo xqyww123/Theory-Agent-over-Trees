@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
 from typing import (
-    Any, NamedTuple, NotRequired, Required, TypeAlias, Union, get_args, get_origin,
+    Any, NamedTuple, NotRequired, Required, TypeAlias, TypeVar, Union, get_args, get_origin,
     get_type_hints, is_typeddict)
 
 import jsoncomment
@@ -66,9 +66,13 @@ _REF = re.compile(r"^#/\$defs/([^/]+)$")
 _EDIT_SCHEMA = Path(__file__).parent / "tools" / "edit.jsonc"
 
 
-def TAT_node(cls: type[Node]) -> type[Node]:
+_N = TypeVar("_N", bound=Node)
+
+
+def TAT_node(cls: type[_N]) -> type[_N]:
     """Class decorator: check the class (PLUGIN_SYSTEM §5) and register it
-    under every kind its construct schema names."""
+    under every kind its construct schema names; the class comes back as
+    itself, so that `isinstance` narrows to it."""
     registry[cls] = _check_class(cls)            # nothing is written before the checks pass
     return cls
 

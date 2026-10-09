@@ -63,8 +63,8 @@ async def std_harness(anyio_backend, tmp_path_factory):
     base heap `Minilang_AoA`, the plugin's directory given, the conversations
     loading the package its registrations do not name yet."""
     async with started(H.Harness(logging.getLogger("tat.test.std_harness"), tmp_path_factory.mktemp("std_harness"),
-                                 plugin="TAT_Isabelle_Std.TAT_Isabelle_Std", registered=[],
-                                 packages=["isabelle_theory_agent.std"], logic="Minilang_AoA")) as h:
+                                 plugin="TAT_Isabelle_Std.TAT_Isabelle_Std", registered=["IsaMini.AoA"],
+                                 packages=["isabelle_theory_agent.std", "IsaMini.AoA"], logic="Minilang_AoA")) as h:
         yield h
 
 

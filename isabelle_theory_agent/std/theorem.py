@@ -2,7 +2,7 @@
 (node_classes/THEOREM.md): a fact stated and admitted, never proved in
 the tree — its evaluation opens the goal and admits it, its construction
 job finds a proof and its evaluation job replays it, the emitted theory
-carrying `by aoa`.  The two job classes are the jobs plan's step 15."""
+carrying `by aoa`."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from typing import Any, Literal, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
-from .. import isabelle_driver
+from .. import isabelle_driver, jobs
 from ..exceptions import BadTheoremNodeParent, InvalidField, InvalidName
-from ..jobs import PASSED, RUNNING, Failed, Succeeded
+from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
     INDENT, RECALL, CannotEvaluate, Isar_State_Slot, Leaf, Node, Ready, Theory, _emit_lines, _parent_id,
     cartouche)
@@ -96,6 +96,92 @@ def _normalised(text: str) -> str:
     return " ".join(text.split())
 
 
+class Proof_Job(jobs.Construction_Job):
+    """`Theorem`'s proof construction (§7): one call of AoA's standard entry
+    on the goal `goal_state` holds, forked by `TAT.Theorem.construct`; the
+    product the proof — the method text with the two times of its replay —
+    and the node's check `Proof_Check.passed` from the run's settlement."""
+
+    @classmethod
+    def title(cls, plural=False):
+        return "proof constructions" if plural else "proof construction"
+
+    @classmethod
+    def failure_header(cls, failure):
+        return "No proof was found:"
+
+    def finished_notification(self, outcome):
+        if isinstance(outcome, Succeeded):
+            return f"`{self.shown_id}` is proven."
+        return with_message(f"No proof of `{self.shown_id}` was found:", outcome.message)
+
+    def _check(self):
+        """§7's table: on a `ready` node, a proof is constructed where none
+        stands, or where the one standing failed its check; a proof not yet
+        checked, or checked and passed, stands."""
+        node = self.node
+        if not node._operations_ready():
+            return False
+        if not isinstance(self.outcome, Succeeded):
+            return True
+        return isinstance(node.check_outcome(), Failed)
+
+    async def _run(self):
+        node = self.node
+        assert isinstance(node, Theorem)
+        errors, product = await self.forked("TAT.Theorem.construct", node.goal_state.to_msgpack())
+        if errors:
+            return Failed("\n".join(errors))
+        text, thread_cpu, wall = product
+        node.attach_evaluation_job(Proof_Check.passed(node))
+        return Succeeded({"text": text, "thread_cpu": thread_cpu, "wall": wall})
+
+
+class Proof_Check(jobs.Evaluation_Job):
+    """`Theorem`'s proof check (§7): the stored product replayed on the goal
+    `goal_state` holds, through the function AoA exports, forked by
+    `TAT.Theorem.check`; no theorem out is `FAILED` with an empty message."""
+
+    @classmethod
+    def title(cls, plural=False):
+        return "proof checks" if plural else "proof check"
+
+    @classmethod
+    def failure_header(cls, failure):
+        return "The proof no longer holds:"
+
+    @classmethod
+    def failure_notification(cls, ids, automatic):
+        several = len(ids) > 1
+        if automatic:
+            tail = (", so " + ("their proof constructions were" if several else "its proof construction was")
+                    + " started automatically; call `check_construct` before you exit")
+        else:
+            tail = ". Call `construct` to prove " + ("them" if several else "it") + " again"
+        if len(ids) <= 3:
+            return "The proof " + jobs.series([f"of `{id}`" for id in ids], "and") + " no longer holds" + tail + "."
+        header = "The following proofs no longer hold" + (tail if automatic else "; call `construct` to prove them again")
+        return header + ":\n" + "\n".join(f"  - {id}" for id in ids)
+
+    @classmethod
+    def passed(cls, node):
+        """The check a proof construction attaches at its settlement (§7):
+        `PASSED` without running."""
+        job = cls(node, None)
+        job.outcome = PASSED
+        return job
+
+    async def _start(self):
+        node = self.node
+        assert isinstance(node, Theorem)
+        job = node.job()
+        assert job is not None and isinstance(job.outcome, Succeeded)   # a check runs on a proven node (§3.3)
+        product = job.outcome.product
+        await isabelle_driver.call(self.conversation, "TAT.Theorem.check",
+                                   (node.goal_state.to_msgpack(),
+                                    (product["text"], product["thread_cpu"], product["wall"]), self.id))
+
+
 @TAT_node
 class Theorem(Leaf):
     construct_schema = {
@@ -110,6 +196,8 @@ class Theorem(Leaf):
         "$defs": STATEMENT_DEFS,
     }
     argument_schema = Theorem_RawAST
+    construction_job_class = Proof_Job
+    evaluation_job_class = Proof_Check
 
     name: str
     statement: Statement

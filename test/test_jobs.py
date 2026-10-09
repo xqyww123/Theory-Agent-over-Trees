@@ -1081,16 +1081,75 @@ class Job:
     def __init__(self, raises: BaseException | None = None):
         self.conversation = SimpleNamespace(ending=Ending())
         self.reports: list[list[str]] = []
+        self.products: list = []
         self.in_the_table_at_the_report: bool | None = None
         self.raises = raises
         self.id = next(jobs._ids)
         jobs.register(self)                 # type: ignore[arg-type]  # a started job: in the table
 
-    def _report(self, errors: list[str]) -> None:
+    def _report(self, errors: list[str], product=None) -> None:
         self.in_the_table_at_the_report = self.id in jobs._evaluation_jobs
         self.reports.append(errors)
+        self.products.append(product)
         if self.raises is not None:
             raise self.raises
+
+
+class Forking(Proof):
+    """A run whose work is ML's: `forked`, under the case's stand-in for
+    the driver's `call`."""
+    async def _run(self):
+        errors, product = await self.forked("TAT_test.construct", "the slot")
+        return Succeeded(product) if not errors else Failed("\n".join(errors))
+
+
+class Forking_Lemma(T):
+    construction_job_class = Forking
+
+
+async def holds_soon(holds) -> None:
+    """Polled, bounded: a wrong implementation fails the case instead of
+    hanging the suite."""
+    for _ in range(400):
+        if holds():
+            return
+        await asyncio.sleep(0.005)
+    assert holds()
+
+
+def test_a_run_forks_its_work_and_takes_the_reports_product(monkeypatch):
+    """`Construction_Job.forked` (§3.3; THEOREM.md §7): the class's callback
+    called with the args and a fresh id, which the table holds until the
+    report; the report settles the run — `["ok", <product>]` with the
+    product, `["messages", ...]` as a failure; a cancellation meanwhile
+    takes the id out of the table and cancels the work."""
+    calls: list[tuple[str, tuple]] = []
+
+    async def call(conversation, name, args):
+        calls.append((name, args))
+    monkeypatch.setattr(isabelle_driver, "call", call)
+
+    async def scenario():
+        f, thy, t1, p, q = build(Forking_Lemma)
+        me = stand_ins.agent(f.conversation)
+        r = add(thy, Forking_Lemma(thy, slot(), "R"), "lemma")
+        for node in (p, q, r):
+            node.job().start(me)
+        await holds_soon(lambda: len(calls) == 3)
+        ids = {}
+        for name, (args, id) in calls:
+            assert name == "TAT_test.construct" and args == "the slot" and id in jobs._evaluation_jobs
+            ids[id] = id
+        (id_p, id_q, id_r) = ids
+        await jobs.job_finished((id_p, ["ok", ["by simp", 3, 5]]), None)    # type: ignore[arg-type]
+        await holds_soon(lambda: p.job().outcome == Succeeded(["by simp", 3, 5]))
+        await jobs.job_finished((id_r, ["messages", ["no proof"]]), None)   # type: ignore[arg-type]
+        await holds_soon(lambda: r.job().outcome == Failed("no proof"))
+        assert set(jobs._evaluation_jobs) == {id_q}
+        q.job().cancel(None)
+        await holds_soon(lambda: CANCELS == [[id_q]])
+        assert jobs._evaluation_jobs == {} and q.job().outcome is NOT_STARTED
+    run(scenario())
 
 
 def finished(id: int, failure: list) -> None:
@@ -1098,10 +1157,12 @@ def finished(id: int, failure: list) -> None:
 
 
 def test_a_report_is_handed_to_its_job_alone_and_takes_it_out_of_the_table():
-    one, other = Job(), Job()
+    one, other, producing = Job(), Job(), Job()
     finished(one.id, ["ok"])
     finished(other.id, ["messages", ["first", "second"]])
-    assert (one.reports, other.reports) == ([[]], [["first", "second"]])
+    finished(producing.id, ["ok", ["by simp", 3, 5]])    # a construction's work yields its product
+    assert (one.reports, other.reports, producing.reports) == ([[]], [["first", "second"]], [[]])
+    assert (one.products, other.products, producing.products) == ([None], [None], [["by simp", 3, 5]])
     assert one.in_the_table_at_the_report is False      # taken out before the body runs
     assert jobs._evaluation_jobs == {} and not one.conversation.ending.entered
     finished(one.id, ["messages", ["again"]])            # a second report is nobody's

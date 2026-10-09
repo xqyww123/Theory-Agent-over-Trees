@@ -50,7 +50,7 @@ class Job:
         self.id = next(jobs._ids)
         jobs.register(self)                 # type: ignore[arg-type]  # a started job: in the table
 
-    def _report(self, errors: list[str]) -> None:
+    def _report(self, errors: list[str], product=None) -> None:
         self.errors = errors
         self.reported.set()
 
@@ -85,14 +85,15 @@ async def test_a_work_that_passes_and_one_that_fails_are_reported_to_their_jobs(
     takes the job out of the table; each job leaves `job_forked` and one
     `job_ended` carrying what was reported."""
     conv, log = conversation.forest.conversation, conversation.log.directory
-    passed, failed = Job(), Job()
+    passed, failed, empty = Job(), Job(), Job()
     await fork(conv, passed, "pass")
     await fork(conv, failed, "fail")
-    await asyncio.wait_for(asyncio.gather(passed.reported.wait(), failed.reported.wait()), 30)
-    assert (passed.errors, failed.errors) == ([], ["tat-job-error"])
-    assert passed.ending.ended_by is None and failed.ending.ended_by is None
-    assert not {passed.id, failed.id} & set(jobs._evaluation_jobs)
-    for job, failure in ((passed, ["ok"]), (failed, ["messages", ["tat-job-error"]])):
+    await fork(conv, empty, "empty")                     # an `ERROR` with no text: one empty message
+    await asyncio.wait_for(asyncio.gather(passed.reported.wait(), failed.reported.wait(), empty.reported.wait()), 30)
+    assert (passed.errors, failed.errors, empty.errors) == ([], ["tat-job-error"], [""])
+    assert passed.ending.ended_by is None and failed.ending.ended_by is None and empty.ending.ended_by is None
+    assert not {passed.id, failed.id, empty.id} & set(jobs._evaluation_jobs)
+    for job, failure in ((passed, ["ok"]), (failed, ["messages", ["tat-job-error"]]), (empty, ["messages", [""]])):
         assert records(log, "job_forked", job.id) == [{"id": job.id}]
         [ended] = records(log, "job_ended", job.id)
         assert set(ended) == {"id", "failure", "cancelled", "duration"}

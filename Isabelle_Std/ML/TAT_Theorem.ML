@@ -1,8 +1,9 @@
 (*  Title:      Isabelle_Std/ML/TAT_Theorem.ML
 
 The ML half of the plugin's `Theorem` (isabelle_theory_agent/std/theorem.py;
-docs/node_classes/THEOREM.md §6): the statement opened and admitted, never a
-proof.  The jobs' callbacks are step 15's.
+docs/node_classes/THEOREM.md §6, §7): the statement opened and admitted, never
+proved in the tree; the proof construction, AoA's standard entry on the goal
+so opened; the proof check, the proof replayed on that goal.
 *)
 
 structure TAT_Theorem =
@@ -68,6 +69,62 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
         if null errors
         then (true, [], reserved (Toplevel.theory_of (#get result ())) statement)
         else (#put goal NONE; (false, errors, []))
+      end,
+    timeout = NONE}))
+
+(*the product on the wire (THEOREM.md §1): the method text and the two times of
+  its replay in milliseconds, thread CPU then wall, as the store orders them*)
+val pack_product = packTuple3 (packString, packInt, packInt)
+val unpack_product = unpackTuple3 (unpackString, unpackInt, unpackInt)
+
+(*the goal `goal_state` holds (§7): the Proof.state's context and goal*)
+fun goal_of get =
+  let val {context, goal, ...} = Proof.goal (Toplevel.proof_of (get ()))
+   in (context, goal) end
+
+(*the proof construction (§7): one call of AoA's standard entry on the goal, the
+  proof store read and written on AoA's own path, forked as the job's work; its
+  product the proof.  The agent's give-up is the failure's message, as the `aoa`
+  method renders it.  AoA's Python half is served by this process: its package
+  is named here, so that the conversation imports it.*)
+val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["IsaMini.AoA"]} (fn env =>
+  {name = "TAT.Theorem.construct",
+    on_interrupt = Remote_Procedure_Calling.Reraise,
+    arg_schema = unpackPair (#slot_unpacker env, unpackInt),
+    ret_schema = packUnit,
+    function = fn (goal, id) =>
+      let val (ctxt, sequent) = goal_of (#get goal) in
+        #fork_job env {id = id, work = fn () =>
+          let
+            val (fut, _) =
+              MiniLang_Agent_AoA.hammer_or_AoA'
+                {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
+                 hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
+                 read_store = SOME true, write_store = SOME true,
+                 task = MiniLang_Agent_AoA.usual, user_operations = []} ctxt sequent
+              handle MiniLang_Agent_AoA.Agent_Give_Up (reason, detail, _) =>
+                error (MiniLang_Agent_AoA.banner_of reason ^ "\n" ^ detail)
+            val (times, text) = Future.join fut
+            val (cpu, wall) = Phi_Proof_Store.ms_of_times times
+          in SOME (pack_product (text, cpu, wall)) end}
+      end,
+    timeout = NONE}))
+
+(*the proof check (§7): the stored product replayed on the same goal through
+  the function AoA exports, forked as the job's work; no theorem is one empty
+  error -- the replay says only that it failed*)
+val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
+  {name = "TAT.Theorem.check",
+    on_interrupt = Remote_Procedure_Calling.Reraise,
+    arg_schema = unpackTuple3 (#slot_unpacker env, unpack_product, unpackInt),
+    ret_schema = packUnit,
+    function = fn (goal, (text, cpu, wall), id) =>
+      let val (ctxt, sequent) = goal_of (#get goal) in
+        #fork_job env {id = id, work = fn () =>
+          (case Proof_Store_AoA.replay_record (ctxt, sequent)
+                  (Phi_Proof_Store.times_of_ms (cpu, wall), text) of
+            SOME _ => NONE
+          | NONE => error "")}
       end,
     timeout = NONE}))
 

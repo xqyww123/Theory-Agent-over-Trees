@@ -7,7 +7,10 @@ plan's steps 14b and 15.
 Run: python -m pytest test/test_theorem.py
 """
 
+import asyncio
 import io
+import re
+import sys
 
 import jsoncomment
 import pytest
@@ -18,10 +21,11 @@ from baselines import DOCS, fenced_blocks, fenced_lines
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
 from harness import text_of
-from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
+from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import BadTheoremNodeParent, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import statement, theorem
-from isabelle_theory_agent.std.theorem import Statement, Theorem
+from isabelle_theory_agent.std.theorem import Proof_Check, Proof_Job, Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
 from test_descriptions import descriptions
 from test_model import locked, run, slot
@@ -200,14 +204,90 @@ def test_print_fields_writes_the_proposition_and_english_by_depth():
     assert two.proposition() == "⋀x. ⋀y::nat. (⋀z. P z ⟹ Q z) ⟹ (A \\<Longrightarrow> B)"
 
 
-def test_the_marks_statement_slot_while_no_job_class_is_named():
+INVALID = M.CannotEvaluate((IsaTerm.from_agent("no"),))
+PROVED = Succeeded({"text": "by simp", "thread_cpu": 3, "wall": 5})
+BAD = Failed("")                                         # a failed check: its message is empty (§7)
+
+
+def with_proof(node, status, outcome, check=None):
+    """The node in one of §7's states: its statement's status, its proof's
+    outcome, its check — None, `RUNNING` (a running `Proof_Check` on the
+    node), `PASSED` or `FAILED`."""
+    node._status = status
+    node.job().outcome = outcome
+    node._evaluation_job = Proof_Check(node, None) if check is RUNNING else None
+    node._check_outcome = check if check in (PASSED, BAD) else None
+
+
+def test_the_mark_reads_one_of_eleven_ways():
+    """§7's mark: the statement slot from the status, the proof slot from
+    the outcome and the check, left out under `invalid statement`, a
+    stored proof left out under `not evaluated` — the eleven of the
+    document's block, no other."""
+    [_, _, block] = fenced_blocks(TH, "7.")
     f, x = forest(lemma("p"))
     (p,) = x.sub_nodes
-    assert p.job() is None and p.mark(M.BRIEFING, 0) == "not evaluated"
-    p._status = M.READY_CLEAN
-    assert p.mark(M.BRIEFING, 0) == "valid statement"
-    p._status = M.CannotEvaluate((IsaTerm.from_agent("no"),))
-    assert p.mark(M.BRIEFING, 0) == "invalid statement"
+    assert p.mark(M.BRIEFING, 0) == "not evaluated, proof not started"
+    marks = []
+    for status in (M.READY_CLEAN, INVALID, M.NOT_EVALUATED):
+        for outcome, check in ((NOT_STARTED, None), (RUNNING, None), (Failed("no"), None), (PROVED, None),
+                               (PROVED, RUNNING), (PROVED, PASSED), (PROVED, BAD)):
+            if status is M.NOT_EVALUATED and (outcome is RUNNING or check is not None):
+                continue                                 # no run and no check live under `not evaluated`
+            with_proof(p, status, outcome, check)
+            marks.append(f"({p.mark(M.BRIEFING, 0)})")
+    assert len(marks) == 17 and len(set(marks)) == 11
+    assert set(marks) == set(re.findall(r"\([^)]*\)", "\n".join(block)))
+    with_proof(p, M.READY_CLEAN, PROVED, PASSED)
+    assert p.mark(M.BRIEFING, 0) == "valid statement, proven"
+
+
+def test_the_jobs_sentences_are_section_7_s():
+    """`Proof_Job`'s and `Proof_Check`'s words: the titles, the two
+    notifications, the failure headers, the check's failure block — the
+    header alone, its colon a period — and the notification's forms for
+    one, three and four nodes, with and without automatic construction,
+    the document's lines verbatim."""
+    [sentences, automatic, _] = fenced_blocks(TH, "7.")
+    f, x = forest(lemma("p"))
+    (p,) = x.sub_nodes
+    job = p.job()
+    assert (Proof_Job.title(), Proof_Job.title(plural=True)) == ("proof construction", "proof constructions")
+    assert (Proof_Check.title(), Proof_Check.title(plural=True)) == ("proof check", "proof checks")
+    assert job.finished_notification(PROVED) == f"`{f.id_of(p)}` is proven."
+    assert job.finished_notification(Failed("no proof")) == f"No proof of `{f.id_of(p)}` was found:\n  no proof"
+    assert Proof_Job.failure_header(Failed("no proof")) == "No proof was found:"
+    assert jobs.with_message(Proof_Check.failure_header(BAD), "") == sentences[0]
+    one, three = ["theory_X.lemma_P"], ["theory_X.lemma_P", "theory_X.lemma_Q", "theory_X.lemma_R"]
+    four = three + ["theory_Y.lemma_S"]
+    assert Proof_Check.failure_notification(one, False) == sentences[1]
+    assert Proof_Check.failure_notification(three, False) == sentences[2]
+    assert Proof_Check.failure_notification(four, False) == "\n".join(sentences[3:8])
+    one, three = ["theory_X.lemma_C"], ["theory_X.lemma_C", "theory_X.lemma_G", "theory_X.lemma_K"]
+    four = three + ["theory_X.lemma_M"]
+    assert Proof_Check.failure_notification(one, True) == automatic[0]
+    assert Proof_Check.failure_notification(three, True) == automatic[1]
+    assert Proof_Check.failure_notification(four, True) == "\n".join(automatic[2:7])
+    passed = Proof_Check.passed(p)
+    assert passed.outcome is PASSED and passed.starter is None and passed.node is p
+
+
+def test_check_answers_section_7_s_table():
+    """`_check()`: false off `ready`; true with no proof — `NOT_STARTED`
+    or `FAILED`; on a proof, true only when its check `FAILED`."""
+    f, x = forest(lemma("p"))
+    (p,) = x.sub_nodes
+    job = p.job()
+    for outcome, check in ((NOT_STARTED, None), (Failed("no"), None), (PROVED, BAD)):
+        with_proof(p, M.NOT_EVALUATED, outcome, check)
+        assert not job._check()
+    for outcome, check, answer in ((NOT_STARTED, None, True), (Failed("no"), None, True), (PROVED, PASSED, False),
+                                   (PROVED, None, False), (PROVED, RUNNING, False), (PROVED, BAD, True)):
+        with_proof(p, M.READY_CLEAN, outcome, check)
+        assert job._check() is answer, (outcome, check)
+        assert job.can_start() is answer
+    with_proof(p, INVALID, NOT_STARTED)
+    assert not job._check()
 
 
 # --- emission (§5) -----------------------------------------------------------
@@ -226,7 +306,12 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
 
     def expected(*unicode_lines: str) -> list[str]:
         return [ascii_of_unicode(line) for line in unicode_lines]
-    assert emitted(p) == expected(*("  " + line for line in lines[:-1]), "    sorry")     # `by aoa` needs the jobs
+    assert emitted(p) == expected(*("  " + line for line in lines[:-1]), "    sorry")
+    with_proof(p, M.READY_CLEAN, PROVED, PASSED)                                         # proven: the document's block whole
+    assert emitted(p) == expected(*("  " + line for line in lines))
+    with_proof(p, M.READY_CLEAN, PROVED, BAD)                                            # a bad proof: `sorry` again
+    assert emitted(p)[-1] == "    sorry"
+    with_proof(p, M.NOT_EVALUATED, NOT_STARTED)
     p.reserved_names = frozenset({"rev_length", "xs", "ne"})
     assert emitted(p)[1:5] == expected('  lemma "rev_length":', '    fixes "xs" :: "\'a list"',
                                        '    assumes "ne": "xs ≠ []"', '    shows "length (rev xs) = length xs"')
@@ -282,10 +367,10 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
         assert not recalled.isError and lines[:12] == [
             "- theory_TAT_Std_A (incomplete)",
             "  imports: Main",
-            "  - lemma_rev_length (valid statement)",
+            "  - lemma_rev_length (valid statement, proof not started)",
             "    ⋀xs::'a list. xs ≠ [] ⟹ length (rev xs) = length xs",
             "    The length of a reversed list",
-            "  - lemma_shows_it (valid statement)",
+            "  - lemma_shows_it (valid statement, proof not started)",
             "    ⋀shows::'a list. length (rev shows) = length shows",
             "    A reserved name",
             "  - lemma_clash (invalid statement)",
@@ -299,3 +384,66 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
          ("lemma", "again", [["xs", "'a list"]], [], "xs = (0::nat)")))
     assert (passed, reserved) == (False, []) and messages
     assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()
+
+
+async def until(condition, seconds: float = 180.0) -> None:
+    async with asyncio.timeout(seconds):
+        while not condition():
+            await asyncio.sleep(0.05)
+
+
+async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_again(std_conversation):
+    """§7 through the two callbacks, on a goal Sledgehammer's automation
+    closes without the agent: `construct` starts the proof construction,
+    which settles `SUCCEEDED` with the proof and its times and attaches a
+    `PASSED` check; invalidated and evaluated with checks, the node gets a
+    proof check that replays the product and passes; a product that no
+    longer proves the goal fails its check with an empty message, the
+    notification sending the agent to `construct`, whose construction
+    proves the node again.  AoA's Python half is served by this process."""
+    forest = std_conversation.forest
+    async with std_conversation.client() as session:
+        result = await session.call_tool("edit", {
+            "action": "append", "target_id": "Sessions", "evaluate": True,
+            "constructs": [over_the_wire(
+                lemma("rev_rev", for_any=({"name": "xs", "type": "'a list"},), premises=(),
+                      conclusion="rev (rev xs) = xs", english="Reversing twice is the identity"))]})
+        assert not result.isError, text_of(result)
+        (s,) = forest.sub_nodes
+        (x,) = s.sub_nodes
+        (p,) = x.sub_nodes
+        assert "IsaMini.AoA.toplevel" in sys.modules                  # the remote procedure `IsaMini.AoA` is this process's
+        result = await session.call_tool("construct", {"node_ids": ["lemma_rev_rev"]})
+        assert not result.isError and "Started the proof construction on `lemma_rev_rev`" in text_of(result)
+        job = p.job()
+        assert job.outcome is RUNNING and p.mark(M.BRIEFING, 0) == "valid statement, proving"
+        await until(lambda: job.outcome is not RUNNING)
+        assert isinstance(job.outcome, Succeeded), job.outcome
+        product = job.outcome.product
+        assert set(product) == {"text", "thread_cpu", "wall"} and product["text"]
+        assert all(isinstance(product[k], int) and product[k] >= 0 for k in ("thread_cpu", "wall"))
+        assert p.check_outcome() is PASSED and p.mark(M.BRIEFING, 0) == "valid statement, proven"
+        result = await session.call_tool("check_construct", {})
+        assert "`lemma_rev_rev` is proven." in text_of(result), text_of(result)
+        # invalidated: the check is cleared; an evaluation with checks replays the product
+        await tm._invalidate(p)
+        assert p.check_outcome() is None and p.mark(M.BRIEFING, 0) == "not evaluated"
+        result = await session.call_tool("evaluate_to", {"node_id": "theory_TAT_Std_A", "checks": "blocking"})
+        assert not result.isError, text_of(result)
+        assert p.check_outcome() is PASSED and p.mark(M.BRIEFING, 0) == "valid statement, proven"
+        # a product that no longer proves the goal: the check fails with an empty message
+        job.outcome = Succeeded({**product, "text": "(rule refl)"})
+        await tm._invalidate(p)
+        result = await session.call_tool("evaluate_to", {"node_id": "theory_TAT_Std_A", "checks": "blocking"})
+        assert p.check_outcome() == Failed("") and p.mark(M.BRIEFING, 0) == "valid statement, bad proof"
+        text = text_of(result)
+        assert "The proof of `lemma_rev_rev` no longer holds. Call `construct` to prove it again." in text, text
+        assert job.can_start()
+        result = await session.call_tool("construct", {"node_ids": ["lemma_rev_rev"]})
+        assert not result.isError, text_of(result)
+        await until(lambda: job.outcome is not RUNNING)
+        assert isinstance(job.outcome, Succeeded) and p.check_outcome() is PASSED
+        assert p.mark(M.BRIEFING, 0) == "valid statement, proven"
+        out = io.StringIO()
+        p.emit(0, out)
+        assert out.getvalue().splitlines()[-1] == "  by aoa"

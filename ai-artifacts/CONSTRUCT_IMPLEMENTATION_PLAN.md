@@ -678,6 +678,16 @@ conversation is launched with).
 Measured in this step (CI §10): that TAT's process serves
 `IsaMini.AoA`; how soon the Python half learns of an interrupt of the
 forked task; that AoA's `group = NONE` forks end with the job.
+Measured 2026-10-09: the first holds — `TAT.Theorem.construct` names
+`IsaMini.AoA` in `python_packages`, so the conversation imports it and
+the remote procedure is this process's (`test_a_theorem_is_constructed_
+checked_invalidated_and_constructed_again` asserts the import). The
+other two need a construction that runs long enough to interrupt, which
+on the goals the automation closes never happens and on any other goal
+reaches the language model; they wait for the AoA round's scripted
+driver. Found on the way: `ERROR ""` renders as `Error` through
+`Runtime.exn_messages`, so `fork_job` reports it as one empty message
+itself (MODULE_STRUCTURE §2.4).
 
 Tests, in `test_theorem.py`: TH §7's sentences and the eleven lines of
 its mark; `_check()`'s table; TH §8's three examples; a construction

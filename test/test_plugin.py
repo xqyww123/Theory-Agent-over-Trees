@@ -812,7 +812,7 @@ def test_a_construction_job_class_is_checked():
         def failure_notification(cls, ids, automatic): return "failed"
 
     class Reporting(Check):
-        def _report(self, errors): pass
+        def _report(self, errors, product=None): pass
 
     refused(leaf("Odd_Check", ["odd_check"], evaluation_job_class=Whole), "not a subclass of `Evaluation_Job`")
     refused(leaf("Partial_Check", ["partial_check"], evaluation_job_class=Half_Check),

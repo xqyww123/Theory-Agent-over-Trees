@@ -59,9 +59,11 @@ sig
                       (*§2.4's, imports resolved through this conversation's tables*)
     end_theory : Toplevel.state -> unit,
                       (*§2.4's, the result put into this conversation's theory table*)
-    fork_job : {id : int, work : unit -> unit} -> unit
+    fork_job : {id : int, work : unit -> MessagePackBinIO.Pack.raw_packer option} -> unit
                       (*§2.4's: the work as a Future task, its end reported to
-                        Python by the remote procedure job_finished*)
+                        Python by the remote procedure job_finished, with the
+                        product the work yields -- a construction's; an
+                        evaluation's yields none*)
   }
   val register_callback :
     {python_packages : string list} ->    (*the class's Python half; imported at
@@ -582,14 +584,17 @@ fun tell_finished (answer : int * string list) =
 structure Jobs = struct
 
 (*What a job's work came to, as Python's job_finished is told it: on the wire
-  ["ok"], ["messages", [...]] or ["bug", <message>].  A work TAT cancelled
-  reports nothing: the Python side cancels only a job it has dropped, and
-  TAT.reset ends the conversation that would hear.*)
-datatype failure = Passed | Messages of string list | Bug_Raised of string
+  ["ok"], ["ok", <product>] -- the value a construction's work yields, packed
+  by the class --, ["messages", [...]] or ["bug", <message>].  A work TAT
+  cancelled reports nothing: the Python side cancels only a job it has
+  dropped, and TAT.reset ends the conversation that would hear.*)
+datatype failure =
+  Passed | Produced of MessagePackBinIO.Pack.raw_packer | Messages of string list | Bug_Raised of string
 
 local open MessagePackBinIO.Pack in
 
 fun pack_failure Passed = packList packString ["ok"]
+  | pack_failure (Produced product) = packPair (packString, I) ("ok", product)
   | pack_failure (Messages messages) = packPair (packString, packList packString) ("messages", messages)
   | pack_failure (Bug_Raised message) = packPair (packString, packString) ("bug", message)
 
@@ -604,6 +609,7 @@ end
 
 (*the wire's value, for the log*)
 fun json_of_failure Passed = Log.Array [Log.String "ok"]
+  | json_of_failure (Produced _) = Log.Array [Log.String "ok"]
   | json_of_failure (Messages messages) =
       Log.Array [Log.String "messages", Log.Array (map Log.String messages)]
   | json_of_failure (Bug_Raised message) = Log.Array [Log.String "bug", Log.String message]
@@ -617,9 +623,12 @@ fun failure_of exn =
   | NONE =>
       if interrupted exn then NONE
       else
-        (case map (#2 o #1) (Runtime.exn_messages exn) of
-          [] => SOME (Bug_Raised "fork_job: an exception with no message")
-        | messages => SOME (Messages messages)))
+        (case exn of
+          ERROR "" => SOME (Messages [""])     (*one empty error, which Runtime would render `Error`*)
+        | _ =>
+            (case map (#2 o #1) (Runtime.exn_messages exn) of
+              [] => SOME (Bug_Raised "fork_job: an exception with no message")
+            | messages => SOME (Messages messages))))
 
 (*A job from its fork to its end.  A task cancelled before it began never
   runs -- Future skips its body -- so its end is the canceller's to record:
@@ -687,7 +696,8 @@ fun fork (jobs : T) {id, work} =
             (*an interrupt nobody of TAT sent leaves a job Python still waits for: a bug*)
             val failure =
               (case result of
-                Exn.Res () => SOME Passed
+                Exn.Res NONE => SOME Passed
+              | Exn.Res (SOME product) => SOME (Produced product)
               | Exn.Exn exn =>
                   (case failure_of exn of
                     NONE =>
@@ -750,7 +760,7 @@ type env = {
   begin_theory : {session_name : string, master_dir : Path.T} ->
                  Thy_Header.header -> Toplevel.state,
   end_theory : Toplevel.state -> unit,
-  fork_job : {id : int, work : unit -> unit} -> unit
+  fork_job : {id : int, work : unit -> MessagePackBinIO.Pack.raw_packer option} -> unit
 }
 
 (*Registrations ride on the theory (§2.5): a conversation's node classes are

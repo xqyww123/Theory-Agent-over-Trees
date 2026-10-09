@@ -154,19 +154,25 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   are exported beside it.
 - `end_theory` — `Toplevel.end_theory`, yielding the value the theory table
   stores.
-- `fork_job` — the evaluation jobs' one function (CONSTRUCT_INTERACTION
-  §3.3): given a job's id and its work, forks the work as a Future task
+- `fork_job` — the jobs' one function (CONSTRUCT_INTERACTION §3.3; a
+  construction whose work is ML's, THEOREM.md §7, forks it the same way):
+  given a job's id and its work, forks the work as a Future task
   on Isabelle's worker pool, keeps the future under the id in the
   framework's table, and when the work ends calls Python's remote
   procedure `job_finished(id, failure)` with interrupts deferred,
   `failure` one value of two shapes: the messages of the exception the
-  work raised, `Runtime.exn_messages` as `operation` reports them, none
-  on success; or, when the work raised a `Bug` — found as `operation`
+  work raised, `Runtime.exn_messages` as `operation` reports them — an
+  `ERROR` with no text one empty message, which Isabelle would render
+  `Error` —, none
+  on success — with the product the work yields, if it yields one,
+  packed by the class, a construction's; or, when the work raised a
+  `Bug` — found as `operation`
   and the callback wrapper of §2.5 find one, by a test the framework
   holds for all three — the `Bug`'s
   message, which the task also logs as the `isabelle` record `bug` and
   which ends the conversation (CONSTRUCT_INTERACTION §3.3); on the wire
-  `["ok"]`, `["messages", [...]]` or `["bug", <message>]`. A work TAT
+  `["ok"]`, `["ok", <product>]`, `["messages", [...]]` or `["bug",
+  <message>]`. A work TAT
   cancelled — its future cancelled by `TAT.job_cancel` or `TAT.reset` —
   reports nothing: the Python side cancels only a job it has dropped,
   and a reset ends the conversation that would hear. A work interrupted

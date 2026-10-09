@@ -470,6 +470,29 @@ class Construction_Job(ABC):
         owner.wake()
 
     @final
+    @final
+    async def forked(self, name: str, args: Any) -> tuple[list[str], Any]:
+        """For a `_run` whose work is ML's (THEOREM.md §7): the class's
+        callback `name` called with `(args, id)`, `id` fresh, under which the
+        callback forks the work through `fork_job` (MODULE_STRUCTURE §2.4);
+        returns the report's errors — none when the work passed — and its
+        product, None when it yielded none.  Whatever ends the wait first —
+        a cancellation, the call's failure — takes the id out of the table
+        and cancels the work, except on the ending's path, where `TAT.reset`
+        cancels every work."""
+        conversation = self._conversation
+        assert conversation is not None                   # a run's, recorded at `start`
+        fork = _Fork(conversation)
+        register(fork)
+        try:
+            await isabelle_driver.call(conversation, name, (args, fork.id))
+            return await fork.reported
+        except BaseException:
+            discard(fork.id)
+            if not conversation.ending.entered:
+                conversation.ending.spawn(cancel_jobs_at_once(conversation, [fork.id]))
+            raise
+
     async def _running(self, run: _Run, owner: Agent, earlier: list[asyncio.Task[None]],
                        slot: Any) -> None:
         """The wrapper around `_run` (§3.2), in order: the log's agent is the
@@ -806,7 +829,7 @@ class Evaluation_Job(ABC):
         construction."""
 
     @final
-    def _report(self, errors: list[str]) -> None:
+    def _report(self, errors: list[str], product: Any) -> None:
         """The report's body, run only for a job the table still held — one
         still on its node, since a drop discards it (§3.3): `_finished`, the
         outcome stored as the node's check in a transaction of its own,
@@ -815,7 +838,10 @@ class Evaluation_Job(ABC):
         no job when the failure starts the node's construction under
         automatic construction (§3.4), which the body then does, the
         starter its owner — the job ended and the starter woken.  An
-        outcome left `RUNNING` is a bug."""
+        outcome left `RUNNING` is a bug, as is a work that yielded a
+        product: an evaluation's yields none."""
+        if product is not None:
+            raise TAT_InternalError(f"the work of {self!r} yielded a product")
         log = self.conversation.log.job
         self._finished(errors)
         outcome = self.outcome
@@ -1045,14 +1071,15 @@ class Unchecked(Unfinished):
 # --- the evaluation jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)
 
 class Reported(Protocol):
-    """What the report needs of an evaluation job: its `id` (the table's
-    key), the conversation it was made in — the report arrives on a pooled
-    connection, which belongs to no conversation — and the body that takes
-    the work's errors, none when it passed."""
+    """What the report needs of a job whose work ML forked: its `id` (the
+    table's key), the conversation it was made in — the report arrives on
+    a pooled connection, which belongs to no conversation — and the body
+    that takes the work's errors, none when it passed, and its product,
+    None when it yielded none."""
     id: int
     conversation: Conversation
 
-    def _report(self, errors: list[str]) -> None: ...
+    def _report(self, errors: list[str], product: Any) -> None: ...
 
 
 # The process's: an id is unique across the conversations a process hosts,
@@ -1077,16 +1104,31 @@ def discard(id: int) -> None:
     _evaluation_jobs.pop(id, None)
 
 
+class _Fork:
+    """The table's entry for the ML work of a construction run
+    (`Construction_Job.forked`): the report settles `reported` with the
+    work's errors and product."""
+
+    def __init__(self, conversation: Conversation):
+        self.id = next(_ids)
+        self.conversation = conversation
+        self.reported: asyncio.Future[tuple[list[str], Any]] = asyncio.get_running_loop().create_future()
+
+    def _report(self, errors: list[str], product: Any) -> None:
+        if not self.reported.done():
+            self.reported.set_result((errors, product))
+
+
 @isabelle_remote_procedure("job_finished")
 async def job_finished(arg: tuple[int, list[Any]], connection: Connection) -> None:
-    """The ML side's report that an evaluation job's work ended, answered at
-    once: the job's id and the failure — `["ok"]`, `["messages", [...]]` or
-    `["bug", <message>]`.  The body is synchronous and takes no lock.  A
-    report carrying a `Bug` ends the conversation of the job the table
-    holds, whatever became of the job; any other is the job's to take, and
-    whatever its body raises ends the conversation too.  A report for an
-    id the table no longer holds is nobody's, and a conversation that has
-    ended hears none."""
+    """The ML side's report that a job's work ended, answered at once: the
+    job's id and the failure — `["ok"]`, `["ok", <product>]`, `["messages",
+    [...]]` or `["bug", <message>]`.  The body is synchronous and takes no
+    lock.  A report carrying a `Bug` ends the conversation of the job the
+    table holds, whatever became of the job; any other is the job's to
+    take, and whatever its body raises ends the conversation too.  A
+    report for an id the table no longer holds is nobody's, and a
+    conversation that has ended hears none."""
     id, failure = arg
     job = _evaluation_jobs.pop(id, None)
     if job is None or job.conversation.ending.entered:      # nobody's, or a conversation that ended
@@ -1094,12 +1136,14 @@ async def job_finished(arg: tuple[int, list[Any]], connection: Connection) -> No
     try:
         match failure:
             case ["ok"]:
-                job._report([])
+                job._report([], None)
+            case ["ok", product]:
+                job._report([], product)
             case ["messages", [*messages]]:
-                job._report([str(message) for message in messages])
+                job._report([str(message) for message in messages], None)
             case ["bug", str(message)]:
                 raise TAT_InternalError(message)
             case _:
-                raise TAT_InternalError(f"job_finished was told {failure!r} of evaluation job {id}")
+                raise TAT_InternalError(f"job_finished was told {failure!r} of job {id}")
     except Exception as bug:
         job.conversation.ending.end(bug)

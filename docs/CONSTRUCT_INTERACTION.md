@@ -278,7 +278,9 @@ own.
 `Future.fork`, on Isabelle's worker pool — and returns; when the task
 ends it calls the framework's remote procedure `finished(id, failure)`,
 `failure` the work's errors, none on success, or the message of a `Bug`
-the work raised (MODULE_STRUCTURE §2.4).
+the work raised (MODULE_STRUCTURE §2.4). A construction job whose work
+is ML's forks it the same way, through `Construction_Job.forked`, and
+its report carries the product the work yields (THEOREM.md §7).
 The framework's ML half offers the fork and the report as one function:
 it forks the work, keeps the future under the job's id in a table of its
 own, and runs the report after the work with interrupts deferred, so
