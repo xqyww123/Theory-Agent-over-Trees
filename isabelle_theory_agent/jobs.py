@@ -345,8 +345,17 @@ class Construction_Job(ABC):
     @property
     def node_id(self) -> str:
         """The node's full id as the forest gives it; once the node has left
-        the forest, the id recorded at `start`."""
+        the forest, the id recorded at `start`.  For logs and bugs, stable;
+        the sentences the agent reads use `shown_id`."""
         return self.node.current_id() or self._id
+
+    @property
+    def shown_id(self) -> str:
+        """The node's id in its shortest unambiguous form, for the sentences
+        the agent reads (MCP_SPECIFICATION §2.1, PRINT §3); the recorded
+        full id once the node has left the forest."""
+        node = self.node
+        return node.forest().id_of(node) if node.current_id() is not None else self._id
 
     # --- the class's (§3.2)
 
@@ -399,13 +408,13 @@ class Construction_Job(ABC):
         return phrased(cls, ids, "Automatically started the", "; call `check_construct` before you exit")
 
     def answered_notice(self) -> str:
-        return f"Answered the {self.title()} on `{self.node_id}`; call `check_construct` before you exit."
+        return f"Answered the {self.title()} on `{self.shown_id}`; call `check_construct` before you exit."
 
     def owned_by_another_refusal(self) -> str:
-        return f"The {self.title()} on `{self.node_id}` belongs to another agent."
+        return f"The {self.title()} on `{self.shown_id}` belongs to another agent."
 
     def finished_notification(self, outcome: Settled) -> str:
-        head = f"The {self.title()} on `{self.node_id}`"
+        head = f"The {self.title()} on `{self.shown_id}`"
         if isinstance(outcome, Succeeded):
             return head + " succeeded."
         return with_message(head + " failed:", outcome.message)
@@ -413,7 +422,7 @@ class Construction_Job(ABC):
     def cancelled_notification(self, reason: Cancel_Reason) -> str:
         why = {"NODE_DELETED": "the node was deleted.", "NODE_AMENDED": "the node was amended.",
                "CONTEXT_CHANGED": "its context changed."}[reason]
-        return f"The {self.title()} on `{self.node_id}` was cancelled: {why}"
+        return f"The {self.title()} on `{self.shown_id}` was cancelled: {why}"
 
     # --- the framework's
 
@@ -584,8 +593,8 @@ class Construction_Job(ABC):
     @final
     def question_message(self, question: Interactive_Question) -> str:
         """The delivered form of a question (§3.4)."""
-        return (f"The {self.title()} on `{self.node_id}` asks:\n{question.text}\n"
-                f"Answer with the `answer` tool, node_id `{self.node_id}`; the answer must follow the JSON schema:\n"
+        return (f"The {self.title()} on `{self.shown_id}` asks:\n{question.text}\n"
+                f"Answer with the `answer` tool, node_id `{self.shown_id}`; the answer must follow the JSON schema:\n"
                 + json.dumps(question.schema, indent=2))
 
     @final
@@ -708,8 +717,17 @@ class Evaluation_Job(ABC):
     @property
     def node_id(self) -> str:
         """The node's full id as the forest gives it; once the node has left
-        the forest, the id recorded when the job was built."""
+        the forest, the id recorded when the job was built.  For logs,
+        stable; the agent's sentences use `shown_id`."""
         return self.node.current_id() or self._id
+
+    @property
+    def shown_id(self) -> str:
+        """The node's id in its shortest unambiguous form, for the sentences
+        the agent reads (MCP_SPECIFICATION §2.1, PRINT §3); the recorded
+        full id once the node has left the forest."""
+        node = self.node
+        return node.forest().id_of(node) if node.current_id() is not None else self._id
 
     @property
     def ended(self) -> bool:
@@ -784,9 +802,9 @@ class Evaluation_Job(ABC):
             if job is not None and job.auto_construct and job.can_start():
                 construction, self.started_construction = job, True
             post(self.conversation.log, Message(
-                self.starter, self.failure_notification([self.node_id], self.started_construction),
+                self.starter, self.failure_notification([self.shown_id], self.started_construction),
                 interrupts=False, subject=None if self.started_construction else self,
-                failure=Failure(type(self), self.node_id, self.started_construction)))
+                failure=Failure(type(self), self.shown_id, self.started_construction)))
             if construction is not None:
                 construction.start(self.starter)          # drops this job from its node
         self.mark_ended()
@@ -900,7 +918,7 @@ def by_title(jobs: Sequence[Job]) -> list[tuple[str, Job_Class, list[str]]]:
     class of its first job — which words the group — and its nodes' ids."""
     groups: dict[str, tuple[Job_Class, list[str]]] = {}
     for job in jobs:
-        groups.setdefault(type(job).title(), (type(job), []))[1].append(job.node_id)
+        groups.setdefault(type(job).title(), (type(job), []))[1].append(job.shown_id)
     return [(title, *groups[title]) for title in sorted(groups)]
 
 
@@ -908,7 +926,7 @@ def state_lines(stands: Standing) -> list[str]:
     """`check_construct`'s state lines (§5): the caller's jobs by title and
     situation — construction titles first, each one's waiting then running,
     then evaluation titles — up to three nodes as one sentence, more as a
-    header over one full id per line."""
+    header over one id per line, each in its shortest form."""
     lines: list[str] = []
     waiting = {title: (cls, ids) for title, cls, ids in by_title(stands.waiting)}
     running = {title: (cls, ids) for title, cls, ids in by_title(stands.running)}

@@ -162,7 +162,7 @@ not.
 | `repeat_question()` | framework | posts the pending question to the owner again when the mailbox no longer holds it — `check_construct`'s delivery of a question again (§5) |
 | `start(owner)` | framework, synchronous | called only when `can_start()`: records the owner; drops the node's evaluation job, clearing the stored check; sets `RUNNING`; stores the node in a transaction of its own; spawns the run |
 | `cancel(reason)` | framework, synchronous | detaches the run, withdraws its pending question (§3.4), sets `NOT_STARTED`, cancels the task; `reason` is `NODE_DELETED`, `NODE_AMENDED` or `CONTEXT_CHANGED` when the framework cancels, and the owner is then told, even when the owner deleted or amended the node itself; `cancel_construct` passes `None`, and nothing is told |
-| wording | class, overridable defaults from `title` | `starting_notice(ids)`, `cancelling_notice(ids)` — `ids` the nodes' full ids —, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
+| wording | class, overridable defaults from `title` | `starting_notice(ids)`, `cancelling_notice(ids)` — `ids` the nodes' ids in their shortest form (§5) —, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed when the outcome is `FAILED`; `None` prints nothing |
 
 The defaults, for the title `proof construction`: `Started the proof
@@ -230,7 +230,7 @@ the instance, does the work, and writes the outcome.
 | `_start()` | hook, async, abstract | begins the work through the class's own ML callback, passing `self.id`, and returns at once; called by the framework once the job is on its node |
 | `_finished(errors)` | hook, default given | called by the framework on the ML report, synchronously, under no lock; default: `PASSED` on no errors, else `FAILED` with the errors joined by newlines |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed from a `FAILED` check's outcome whether or not a job is on the node; `None` prints nothing |
-| `failure_notification(ids, automatic)` | class, abstract | the sentence its failure sends (§3.4) for the nodes these full ids name — one, two or three, or more, in the forms of §5 — `automatic` saying that the failure started their construction |
+| `failure_notification(ids, automatic)` | class, abstract | the sentence its failure sends (§3.4) for the nodes these ids name, in their shortest form — one, two or three, or more, in the forms of §5 — `automatic` saying that the failure started their construction |
 
 **Where a job starts.** A node the walk **passes** is one it reaches in
 the `Evaluating` mode (MODULE_STRUCTURE §4.1) — rerun, or `ready` and
@@ -422,9 +422,9 @@ whatever its `_run` did.
 Delivered, a question reads:
 
 ```
-The proof construction on `theory_X.lemma_P` asks:
+The proof construction on `lemma_P` asks:
 <the question's text>
-Answer with the `answer` tool, node_id `theory_X.lemma_P`; the answer must follow the JSON schema:
+Answer with the `answer` tool, node_id `lemma_P`; the answer must follow the JSON schema:
 {
   …the schema, complete…
 }
@@ -521,7 +521,7 @@ A call that ran an evaluation names, after the messages and before the
 trailer, the constructions its evaluation started automatically (§3.3),
 in the forms of `construct`'s line below opened with `Automatically
 started` — `Automatically started the proof construction on
-\`theory_X.lemma_A\`; call \`check_construct\` before you exit.` — and
+\`lemma_A\`; call \`check_construct\` before you exit.` — and
 nothing when there is none; a construction started on a failed check is
 told by that failure's notification (§3.4, §6).
 A *plain* result is one with no trailer. Body, messages and trailer are
@@ -562,28 +562,29 @@ started, so every job waited for belongs to a current context.
 
   The two lines take the forms of `check_construct`'s state lines: one
   node; two or three, `on` repeated and `and` before the last; more, a
-  header and one full id per line; and a fixed sentence for none. Each
+  header and one id per line, each in its shortest form; and a fixed
+  sentence for none. Each
   is one line or list per job class, worded by that class, so two
   classes of one title give two; the classes in the order their first
   nodes come in tree order. The `Automatically started` line (§3.3) is
   one per class the same way.
 
   ```
-  Started the proof construction on `theory_X.lemma_P`; call `check_construct` before you exit.
-  Started the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`; call `check_construct` before you exit.
+  Started the proof construction on `lemma_P`; call `check_construct` before you exit.
+  Started the proof construction on `lemma_P`, on `lemma_Q` and on `lemma_R`; call `check_construct` before you exit.
   Started the following proof constructions; call `check_construct` before you exit:
-    - theory_X.lemma_P
-    - theory_X.lemma_Q
-    - theory_X.lemma_R
-    - theory_Y.lemma_S
+    - lemma_P
+    - lemma_Q
+    - lemma_R
+    - lemma_S
   No construction job was started.
-  Cancelled the proof construction on `theory_X.lemma_P`.
-  Cancelled the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`.
+  Cancelled the proof construction on `lemma_P`.
+  Cancelled the proof construction on `lemma_P`, on `lemma_Q` and on `lemma_R`.
   Cancelled the following proof constructions:
-    - theory_X.lemma_P
-    - theory_X.lemma_Q
-    - theory_X.lemma_R
-    - theory_Y.lemma_S
+    - lemma_P
+    - lemma_Q
+    - lemma_R
+    - lemma_S
   No construction job was running.
   ```
 - `check_construct`: returns on a condition, judged when the call starts
@@ -607,17 +608,18 @@ started, so every job waited for belongs to a current context.
   titles then evaluation titles, alphabetical within, a construction
   title's waiting group before its running group; up to three nodes
   as one sentence with `on` repeated and `and` before the last,
-  `The proof construction on \`theory_X.lemma_P\` and on
-  \`theory_X.lemma_Q\` is waiting for your answer.` / `… is still
+  `The proof construction on \`lemma_P\` and on
+  \`lemma_Q\` is waiting for your answer.` / `… is still
   running.`, `The proof check on \`…\` is still running.`; more than
-  three as a header with the plural title and one full id per line:
+  three as a header with the plural title and one id per line, each in
+  its shortest form:
 
   ```
   The following proof constructions are still running:
-    - theory_X.lemma_Q
-    - theory_X.lemma_R
-    - theory_Y.lemma_S
-    - theory_Y.lemma_T
+    - lemma_Q
+    - lemma_R
+    - lemma_S
+    - lemma_T
   ```
 
   and for the waiting group `The following proof constructions are
@@ -707,15 +709,15 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
     2 nodes not evaluated: lemma_E, lemma_F
   ```
 
-- **Notifications** on tool results: `\`theory_X.lemma_P\` is proven.`,
-  `No proof of \`theory_X.lemma_P\` was found:` + the message on the
-  lines below, indented, `The proof construction on \`theory_X.lemma_P\`
+- **Notifications** on tool results: `\`lemma_P\` is proven.`,
+  `No proof of \`lemma_P\` was found:` + the message on the
+  lines below, indented, `The proof construction on \`lemma_P\`
   was cancelled: the node was deleted.` / `… amended.` / `… its context
   changed.`, and `Theorem`'s failed proof check, which gives no reason
   and tells what to do next (THEOREM.md §7): `The proof of
-  \`theory_X.lemma_P\` no longer holds. Call \`construct\` to prove it
+  \`lemma_P\` no longer holds. Call \`construct\` to prove it
   again.` — for a node under automatic construction `The proof of
-  \`theory_X.lemma_P\` no longer holds, so its proof construction was
+  \`lemma_P\` no longer holds, so its proof construction was
   started automatically; call \`check_construct\` before you exit.`;
   several nodes are named in one sentence or one list (§3.4).
 - **The seen set** (PRINT.md §4) is the agent's: `Agent.seen: set[Key]`,
@@ -765,8 +767,8 @@ instruction asks for delivers them.
 
 ```
 The `TAT` server blocked your exit:
-The proof construction on `theory_X.lemma_P` is waiting for your answer.
-The proof check on `theory_X.lemma_A` and on `theory_X.lemma_B` is still running.
+The proof construction on `lemma_P` is waiting for your answer.
+The proof check on `lemma_A` and on `lemma_B` is still running.
 Call `check_construct` to see the question and to wait for the running proof checks; answer it before you exit.
 ```
 

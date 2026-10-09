@@ -231,8 +231,8 @@ def test_the_answer_tools_refusals():
     check(NoQuestionPending(id="theory_X.definition_f"),
           "`theory_X.definition_f` has no question waiting for an answer.")
     check(ConstructOwnedByAnother(id="theory_X.lemma_P",
-                                  refusal="The proof construction on `theory_X.lemma_P` belongs to another agent."),
-          "The proof construction on `theory_X.lemma_P` belongs to another agent.")
+                                  refusal="The proof construction on `lemma_P` belongs to another agent."),
+          "The proof construction on `lemma_P` belongs to another agent.")
     assert str(BadAnswer("A verdict needs a reason.")) == "A verdict needs a reason."
 
 

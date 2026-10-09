@@ -1062,11 +1062,11 @@ def test_the_stop_rule_s_reason_per_row_of_section_7(transcript_path):
             await report(a.evaluation_job())
             await report(b.evaluation_job())
             assert await judged(stop()) == blocked(
-                "The proof construction on `theory_X.lemma_P` is waiting for your answer.",
+                "The proof construction on `lemma_P` is waiting for your answer.",
                 "Call `check_construct` to see the question; answer it before you exit.")
             await asked(c.job(), main)
             assert await judged(stop()) == blocked(
-                "The proof construction on `theory_X.lemma_P` and on `theory_X.lemma_C` is waiting for your answer.",
+                "The proof construction on `lemma_P` and on `lemma_C` is waiting for your answer.",
                 "Call `check_construct` to see the questions; answer them before you exit.")
             # jobs running only — the withdrawn questions still in the mailbox stand no more
             p.job().cancel(None)
@@ -1074,13 +1074,13 @@ def test_the_stop_rule_s_reason_per_row_of_section_7(transcript_path):
             assert [m.question is not None for m in main.mailbox] == [True, True]
             a.job().start(main)
             assert await judged(stop()) == blocked(
-                "The proof construction on `theory_X.lemma_A` is still running.",
+                "The proof construction on `lemma_A` is still running.",
                 "Call `check_construct` to wait for the running proof construction before you exit.")
             await b.start_evaluation_job(main)
             await c.start_evaluation_job(main)
             assert await judged(stop()) == blocked(
-                "The proof construction on `theory_X.lemma_A` is still running.",
-                "The proof check on `theory_X.lemma_B` and on `theory_X.lemma_C` is still running.",
+                "The proof construction on `lemma_A` is still running.",
+                "The proof check on `lemma_B` and on `lemma_C` is still running.",
                 "Call `check_construct` to wait for the running proof construction and proof checks before you exit.")
             # messages only: the second example, for each agent its own
             a.job().cancel(None)
@@ -1209,7 +1209,7 @@ def test_codex_s_stop_and_interruption_are_judged_end_to_end(tmp_path):
                          "tool_input": {"path": "/work/.codex/agents/worker"}}
             r = await post_hook(url, stop)
             assert r.json() == {"decision": "block", "reason": "\n".join([
-                BLOCKED, "The proof construction on `theory_X.lemma_P` is still running.",
+                BLOCKED, "The proof construction on `lemma_P` is still running.",
                 "Call `check_construct` to wait for the running proof construction before you exit."])}
             r = await post_hook(url, interrupt)
             assert r.json()["hookSpecificOutput"]["permissionDecision"] == "deny"

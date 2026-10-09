@@ -47,7 +47,8 @@ class Job:
         self.conversation = SimpleNamespace(ending=self.ending)
         self.reported = asyncio.Event()
         self.errors: list[str] | None = None
-        self.id = jobs.register(self)       # type: ignore[arg-type]
+        self.id = next(jobs._ids)
+        jobs.register(self)                 # type: ignore[arg-type]  # a started job: in the table
 
     def _report(self, errors: list[str]) -> None:
         self.errors = errors
@@ -227,7 +228,7 @@ async def test_the_notes_jobs_over_the_wire(conversation):
     checks = [n.evaluation_job() for n in (p, q, r)]
     await until(lambda: checks[0].ended and checks[1].ended)
     assert p.check_outcome() is jobs.PASSED and q.check_outcome() == jobs.Failed("tat-job-error")
-    assert jobs.deliver(conv.log, agent) == [f"The note check on `{forest.full_id(q)}` failed."]
+    assert jobs.deliver(conv.log, agent) == [f"The note check on `{forest.id_of(q)}` failed."]
     assert records(log, "job_ended", checks[0].id)[0]["failure"] == ["ok"]
     # the waiting work: dropped by the edit that deletes its node, cancelled on the Isabelle side
     await until(lambda: records(log, "job_forked", checks[2].id))
@@ -237,15 +238,15 @@ async def test_the_notes_jobs_over_the_wire(conversation):
     await until(lambda: records(log, "job_ended", checks[2].id))
     [ended] = records(log, "job_ended", checks[2].id)
     assert ended["cancelled"] is True
-    assert checks[2].id in jobs._evaluation_jobs                 # no report comes for a cancelled work
+    assert checks[2].id not in jobs._evaluation_jobs             # the drop discarded it (§3.3, R9); a late report is nobody's
     # the construction job: one question, settled by the answer
     job = p.job()
     assert job.can_start()
     job.start(agent)
     await until(lambda: job.pending_question is not None)
-    assert jobs.deliver(conv.log, agent)[0].startswith(f"The note construction on `{forest.full_id(p)}` asks:\nAccept the note?")
+    assert jobs.deliver(conv.log, agent)[0].startswith(f"The note construction on `{forest.id_of(p)}` asks:\nAccept the note?")
     assert job.receive_answer({"verdict": "accept"}) == (
-        f"Answered the note construction on `{forest.full_id(p)}`; call `check_construct` before you exit.")
+        f"Answered the note construction on `{forest.id_of(p)}`; call `check_construct` before you exit.")
     await until(lambda: job.outcome is not jobs.RUNNING)
     assert job.outcome == jobs.Succeeded("accept") and p.is_finished() is False   # its check was dropped by the start
     assert p.check_outcome() is None

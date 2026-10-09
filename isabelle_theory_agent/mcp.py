@@ -258,7 +258,7 @@ def _notices(jobs: list[Construction_Job],
     (CONSTRUCT_INTERACTION §5); empty for none."""
     by_class: dict[type[Construction_Job], list[str]] = {}
     for job in jobs:
-        by_class.setdefault(type(job), []).append(job.node_id)
+        by_class.setdefault(type(job), []).append(job.shown_id)
     return "\n".join(notice(cls, ids) for cls, ids in by_class.items())
 
 

@@ -227,7 +227,7 @@ sentence:
 
 ```
 `theory_X.definition_f` has no question waiting for an answer.
-The proof construction on `theory_X.lemma_P` belongs to another agent.
+The proof construction on `lemma_P` belongs to another agent.
 ```
 
 The `raw_ast_path` prefix — on any cause raised while building a batch
@@ -383,27 +383,27 @@ A successful `construct` or `cancel_construct` opens instead with each job
 class's `starting_notice` or `cancelling_notice`, one per class, composed from its title
 by default (CONSTRUCT_INTERACTION §3.2), above the quickview. Each names
 every node the call started or cancelled: one node; two or three, `on`
-repeated and `and` before the last; more, a header and one full id per
-line; none, a fixed sentence. A call whose evaluation started
+repeated and `and` before the last; more, a header and one id per
+line, each in its shortest form; none, a fixed sentence. A call whose evaluation started
 constructions automatically names them before its trailer in the same
 forms, opened with `Automatically started` (CONSTRUCT_INTERACTION §5):
 
 ```
-Automatically started the proof construction on `theory_X.lemma_A`; call `check_construct` before you exit.
-Started the proof construction on `theory_X.lemma_P`; call `check_construct` before you exit.
-Started the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`; call `check_construct` before you exit.
+Automatically started the proof construction on `lemma_A`; call `check_construct` before you exit.
+Started the proof construction on `lemma_P`; call `check_construct` before you exit.
+Started the proof construction on `lemma_P`, on `lemma_Q` and on `lemma_R`; call `check_construct` before you exit.
 Started the following proof constructions; call `check_construct` before you exit:
-  - theory_X.lemma_P
-  - theory_X.lemma_Q
-  - theory_X.lemma_R
-  - theory_Y.lemma_S
+  - lemma_P
+  - lemma_Q
+  - lemma_R
+  - lemma_S
 No construction job was started.
-Cancelled the proof construction on `theory_X.lemma_P`.
-Cancelled the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`.
+Cancelled the proof construction on `lemma_P`.
+Cancelled the proof construction on `lemma_P`, on `lemma_Q` and on `lemma_R`.
 Cancelled the following proof constructions:
-  - theory_X.lemma_P
-  - theory_X.lemma_Q
-  - theory_X.lemma_R
-  - theory_Y.lemma_S
+  - lemma_P
+  - lemma_Q
+  - lemma_R
+  - lemma_S
 No construction job was running.
 ```

@@ -303,7 +303,7 @@ def test_the_success_lines_of_render_baselines_section_6():
     y = add(f, Block(f, slot(), "Y", slot()), "theory")
     add(y, Lemma(y, slot(), "S"), "lemma")
     automatic, *forms = entries(construction)
-    assert automatic.startswith("Automatically started the proof construction on `theory_X.lemma_A`")
+    assert automatic.startswith("Automatically started the proof construction on `lemma_A`")
     assert construction[1:] == fenced_blocks(CI, "5.")[2]
     expected = dict(zip(["one", "three", "four", "none", "cancel_one", "cancel_three", "cancel_four",
                          "cancel_none"], forms))
@@ -404,7 +404,7 @@ def test_evaluate_to_s_result_the_background_line_and_blocking():
                                         constructs=[{"kind": "lemma", "name": "V"}]))
         result = await tools["evaluate_to"].run(c, {"node_id": "theory_Y"})        # U's check starts now too
         assert n("theory_Y.lemma_V").job().owner is c and u.evaluation_job().starter is c
-        assert result.trailer() == ("Automatically started the proof construction on `theory_Y.lemma_V`; call"
+        assert result.trailer() == ("Automatically started the proof construction on `lemma_V`; call"
                                     " `check_construct` before you exit.\n\n"
                                     "2 proof checks are running in the background.")
         # blocking: the passed nodes' checks are a's; b waits for them under the lock
@@ -419,7 +419,7 @@ def test_evaluate_to_s_result_the_background_line_and_blocking():
         assert body(result).splitlines()[0] == "Evaluation reached theory_X." and not f.lock.locked()
         assert result.trailer() == "1 counterexample search and 1 proof check are running in the background."
         assert [m.text for m in a.mailbox] == [
-            "The proof on `theory_X.lemma_R` no longer holds. Call `construct` to prove it again."]
+            "The proof on `lemma_R` no longer holds. Call `construct` to prove it again."]
         assert b.mailbox == []
         await settled(f)
     tm.run(scenario())
@@ -832,8 +832,8 @@ def test_the_nodes_of_a_call_the_skipping_and_the_one_refusal():
         text = await construct.run(me, {"node_ids": ["theory_X", Q], "auto_construct": True})
         assert tm.TABLE.transactions == 3                # each node once, stored by its start
         assert text.splitlines() == [
-            "Started the proof construction on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on"
-            " `theory_X.lemma_R`; call `check_construct` before you exit.",
+            "Started the proof construction on `lemma_P`, on `lemma_Q` and on"
+            " `lemma_R`; call `check_construct` before you exit.",
             "Sessions:", "- theory_X (not evaluated)", "  - section_Basics (not evaluated)",
             "  - definition_f (not evaluated)", "  - lemma_P (not evaluated, automatic construction)",
             "  - lemma_Q (not evaluated, automatic construction)", "  - lemma_R (not evaluated, automatic construction)",
@@ -843,8 +843,8 @@ def test_the_nodes_of_a_call_the_skipping_and_the_one_refusal():
             assert job.outcome is RUNNING and job.owner is me and job.auto_construct
             assert f.store.get(n(id).identity, "auto_construct") is True
         text = await cancel.run(me, {"node_ids": ["theory_X"]})
-        assert text.splitlines()[0] == ("Cancelled the proof construction on `theory_X.lemma_P`, on"
-                                        " `theory_X.lemma_Q` and on `theory_X.lemma_R`.")
+        assert text.splitlines()[0] == ("Cancelled the proof construction on `lemma_P`, on"
+                                        " `lemma_Q` and on `lemma_R`.")
         for id in (P, Q, R):
             job = n(id).job()
             assert job.outcome is NOT_STARTED and not job.auto_construct
@@ -853,12 +853,12 @@ def test_the_nodes_of_a_call_the_skipping_and_the_one_refusal():
         await construct.run(other, {"node_ids": [P]})
         text = await construct.run(me, {"node_ids": [P, "theory_Y"]})
         assert text.splitlines()[:2] == [
-            "Started the proof construction on `theory_Y.lemma_S` and on `theory_Y.lemma_T`; call"
+            "Started the proof construction on `lemma_S` and on `lemma_T`; call"
             " `check_construct` before you exit.",
-            "Started the counterexample search on `theory_Y.searched_V`; call `check_construct` before you exit."]
+            "Started the counterexample search on `searched_V`; call `check_construct` before you exit."]
         assert n(P).job().owner is other and n(U).job().outcome is NOT_STARTED
         text = await cancel.run(me, {"node_ids": [P, S]})
-        assert text.splitlines()[0] == "Cancelled the proof construction on `theory_Y.lemma_S`."
+        assert text.splitlines()[0] == "Cancelled the proof construction on `lemma_S`."
         assert n(P).job().outcome is RUNNING and n(P).job().owner is other
         # the one refusal, and a failing call starting nothing
         causes = fenced_lines(RB, "2.")
@@ -956,7 +956,7 @@ def test_check_construct_answers_no_job_at_once_and_returns_on_an_interrupting_m
         await still_waiting(task)                                  # judged again on the wake: no return
         jobs.post(f.conversation.log, Message(me, "urgent", interrupts=True))
         result = await returned(task)
-        assert result.trailer() == "The proof construction on `theory_X.lemma_P` is still running."
+        assert result.trailer() == "The proof construction on `lemma_P` is still running."
         assert [m.text for m in me.mailbox] == ["note", "urgent"]
         # a message that no longer stands does not return the call
         other = Agent("a9f3c2d1e4b5", False)
@@ -983,7 +983,7 @@ def test_check_construct_delivers_a_pending_question_again():
         await asked(job, me)
         result = await returned(calling(check, me, wait_seconds=3600))
         assert [m.question for m in me.mailbox] == [job.pending_question]   # there already: not posted again
-        assert result.trailer() == "The proof construction on `theory_X.lemma_P` is waiting for your answer."
+        assert result.trailer() == "The proof construction on `lemma_P` is waiting for your answer."
         assert jobs.deliver(f.conversation.log, me) == [job.question_message(job.pending_question)]
         assert me.mailbox == []
         await returned(calling(check, me, wait_seconds=3600))
@@ -1029,7 +1029,7 @@ def test_check_construct_returns_once_a_title_of_the_callers_has_no_job_left():
         await still_waiting(task)                                 # T's check, of the same title, still runs
         q.job().cancel(None)
         result = await returned(task)
-        assert result.trailer() == ("The proof check on `theory_Y.lemma_T` is still running.\n"
+        assert result.trailer() == ("The proof check on `lemma_T` is still running.\n"
                                     "All proof constructions have finished.")
         assert me.mailbox == []
         task = calling(check, me, wait_seconds=3600)
@@ -1043,8 +1043,8 @@ def test_check_construct_returns_once_a_title_of_the_callers_has_no_job_left():
         await still_waiting(task)
         p.job().release.set()                                     # P settles: its notification interrupts
         result = await returned(task)
-        assert result.trailer() == "The proof construction on `theory_X.lemma_Q` is still running."
-        assert [m.text for m in me.mailbox] == ["The proof construction on `theory_X.lemma_P` succeeded."]
+        assert result.trailer() == "The proof construction on `lemma_Q` is still running."
+        assert [m.text for m in me.mailbox] == ["The proof construction on `lemma_P` succeeded."]
         me.mailbox.clear()
         n(R).job().start(other)
         task = calling(check, me, wait_seconds=3600)
@@ -1091,7 +1091,7 @@ def test_check_construct_s_deadline_and_its_two_clamps(monkeypatch):
             started = asyncio.get_running_loop().time()
             result = await returned(calling(check, me, wait_seconds=0))
             assert 0.05 <= asyncio.get_running_loop().time() - started < 1.0
-        assert result.trailer() == "The proof construction on `theory_X.lemma_P` is still running."
+        assert result.trailer() == "The proof construction on `lemma_P` is still running."
         deadlines = []
         original = asyncio.wait_for
 
@@ -1126,7 +1126,7 @@ def test_check_construct_s_state_lines_in_every_form():
             n(id).job().start(me)
         assert await lines() == fenced_blocks(CI, "5.")[3] == [
             "The following proof constructions are still running:",
-            "  - theory_X.lemma_Q", "  - theory_X.lemma_R", "  - theory_Y.lemma_S", "  - theory_Y.lemma_T"]
+            "  - lemma_Q", "  - lemma_R", "  - lemma_S", "  - lemma_T"]
         for id in (Q, R):
             n(id).job().cancel(None)
             await asked(n(id).job(), me)
@@ -1135,19 +1135,19 @@ def test_check_construct_s_state_lines_in_every_form():
             await n(id).start_evaluation_job(me)
         n(SEARCHED).job().start(me)
         assert await lines() == [
-            "The counterexample search on `theory_Y.searched_V` is still running.",
-            "The proof construction on `theory_X.lemma_Q` and on `theory_X.lemma_R` is waiting for your answer.",
-            "The proof construction on `theory_Y.lemma_S` and on `theory_Y.lemma_T` is still running.",
-            "The proof check on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`"
+            "The counterexample search on `searched_V` is still running.",
+            "The proof construction on `lemma_Q` and on `lemma_R` is waiting for your answer.",
+            "The proof construction on `lemma_S` and on `lemma_T` is still running.",
+            "The proof check on `lemma_P`, on `lemma_Q` and on `lemma_R`"
             " is still running."]
         for id in (S, T_):
             n(id).job().cancel(None)
             await asked(n(id).job(), me)
         assert await lines() == [
-            "The counterexample search on `theory_Y.searched_V` is still running.",
+            "The counterexample search on `searched_V` is still running.",
             "The following proof constructions are waiting for your answer:",
-            "  - theory_X.lemma_Q", "  - theory_X.lemma_R", "  - theory_Y.lemma_S", "  - theory_Y.lemma_T",
-            "The proof check on `theory_X.lemma_P`, on `theory_X.lemma_Q` and on `theory_X.lemma_R`"
+            "  - lemma_Q", "  - lemma_R", "  - lemma_S", "  - lemma_T",
+            "The proof check on `lemma_P`, on `lemma_Q` and on `lemma_R`"
             " is still running."]
         await settled(f)
     tm.run(scenario())
@@ -1184,7 +1184,7 @@ def test_answer_s_four_refusals_and_its_results():
         job.cancel(None)
         await asked(job, me)
         e, lines = await refused(ConstructOwnedByAnother, other, node_id=P, answer={"verdict": "accept"})
-        assert (e.id, e.refusal) == (P, "The proof construction on `theory_X.lemma_P` belongs to another agent.")
+        assert (e.id, e.refusal) == (P, "The proof construction on `lemma_P` belongs to another agent.")
         assert lines == [e.refusal] and lines[0] in causes
         e, lines = await refused(InvalidField, me, node_id=P, answer={"verdict": "maybe"})
         assert (e.field, e.of_tool) == ("answer.verdict", True)
@@ -1204,7 +1204,7 @@ def test_answer_s_four_refusals_and_its_results():
         assert job.outcome == Succeeded("by simp") and job.pending_question is None
         await asked(n(Q).job(), me)
         assert await answer.run(me, {"node_id": Q, "answer": {"verdict": "accept"}}) == (
-            "Answered the proof construction on `theory_X.lemma_Q`; call `check_construct` before you exit.")
+            "Answered the proof construction on `lemma_Q`; call `check_construct` before you exit.")
         # malformed, against the advertised schema: `answer` a bare object
         e, _ = await refused(MissingField, me, node_id=P)
         assert (e.holder, e.field) == ("answer", "answer")
@@ -1254,7 +1254,7 @@ def test_check_construct_counts_a_job_started_during_the_call():
         await still_waiting(task)
         await report(n(Q).evaluation_job())
         result = await returned(task)
-        assert result.trailer() == ("The proof construction on `theory_X.lemma_P` is still running.\n"
+        assert result.trailer() == ("The proof construction on `lemma_P` is still running.\n"
                                     "All proof checks have finished.")
         await settled(f)
     tm.run(scenario())
