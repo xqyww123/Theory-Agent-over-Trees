@@ -1,9 +1,10 @@
-"""`Theorem` with no Isabelle (node_classes/THEOREM.md §1–§5, §7, §8): the
-schema and the descriptions, `gen`'s checks and refusals, the statement
-as the node holds, stores and prints it, the mark's statement slot, the
-emitted text, the goal slot's place among the node's slots, the carry on
-an amend.  The evaluation, and the proof slot of the mark, need the jobs
-plan's steps 14b and 15.
+"""`Theorem` (node_classes/THEOREM.md): with no Isabelle, the schema and the
+descriptions, `gen`'s checks and refusals, the statement as the node
+holds, stores and prints it, the mark's eleven ways, the jobs' sentences
+and `_check()`, §8's examples, the emitted text, the goal slot's place
+among the node's slots, the carry on an amend; through the std harness,
+the evaluation (§6) and a theorem constructed, checked, invalidated and
+constructed again (§7).
 Run: python -m pytest test/test_theorem.py
 """
 
@@ -15,6 +16,7 @@ import sys
 import jsoncomment
 import pytest
 
+import stand_ins
 import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
@@ -288,6 +290,28 @@ def test_check_answers_section_7_s_table():
         assert job.can_start() is answer
     with_proof(p, INVALID, NOT_STARTED)
     assert not job._check()
+
+
+def test_what_it_prints_with_a_job_is_section_8_s_three_examples():
+    """§8's examples: the line with a question waiting, for the owner; a
+    focus after a failed proof construction, the failure block below;
+    a node under `recall` whose stored proof failed its check, the
+    header alone with a period — the document's blocks verbatim."""
+    [_, asking, failed, bad] = fenced_blocks(TH, "8.")
+    f, x = forest(lemma("rev_length"))
+    (p,) = x.sub_nodes
+    me = stand_ins.agent(f.conversation)
+    job = p.job()
+    with_proof(p, M.READY_CLEAN, RUNNING)
+    job.owner = me
+    job._questions.append(jobs._Pending(object(), None))                    # a question waiting for its owner
+    assert f.render(p, M.Relative_Focus(frozenset([p]), 0), me).splitlines() == asking
+    job._questions.clear()
+    with_proof(p, M.READY_CLEAN, Failed(
+        "Sledgehammer timed out on every prover; the goal needs an induction the search did not attempt."))
+    assert f.render(p, M.Relative_Focus(frozenset([p]), 0), me).splitlines() == failed
+    with_proof(p, M.READY_CLEAN, PROVED, BAD)
+    assert f.render(p, M.RECALL, me).splitlines() == bad
 
 
 # --- emission (§5) -----------------------------------------------------------
