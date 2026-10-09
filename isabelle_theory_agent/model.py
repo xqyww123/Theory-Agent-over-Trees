@@ -33,7 +33,7 @@ from .exceptions import (
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
     ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError)
 from .jobs import (
-    RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
+    NOT_STARTED, RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
     Succeeded, Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs,
     cancel_jobs_at_once, check_image, check_of_image, current_run, discard, job_image, job_of_image,
     register, with_message)
@@ -1029,16 +1029,20 @@ class Node(ABC):
         §3.3), the node `ready`: the evaluation job — its class naming one,
         none on the node, `_unfinished()` answering `Unchecked`, `checks`
         allowing — and, under automatic construction, the construction job
-        — `can_start()`, and a `FAILED` job only after an invalidation since
-        its failure.  A walk with no caller starts nothing."""
+        — `can_start()`, and the node holding no result worth keeping: the
+        job `NOT_STARTED`, `FAILED` with an invalidation since, or
+        `SUCCEEDED` with its check `FAILED`.  A walk with no caller starts
+        nothing."""
         if ev.starter is None or not self._operations_ready():
             return
         if (ev.checks != "no" and type(self).evaluation_job_class is not None
                 and self.evaluation_job() is None and isinstance(self._unfinished(), Unchecked)):
             await self.start_evaluation_job(ev.starter)
         job = self.job()
-        if (job is not None and job.auto_construct and job.can_start()
-                and not (isinstance(job.outcome, Failed) and self not in ev.was_not_ready)):
+        if job is not None and job.auto_construct and job.can_start() and (
+                job.outcome is NOT_STARTED
+                or (isinstance(job.outcome, Failed) and self in ev.was_not_ready)
+                or (isinstance(job.outcome, Succeeded) and isinstance(self.check_outcome(), Failed))):
             job.start(ev.starter)
             ev.started.append(job)
 

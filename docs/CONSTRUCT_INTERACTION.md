@@ -262,15 +262,15 @@ a cancelled run.
 **Automatic construction.** On a node it passes, after the test above,
 an evaluation also starts the node's construction job — `start(caller)`,
 the caller its owner — when the node is `ready`, the job's
-`auto_construct` is on and `can_start()` holds. One case is excepted: a
-job whose last run ended `FAILED` is started again only when the node
-was invalidated since that failure — its stored status was not `ready`
-before this evaluation wrote it. A node whose class wants an
-existing result checked before another is constructed — `Theorem` with
-a proof on it, whose `_check()` says so — gets its evaluation job from
-the test above and no construction; when that job's report is `FAILED`
-and `auto_construct` is on, the report's body starts the construction,
-the job's starter its owner. Nothing else starts a construction
+`auto_construct` is on, `can_start()` holds, and the node holds no
+result worth keeping: the job is `NOT_STARTED`; or its last run ended
+`FAILED` and the node was invalidated since — its stored status was not
+`ready` before this evaluation wrote it; or it ended `SUCCEEDED` and the
+check on the node is `FAILED`. A `SUCCEEDED` job whose check is
+`PASSED`, `RUNNING` or not yet run is left alone: the result stands, or
+is checked first by the test above. When a check's report is `FAILED`
+and `auto_construct` is on, the report's body starts the construction at
+once, the job's starter its owner. Nothing else starts a construction
 automatically, and automatic construction starts no evaluation of its
 own.
 

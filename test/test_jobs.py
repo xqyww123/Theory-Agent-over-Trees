@@ -1645,6 +1645,45 @@ def test_automatic_construction_at_a_passed_node():
     run(scenario())
 
 
+def test_automatic_construction_leaves_a_result_worth_keeping():
+    """§3.3 "Automatic construction": a `SUCCEEDED` job is started again
+    only when the check on the node is `FAILED` — the setting turned on
+    after a `FAILED` report included; one `PASSED`, `RUNNING` or not yet
+    run stands, the walk starting the check under `checks` and keeping
+    it — whatever the class's `_check()` says, here the default; a job
+    the class's `_check()` vetoes is not started, `NOT_STARTED` or not."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        me = stand_ins.agent(f.conversation)
+        for node in (p, q):
+            node.job().outcome = Succeeded("by simp")
+            node.job().auto_construct = True
+        await walk(thy, me, "no")                         # unchecked, no check allowed: nothing
+        assert p.job().outcome == Succeeded("by simp") and p.evaluation_job() is None
+        await walk(thy, me, "quick")                      # unchecked: the check, not the construction
+        check = p.evaluation_job()
+        assert check is not None and check.outcome is RUNNING and p.job().outcome == Succeeded("by simp")
+        await walk(thy, me, "quick")                      # the check running: left alone
+        assert p.evaluation_job() is check and p.job().outcome == Succeeded("by simp")
+        await report(check)
+        await walk(thy, me, "quick")                      # `PASSED`: the result stands, the check kept
+        assert p.evaluation_job() is check and p.check_outcome() is PASSED
+        assert p.job().outcome == Succeeded("by simp")
+        q.job().auto_construct = False
+        await report(q.evaluation_job(), ["broken"])      # the setting off: the report starts nothing
+        assert q.job().outcome == Succeeded("by simp") and q.check_outcome() == Failed("broken")
+        q.job().auto_construct = True
+        await walk(thy, me, "quick")                      # the check `FAILED`, the setting on since: started
+        assert q.job().outcome is RUNNING and q.job().owner is me
+        assert q.evaluation_job() is None and q.check_outcome() is None
+        r = add(thy, Never_Lemma(thy, slot(), "R"), "lemma")     # the class's own condition failing
+        r.job().auto_construct = True
+        await walk(thy, me, "quick")
+        assert r.job().outcome is NOT_STARTED and r.evaluation_job() is None
+        q.job().cancel(None)
+    run(scenario())
+
+
 def test_a_failed_report_starts_the_construction_under_automatic_construction():
     """§3.3: a `FAILED` report on a node whose `auto_construct` is on and
     whose job `can_start()` — the check stored first, which `Careful`

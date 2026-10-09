@@ -578,8 +578,10 @@ Files: `model.py`, `mcp.py`, `tools/evaluate_to.jsonc`.
 Tests. `test_forest_walk.py` and `test_jobs.py`: a check starts only
 where `_unfinished()` would answer `Unchecked`, and none under `"no"`;
 a construction starts automatically at a `ready` node, not at one that
-failed and was not invalidated since, again after an invalidation, and
-on a failed report, its owner the caller or the starter; `blocking`
+failed and was not invalidated since, again after an invalidation, not
+at one that succeeded while its check is passed, running or not yet
+run, again when that check failed, and on a failed report, its owner
+the caller or the starter; `blocking`
 returns after the passed nodes' jobs end, whoever started them, the
 failures on the same result. `test_mcp.py`: the lines of RB §6 and
 §3, the background line's forms, `checks` absent with no evaluation
