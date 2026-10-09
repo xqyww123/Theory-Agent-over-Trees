@@ -43,12 +43,33 @@ val admit_transition =
 fun reserved thy ((_, name, for_any, premises, _) : statement) =
   filter (fn n => Thy_Header.print_name thy n <> n) (name :: map #1 for_any @ map #1 premises)
 
+(*§6's check once the goal is open: the statement's free variables -- in the
+  goal and in the premises assumed beside it -- that `for_any` does not
+  declare, which Isabelle fixed by itself; sorted*)
+fun undeclared ((_, _, for_any, _, _) : statement) st =
+  let val {context, goal, ...} = Proof.goal (Toplevel.proof_of st)
+      val props = Thm.prop_of goal :: map Thm.prop_of (Assumption.all_prems_of context)
+      val frees = distinct (op =) (map #1 (fold Term.add_frees props []))
+   in sort_strings (subtract (op =) (map #1 for_any) frees) end
+
+fun undeclared_sentence names =
+  let val quoted = map (fn n => "`" ^ n ^ "`") names
+      val listed =
+        (case quoted of
+          [one] => one
+        | _ => String.concatWith ", " (take (length quoted - 1) quoted) ^ " and " ^ List.last quoted)
+   in if length names = 1
+      then "Undeclared variable " ^ listed ^ ": declare it in `for_any`."
+      else "Undeclared variables " ^ listed ^ ": declare them in `for_any`."
+  end
+
 (*the two transitions in turn from the input slot's state: the goal, open and
-  no step taken, into `goal_state`; the admitted fact into the resulting slot.
-  A failure of either is the statement's: `goal_state` emptied -- a rerun of a
-  `ready` node releases nothing, so an earlier run's goal would stand there --
-  the resulting slot left to the framework, the messages answered.*)
-val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
+  no step taken, into `goal_state`, then the undeclared variables refused; the
+  admitted fact into the resulting slot.  A failure of any is the statement's:
+  `goal_state` emptied -- a rerun of a `ready` node releases nothing, so an
+  earlier run's goal would stand there -- the resulting slot left to the
+  framework, the messages answered.*)
+val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["isabelle_theory_agent.std"]} (fn env =>
   {name = "TAT.Theorem.evaluate",
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env,
@@ -60,6 +81,10 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
         val errors =
           TAT_Common_Nodes.operation goal (fn () =>
             TAT_Framework.apply_transition (statement_transition statement) st)
+        val errors =
+          if null errors
+          then (case undeclared statement (#get goal ()) of [] => [] | names => [undeclared_sentence names])
+          else errors
         val errors =
           if null errors
           then TAT_Common_Nodes.operation result (fn () =>
@@ -85,9 +110,9 @@ fun goal_of get =
 (*the proof construction (§7): one call of AoA's standard entry on the goal, the
   proof store read and written on AoA's own path, forked as the job's work; its
   product the proof.  The agent's give-up is the failure's message, as the `aoa`
-  method renders it.  AoA's Python half is served by this process: its package
-  is named here, so that the conversation imports it.*)
-val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["IsaMini.AoA"]} (fn env =>
+  method renders it.  AoA's Python half is served by this process: the plugin's
+  package imports it.*)
+val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Theorem.construct",
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackPair (#slot_unpacker env, unpackInt),
@@ -96,15 +121,21 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["IsaMi
       let val (ctxt, sequent) = goal_of (#get goal) in
         #fork_job env {id = id, work = fn () =>
           let
-            val (fut, _) =
-              MiniLang_Agent_AoA.hammer_or_AoA'
-                {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
-                 hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
-                 read_store = SOME true, write_store = SOME true,
-                 task = MiniLang_Agent_AoA.usual, user_operations = []} ctxt sequent
+            (*the two give-ups the `aoa` method renders, rendered its way: the
+              agent's, and the engine's own failure; Sync raises them at the call,
+              the join joins a value*)
+            val (times, text) =
+              let val (fut, _) =
+                    MiniLang_Agent_AoA.hammer_or_AoA'
+                      {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
+                       hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
+                       read_store = SOME true, write_store = SOME true,
+                       task = MiniLang_Agent_AoA.usual, user_operations = []} ctxt sequent
+              in Future.join fut end
               handle MiniLang_Agent_AoA.Agent_Give_Up (reason, detail, _) =>
-                error (MiniLang_Agent_AoA.banner_of reason ^ "\n" ^ detail)
-            val (times, text) = Future.join fut
+                       error (MiniLang_Agent_AoA.banner_of reason ^ "\n" ^ detail)
+                   | Phi_Sledgehammer_Solver.Auto_Fail (Phi_Sledgehammer_Solver.Internal_Failure msg) =>
+                       error msg
             val (cpu, wall) = Phi_Proof_Store.ms_of_times times
           in SOME (pack_product (text, cpu, wall)) end}
       end,
@@ -112,7 +143,8 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["IsaMi
 
 (*the proof check (§7): the stored product replayed on the same goal through
   the function AoA exports, forked as the job's work; no theorem is one empty
-  error -- the replay says only that it failed*)
+  error -- the replay says only that it failed; anything else the replay
+  raises is a bug, AoA's own classification of it, and ends the conversation*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Theorem.check",
     on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -121,10 +153,16 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
     function = fn (goal, (text, cpu, wall), id) =>
       let val (ctxt, sequent) = goal_of (#get goal) in
         #fork_job env {id = id, work = fn () =>
-          (case Proof_Store_AoA.replay_record (ctxt, sequent)
-                  (Phi_Proof_Store.times_of_ms (cpu, wall), text) of
-            SOME _ => NONE
-          | NONE => error "")}
+          let
+            val replayed =
+              (case Exn.capture_body (fn () =>
+                      Proof_Store_AoA.replay_record (ctxt, sequent)
+                        (Phi_Proof_Store.times_of_ms (cpu, wall), text)) of
+                Exn.Res replayed => replayed
+              | Exn.Exn exn =>
+                  if TAT_Framework.interrupted exn then Exn.reraise exn
+                  else raise TAT_Framework.Bug ("the proof check's replay raised: " ^ Runtime.exn_message exn))
+          in (case replayed of SOME _ => NONE | NONE => error "") end}
       end,
     timeout = NONE}))
 

@@ -258,18 +258,18 @@ def series(words: list[str], last: str) -> str:
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
 
 
-def on_each(ids: list[str]) -> str:
+def on_each(ids: list[str], preposition: str = "on") -> str:
     """`on \\`A\\``; `on \\`A\\` and on \\`B\\``; `on \\`A\\`, on \\`B\\` and on
-    \\`C\\`` (§5)."""
-    return series([f"on `{id}`" for id in ids], "and")
+    \\`C\\`` (§5) — with the class's preposition, `of` for a proof."""
+    return series([f"{preposition} `{id}`" for id in ids], "and")
 
 
-def listed(ids: list[str], sentence: Callable[[str], str], header: str) -> str:
+def listed(ids: list[str], sentence: Callable[[str], str], header: str, preposition: str = "on") -> str:
     """§5's forms for the nodes `ids` name: up to three in one sentence —
     `sentence` given `on_each`'s phrase — more as `header` over one full
     id per line."""
     if len(ids) <= 3:
-        return sentence(on_each(ids))
+        return sentence(on_each(ids, preposition))
     return header + "\n" + "\n".join(f"  - {id}" for id in ids)
 
 
@@ -300,13 +300,15 @@ class _Run:
     longer its job's, or its question, if it carries one, is no longer
     the job's pending question.  `attach` is an evaluation job attached
     from inside the run, applied at its settlement and gone with it
-    (§3.3)."""
+    (§3.3); `forks` the ML works `forked` has waiting, from any task of
+    the run's, cancelled with it."""
 
     def __init__(self, job: Construction_Job):
         self.job = job
         self.task: asyncio.Task[None] | None = None
         self.cancelled = False
         self.attach: Evaluation_Job | None = None
+        self.forks: list[_Fork] = []
 
     def dropped_for(self, message: Message) -> str | None:
         if self.cancelled:
@@ -444,7 +446,9 @@ class Construction_Job(ABC):
 
     @final
     def can_start(self) -> bool:
-        return self.outcome is not RUNNING and self._check()
+        """Not `RUNNING`, the node `ready` — no class reads a slot the walk
+        has not filled — and `_check()` (§3.2)."""
+        return self.outcome is not RUNNING and self.node._operations_ready() and self._check()
 
     @final
     def start(self, owner: Agent) -> None:
@@ -470,28 +474,34 @@ class Construction_Job(ABC):
         owner.wake()
 
     @final
-    @final
     async def forked(self, name: str, args: Any) -> tuple[list[str], Any]:
-        """For a `_run` whose work is ML's (THEOREM.md §7): the class's
+        """For a `_run` whose work is ML's (§3.2; MODULE_STRUCTURE §2.4): the class's
         callback `name` called with `(args, id)`, `id` fresh, under which the
         callback forks the work through `fork_job` (MODULE_STRUCTURE §2.4);
         returns the report's errors — none when the work passed — and its
-        product, None when it yielded none.  Whatever ends the wait first —
-        a cancellation, the call's failure — takes the id out of the table
-        and cancels the work, except on the ending's path, where `TAT.reset`
-        cancels every work."""
-        conversation = self._conversation
-        assert conversation is not None                   # a run's, recorded at `start`
+        product, None when it yielded none.  The fork is the run's, from
+        whichever task of the run calls: `cancel` takes the run's forks out
+        of the table and cancels their works; the call's own failure does
+        the same for its fork — except on the ending's path, where
+        `TAT.reset` cancels every work."""
+        conversation, run = self._conversation, current_run()
+        assert conversation is not None and run is not None and run.job is self   # a run's
         fork = _Fork(conversation)
+        run.forks.append(fork)
         register(fork)
         try:
             await isabelle_driver.call(conversation, name, (args, fork.id))
             return await fork.reported
         except BaseException:
-            discard(fork.id)
-            if not conversation.ending.entered:
-                conversation.ending.spawn(cancel_jobs_at_once(conversation, [fork.id]))
+            if fork in run.forks:                         # not `cancel`'s doing: the call failed
+                run.forks.remove(fork)
+                discard(fork.id)
+                if not conversation.ending.entered:
+                    conversation.ending.spawn(cancel_jobs_at_once(conversation, [fork.id]))
             raise
+        finally:
+            if fork in run.forks:
+                run.forks.remove(fork)
 
     async def _running(self, run: _Run, owner: Agent, earlier: list[asyncio.Task[None]],
                        slot: Any) -> None:
@@ -557,6 +567,13 @@ class Construction_Job(ABC):
             run.cancelled = True
             if run.task is not None:
                 run.task.cancel()
+            forks, run.forks = run.forks, []     # its forked works too, whichever task waits for them
+            for fork in forks:
+                discard(fork.id)
+                fork.reported.cancel()
+            conversation = self._conversation
+            if forks and conversation is not None and not conversation.ending.entered:
+                conversation.ending.spawn(cancel_jobs_at_once(conversation, [fork.id for fork in forks]))
         self._log.construction_cancelled(node=self.node_id, reason=reason)
         owner = self._owned_by()
         if reason is not None:
@@ -1068,7 +1085,7 @@ class Unchecked(Unfinished):
         return self.job_class.title(plural)
 
 
-# --- the evaluation jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)
+# --- the forked jobs' wire (CONSTRUCT_INTERACTION §3.3; MODULE_STRUCTURE §2.4)
 
 class Reported(Protocol):
     """What the report needs of a job whose work ML forked: its `id` (the
@@ -1086,22 +1103,22 @@ class Reported(Protocol):
 # and a job is in the table from its id's making until its report arrives or
 # it is discarded.
 _ids = itertools.count(1)
-_evaluation_jobs: dict[int, Reported] = {}
+_forked_jobs: dict[int, Reported] = {}
 
 
 def register(job: Reported) -> None:
     """Enter `job` into the table under its id, just before its ML work is
-    forked (`start_evaluation_job`, §3.3), so that no report arrives for a
-    job the table does not hold; discarded at every drop and at the
-    ending."""
-    _evaluation_jobs[job.id] = job
+    forked (`start_evaluation_job`, §3.3; a construction run's `forked`),
+    so that no report arrives for a job the table does not hold;
+    discarded at every drop, at the run's end and at the ending."""
+    _forked_jobs[job.id] = job
 
 
 def discard(id: int) -> None:
     """Take a job out of the table whose report will not come, or is not
     wanted — every drop and the ending (§3.3); one that is not there is not
     an error."""
-    _evaluation_jobs.pop(id, None)
+    _forked_jobs.pop(id, None)
 
 
 class _Fork:
@@ -1130,7 +1147,7 @@ async def job_finished(arg: tuple[int, list[Any]], connection: Connection) -> No
     report for an id the table no longer holds is nobody's, and a
     conversation that has ended hears none."""
     id, failure = arg
-    job = _evaluation_jobs.pop(id, None)
+    job = _forked_jobs.pop(id, None)
     if job is None or job.conversation.ending.entered:      # nobody's, or a conversation that ended
         return
     try:

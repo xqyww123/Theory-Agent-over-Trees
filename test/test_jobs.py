@@ -44,9 +44,9 @@ def isolated(monkeypatch):
     async def job_cancel(conversation, ids):
         CANCELS.append(list(ids))
     monkeypatch.setattr(isabelle_driver, "job_cancel", job_cancel)
-    jobs._evaluation_jobs.clear()
+    jobs._forked_jobs.clear()
     yield
-    jobs._evaluation_jobs.clear()
+    jobs._forked_jobs.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +115,16 @@ class Proof(jobs.Construction_Job):
 
 
 class Lemma(T):
+    """A leaf with a job, `ready` from the start unless told to fail: a
+    job starts on a `ready` node alone (§3.2), and the cases start theirs
+    without a walk."""
     construction_job_class = Proof
+
+    def __init__(self, parent, state, name, fail=False, evaluated=True):
+        super().__init__(parent, state, name, fail)
+        if evaluated and not fail:
+            self._status = READY
+            self._last_evaluation_statuses = [READY]     # stored too: a rerun rewrites `ready` over `ready`
 
 
 class Check(jobs.Evaluation_Job):
@@ -202,6 +211,15 @@ def build(lemma=Lemma):
     p = add(thy, lemma(thy, slot(), "P"), kind)
     q = add(thy, lemma(thy, slot(), "Q"), kind)
     return f, thy, t1, p, q
+
+
+def ready(*nodes):
+    """The nodes evaluated `ready` through the setter and stored, as a walk
+    leaves them: a job starts on a `ready` node alone (§3.2)."""
+    ev = M.Evaluation(None, False)
+    for node in nodes:
+        node._set_status(ev, READY, None)
+    nodes[0].forest()._store_written(ev)
 
 
 def records(event):
@@ -645,16 +663,16 @@ def test_a_delete_or_an_amend_cancels_the_running_job_naming_the_node_it_belonge
         p.job().start(owner)
         q.job().start(owner)
         await asyncio.sleep(0)
-        await locked(f, edit.delete(p))
-        assert p.job().outcome is NOT_STARTED and q.job().outcome is RUNNING
-        assert records("construction_cancelled") == [{"node": P, "reason": "NODE_DELETED"}]
-        (q2,) = await locked(f, edit.amend(q, [{"kind": "lemma", "name": "Q2"}], KINDS))
-        assert q.job().outcome is NOT_STARTED and q2.job().outcome is NOT_STARTED
-        assert records("construction_cancelled")[-1] == {"node": "block_Theory.lemma_Q", "reason": "NODE_AMENDED"}
+        await locked(f, edit.delete(q))                      # after P: P's run stands
+        assert q.job().outcome is NOT_STARTED and p.job().outcome is RUNNING
+        assert records("construction_cancelled") == [{"node": Q, "reason": "NODE_DELETED"}]
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "lemma", "name": "P2"}], KINDS))
+        assert p.job().outcome is NOT_STARTED and p2.job().outcome is NOT_STARTED
+        assert records("construction_cancelled")[-1] == {"node": P, "reason": "NODE_AMENDED"}
         assert deliver(f, owner) == [
-            f"The proof construction on `{P}` was cancelled: the node was deleted.",
-            "The proof construction on `block_Theory.lemma_Q` was cancelled: the node was amended."]
-        assert q2.job().auto_construct is False
+            f"The proof construction on `{Q}` was cancelled: the node was deleted.",
+            f"The proof construction on `{P}` was cancelled: the node was amended."]
+        assert p2.job().auto_construct is False
         invariants.assert_store_mirrors(f, KINDS)
     run(scenario())
 
@@ -669,11 +687,13 @@ def test_an_amend_carries_the_old_jobs_image_where_gen_asked():
         p.job().outcome = Succeeded("by simp")
         (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}], KINDS))
         assert p2.job().outcome == Succeeded("by simp") and f.store.get(p2.identity, "job") == ["SUCCEEDED", "by simp"]
+        ready(p2)                                            # an amended node is not evaluated
         p2.job().start(owner)                                # settles during the next gen
         p2.job().release.set()
         (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}], KINDS))
         assert p2.job().outcome == Succeeded("by simp") and p3.job().outcome == Succeeded("by simp")
         assert records("construction_cancelled") == []
+        ready(p3)
         p3.job().start(owner)                                # still running at the commit
         (p4,) = await locked(f, edit.amend(p3, [{"kind": "carrying", "name": "P4"}], KINDS))
         assert p4.job().outcome is NOT_STARTED
@@ -823,7 +843,7 @@ def test_an_evaluation_job_is_attached_started_and_settled_by_its_report():
         tm.TABLE.clear_writes()
         await p.start_evaluation_job(starter)
         job = p.evaluation_job()
-        assert isinstance(job, Check) and job.began and job.starter is starter and job.id in jobs._evaluation_jobs
+        assert isinstance(job, Check) and job.began and job.starter is starter and job.id in jobs._forked_jobs
         assert p.check_outcome() is RUNNING and p._unfinished() == jobs.Unfinished_Check(RUNNING, Check)
         assert tm.TABLE.transactions == 1 and "check" not in f.store.fields(p.identity)
         assert records("evaluation_started") == [{"node": P_CHECKED, "id": job.id, "starter": "main"}]
@@ -832,7 +852,7 @@ def test_an_evaluation_job_is_attached_started_and_settled_by_its_report():
         assert p._unfinished() is None and p.is_finished()
         assert f.store.get(p.identity, "check") == ["PASSED"] and tm.TABLE.transactions == 2
         assert records("evaluation_reported") == [{"id": job.id, "outcome": "PASSED"}]
-        assert deliver(f, starter) == [] and job.id not in jobs._evaluation_jobs
+        assert deliver(f, starter) == [] and job.id not in jobs._forked_jobs
         await p.start_evaluation_job(starter)                 # another in its place
         second = p.evaluation_job()
         assert second is not job and p.check_outcome() is RUNNING and "check" not in f.store.fields(p.identity)
@@ -963,7 +983,7 @@ def test_a_dropped_jobs_late_report_is_ignored_and_a_stuck_finished_is_a_bug():
         await p.start_evaluation_job(starter)
         job = p.evaluation_job()
         p.drop_evaluation_job("status_write", M.Evaluation(None, False))
-        assert job.id not in jobs._evaluation_jobs             # the drop discarded it (§3.3, R9)
+        assert job.id not in jobs._forked_jobs             # the drop discarded it (§3.3, R9)
         tm.TABLE.clear_writes()
         await report(job)                                      # its late report is nobody's: no record, no settle
         assert records("report_ignored") == [] and job.outcome is RUNNING
@@ -1002,7 +1022,7 @@ def test_an_attach_from_inside_a_run_takes_effect_at_the_settlement():
         await run_to_end(job, owner)
         check = p.evaluation_job()
         assert isinstance(check, Check) and check.outcome is PASSED and p.check_outcome() is PASSED
-        assert f.store.get(p.identity, "check") == ["PASSED"] and p._status is M.NOT_EVALUATED
+        assert f.store.get(p.identity, "check") == ["PASSED"] and p._status == READY
         p._status = READY
         assert p.is_finished()
         gate.clear()
@@ -1088,7 +1108,7 @@ class Job:
         jobs.register(self)                 # type: ignore[arg-type]  # a started job: in the table
 
     def _report(self, errors: list[str], product=None) -> None:
-        self.in_the_table_at_the_report = self.id in jobs._evaluation_jobs
+        self.in_the_table_at_the_report = self.id in jobs._forked_jobs
         self.reports.append(errors)
         self.products.append(product)
         if self.raises is not None:
@@ -1103,8 +1123,32 @@ class Forking(Proof):
         return Succeeded(product) if not errors else Failed("\n".join(errors))
 
 
-class Forking_Lemma(T):
+class Forking_Lemma(Lemma):
     construction_job_class = Forking
+
+
+class Broken(Proof):
+    """A run whose callback fails before any work is forked."""
+    async def _run(self):
+        await self.forked("TAT_test.construct", "broken")
+        return Succeeded(None)
+
+
+class Broken_Lemma(Lemma):
+    construction_job_class = Broken
+
+
+class Spawning(Proof):
+    """A run whose work is forked from a task of its own, which it never
+    awaits: the fork is the run's all the same."""
+    async def _run(self):
+        self.side = asyncio.create_task(self.forked("TAT_test.construct", "aside"))
+        await self.release.wait()
+        return Succeeded(None)
+
+
+class Spawning_Lemma(Lemma):
+    construction_job_class = Spawning
 
 
 async def holds_soon(holds) -> None:
@@ -1117,17 +1161,26 @@ async def holds_soon(holds) -> None:
     assert holds()
 
 
-def test_a_run_forks_its_work_and_takes_the_reports_product(monkeypatch):
-    """`Construction_Job.forked` (§3.3; THEOREM.md §7): the class's callback
-    called with the args and a fresh id, which the table holds until the
-    report; the report settles the run — `["ok", <product>]` with the
-    product, `["messages", ...]` as a failure; a cancellation meanwhile
-    takes the id out of the table and cancels the work."""
-    calls: list[tuple[str, tuple]] = []
-
+def forking_driver(monkeypatch, calls: list):
+    """The driver's `call` as the forking cases see it: each call recorded
+    with whether its id was in the table already — a report for an id the
+    table does not hold is nobody's —; the args `broken` fail the call."""
     async def call(conversation, name, args):
-        calls.append((name, args))
+        calls.append((name, args, args[1] in jobs._forked_jobs))
+        if args[0] == "broken":
+            raise RuntimeError("the callback failed")
     monkeypatch.setattr(isabelle_driver, "call", call)
+
+
+def test_a_run_forks_its_work_and_takes_the_reports_product(monkeypatch):
+    """`Construction_Job.forked` (§3.2, §3.3): the class's callback called
+    with the args and a fresh id, in the table before the call; the report
+    settles the run — `["ok", <product>]` with the product, `["messages",
+    ...]` as a failure; a cancellation meanwhile takes the id out of the
+    table and cancels the work; a call that fails does the same for its
+    own fork, and is the run's bug."""
+    calls: list = []
+    forking_driver(monkeypatch, calls)
 
     async def scenario():
         f, thy, t1, p, q = build(Forking_Lemma)
@@ -1137,18 +1190,46 @@ def test_a_run_forks_its_work_and_takes_the_reports_product(monkeypatch):
             node.job().start(me)
         await holds_soon(lambda: len(calls) == 3)
         ids = {}
-        for name, (args, id) in calls:
-            assert name == "TAT_test.construct" and args == "the slot" and id in jobs._evaluation_jobs
+        for name, (args, id), registered in calls:
+            assert name == "TAT_test.construct" and args == "the slot" and registered and id in jobs._forked_jobs
             ids[id] = id
         (id_p, id_q, id_r) = ids
         await jobs.job_finished((id_p, ["ok", ["by simp", 3, 5]]), None)    # type: ignore[arg-type]
         await holds_soon(lambda: p.job().outcome == Succeeded(["by simp", 3, 5]))
         await jobs.job_finished((id_r, ["messages", ["no proof"]]), None)   # type: ignore[arg-type]
         await holds_soon(lambda: r.job().outcome == Failed("no proof"))
-        assert set(jobs._evaluation_jobs) == {id_q}
+        assert set(jobs._forked_jobs) == {id_q}
         q.job().cancel(None)
         await holds_soon(lambda: CANCELS == [[id_q]])
-        assert jobs._evaluation_jobs == {} and q.job().outcome is NOT_STARTED
+        assert jobs._forked_jobs == {} and q.job().outcome is NOT_STARTED
+        s = add(thy, Broken_Lemma(thy, slot(), "S"), "lemma")
+        s.job().start(me)
+        await holds_soon(lambda: f.conversation.ending.entered)   # the run's exception: a bug the ending takes
+        (_, (_, id_s), registered) = calls[-1]
+        assert registered and id_s not in jobs._forked_jobs       # its fork discarded; `TAT.reset` cancels the works
+    run(scenario())
+
+
+def test_a_fork_from_a_task_of_the_run_is_cancelled_with_the_run(monkeypatch):
+    """`cancel` takes the run's forks out of the table and cancels their
+    works, whichever task of the run waits for them, and the waiting task
+    unwinds."""
+    calls: list = []
+    forking_driver(monkeypatch, calls)
+
+    async def scenario():
+        f, thy, t1, p, q = build(Spawning_Lemma)
+        me = stand_ins.agent(f.conversation)
+        p.job().start(me)
+        await holds_soon(lambda: len(calls) == 1)
+        (_, (_, id), registered) = calls[0]
+        assert registered and id in jobs._forked_jobs
+        p.job().cancel(None)
+        await holds_soon(lambda: CANCELS == [[id]])
+        assert jobs._forked_jobs == {} and p.job().outcome is NOT_STARTED
+        side = p.job().side
+        await holds_soon(side.done)
+        assert side.cancelled()
     run(scenario())
 
 
@@ -1164,9 +1245,23 @@ def test_a_report_is_handed_to_its_job_alone_and_takes_it_out_of_the_table():
     assert (one.reports, other.reports, producing.reports) == ([[]], [["first", "second"]], [[]])
     assert (one.products, other.products, producing.products) == ([None], [None], [["by simp", 3, 5]])
     assert one.in_the_table_at_the_report is False      # taken out before the body runs
-    assert jobs._evaluation_jobs == {} and not one.conversation.ending.entered
+    assert jobs._forked_jobs == {} and not one.conversation.ending.entered
     finished(one.id, ["messages", ["again"]])            # a second report is nobody's
     assert one.reports == [[]]
+
+
+def test_a_product_for_an_evaluation_job_is_a_bug():
+    """An evaluation's work yields no product: a report bringing one ends
+    the conversation of its job as a bug."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        me = stand_ins.agent(f.conversation)
+        await p.start_evaluation_job(me)
+        check = p.evaluation_job()
+        await jobs.job_finished((check.id, ["ok", "made"]), None)          # type: ignore[arg-type]
+        exn = f.conversation.ending.ended_by
+        assert isinstance(exn, TAT_InternalError) and "yielded a product" in str(exn)
+    run(scenario())
 
 
 def test_a_bug_ends_the_conversation_of_its_job_and_no_other():
@@ -1175,7 +1270,7 @@ def test_a_bug_ends_the_conversation_of_its_job_and_no_other():
     exn = one.conversation.ending.ended_by
     assert isinstance(exn, TAT_InternalError) and str(exn) == "the work caught itself out"
     assert one.reports == [] and not other.conversation.ending.entered
-    assert set(jobs._evaluation_jobs) == {other.id}
+    assert set(jobs._forked_jobs) == {other.id}
 
 
 def test_what_the_body_raises_and_a_report_of_no_known_shape_end_the_conversation():
@@ -1203,7 +1298,7 @@ def test_an_id_is_never_handed_out_twice():
     second = Job()
     assert second.id > first.id
     finished(first.id, ["ok"])                           # the discarded job's late report
-    assert second.reports == [] and set(jobs._evaluation_jobs) == {second.id}
+    assert second.reports == [] and set(jobs._forked_jobs) == {second.id}
 
 
 # --- the cases of the tests reader of steps 8 and 9 (STEPS_8_9_REVIEW.md §3) -------

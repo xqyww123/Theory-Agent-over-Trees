@@ -588,36 +588,36 @@ structure Jobs = struct
   by the class --, ["messages", [...]] or ["bug", <message>].  A work TAT
   cancelled reports nothing: the Python side cancels only a job it has
   dropped, and TAT.reset ends the conversation that would hear.*)
-datatype failure =
+datatype outcome =
   Passed | Produced of MessagePackBinIO.Pack.raw_packer | Messages of string list | Bug_Raised of string
 
 local open MessagePackBinIO.Pack in
 
-fun pack_failure Passed = packList packString ["ok"]
-  | pack_failure (Produced product) = packPair (packString, I) ("ok", product)
-  | pack_failure (Messages messages) = packPair (packString, packList packString) ("messages", messages)
-  | pack_failure (Bug_Raised message) = packPair (packString, packString) ("bug", message)
+fun pack_outcome Passed = packList packString ["ok"]
+  | pack_outcome (Produced product) = packPair (packString, I) ("ok", product)
+  | pack_outcome (Messages messages) = packPair (packString, packList packString) ("messages", messages)
+  | pack_outcome (Bug_Raised message) = packPair (packString, packString) ("bug", message)
 
 (*the remote procedure, through Isabelle_RPC's registry; it answers at once,
   so one left unanswered this long means the Python side answers no more*)
 val report_timeout = Time.fromSeconds 300
-val finished : (int * failure, unit) Remote_Procedure_Calling.command =
-  {name = "job_finished", arg_schema = packPair (packInt, pack_failure),
+val finished : (int * outcome, unit) Remote_Procedure_Calling.command =
+  {name = "job_finished", arg_schema = packPair (packInt, pack_outcome),
    ret_schema = MessagePackBinIO.Unpack.unpackUnit, callback = [], timeout = SOME report_timeout}
 
 end
 
 (*the wire's value, for the log*)
-fun json_of_failure Passed = Log.Array [Log.String "ok"]
-  | json_of_failure (Produced _) = Log.Array [Log.String "ok"]
-  | json_of_failure (Messages messages) =
+fun json_of_outcome Passed = Log.Array [Log.String "ok"]
+  | json_of_outcome (Produced _) = Log.Array [Log.String "ok"]
+  | json_of_outcome (Messages messages) =
       Log.Array [Log.String "messages", Log.Array (map Log.String messages)]
-  | json_of_failure (Bug_Raised message) = Log.Array [Log.String "bug", Log.String message]
+  | json_of_outcome (Bug_Raised message) = Log.Array [Log.String "bug", Log.String message]
 
 (*the exception a work raised, read as `operation` reads one (TAT_Common_Nodes.ML):
   a Bug before anything else, an interrupt as no failure at all, and an
   exception rendering to no message -- which would read as success -- a bug*)
-fun failure_of exn =
+fun outcome_of exn =
   (case bug_message exn of
     SOME message => SOME (Bug_Raised message)
   | NONE =>
@@ -641,18 +641,18 @@ type T = job Inttab.table Synchronized.var
 
 fun create () : T = Synchronized.var "TAT.jobs" Inttab.empty
 
-fun ended (log : Log.T) id failure duration =
+fun ended (log : Log.T) id outcome duration =
   Log.record log {event = "job_ended", level = "info",
     data = [("id", Log.Int id)] @
-      (case failure of SOME failure => [("failure", json_of_failure failure)] | NONE => []) @
-      [("duration", Log.seconds duration), ("cancelled", Log.Bool (is_none failure))]}
+      (case outcome of SOME outcome => [("failure", json_of_outcome outcome)] | NONE => []) @
+      [("duration", Log.seconds duration), ("cancelled", Log.Bool (is_none outcome))]}
 
 (*the report, made with interrupts deferred by its caller: one that cannot be
   delivered is recorded, and the task ends; one the Python side left
   unanswered is beyond repair, and ends the process as a disaster -- the
   launcher prints the record's message and exits 2*)
-fun report (log : Log.T) id failure =
-  (case Exn.capture_body (fn () => Remote_Procedure_Calling.call_command finished (id, failure)) of
+fun report (log : Log.T) id outcome =
+  (case Exn.capture_body (fn () => Remote_Procedure_Calling.call_command finished (id, outcome)) of
     Exn.Res () => ()
   | Exn.Exn exn =>
       if Exn.is_interrupt exn then Exn.reraise exn
@@ -668,11 +668,11 @@ fun report (log : Log.T) id failure =
                   string_of_int (Time.toSeconds report_timeout) ^ " seconds"
                 else Runtime.exn_message exn)
           val message =
-            "The result of evaluation job " ^ string_of_int id ^
+            "The result of job " ^ string_of_int id ^
             " could not be reported to the Python side: " ^ reason
           val _ =
             Log.record log {event = "report_undelivered", level = "warning",
-              data = [("id", Log.Int id), ("failure", json_of_failure failure),
+              data = [("id", Log.Int id), ("failure", json_of_outcome outcome),
                       ("message", Log.String message)]}
         in if unanswered then tell_finished (2, [message]) else () end)
 
@@ -694,30 +694,30 @@ fun fork (jobs : T) {id, work} =
             val cancelled = Synchronized.change_result phase (fn p => (p = Cancelled, Ended))
             val _ = Synchronized.change jobs (Inttab.delete_safe id)
             (*an interrupt nobody of TAT sent leaves a job Python still waits for: a bug*)
-            val failure =
+            val outcome =
               (case result of
                 Exn.Res NONE => SOME Passed
               | Exn.Res (SOME product) => SOME (Produced product)
               | Exn.Exn exn =>
-                  (case failure_of exn of
+                  (case outcome_of exn of
                     NONE =>
                       if cancelled then NONE
                       else SOME (Bug_Raised "fork_job: the work was interrupted, and TAT had not cancelled it")
-                  | failure => failure))
-            val _ = ended log id failure (Time.now () - start)
+                  | outcome => outcome))
+            val _ = ended log id outcome (Time.now () - start)
             val _ =
-              (case failure of
+              (case outcome of
                 SOME (Bug_Raised message) =>
                   Log.record log {event = "bug", level = "error",
                     data = [("message", Log.String message), ("job", Log.Int id)]}
               | _ => ())
-          in Option.app (report log id) failure end
+          in Option.app (report log id) outcome end
         else ())
   in
     Thread_Attributes.uninterruptible_body (fn _ =>
       Synchronized.change jobs (fn tab =>
         if Inttab.defined tab id
-        then raise Bug ("Evaluation job " ^ string_of_int id ^ " forked twice")
+        then raise Bug ("Job " ^ string_of_int id ^ " forked twice")
         else
           let
             val _ = Log.record log {event = "job_forked", level = "info", data = [("id", Log.Int id)]}

@@ -194,9 +194,9 @@ Written by the Isabelle side: what the Python side cannot see.
 | --- | --- | --- |
 | `callback` | info | the callback's name, how long its function ran, whether it returned, raised or was interrupted |
 | `theory_loaded` | info | a library theory loaded from source: its name, the duration |
-| `job_forked` | info | an evaluation job's id |
-| `job_ended` | info | the id, the failure reported, the duration; whether it was cancelled |
-| `report_undelivered` | warning | the id, the failure that went unreported, `message`: `The result of evaluation job <id> could not be reported to the Python side: <reason>` — the reason the report could not be delivered |
+| `job_forked` | info | the id of a job whose work ML forked — an evaluation job's, or a construction run's fork (CONSTRUCT_INTERACTION §3.3) |
+| `job_ended` | info | the id, the failure reported — `["ok"]` for a work that yielded a product, the product itself not recorded —, the duration; whether it was cancelled |
+| `report_undelivered` | warning | the id, the failure that went unreported, `message`: `The result of job <id> could not be reported to the Python side: <reason>` — the reason the report could not be delivered |
 | `reset` | info | the futures cancelled, the slots and theories cleared |
 | `bug` | error | a `TAT_Framework.Bug` that left a callback or an evaluation job's work: its message |
 

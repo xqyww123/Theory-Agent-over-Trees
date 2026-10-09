@@ -60,12 +60,23 @@ async def harness(anyio_backend, tmp_path_factory):
 @pytest.fixture(scope="session")
 async def std_harness(anyio_backend, tmp_path_factory):
     """The run of the plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5): on the
-    base heap `Minilang_AoA`, the plugin's directory given, the conversations
-    loading the package its registrations do not name yet."""
-    async with started(H.Harness(logging.getLogger("tat.test.std_harness"), tmp_path_factory.mktemp("std_harness"),
-                                 plugin="TAT_Isabelle_Std.TAT_Isabelle_Std", registered=["IsaMini.AoA"],
-                                 packages=["isabelle_theory_agent.std", "IsaMini.AoA"], logic="Minilang_AoA")) as h:
-        yield h
+    base heap `Minilang_AoA`, the conversations loading the package the
+    plugin's registrations name.  AoA's level-1 proof store — a cache in
+    the user's directory, served by this process — is redirected into the
+    run's directory: a proof found here is not found again elsewhere, and
+    the user's cache is left alone."""
+    import IsaMini.proof_store as proof_store
+    patch = pytest.MonkeyPatch()
+    cache = tmp_path_factory.mktemp("aoa_cache")
+    patch.setattr(proof_store, "user_cache_dir", lambda *_: str(cache))
+    patch.setattr(proof_store, "_store", None)
+    try:
+        async with started(H.Harness(logging.getLogger("tat.test.std_harness"), tmp_path_factory.mktemp("std_harness"),
+                                     plugin="TAT_Isabelle_Std.TAT_Isabelle_Std",
+                                     registered=["isabelle_theory_agent.std"], logic="Minilang_AoA")) as h:
+            yield h
+    finally:
+        patch.undo()
 
 
 HARNESSES = ("harness", "std_harness")

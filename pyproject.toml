@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "isabelle-rpc>=0.4.0",
+    "IsaMini>=0.3.5",
     "msgpack>=1.1.2",
     "jsonschema>=4.18",
     "jsoncomment>=0.4.2",

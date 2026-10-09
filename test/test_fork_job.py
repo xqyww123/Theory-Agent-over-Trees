@@ -47,11 +47,12 @@ class Job:
         self.conversation = SimpleNamespace(ending=self.ending)
         self.reported = asyncio.Event()
         self.errors: list[str] | None = None
+        self.product = None
         self.id = next(jobs._ids)
         jobs.register(self)                 # type: ignore[arg-type]  # a started job: in the table
 
     def _report(self, errors: list[str], product=None) -> None:
-        self.errors = errors
+        self.errors, self.product = errors, product
         self.reported.set()
 
 
@@ -60,7 +61,7 @@ def an_empty_table():
     """No stand-in outlives its case in the process's table, however the
     case ends."""
     yield
-    jobs._evaluation_jobs.clear()
+    jobs._forked_jobs.clear()
 
 
 async def fork(conversation, job: Job, outcome: str, path="") -> None:
@@ -85,15 +86,18 @@ async def test_a_work_that_passes_and_one_that_fails_are_reported_to_their_jobs(
     takes the job out of the table; each job leaves `job_forked` and one
     `job_ended` carrying what was reported."""
     conv, log = conversation.forest.conversation, conversation.log.directory
-    passed, failed, empty = Job(), Job(), Job()
+    passed, failed, empty, produced = Job(), Job(), Job(), Job()
     await fork(conv, passed, "pass")
     await fork(conv, failed, "fail")
     await fork(conv, empty, "empty")                     # an `ERROR` with no text: one empty message
-    await asyncio.wait_for(asyncio.gather(passed.reported.wait(), failed.reported.wait(), empty.reported.wait()), 30)
-    assert (passed.errors, failed.errors, empty.errors) == ([], ["tat-job-error"], [""])
-    assert passed.ending.ended_by is None and failed.ending.ended_by is None and empty.ending.ended_by is None
-    assert not {passed.id, failed.id, empty.id} & set(jobs._evaluation_jobs)
-    for job, failure in ((passed, ["ok"]), (failed, ["messages", ["tat-job-error"]]), (empty, ["messages", [""]])):
+    await fork(conv, produced, "produce")                # a work yielding a product: `["ok", <product>]`
+    await asyncio.wait_for(asyncio.gather(*(job.reported.wait() for job in (passed, failed, empty, produced))), 30)
+    assert (passed.errors, failed.errors, empty.errors, produced.errors) == ([], ["tat-job-error"], [""], [])
+    assert (passed.product, produced.product) == (None, "made")
+    assert all(job.ending.ended_by is None for job in (passed, failed, empty, produced))
+    assert not {passed.id, failed.id, empty.id, produced.id} & set(jobs._forked_jobs)
+    for job, failure in ((passed, ["ok"]), (failed, ["messages", ["tat-job-error"]]), (empty, ["messages", [""]]),
+                         (produced, ["ok"])):                           # the product is not logged
         assert records(log, "job_forked", job.id) == [{"id": job.id}]
         [ended] = records(log, "job_ended", job.id)
         assert set(ended) == {"id", "failure", "cancelled", "duration"}
@@ -112,7 +116,7 @@ async def test_a_bug_in_the_work_ends_the_conversation_of_the_job(conversation):
     await asyncio.wait_for(job.ending.ended.wait(), 30)
     exn = job.ending.ended_by
     assert isinstance(exn, TAT_InternalError) and str(exn) == "tat-job-bug"
-    assert not job.reported.is_set() and job.id not in jobs._evaluation_jobs
+    assert not job.reported.is_set() and job.id not in jobs._forked_jobs
     assert records(log, "bug", job.id) == [{"message": "tat-job-bug", "job": job.id}]
     [ended] = records(log, "job_ended", job.id)
     assert (ended["failure"], ended["cancelled"]) == (["bug", "tat-job-bug"], False)
@@ -131,9 +135,9 @@ async def test_a_cancelled_work_ends_without_a_report(conversation, tmp_path):
     assert set(ended) == {"id", "cancelled", "duration"} and (ended["id"], ended["cancelled"]) == (job.id, True)
     await asyncio.sleep(0.5)
     assert not job.reported.is_set() and job.ending.ended_by is None
-    assert job.id in jobs._evaluation_jobs      # its report will not come: the framework's to discard
+    assert job.id in jobs._forked_jobs      # its report will not come: the framework's to discard
     jobs.discard(job.id)
-    assert job.id not in jobs._evaluation_jobs
+    assert job.id not in jobs._forked_jobs
     await isabelle_driver.job_cancel(conv, [job.id])       # cancelled already: no error
 
 
@@ -239,7 +243,7 @@ async def test_the_notes_jobs_over_the_wire(conversation):
     await until(lambda: records(log, "job_ended", checks[2].id))
     [ended] = records(log, "job_ended", checks[2].id)
     assert ended["cancelled"] is True
-    assert checks[2].id not in jobs._evaluation_jobs             # the drop discarded it (§3.3, R9); a late report is nobody's
+    assert checks[2].id not in jobs._forked_jobs             # the drop discarded it (§3.3, R9); a late report is nobody's
     # the construction job: one question, settled by the answer
     job = p.job()
     assert job.can_start()

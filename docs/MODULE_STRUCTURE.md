@@ -146,7 +146,7 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   `operation`'s shape (§3): the state, or the errors as messages, markup
   stripped; a folded interrupt is re-raised. `Theory`'s header goes
   through it (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
-  transition through it, and `Theorem` builds one transition from its
+  transition through it, and `Theorem` builds two transitions from its
   statement's structure (THEOREM.md §6). Nothing splits a node's text into
   spans or registers anything in Isabelle's execution table, which a
   library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6). The
@@ -384,7 +384,7 @@ own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem`.
 | --- | --- |
 | `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
-| `Theorem` | `TAT.Theorem.evaluate`: the statement opened and admitted, two direct-ML transitions on the input slot's state, the first's result into the node's `goal_state` slot, the second's into the resulting slot (THEOREM.md §6); `TAT.Theorem.construct`: the proof construction — AoA's `hammer_or_AoA` on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Theorem.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way (THEOREM.md §7) |
+| `Theorem` | `TAT.Theorem.evaluate`: the statement opened and admitted, two direct-ML transitions on the input slot's state, the first's result into the node's `goal_state` slot, the second's into the resulting slot (THEOREM.md §6); `TAT.Theorem.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Theorem.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way (THEOREM.md §7) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 

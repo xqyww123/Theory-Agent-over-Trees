@@ -639,8 +639,12 @@ and its emission both write the header through, adding them on a
 theory none of whose imports resolves to a theory of the forest;
 `Isabelle_Std` declaring `Minilang_AoA.Minilang_AoA`. Measured in this
 step: whether that import changes how a statement's terms parse.
+Not measured as such (2026-10-10): the statements the std tests send
+parse as written under the import; no notation of `Minilang_AoA`'s has
+met one yet.
 
-Files: `Isabelle_Std/` (`etc/settings`, `ROOT`, `TAT_Isabelle_Std.thy`,
+Files: `Isabelle_Std/` (`TAT_Isabelle_Std.thy`; the `etc/settings` and
+`ROOT` of the first cut went with R21, the session declared in TAT's ROOT;
 `ML/TAT_Theorem.ML`), `isabelle_theory_agent/std/` (`__init__.py`,
 `statement.py`, `theorem.py`; the empty `builtins.py` and
 `theorem_node.py` go), `ML/TAT_Common_Nodes.ML` (its empty sections for
@@ -688,6 +692,12 @@ reaches the language model; they wait for the AoA round's scripted
 driver. Found on the way: `ERROR ""` renders as `Error` through
 `Runtime.exn_messages`, so `fork_job` reports it as one empty message
 itself (MODULE_STRUCTURE §2.4).
+
+The owner's rule, 2026-10-10, for every step of this plan: no framework
+mechanism for what an operation's ML can capture and return itself —
+TAT owns all of its ML, and each operation writes what matters into its
+return value; capturing Isabelle's warnings for `Theorem` was refused on
+it, as `run_commands` had been.
 
 Tests, in `test_theorem.py`: TH §7's sentences and the eleven lines of
 its mark; `_check()`'s table; TH §8's three examples; a construction
@@ -791,6 +801,16 @@ bound's refusal among the `TAT_StartupError`s of EXCEPTIONS.md §1.
   message. ARCHITECTURE.md is told to the compilation session first.
 - Step 8: MS §4.2 and §4.4 name the field checker `check_construct`;
   it becomes `check_fields`. Told to the compilation session first.
+- Steps 14–15 (2026-10-10, from their review): MS §2.4's `fork_job` and
+  CI §3.3's "The work" and "The report" gain the product on the report,
+  `Construction_Job.forked` and the construction run's fork in the
+  table; CI §3.2 the `forked` row and `can_start()` requiring `ready`;
+  THEOREM §7, CI §10, MS §4's `Theorem` row and OPEN_QUESTIONS name
+  `hammer_or_AoA'`; THEOREM §1, §2 and §6 the undeclared-variable
+  refusal and `Ready` with no messages; LOGGING §4's job records
+  general over both kinds of job, the product not logged; MS §2.4's
+  "one transition" two; the measurements of CI §10 and THEOREM §7
+  recorded. Done.
 
 ## 6. Not in this plan
 

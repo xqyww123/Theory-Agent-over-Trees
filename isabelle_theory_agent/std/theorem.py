@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
+import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§7)
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver, jobs
@@ -96,6 +97,9 @@ def _normalised(text: str) -> str:
     return " ".join(text.split())
 
 
+_PRODUCT = ("text", "thread_cpu", "wall")    # the proof as stored (§1); on the wire, a triple in this order
+
+
 class Proof_Job(jobs.Construction_Job):
     """`Theorem`'s proof construction (§7): one call of AoA's standard entry
     on the goal `goal_state` holds, forked by `TAT.Theorem.construct`; the
@@ -116,15 +120,12 @@ class Proof_Job(jobs.Construction_Job):
         return with_message(f"No proof of `{self.shown_id}` was found:", outcome.message)
 
     def _check(self):
-        """§7's table: on a `ready` node, a proof is constructed where none
-        stands, or where the one standing failed its check; a proof not yet
-        checked, or checked and passed, stands."""
-        node = self.node
-        if not node._operations_ready():
-            return False
+        """§7's table: a proof is constructed where none stands, or where
+        the one standing failed its check; a proof not yet checked, or
+        checked and passed, stands."""
         if not isinstance(self.outcome, Succeeded):
             return True
-        return isinstance(node.check_outcome(), Failed)
+        return isinstance(self.node.check_outcome(), Failed)
 
     async def _run(self):
         node = self.node
@@ -132,9 +133,8 @@ class Proof_Job(jobs.Construction_Job):
         errors, product = await self.forked("TAT.Theorem.construct", node.goal_state.to_msgpack())
         if errors:
             return Failed("\n".join(errors))
-        text, thread_cpu, wall = product
         node.attach_evaluation_job(Proof_Check.passed(node))
-        return Succeeded({"text": text, "thread_cpu": thread_cpu, "wall": wall})
+        return Succeeded(dict(zip(_PRODUCT, product)))
 
 
 class Proof_Check(jobs.Evaluation_Job):
@@ -158,10 +158,10 @@ class Proof_Check(jobs.Evaluation_Job):
                     + " started automatically; call `check_construct` before you exit")
         else:
             tail = ". Call `construct` to prove " + ("them" if several else "it") + " again"
-        if len(ids) <= 3:
-            return "The proof " + jobs.series([f"of `{id}`" for id in ids], "and") + " no longer holds" + tail + "."
-        header = "The following proofs no longer hold" + (tail if automatic else "; call `construct` to prove them again")
-        return header + ":\n" + "\n".join(f"  - {id}" for id in ids)
+        return jobs.listed(ids, lambda of: f"The proof {of} no longer holds{tail}.",
+                           "The following proofs no longer hold"
+                           + (tail if automatic else "; call `construct` to prove them again") + ":",
+                           preposition="of")
 
     @classmethod
     def passed(cls, node):
@@ -178,8 +178,7 @@ class Proof_Check(jobs.Evaluation_Job):
         assert job is not None and isinstance(job.outcome, Succeeded)   # a check runs on a proven node (§3.3)
         product = job.outcome.product
         await isabelle_driver.call(self.conversation, "TAT.Theorem.check",
-                                   (node.goal_state.to_msgpack(),
-                                    (product["text"], product["thread_cpu"], product["wall"]), self.id))
+                                   (node.goal_state.to_msgpack(), tuple(product[k] for k in _PRODUCT), self.id))
 
 
 @TAT_node
@@ -346,13 +345,13 @@ def _statement_of(raw: LongStatement_RawAST) -> Statement:
     same."""
     variables: list[Variable] = []
     for i, v in enumerate(raw.get("for_any", [])):
-        name = IsaTerm.from_agent(_normalised(v["name"]))
+        name = IsaTerm.from_agent(v["name"])
         _check_name(name, f"statement.for_any[{i}].name", [x.name for x in variables], variable=True)
         type_ = _normalised(v.get("type", ""))
         variables.append(Variable(name, IsaTerm.from_agent(type_) if type_ else None))
     premises: list[Premise] = []
     for i, p in enumerate(raw.get("premises", [])):
-        name = IsaTerm.from_agent(_normalised(p["name"]))
+        name = IsaTerm.from_agent(p["name"])
         _check_name(name, f"statement.premises[{i}].name", [x.name for x in premises], variable=False)
         premises.append(Premise(name, IsaTerm.from_agent(_normalised(p["term"]))))
     return Statement(_normalised(raw["english"]), tuple(variables), tuple(premises),

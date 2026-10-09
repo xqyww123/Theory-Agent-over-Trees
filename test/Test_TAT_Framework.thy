@@ -304,17 +304,19 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
       ret_schema = packUnit,
       function = fn (id, (outcome, path)) =>
         #fork_job env {id = id, work = fn () =>
-          ((case outcome of
-            "pass" => ()
-          | "fail" => error "tat-job-error"
-          | "empty" => error ""
-          | "bug" => raise TAT_Framework.Bug "tat-job-bug"
-          | "interrupt" => Isabelle_Thread.raise_interrupt ()
-          | "wait" =>
-              let val file = Path.explode path in
-                while not (File.exists file) do OS.Process.sleep (Time.fromMilliseconds 50)
-              end
-          | _ => raise Fail ("unknown outcome " ^ outcome)); NONE)},
+          if outcome = "produce" then SOME (packString "made")
+          else
+            ((case outcome of
+              "pass" => ()
+            | "fail" => error "tat-job-error"
+            | "empty" => error ""
+            | "bug" => raise TAT_Framework.Bug "tat-job-bug"
+            | "interrupt" => Isabelle_Thread.raise_interrupt ()
+            | "wait" =>
+                let val file = Path.explode path in
+                  while not (File.exists file) do OS.Process.sleep (Time.fromMilliseconds 50)
+                end
+            | _ => raise Fail ("unknown outcome " ^ outcome)); NONE)},
       timeout = NONE})
 end
 \<close>

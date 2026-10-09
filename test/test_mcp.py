@@ -22,7 +22,7 @@ import pytest
 import test_jobs
 import test_model as tm
 from baselines import DOCS, fenced_blocks, fenced_lines, stated
-from test_jobs import Check, Checked, Lemma, Proof, asking, report, until
+from test_jobs import Check, Checked, Lemma, Proof, asking, ready, report, until
 from test_model import T, add, slot
 
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -49,7 +49,7 @@ class Search(Proof):                    # a second construction job class, for t
         return "counterexample searches" if plural else "counterexample search"
 
 
-class Searched(T):
+class Searched(Lemma):
     construction_job_class = Search
 
 
@@ -302,6 +302,7 @@ def test_the_success_lines_of_render_baselines_section_6():
     add(x, Lemma(x, slot(), "R"), "lemma")
     y = add(f, Block(f, slot(), "Y", slot()), "theory")
     add(y, Lemma(y, slot(), "S"), "lemma")
+    ready(f.resolve("theory_X.lemma_P"), f.resolve("theory_X.lemma_Q"))   # invalidated by the move and the delete
     automatic, *forms = entries(construction)
     assert automatic.startswith("Automatically started the proof construction on `lemma_A`")
     assert construction[1:] == fenced_blocks(CI, "5.")[2]
@@ -835,8 +836,8 @@ def test_the_nodes_of_a_call_the_skipping_and_the_one_refusal():
             "Started the proof construction on `lemma_P`, on `lemma_Q` and on"
             " `lemma_R`; call `check_construct` before you exit.",
             "Sessions:", "- theory_X (not evaluated)", "  - section_Basics (not evaluated)",
-            "  - definition_f (not evaluated)", "  - lemma_P (not evaluated, automatic construction)",
-            "  - lemma_Q (not evaluated, automatic construction)", "  - lemma_R (not evaluated, automatic construction)",
+            "  - definition_f (not evaluated)", "  - lemma_P (incomplete, automatic construction)",
+            "  - lemma_Q (incomplete, automatic construction)", "  - lemma_R (incomplete, automatic construction)",
             "- theory_Y (not evaluated)"]
         for id in (P, Q, R):
             job = n(id).job()

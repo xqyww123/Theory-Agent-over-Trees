@@ -1643,3 +1643,23 @@ CONSTRUCT_INTERACTION §10, OPEN_QUESTIONS §2, ARCHITECTURE §2.1, §3.1,
   sessions are recorded in `import_sessions` with the agent's, by
   construction, so the ROOT's `sessions` clause names `Minilang_AoA`;
   SESSION_AND_THEORY §2 says so (「赞同你的建议」).
+- Landed on 2026-10-09 (step 15), the shapes told to the owner: the
+  entry with the times is a sibling `hammer_or_AoA'`, `hammer_or_AoA`
+  its projection, so that AoA's own callers are untouched; TAT's call
+  passes `task = usual, user_operations = []`, the AoA session's
+  user-operations API, uncommitted in Isa-Mini beside the two changes
+  §15 allows, which that session commits together with its work; the
+  measurement that TAT's process serves `IsaMini.AoA` holds — the
+  plugin's package imports it —, the two about interrupts wait for the
+  round's scripted driver. Ruled on 2026-10-10, from the review of steps
+  14 and 15: the report carries the product as `["ok", <product>]`, one
+  `fork_job` for both kinds of job (「赞同维持甲」); `can_start()` requires
+  the node `ready` (「赞同」); a replay that raises anything but its
+  ordinary failure is a bug that ends the conversation (「应该当作 Bug，
+  问题应该及早发现」); `Theorem`'s evaluation refuses a variable `for_any`
+  does not declare, checks no types, and `Ready` carries no messages —
+  no warning is captured, since an operation's ML returns what matters
+  itself (「我们掌控了整个 ML … 这一切都是各个 operation 的 ML 的自由」); the
+  plugin's package imports `IsaMini.AoA` rather than `python_packages`
+  naming it (「为什么你不去 import the plugin package and then let the
+  plugin package import the AoA package」); the product is not logged.

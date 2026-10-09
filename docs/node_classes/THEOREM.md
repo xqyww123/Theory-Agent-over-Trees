@@ -36,9 +36,9 @@ heads the id component: `lemma_P`.
 
 What the last evaluation reported is no field of the class: the
 messages travel on the status the evaluation hook returns —
-`CannotEvaluate(messages)` when the statement failed, `Ready(messages)`
-when it went through and Isabelle still had something to say — and the
-framework stores and prints them (COMPILATION.md §4, PRINT.md §3).
+`CannotEvaluate(messages)` when the statement failed, `Ready` with no
+messages when it went through — and the framework stores and prints
+them (COMPILATION.md §4, PRINT.md §3).
 
 Three things more are recorded on the node by the framework, not by
 the class: the two jobs' outcomes and the construction job's
@@ -98,7 +98,9 @@ using it — a future `Define` — merges the same definition (PLUGIN_SYSTEM
 ```
 
 `english` and `conclusion` are required, `for_any` and `premises`
-optional. `gen` normalises every term (`for_any[].type`,
+optional. Every variable the premises and the conclusion use is declared
+in `for_any`: one Isabelle fixed by itself is refused at evaluation (§6).
+`gen` normalises every term (`for_any[].type`,
 `premises[].term`, `conclusion`) and `english` once, when the construct
 is accepted: newlines become spaces and runs of whitespace one space;
 printing, emission and evaluation all use the stored text.
@@ -273,10 +275,20 @@ re-raised; any other error is the statement's: no state is written into
 either slot, the callback empties `goal_state` — a rerun of a `ready`
 node rewrites its status and releases nothing, so the earlier run's
 goal would stand there otherwise —, answers the messages, and `_eval_opr` returns
-`CannotEvaluate` with them — the node is an obstacle. Otherwise the callback answers what the
-run reported beside its success and, for the fact's name, each
+`CannotEvaluate` with them — the node is an obstacle. Between the two
+transitions, the goal open, the callback refuses the statement whose
+free variables — in the goal, or in the premises assumed beside it —
+`for_any` does not declare, which Isabelle fixed by itself (§2): the
+same failure, one message naming them in alphabetical order,
+
+```
+Undeclared variable `x`: declare it in `for_any`.
+Undeclared variables `x` and `y`: declare them in `for_any`.
+```
+
+Otherwise the callback answers, for the fact's name, each
 variable's and each premise's, whether `Thy_Header.print_name` would
-quote it in this theory; `_eval_opr` returns `Ready` with those
+quote it in this theory; `_eval_opr` returns `Ready` with no
 messages, the class records the names as `reserved_names` (§1), and
 emission quotes them (§5). A reserved name
 is not a failure: Isabelle accepts it quoted at every use.
@@ -297,26 +309,28 @@ construction's callback, `TAT.Theorem.construct`, is the class's third
 `title()` is `proof construction`, `title(plural=True)` `proof
 constructions`; `compulsory` is true. Its `_run` calls the class's third
 callback `TAT.Theorem.construct` with the node's `goal_state` slot (§1,
-§6) and the job's `id`, and waits for the report. The callback takes the
+§6) and the id of the run's fork (CONSTRUCT_INTERACTION §3.2), and
+waits for the report. The callback takes the
 slot's `Proof.state` (`Toplevel.proof_of`), its context and goal
 (`Proof.goal`), and forks through the framework's `fork_job`
-(MODULE_STRUCTURE §2.4) one call of AoA's `hammer_or_AoA`
+(MODULE_STRUCTURE §2.4) one call of AoA's `hammer_or_AoA'`
 (`contrib/Isa-Mini/Agent/agent_server.ML`) on them — what the `aoa`
 method does on a goal: the proof store looked up first, then
 Sledgehammer, then the AoA agent, and the proof found written back into
-the store, all on AoA's own path with both store switches on; the driver
+the store — a task of its own, which may land after the report —, all
+on AoA's own path with both store switches on; the driver
 and the budget are what Isabelle's configuration gives AoA
 (`AoA_driver`, Minilang's default budget), TAT setting neither. The
 report brings the product: the method text and its two times in the
-store's standard-machine form, which `hammer_or_AoA` is extended to
-return beside the text. How many runs are inside `_run` at once
+store's standard-machine form, which `hammer_or_AoA'`, the entry beside
+`hammer_or_AoA`, returns beside the text. How many runs are inside `_run` at once
 (CONSTRUCT_INTERACTION §3.2) is bounded by the Isabelle environment variable
 `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, unbounded when it is unset or
 empty; a value that is not a positive integer refuses the start, with
 `TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a positive
 integer, but it is <value>`. A run waiting for its turn is `RUNNING`,
 and shows as any running one, `proving`. AoA's Python half, the remote procedure `IsaMini.AoA`, is
-served by TAT's own process (to verify at implementation), so a
+served by TAT's own process — the plugin's package imports it —, so a
 question the search asks reaches the job through the process's job
 table (CONSTRUCT_INTERACTION §3.3); the questions themselves — AoA's
 `request` as a question to the owner, what it asks and what the answer
@@ -327,13 +341,13 @@ product: a run that reaches its end saw no context change (the default
 `_on_context_change` below), so the proof AoA verified holds in the
 current context and the node is `proven` from the run's settlement on.
 `_check()` answers whether a proof can be constructed on the node as it
-stands; a node it answers false for is skipped by `construct` and by
-automatic construction, with no sentence of its own:
+stands — the framework's `can_start()` having answered false off `ready`
+(CONSTRUCT_INTERACTION §3.2); a node answered false for is skipped by
+`construct` and by automatic construction, with no sentence of its own:
 
 | the node | `_check()` |
 | --- | --- |
-| not `ready` | false |
-| `ready`, no proof — `NOT_STARTED` or `FAILED` | true |
+| no proof — `NOT_STARTED` or `FAILED` | true |
 | `SUCCEEDED`, the proof check `PASSED` | false: it is proven |
 | `SUCCEEDED`, no proof check yet or one `RUNNING` | false: the proof is checked first |
 | `SUCCEEDED`, the proof check `FAILED` | true |

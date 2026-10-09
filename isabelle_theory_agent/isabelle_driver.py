@@ -207,6 +207,7 @@ async def check_session(conversation: Conversation, name: str, parent_session: s
 
 
 async def job_cancel(conversation: Conversation, ids: list[int]) -> None:
-    """Cancel the futures of the evaluation jobs so numbered (MODULE_STRUCTURE
-    §2.4), in one round trip; an id whose job has ended is not an error."""
+    """Cancel the futures of the forked works so numbered — evaluation jobs',
+    construction runs' (MODULE_STRUCTURE §2.4) — in one round trip; an id
+    whose work has ended is not an error."""
     await call(conversation, "TAT.job_cancel", ids)

@@ -156,11 +156,12 @@ not.
 | `_run()` | class, hook | the work; returns the outcome; a cancellation propagates out of it: its `try/finally` is its cleanup, which never starts a round trip on the ending's path (MODULE_STRUCTURE §4.3) |
 | `_check() -> bool` | class, hook, default true | the class's own condition for a start: whether the job can be started on the node as it stands |
 | `auto_construct` | framework, a boolean, false by default | automatic construction, on or off; written by `edit`, `construct` and `cancel_construct` on every node of the call that has a construction job (§5); persisted in a reserved framework field of its own, which the call that writes it stores at once, in a transaction of its own, on every node it wrote — started, cancelled or skipped — and read back at load; no class reads or writes it |
-| `can_start() -> bool` | framework | not `RUNNING`, and `_check()` |
+| `can_start() -> bool` | framework | not `RUNNING`, the node `ready` — no class reads a slot the walk has not filled —, and `_check()` |
 | `_on_context_change()` | class, hook | called from the status setter on every write of the node's own evaluation status by the walk while the job runs — a rewrite of `ready` on a rerun included — independently of the node's `on_invalidated`, through `_completed` as a completed hook is, after the write; whatever it raises, a `TAT_Error` included, is its class's bug — `TAT_InternalError`, the conversation ends (EXCEPTIONS.md §1); default: cancel with `CONTEXT_CHANGED` |
 | `ask(question) -> None` | framework, for `_run` | enqueues an `Interactive_Question` on the job's FIFO queue, posts it to the owner's mailbox when it is the front, and suspends until an answer to it is accepted (§3.4); a cancellation while it waits withdraws that question |
 | `repeat_question()` | framework | posts the front question to the owner again when the mailbox no longer holds it — `check_construct`'s delivery of a question again (§5) |
 | `start(owner)` | framework, synchronous | called only when `can_start()`: records the owner; drops the node's evaluation job, clearing the stored check; sets `RUNNING`; stores the node in a transaction of its own; spawns the run |
+| `forked(name, args)` | framework, for a `_run` whose work is ML's | the class's callback `name` called with `(args, id)`, `id` fresh, under which the callback forks the work through `fork_job` (§3.3); returns the report's errors — none when the work passed — and its product, None when it yielded none; a cancellation meanwhile takes the id out of the table and cancels the work |
 | `cancel(reason)` | framework, synchronous | detaches the run, drains its question queue (§3.4), sets `NOT_STARTED`, cancels the task; `reason` is `NODE_DELETED`, `NODE_AMENDED` or `CONTEXT_CHANGED` when the framework cancels, and the owner is then told, even when the owner deleted or amended the node itself; `cancel_construct` passes `None`, and nothing is told |
 | wording | class, overridable defaults from `title` | `starting_notice(ids)`, `cancelling_notice(ids)` — `ids` the nodes' ids in their shortest form (§5) —, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed when the outcome is `FAILED`; `None` prints nothing |
@@ -276,11 +277,11 @@ own.
 
 **The work.** The class's ML callback forks the work as a Future task —
 `Future.fork`, on Isabelle's worker pool — and returns; when the task
-ends it calls the framework's remote procedure `finished(id, failure)`,
+ends it calls the framework's remote procedure `job_finished(id, failure)`,
 `failure` the work's errors, none on success, or the message of a `Bug`
 the work raised (MODULE_STRUCTURE §2.4). A construction job whose work
-is ML's forks it the same way, through `Construction_Job.forked`, and
-its report carries the product the work yields (THEOREM.md §7).
+is ML's forks it the same way, through `Construction_Job.forked` (§3.2),
+and its report carries the product the work yields (THEOREM.md §7).
 The framework's ML half offers the fork and the report as one function:
 it forks the work, keeps the future under the job's id in a table of its
 own, and runs the report after the work with interrupts deferred, so
@@ -292,15 +293,17 @@ it answers at once, so a report unanswered that long means the Python
 side answers no more, and the task ends the process as a disaster
 (MODULE_STRUCTURE §2.4) — on the wire
 `TAT.job_cancel` and `job_finished`, the function `fork_job` of the
-class's ML environment (MODULE_STRUCTURE §2.4–§2.6). The work reads the
-node's input slot's state once, at the fork; it bounds its own time,
-and the framework sets no limit. The work applies no Toplevel
-transition and calls nothing that forks a proof — `Goal.prove_future`,
-`Goal.prove_sorry` — so nothing of a job's ever enters Isabelle's
-execution table, and a library load's `Execution.reset`
-(EVALUATOR_DESIGN §6) never meets it; no lock orders the jobs against
-a load. `Proof_Check`'s work is a goal built in ML and `eval_prf_str`
-(THEOREM.md §7).
+class's ML environment (MODULE_STRUCTURE §2.4–§2.6). The callback reads
+what the work needs of the node's slots before the fork — `Theorem` its
+`goal_state` —; the work bounds its own time, and the framework sets no
+limit. The work applies no Toplevel
+transition and registers nothing in Isabelle's execution table — a
+construction's, AoA's search and its store's write-back, forks Future
+tasks under the job's group alone, every call inside it synchronous
+(THEOREM.md §7) — so a library load's `Execution.reset`
+(EVALUATOR_DESIGN §6), which empties that table and collects its
+groups' errors, never meets it; no lock orders the jobs against a load. `Proof_Check`'s work replays the stored product on the goal
+`goal_state` holds, through the function AoA exports (THEOREM.md §7).
 
 **The report.** `finished` answers at once. Its body is synchronous and
 takes no lock; the table from a job's id to the job is the process's —
@@ -308,7 +311,9 @@ the report arrives on a pooled connection of the RPC host's, which
 belongs to no conversation — and the job holds the `Conversation` it
 was made in, through which the report reaches the conversation and its
 log. A job is in the table from its start (`start_evaluation_job`
-registers it just before the work begins) until its report or a drop:
+registers it just before the work begins) until its report or a drop —
+a construction run's fork from `forked`'s call until its report or the
+run's end —:
 every drop discards it (§4.2), so a report whose job the table no longer
 holds — dropped, or its conversation already ended — is **nobody's**,
 and is ignored whole, a `Bug` included: nothing is stored, nothing is
@@ -1026,7 +1031,8 @@ synchronous commit block, before its store write (MODULE_STRUCTURE
 Decided on 2026-10-03 and stated in THEOREM.md §6–§7: the drive path —
 `Proof_Job._run` through the class's callback `TAT.Theorem.construct` on
 the `goal_state` slot the evaluation fills, one call of AoA's
-`hammer_or_AoA` forked through `fork_job`, the proof store read and
+`hammer_or_AoA'` — the entry beside `hammer_or_AoA` with the replay
+times beside the text — forked through `fork_job`, the proof store read and
 written on AoA's own path, the product returned with its times —, the
 driver and the budget from Isabelle's configuration, the bound on
 concurrent runs from the Isabelle environment variable
@@ -1044,10 +1050,12 @@ and repairs a stored proof — for which `start` would have to hand `_run`
 the outcome it clears, since the node no longer holds it while the run
 goes, and whose `_run` would end with a replay instead of
 `Proof_Check.passed` —, until which a context change cancels the run and
-the construction is started again. To measure at implementation, not to
-design: cancellation on the AoA side — how soon the Python half learns
-of the interrupt of the forked task, and that AoA's own `group = NONE`
-forks end with the job —, and that TAT's process serves `IsaMini.AoA`.
+the construction is started again. To measure, not to design:
+cancellation on the AoA side — how soon the Python half learns of the
+interrupt of the forked task, and that AoA's own `group = NONE` forks
+end with the job —, which waits for the round's scripted driver; that
+TAT's process serves `IsaMini.AoA` is measured: the plugin's package
+imports it (THEOREM.md §7).
 The two requirements of the owner's bind the remainder: AoA's `request`
 reports to the TAT agent as a question, and AoA is told it runs under
 TAT. What `product` holds is decided, the method text AoA writes to its

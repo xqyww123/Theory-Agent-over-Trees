@@ -19,7 +19,7 @@ and the part of `Define` ARCHITECTURE §2.2 gives is unspecified.
 The drive path is decided (2026-10-03; THEOREM.md §6–§7,
 CONSTRUCT_INTERACTION §10): the evaluation records the state in which
 the goal stands open in the class's `goal_state` slot; the construction
-job calls AoA's `hammer_or_AoA` on it through the class's callback, the
+job calls AoA's `hammer_or_AoA'` on it through the class's callback, the
 proof store read and written on AoA's own path, the product and its
 times returned; the check replays the product on the same goal; the
 driver and the budget are Isabelle's configuration; the bound on
