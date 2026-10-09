@@ -22,13 +22,15 @@ from baselines import DOCS, fenced_blocks, fenced_lines
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
 from harness import text_of
-from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M, plugin
+from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import BadTheoremNodeParent, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import statement, theorem
 from isabelle_theory_agent.std.theorem import Proof_Check, Proof_Job, Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
+from test_compile import listing
 from test_descriptions import descriptions
+from test_launcher import compiled, leave
 from test_model import locked, run, slot
 from test_session_theory import Forest_Under_Test, session, theory
 
@@ -354,6 +356,56 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
     assert emitted(r)[:2] == expected("  text ‹Corollary r. Bang!›", "  corollary r:")
 
 
+def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores_of_no_tree(monkeypatch):
+    """A compile with the package's hook (COMPILATION.md §5): a theory of a
+    proven, an unchecked and an unproven theorem is written with `by aoa`,
+    `sorry`, `sorry`; each `<T>.proof-store` and `<T>.proof-store.*` the
+    path listing yields whose `<folder>/<T>.thy` is no tree's file path
+    goes — a lock, a temporary file, a store in the wrong folder —, a
+    tree's stay, an unwritten tree's included, and nothing else is touched:
+    not a `.thy`, not a folder of that name, not a `.proof-cache`."""
+    assert theorem.remove_proof_stores_of_no_tree in plugin.compile_hooks        # registered at import
+    [lines] = fenced_blocks(TH, "5.")
+    f = Forest_Under_Test(kinds=KINDS)
+    (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
+        lemma("rev_length"), lemma("unchecked"), lemma("unproven")]}, theory("Y", kind="fake_theory"))])
+    x, y = s.sub_nodes
+    p, q, r = x.sub_nodes
+
+    async def evaluate(conversation, name, args):
+        assert name == "TAT.Theorem.evaluate"
+        return True, [], []
+    monkeypatch.setattr(isabelle_driver, "call", evaluate)
+    run(x.evaluate_to(None, False))                                          # `Y` stays unevaluated: not written
+    with_proof(p, M.READY_CLEAN, PROVED, PASSED)
+    with_proof(q, M.READY_CLEAN, PROVED, None)
+
+    directory = f.conversation.working_directory
+    (directory / "Arith" / "Dir.proof-store").mkdir(parents=True)
+    for file in ("Arith/.proof-store", "Arith/Dir.proof-store/keep", "Arith/X.proof-cache", "Arith/X.proof-store",
+                 "Arith/X.proof-store.lock", "Arith/Y.proof-store"):
+        (directory / file).write_text("kept")
+    for file in ("Arith/Gone.proof-store", "Arith/Gone.proof-store.lock", "Arith/Gone.proof-store.tmp.123",
+                 "Arith/notes.proof-store.txt", "X.proof-store"):
+        (directory / file).write_text("of no tree")
+    report = C.compile(f, [theorem.remove_proof_stores_of_no_tree])
+    assert listing(directory) == [
+        ("Arith/.proof-store", "file"),
+        ("Arith/Dir.proof-store/keep", "file"), ("Arith/Dir.proof-store", "folder"),
+        ("Arith/X.proof-cache", "file"), ("Arith/X.proof-store", "file"), ("Arith/X.proof-store.lock", "file"),
+        ("Arith/X.thy", "file"), ("Arith/Y.proof-store", "file"), ("Arith", "folder"), ("ROOT", "file")]
+    assert all((directory / path).read_text() == "kept" for path, kind in listing(directory)
+               if kind == "file" and path not in ("Arith/X.thy", "ROOT"))
+    assert [str(e.path) for e in report.removed] == [
+        "Arith/Gone.proof-store", "Arith/Gone.proof-store.lock", "Arith/Gone.proof-store.tmp.123",
+        "Arith/notes.proof-store.txt", "X.proof-store"]
+    assert report.trees == ((x, None), (y, C.Does_Not_Emit(y)))
+    text = (directory / "Arith" / "X.thy").read_text()
+    assert text == C.render(f).files[C.Path("Arith/X.thy")]                  # the hook left the file whole
+    assert "\n".join(ascii_of_unicode(line) for line in lines) in text         # the document's block, proven
+    assert [line for line in text.splitlines() if line in ("  by aoa", "  sorry")] == ["  by aoa", "  sorry", "  sorry"]
+
+
 # --- the evaluation, in the plugin's run of the harness (§6, §8) -----------------
 
 def over_the_wire(*theorems):
@@ -526,3 +578,29 @@ async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_agai
         assert job.outcome is RUNNING and p.check_outcome() is None
         await until(lambda: job.outcome is not RUNNING)
         assert isinstance(job.outcome, Succeeded) and p.check_outcome() is PASSED
+
+
+@pytest.mark.isabelle(deadline=300)
+async def test_isabelle_tat_compile_writes_the_theory_and_isabelle_reads_it(std_harness, request, tmp_path):
+    """`isabelle TAT_compile` on a directory a conversation of the plugin's
+    run left, a theory of one theorem admitted: the file holds §5's text
+    with `sorry` under the header carrying the declared import, the ROOT's
+    `sessions` clause names `Minilang_AoA`, the package's hook ran in the
+    tool's process — a proof store of no tree is gone —, and the tool's
+    Isabelle read the ROOT and the header, the import resolved: exit 0."""
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    await leave(std_harness, request, wd, "TAT_Std_C",
+                ts.theory("TAT_Std_C_A") | {"children": [lemma("rev_length")]}, evaluate=1)
+    (wd / "TAT_Std_C" / "Gone.proof-store").write_text("of no tree")
+    r = await compiled(std_harness, str(wd))
+    assert r.returncode == 0 and r.stderr == "", r
+    assert r.stdout.splitlines()[1:] == [
+        "TAT_Std_C/TAT_Std_C_A.thy written", "ROOT written", "removed TAT_Std_C/Gone.proof-store"]
+    [lines] = fenced_blocks(TH, "5.")
+    assert (wd / "TAT_Std_C" / "TAT_Std_C_A.thy").read_text() == (
+        'theory TAT_Std_C_A\n  imports "Main" "Minilang_AoA.Minilang_AoA"\nbegin\n'
+        + "".join(ascii_of_unicode(line) + "\n" for line in lines[:-1]) + "  sorry\nend\n")
+    assert (wd / "ROOT").read_text() == (
+        'session "TAT_Std_C" in "TAT_Std_C" = "HOL" +\n'
+        '  sessions\n    "Minilang_AoA"\n  theories\n    "TAT_Std_C_A"\n')

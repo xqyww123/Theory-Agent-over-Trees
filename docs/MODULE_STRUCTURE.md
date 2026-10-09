@@ -414,7 +414,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5), one module per node class: theorem.py, Theorem with Proof_Job and Proof_Check (THEOREM.md); statement.py, the statement's schema definitions
+  std/                 the Python half of the plugin Isabelle_Std (§4.5), one module per node class: theorem.py, Theorem with Proof_Job and Proof_Check (THEOREM.md) and the compile hook for AoA's proof stores (COMPILATION.md §5); statement.py, the statement's schema definitions
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -1157,6 +1157,8 @@ whose `_start` forks the replay of that proof on the ML side (§2.4's
 `fork_job`). The framework, not the class, posts the jobs' notifications
 to the owner's or starter's mailbox (CONSTRUCT_INTERACTION §3.4) and
 cancels or drops the jobs when the node is deleted or amended (§4.2).
+The module also registers the package's one compile hook,
+`remove_proof_stores_of_no_tree` (COMPILATION.md §5, "Compile hooks").
 
 ### 4.6 `mcp.py`, `mcp_server.py`, `toplevel.py`
 

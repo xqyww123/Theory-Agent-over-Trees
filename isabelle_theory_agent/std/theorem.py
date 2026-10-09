@@ -14,12 +14,13 @@ import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served b
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver, jobs
+from ..compile import paths
 from ..exceptions import BadTheoremNodeParent, InvalidField, InvalidName
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
-    INDENT, RECALL, CannotEvaluate, Isar_State_Slot, Leaf, Node, Ready, Theory, _emit_lines, _parent_id,
-    cartouche)
-from ..plugin import TAT_node
+    INDENT, RECALL, CannotEvaluate, Forest, Isar_State_Slot, Leaf, Node, Ready, Theory, _emit_lines,
+    _parent_id, cartouche)
+from ..plugin import TAT_compile_hook, TAT_node
 from .statement import STATEMENT_DEFS, LongStatement_RawAST
 
 KINDS = ("lemma", "theorem", "corollary", "proposition")   # the Isar commands Isabelle treats alike
@@ -326,6 +327,21 @@ class Theorem(Leaf):
         """A reserved name in double quotes, as `Token.print_name` would
         write it (§5); every other bare."""
         return f'"{name}"' if name in self.reserved_names else name
+
+
+@TAT_compile_hook
+def remove_proof_stores_of_no_tree(forest: Forest) -> None:
+    """The package's compile hook (COMPILATION.md §5): AoA keeps a theory's
+    proofs in `<T>.proof-store` beside its file, with `<T>.proof-store.*`
+    for its lock and a temporary file.  Each the path listing yields whose
+    `<folder>/<T>.thy` is no tree's file path goes, and nothing else."""
+    directory = forest.conversation.working_directory
+    files = {tree.file_path() for tree in forest._trees()}
+    for entry in list(paths(directory)):
+        name, found, rest = entry.path.name.partition(".proof-store")
+        if (entry.kind != "folder" and name and found and (not rest or rest.startswith("."))
+                and entry.path.parent / f"{name}.thy" not in files):
+            (directory / entry.path).unlink()
 
 
 def _inside_a_theory(parent: Node) -> bool:
