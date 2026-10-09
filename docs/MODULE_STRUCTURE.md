@@ -724,9 +724,9 @@ the same `Evaluation` (the invalidation functions, below).
   (recomputed whenever needed, never stored), routes a walk to the tree it
   concerns, invalidates every tree that imports a changed one, and runs a
   tree's imports to their `end`; `_order_violation(node)` answers the
-  `imports` item that violates the order constraint (ARCHITECTURE §3.3),
-  and None off a violating `Theory`, so the tool may ask it of any node a
-  result names.
+  `imports` item that violates the order constraint (ARCHITECTURE §3.3)
+  with the tree it names, and None off a violating `Theory`, so the tool
+  may ask it of any node a result names.
 
 `Conversation` is what one conversation, or one compile, is given and
 the forest does not store — this list and no other: the connection to the

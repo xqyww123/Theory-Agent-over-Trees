@@ -266,10 +266,11 @@ def _order_constraint_sentence(forest: Forest, stop: Node | None) -> list[str]:
     """RENDER_BASELINES §3's sentence under the order constraint's stop —
     a tree importing a forest tree placed after it, or itself — composed
     from the forest's answer; nothing under any other stop."""
-    item = forest._order_violation(stop) if stop is not None else None
-    if not isinstance(stop, Theory) or item is None:
+    violation = forest._order_violation(stop) if stop is not None else None
+    if not isinstance(stop, Theory) or violation is None:
         return []
-    if forest._resolved_imports(stop) == [stop]:
+    item, tree = violation
+    if tree is stop:
         return [f"`{forest.id_of(stop)}` imports itself. Remove `{item}` from its imports."]
     return [f"Since `{forest.id_of(stop)}` imports `{item}`, you cannot put it before `{item}`. Move it later."]
 

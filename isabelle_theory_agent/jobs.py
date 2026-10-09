@@ -828,6 +828,8 @@ class Evaluation_Job(ABC):
             job = self.node.job()
             if job is not None and job.auto_construct and job.can_start():
                 construction, self.started_construction = job, True
+            # the text is the one-node sentence, for the log; delivery
+            # composes the merged sentence from `failure` (§3.4)
             post(self.conversation.log, Message(
                 self.starter, self.failure_notification([self.shown_id], self.started_construction),
                 interrupts=False, subject=None if self.started_construction else self,

@@ -1035,6 +1035,8 @@ class Node(ABC):
         nothing."""
         if ev.starter is None or not self._operations_ready():
             return
+        # the class and the empty node follow from `Unchecked` under the
+        # default `_unfinished()`; an override may answer it otherwise
         if (ev.checks != "no" and type(self).evaluation_job_class is not None
                 and self.evaluation_job() is None and isinstance(self._unfinished(), Unchecked)):
             await self.start_evaluation_job(ev.starter)
@@ -2035,18 +2037,19 @@ class Forest(Unchained_Node):
                 pending.extend(self._resolved_imports(tree, table))
         return [t for t in self._trees() if t in closed]
 
-    def _order_violation(self, node: Node) -> str | None:
+    def _order_violation(self, node: Node) -> tuple[str, Theory] | None:
         """The order constraint (ARCHITECTURE §3.3): the first `imports`
         item, as the agent wrote it, whose forest tree does not lie strictly
         earlier in tree order — placed after the tree, or the tree itself —
-        or None.  Total on nodes, None off a `Theory`, so the renderer may
-        ask it of any `stopped_at` and compose RENDER_BASELINES §3's sentence
-        from the answer.  No edit refuses the state; the check runs before
-        every run of the tree, so a repairing `move` clears it by itself."""
+        with that tree; or None.  Total on nodes, None off a `Theory`, so
+        the renderer may ask it of any `stopped_at` and compose
+        RENDER_BASELINES §3's sentence from the answer.  No edit refuses the
+        state; the check runs before every run of the tree, so a repairing
+        `move` clears it by itself."""
         if not isinstance(node, Theory):
             return None
         misplaced = self._misplaced_imports(node)
-        return misplaced[0][0] if misplaced else None
+        return misplaced[0] if misplaced else None
 
     def _misplaced_imports(self, tree: Theory, table: dict[str, Theory] | None = None
                            ) -> list[tuple[str, Theory]]:

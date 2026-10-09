@@ -335,8 +335,8 @@ placed after it, or itself, is not run but invalidated whole,
 `Theory` node; no edit refuses the state, which legal edits
 reach, and the check runs before every run of the tree, so a repairing
 `move` clears it by itself. The forest answers which `imports` item
-offends (`_order_violation`, MODULE_STRUCTURE §4.1), and the tool composes
-RENDER_BASELINES §3's sentence from it. **The stop crossing an import
+offends and the tree it names (`_order_violation`, MODULE_STRUCTURE §4.1),
+and the tool composes RENDER_BASELINES §3's sentence from it. **The stop crossing an import
 dependency**: a tree one of whose resolved imports does not have both
 operations `ready` — a theory value exists only once the import's `end`
 has run; after a failed header the ending is `ready` and no value exists —

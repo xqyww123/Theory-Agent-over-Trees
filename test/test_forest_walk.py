@@ -168,13 +168,10 @@ def test_the_order_constraint():
     assert r.stopped_at is b and RUNS == ["begin C", "end C"]
     not_evaluated(b)
     assert st(c) == (READY, READY)
-    assert f._order_violation(b) == "S.C" and f._order_violation(c) is None
+    assert f._order_violation(b) == ("S.C", c) and f._order_violation(c) is None
     # the sentence the renderer composes from the answer, RENDER_BASELINES
     # §3's line verbatim
-    item = f._order_violation(b)
-    composed = (f"Since `{f.id_of(b)}` imports `{item}`, you cannot put it before `{item}`."
-                " Move it later.")
-    assert composed == fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")[0]
+    assert mcp._order_constraint_sentence(f, b) == [fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")[0]]
     inv(f)
     # `None` on the leaf a case-3 stop reports
     (y,) = insert(f, c, 0, [t("y", fail=True)])
@@ -192,7 +189,8 @@ def test_the_order_constraint():
 
 def test_the_order_constraint_answers_the_offending_item_written_first():
     f = forest(session("S", theory("A"), theory("B", "A", "S.D", "S.C"), theory("C"), theory("D")))
-    assert f._order_violation(f.sub_nodes[0].sub_nodes[1]) == "S.D"
+    a, b, c, d = f.sub_nodes[0].sub_nodes
+    assert f._order_violation(b) == ("S.D", d)
 
 
 def test_a_reorder_into_a_violation_invalidates_the_tree_at_the_next_walk():
@@ -205,7 +203,7 @@ def test_a_reorder_into_a_violation_invalidates_the_tree_at_the_next_walk():
     # the reorder itself invalidates nothing; the next walk finds the
     # violation and invalidates the ready tree whole, its importer blocked
     run(locked(f, edit.move(b, s, 0)))
-    assert f.is_finished() and f._order_violation(b) == "S.C"
+    assert f.is_finished() and f._order_violation(b) == ("S.C", c)
     assert tm.TABLE.theory_deletes == []
     RUNS.clear()
     r = run(d.evaluate_to(None, False))
@@ -237,17 +235,28 @@ def test_a_self_import_is_a_stop():
     (a,) = f.sub_nodes[0].sub_nodes
     assert f._resolved_imports(a) == [a] and f._importers(a) == [a] and f._closure([a]) == [a]
     r = run(a.evaluate_to(None, False))
-    assert r.stopped_at is a and RUNS == [] and f._order_violation(a) == "A"
+    assert r.stopped_at is a and RUNS == [] and f._order_violation(a) == ("A", a)
     not_evaluated(a)
     inv(f)
     # the sentence's variant for an item naming the tree itself, on the
     # document's own example: RENDER_BASELINES §3's second line verbatim
     f = forest(session("S", theory("B", "S.B")))
     (b,) = f.sub_nodes[0].sub_nodes
-    item = f._order_violation(b)
-    assert item == "S.B" and f._resolved_imports(b) == [b]   # what tells the renderer to use the variant
-    composed = f"`{f.id_of(b)}` imports itself. Remove `{item}` from its imports."
-    assert composed == fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")[1]
+    assert f._order_violation(b) == ("S.B", b)              # what tells the renderer to use the variant
+    assert mcp._order_constraint_sentence(f, b) == [fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")[1]]
+    # the variant is the item's, not the tree's: a tree importing itself
+    # and an earlier tree, the self-import written first
+    f = forest(session("S", theory("A"), theory("B", "S.B", "S.A")))
+    a, b = f.sub_nodes[0].sub_nodes
+    assert f._resolved_imports(b) == [b, a] and f._order_violation(b) == ("S.B", b)
+    assert mcp._order_constraint_sentence(f, b) == [f"`{f.id_of(b)}` imports itself. Remove `S.B` from its imports."]
+    # and the other way about: a later tree's import written before the
+    # self-import is the item, and gets the first line
+    f = forest(session("S", theory("B", "S.C", "S.B"), theory("C")))
+    b, c = f.sub_nodes[0].sub_nodes
+    assert f._order_violation(b) == ("S.C", c)
+    assert mcp._order_constraint_sentence(f, b) == [
+        f"Since `{f.id_of(b)}` imports `S.C`, you cannot put it before `S.C`. Move it later."]
 
 
 # --- the stop crossing an import dependency ----------------------------------
