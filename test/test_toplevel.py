@@ -31,21 +31,22 @@ DIRECTORY_NAME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{6}Z$")
 
 
 class Recorder:
-    """What `launch_TAT` says to the Isabelle side — the lines, and the
-    round trips, answered with nothing; `served` once it has served; the RPC
-    host's logger, which the `Log` reports to."""
+    """What `launch_TAT` says to the Isabelle side — the round trips,
+    answered with nothing; `served` once `TAT.serving` arrives, and the
+    lock's text at that moment, when the launcher may start the client;
+    the RPC host's logger, which the `Log` reports to."""
     def __init__(self):
-        self.lines: list[str] = []
         self.calls: list[tuple[str, Any]] = []
         self.served = asyncio.Event()
+        self.lock: str | None = None
         self.server = SimpleNamespace(logger=logging.getLogger("tat.test.toplevel"))
-
-    async def writeln(self, msg: str) -> None:
-        self.lines.append(msg)
-        self.served.set()
 
     async def callback(self, name: str, args: Any) -> None:
         self.calls.append((name, args))
+        if name == "TAT.serving":
+            _, agent_directory, _ = args          # the lock lies beside the agent directory
+            self.lock = (Path(agent_directory).parent / "tat.lock").read_text()
+            self.served.set()
 
 
 def run(scenario):
@@ -80,7 +81,6 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
     async def scenario():
         port = free_port()
         first, connection = await launch(tmp_path, port)
-        assert connection.lines == [f"TAT is serving on http://{HOST}:{port}/mcp"]
         assert (tmp_path / "TAT.sqlite").is_file()
         # pid then port, one line each: the refusal reads the first, the
         # hooks the second (CLIENT_HOOKS.md)
@@ -89,8 +89,13 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # named by its moment (LOGGING.md §2), the start recorded in order
         [log_directory] = log_directories(tmp_path)
         assert DIRECTORY_NAME.match(log_directory.name)
-        # the Isabelle side told the directory, absolute, right after `start`
-        assert connection.calls == [("TAT.log_directory", str(log_directory.absolute()))]
+        # the Isabelle side told the directory, absolute, right after `start`;
+        # then, the lock holding the port, `TAT.serving`: the URL, the agent
+        # directory's canonical path, Claude Code's launch arguments — none
+        assert connection.calls == [
+            ("TAT.log_directory", str(log_directory.absolute())),
+            ("TAT.serving", (f"http://{HOST}:{port}/mcp", str((tmp_path / "TAT.agents").resolve()), []))]
+        assert connection.lock == f"{os.getpid()}\n{port}\n"
         records = stand_ins.records("conversation", log_directory)
         assert [r["event"] for r in records] == [
             "start", "store_opened", "plugins_loaded", "configured", "serving"]
@@ -100,7 +105,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
                          "client": "claude-code"}
         assert store_opened == {"schema_version": 1, "nodes": 0}
         assert plugins_loaded["kinds"]["session"] == "isabelle_theory_agent.model"
-        # the client's files and the scripts, written before the port is bound
+        # the client's files and the scripts, written with the port bound
         assert configured == {"files": ["TAT.agents/.mcp.json", "TAT.agents/.claude/settings.json",
                                         ".tat/hook.py", ".tat/guard.py"]}
         assert (tmp_path / "TAT.agents" / ".mcp.json").is_file() and (tmp_path / ".tat" / "hook.py").is_file()
@@ -164,6 +169,42 @@ def test_the_client_selects_the_server_and_the_bound_is_read(tmp_path):
                                           f"positive integer, but it is {text}")
         assert list(directory.iterdir()) == []
     run(scenario)
+
+
+def test_port_0_serves_on_a_port_the_system_assigns(tmp_path):
+    """MODULE_STRUCTURE §4.6: `start` records the port asked for; the
+    server's `port` and URL, the lock's second line, the `serving` record
+    and what the Isabelle side is told all carry the one bound."""
+    async def scenario():
+        connection = Recorder()
+        async with toplevel.served([], str(tmp_path), 0, "claude-code", "", cast(Any, connection)
+                                   ) as (_, _, server):
+            assert server.port != 0 and server.url == f"http://{HOST}:{server.port}/mcp"
+            assert (tmp_path / "tat.lock").read_text() == f"{os.getpid()}\n{server.port}\n"
+            [log_directory] = log_directories(tmp_path)
+            start, *_, serving = stand_ins.records("conversation", log_directory)
+            assert start["data"]["port"] == 0 and serving["data"] == {"url": server.url}
+            assert connection.calls[-1][1][0] == server.url
+    run(scenario)
+
+
+def test_a_configure_refusal_closes_the_socket_served_bound(tmp_path, monkeypatch):
+    """The socket is bound before `configure` writes the files that name
+    its URL, and a `configure` that raises leaves no bound socket behind."""
+    sockets = []
+    bind = toplevel._bind
+
+    def keeping(port):
+        sockets.append(bind(port))
+        return sockets[-1]
+    monkeypatch.setattr(toplevel, "_bind", keeping)
+    (tmp_path / "TAT.agents").write_text("a file")        # nothing can be made below it
+    async def scenario():
+        with pytest.raises(TAT_StartupError, match="^TAT cannot write "):
+            await launch(tmp_path, free_port())
+    run(scenario)
+    [sock] = sockets
+    assert sock.fileno() == -1
 
 
 def test_a_port_in_use_is_refused_and_leaves_no_lock_behind(tmp_path):

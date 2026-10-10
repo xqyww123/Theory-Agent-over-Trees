@@ -26,7 +26,7 @@ from . import isabelle_driver, mcp, plugin
 from .compile import compile, report_lines
 from .exceptions import TAT_StartupError
 from .log import Log, now
-from .mcp_server import DOT_TAT, SERVERS, Ending, TAT_Server
+from .mcp_server import DOT_TAT, SERVERS, Ending, TAT_Server, _bind, agent_directory
 from .model import Conversation, Forest
 from .store import SCHEMA_VERSION, Forest_Store
 
@@ -144,20 +144,27 @@ async def conversation(python_packages: list[str], working_directory: str, conne
 async def served(python_packages: list[str], working_directory: str, port: int, client: str,
                  max_concurrent_construction_jobs: str, connection: Connection
                  ) -> AsyncGenerator[tuple[Forest, plugin.Loaded, TAT_Server]]:
-    """All three layers: a conversation whose server — the `TAT_Server`
-    subclass `client` names — writes the client's files, then listens, the
-    port announced in the lock; whoever holds the block serves it.  The
-    bound's text is checked first, before anything is touched."""
+    """All three layers: a conversation; the port bound, 0 for one the
+    system assigns; its server — the `TAT_Server` subclass `client` names
+    — which writes the client's files and accepts, the bound port then
+    announced in the lock and the Isabelle side told.  Whoever holds the
+    block serves it.  The bound's text is checked first, before anything
+    is touched."""
     bound = _max_concurrent_construction_jobs(max_concurrent_construction_jobs)
     async with conversation(python_packages, working_directory, connection, port, client, bound
                             ) as (forest, loaded, announce):
-        server = SERVERS[client](forest.conversation.ending, port, mcp.tools(forest, loaded),
-                                 forest.conversation.agents)
-        server.configure(forest.conversation.working_directory)
-        async with server:
-            announce(port)                  # listening: the hooks may call
-            forest.conversation.log.conversation.serving(url=server.url)
-            yield forest, loaded, server
+        with _bind(port) as sock:           # the port is TAT's from here on: the files name its URL
+            server = SERVERS[client](forest.conversation.ending, sock, mcp.tools(forest, loaded),
+                                     forest.conversation.agents)
+            server.configure(forest.conversation.working_directory)
+            async with server:
+                announce(server.port)       # accepting: the hooks may call
+                forest.conversation.log.conversation.serving(url=server.url)
+                # the launcher starts the client on this message, after the port line
+                agents = agent_directory(forest.conversation.working_directory)
+                await isabelle_driver.serving(forest.conversation, server.url, agents,
+                                              server.launch_arguments(agents))
+                yield forest, loaded, server
 
 
 @isabelle_remote_procedure("launch_TAT")
@@ -169,8 +176,6 @@ async def launch_TAT(arg: tuple[list[str], str, int, str, str], connection: Conn
     python_packages, working_directory, port, client, max_concurrent_construction_jobs = arg
     async with served(python_packages, working_directory, port, client,
                       max_concurrent_construction_jobs, connection) as (_, _, server):
-        # a line nothing depends on, and the launcher does not echo (§5)
-        await connection.writeln(f"TAT is serving on {server.url}")
         await server.serve()
 
 

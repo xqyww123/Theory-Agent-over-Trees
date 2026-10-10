@@ -848,6 +848,23 @@ val log_directory =
         Output.protocol_message [Markup.function "TAT.log_directory"] [XML.Encode.string directory]),
      timeout = NONE}
 
+(*The Python side is serving (docs/MODULE_STRUCTURE.md §4.6): the URL, the
+  agent directory's canonical path and the client's launch arguments, passed
+  on to the launcher as the protocol message TAT.serving, sent as
+  TAT.finished is; a conversation's alone, never a compile's.*)
+val serving =
+  make_callback
+    {name = "TAT.serving",
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackTuple3 (unpackString, unpackString, unpackList unpackString),
+     ret_schema = packUnit,
+     function = fn served =>
+       served
+       |> let open XML.Encode in triple string string (list string) end
+       |> single
+       |> Output.protocol_message [Markup.function "TAT.serving"],
+     timeout = NONE}
+
 fun framework_callbacks (slots : Slots.T) (theories : Theories.T) (jobs : Jobs.T) = [
   make_callback
     {name = "TAT.state_copy",
@@ -882,6 +899,7 @@ fun framework_callbacks (slots : Slots.T) (theories : Theories.T) (jobs : Jobs.T
                                 unpackList (unpackPair (unpackString, unpackString))),
      ret_schema = pack_session_answer, function = Loader.check_session, timeout = NONE},
   log_directory,
+  serving,
   (*the futures of the evaluation jobs whose ids it is given, cancelled (§2.4)*)
   make_callback
     {name = "TAT.job_cancel",

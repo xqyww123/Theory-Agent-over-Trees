@@ -109,6 +109,17 @@ async def log_directory(conversation: Conversation, directory: Path) -> None:
     await call(conversation, "TAT.log_directory", str(directory.absolute()))
 
 
+async def serving(conversation: Conversation, url: str, agent_directory: Path,
+                  launch_arguments: Sequence[str]) -> None:
+    """Tell the Isabelle side the conversation is served — the URL, the
+    agent directory's canonical path and the arguments the client takes
+    at its launch — which it passes to the launcher as the protocol message
+    `TAT.serving` (MODULE_STRUCTURE §2.6, §4.6): a conversation's one round
+    trip once its port is bound, after which the launcher may start the
+    client."""
+    await call(conversation, "TAT.serving", (url, str(agent_directory), list(launch_arguments)))
+
+
 async def reset(conn: Connection) -> None:
     """Empty the state slot table and the theory table: a fresh conversation
     begins on the same Isabelle process (ARCHITECTURE §9).  The first act of

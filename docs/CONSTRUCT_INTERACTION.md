@@ -845,7 +845,8 @@ LOGGING.md §4) and the ending.
 
 `isabelle TAT_mcp -c <client>` (default `claude-code`) chooses the client for
 the launch. `TAT_Server` has one subclass per client, which implements
-`configure`, `agent_of_call`, `event_of_hook` and the result envelope.
+`configure`, `launch_arguments` (CLIENT_HOOKS.md §3), `agent_of_call`,
+`event_of_hook` and the result envelope.
 The client's version is read where the client states it: every MCP
 session opens with an `initialize` request whose `clientInfo` carries
 the client's `name` and `version` (the MCP specification's lifecycle;

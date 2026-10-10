@@ -29,8 +29,8 @@ from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.jobs import Agent, Message, post
 from isabelle_theory_agent.mcp_server import (
-    AGENTS, DOT_TAT, HOST, Claude_Code_Server, Codex_Server, TAT_Server, Tool, With_Trailer,
-    resolver_entry, stopped, stopped_for, toml_string)
+    AGENTS, DOT_TAT, HOST, Claude_Code_Server, Codex_Server, TAT_Server, Tool, With_Trailer, _bind,
+    agent_directory, resolver_entry, stopped, stopped_for, toml_string)
 from isabelle_theory_agent.model import CannotUseWorkingDirectory
 from test_toplevel import Recorder, cancelled_by_the_host
 
@@ -120,39 +120,39 @@ class Bodies:
 @asynccontextmanager
 async def serving(port: int, tools: list[Tool],
                   server_class: type[TAT_Server] = Claude_Code_Server):
-    """A server listening and serving in a task, on an ending object and an
-    agents dict of its own — Claude Code's by default, the client the
-    harness's `client()` is; yields the server and the serving task, which
-    raises what ended the conversation (`ended`)."""
-    async with stand_ins.ending() as ending, \
-            server_class(ending, port, tools, {}) as server:
-        serve = asyncio.create_task(server.serve())
-        try:
-            yield server, serve
-        finally:
-            if not serve.done():
-                serve.cancel()
-            await asyncio.wait({serve})
-            if not serve.cancelled():
-                serve.exception()                     # retrieved: the tests inspect it themselves
+    """A server on a socket bound here, accepting and serving in a task, on
+    an ending object and an agents dict of its own — Claude Code's by
+    default, the client the harness's `client()` is; yields the server and
+    the serving task, which raises what ended the conversation (`ended`)."""
+    with _bind(port) as sock:
+        async with stand_ins.ending() as ending, server_class(ending, sock, tools, {}) as server:
+            serve = asyncio.create_task(server.serve())
+            try:
+                yield server, serve
+            finally:
+                if not serve.done():
+                    serve.cancel()
+                await asyncio.wait({serve})
+                if not serve.cancelled():
+                    serve.exception()                 # retrieved: the tests inspect it themselves
 
 
 async def launched(tools: list[Tool], block: Callable[[TAT_Server], Awaitable[Any]]
                    ) -> tuple[TAT_Server, asyncio.Task]:
-    """`launch_TAT`'s shape: an ending object and a server entered in a task
-    of their own, running `block` inside them — the task the RPC host
-    cancels; returned once the server listens."""
+    """`launch_TAT`'s shape: a socket bound, an ending object and a server
+    entered in a task of their own, running `block` inside them — the task
+    the RPC host cancels; returned once the server accepts."""
     ending = stand_ins.ending()
-    server = Claude_Code_Server(ending, free_port(), tools, {})
-    listening = asyncio.Event()
+    accepting: asyncio.Future[TAT_Server] = asyncio.get_running_loop().create_future()
 
     async def launch_TAT():
-        async with ending, server:
-            listening.set()
-            await block(server)
+        with _bind(free_port()) as sock:
+            server = Claude_Code_Server(ending, sock, tools, {})
+            async with ending, server:
+                accepting.set_result(server)
+                await block(server)
     task = asyncio.create_task(launch_TAT())
-    await listening.wait()
-    return server, task
+    return await accepting, task
 
 
 async def ended(serve: asyncio.Task):
@@ -602,10 +602,10 @@ def test_the_endpoint_answers_as_soon_as_it_listens():
     """The session manager runs from `async with` on, not from `serve`: a
     request between the two is answered normally."""
     async def scenario():
-        port = free_port()
-        async with stand_ins.ending() as ending, Claude_Code_Server(ending, port, [], {}) as server, \
-                client(server.url) as session:
-            assert (await session.list_tools()).tools == []
+        with _bind(free_port()) as sock:
+            async with stand_ins.ending() as ending, Claude_Code_Server(ending, sock, [], {}) as server, \
+                    client(server.url) as session:
+                assert (await session.list_tools()).tools == []
     run(scenario)
 
 
@@ -628,13 +628,13 @@ def test_another_host_or_origin_is_refused_and_another_path_is_not_found():
 
 
 def test_a_port_that_cannot_be_bound_is_a_startup_error():
-    async def scenario():
-        port = free_port()
-        async with serving(port, []):
-            with pytest.raises(TAT_StartupError, match=f"TAT cannot serve on {HOST}:{port}: "):
-                async with stand_ins.ending() as ending, TAT_Server(ending, port, [], {}):
-                    pass
-    run(scenario)
+    """`_bind` listens, so a second bind on its port is refused with the
+    sentence — which, under `SO_REUSEADDR`, a bound socket that does not
+    listen would let through."""
+    port = free_port()
+    with _bind(port):
+        with pytest.raises(TAT_StartupError, match=f"TAT cannot serve on {HOST}:{port}: "):
+            _bind(port)
 
 
 def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
@@ -660,8 +660,12 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             raise
 
     async def enter(port):                            # a task of its own takes the cancellation
-        async with stand_ins.ending() as ending, TAT_Server(ending, port, [], {}):
-            pass
+        with _bind(port) as sock:
+            try:
+                async with stand_ins.ending() as ending, TAT_Server(ending, sock, [], {}):
+                    pass
+            finally:                                  # no reader left on the descriptor
+                assert not asyncio.get_running_loop().remove_reader(sock.fileno())
 
     async def scenario():
         port = free_port()
@@ -670,9 +674,10 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             with pytest.raises(raised):
                 await asyncio.create_task(enter(port))
             monkeypatch.setattr(uvicorn.Server, "startup", real_startup)
-            async with stand_ins.ending() as ending, \
-                    Claude_Code_Server(ending, port, [], {}) as again, client(again.url) as session:
-                assert (await session.list_tools()).tools == []
+            with _bind(port) as sock:
+                async with stand_ins.ending() as ending, \
+                        Claude_Code_Server(ending, sock, [], {}) as again, client(again.url) as session:
+                    assert (await session.list_tools()).tools == []
         assert reached_the_window
     run(scenario)
 
@@ -724,10 +729,11 @@ def working_directory(tmp_path: Path) -> Path:
 
 def configured(server_class: type[TAT_Server], working_directory: Path, monkeypatch) -> TAT_Server:
     """`configure` under an interpreter whose path holds a space and both
-    quotes."""
+    quotes, on a socket closed at once: the files alone are under test."""
     monkeypatch.setattr(sys, "executable", '/opt/my "python\'s"/bin/python3')
-    server = server_class(stand_ins.ending(), free_port(), [], {})
-    server.configure(working_directory)
+    with _bind(0) as sock:
+        server = server_class(stand_ins.ending(), sock, [], {})
+        server.configure(working_directory)
     return server
 
 
@@ -742,7 +748,7 @@ def test_configure_writes_claude_codes_files_and_the_scripts(working_directory, 
     (working_directory / DOT_TAT / "hook.py").write_text("stale")
     server = configured(Claude_Code_Server, working_directory, monkeypatch)
     agents, scripts = working_directory / AGENTS, working_directory / DOT_TAT
-    placeholders = {"<port>": str(server._port), "<python>": sys.executable,
+    placeholders = {"<port>": str(server.port), "<python>": sys.executable,
                     "<working directory>": str(working_directory)}
     mcp_json, settings = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "2.")
     assert written(agents / ".mcp.json") == documented(mcp_json, placeholders)
@@ -838,9 +844,9 @@ def test_configure_writes_codexs_files(tmp_path, working_directory, monkeypatch,
     monkeypatch.setattr(mcp_server, "RESOLV_CONF", str(resolv_conf))
     server = configured(Codex_Server, working_directory, monkeypatch)
     codex = working_directory / AGENTS / ".codex"
-    placeholders = {"<port>": str(server._port), "<python>": sys.executable,
+    placeholders = {"<port>": str(server.port), "<python>": sys.executable,
                     "<working directory>": str(working_directory), RESOLVER: str(target.resolve())}
-    config, hooks = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "3.")
+    config, hooks, _ = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "3.")
     expected = [line for line in config if resolver_outside_minimal or RESOLVER not in line]
     assert written(codex / "config.toml", tomllib.loads) == documented(expected, placeholders, tomllib.loads)
     assert written(codex / "hooks.json") == documented(hooks, placeholders)
@@ -848,6 +854,24 @@ def test_configure_writes_codexs_files(tmp_path, working_directory, monkeypatch,
         assert (working_directory / DOT_TAT / script).read_bytes() == (PACKAGE / script).read_bytes()
     [record] = stand_ins.records("conversation")
     assert record["data"]["files"][:2] == [f"{AGENTS}/.codex/config.toml", f"{AGENTS}/.codex/hooks.json"]
+
+
+def test_the_launch_arguments_are_the_documented_ones(working_directory):
+    """CLIENT_HOOKS §3's third block, one argument per line, the agent
+    directory's canonical path filled in — Codex's flag and the project
+    trust, whose TOML names that path, which `agent_directory` gives with
+    symbolic links resolved; Claude Code takes none."""
+    agents = agent_directory(working_directory)
+    link = working_directory.parent / "link"
+    link.symlink_to(working_directory)
+    assert agents == (working_directory / AGENTS).resolve() == agent_directory(link)
+    _, _, block = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "3.")
+    flag, option, trust = block
+    arguments = Codex_Server.launch_arguments(agents)
+    assert arguments[:2] == [flag, option]
+    assert tomllib.loads(arguments[2]) == documented([trust], {"<agent directory>": str(agents)}, tomllib.loads) \
+        == {"projects": {str(agents): {"trust_level": "trusted"}}}
+    assert Claude_Code_Server.launch_arguments(agents) == []
 
 
 def test_the_resolvers_entry_is_its_real_path_outside_minimal(tmp_path):

@@ -195,9 +195,13 @@ TAT call still working (CONSTRUCT_INTERACTION §7). `SessionStart` fires for
 `startup`, `resume`, `clear`, `compact` and `fork`. Codex runs project
 hooks only when the project is trusted and only under
 `--dangerously-bypass-hook-trust`, which has no configuration equivalent:
-both are given at launch, and no sandbox option is (§5). The agent
-directory is in no git repository of its own, and `codex exec` started
-there needs `--skip-git-repo-check` when no directory above it is one.
+both come from the client class, as the arguments the client is given at
+its launch before the user's own (MODULE_STRUCTURE §4.6) — the third
+block below, one argument per line, as the client receives them — and
+no sandbox option is (§5). The trust is given under `<agent directory>`,
+the canonical path of `<working directory>/TAT.agents`, symbolic links
+resolved, which is also the directory the client is started in;
+`<working directory>` is the absolute path as given.
 
 ```toml
 check_for_update_on_startup = false
@@ -232,6 +236,12 @@ default_tools_approval_mode = "approve"
     "SessionStart": [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
     "PreCompact":   [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
     "PostCompact":  [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ] } }
+```
+
+```
+--dangerously-bypass-hook-trust
+-c
+projects={"<agent directory>"={trust_level="trusted"}}
 ```
 
 `PreCompact` and `PostCompact` fire for every thread that compacts, the
@@ -397,7 +407,8 @@ names the real path and never the symbolic link, on which the sandbox
 fails every command. `apply_patch` obeys the same profile, and Codex has
 no other file tool and no worktree tool, so it needs no guard script.
 A sandbox option at launch — `-s`,
-`--dangerously-bypass-approvals-and-sandbox` — makes Codex ignore the
+`--dangerously-bypass-approvals-and-sandbox`, neither among the launch
+arguments of §3 — makes Codex ignore the
 profile, so TAT checks it: TAT's server declares
 `capabilities.experimental["codex/sandbox-state-meta"]` in its
 `initialize` result, Codex then sends the policy in force as

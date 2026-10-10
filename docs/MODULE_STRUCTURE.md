@@ -320,7 +320,11 @@ the agent client's name, and starts the conversation:
    (§2.4's `fork_job`), `TAT.log_directory`, which names the directory
    the Isabelle side appends its records to (LOGGING.md §5) and passes
    the name on to the launcher, as the protocol message
-   `TAT.log_directory`, sent as `TAT.finished` is (LOGGING.md §7), and
+   `TAT.log_directory`, sent as `TAT.finished` is (LOGGING.md §7),
+   `TAT.serving`, which the Python side calls once its port is bound,
+   with the URL, the agent directory's canonical path and the client's
+   launch arguments (§4.6), passed on to the launcher the same way as
+   the protocol message `TAT.serving`, and
    `TAT.reset`, which cancels every job's future, empties both tables
    (§2.1's and §2.2's `clear`) and begins a fresh Isabelle-side log
    (LOGGING.md §5);
@@ -1323,7 +1327,9 @@ of one `edit` schema).
 The server has one path beside `/mcp`: `POST /hook`, to which the
 conversation's hooks post their payloads (CLIENT_HOOKS.md §1). `TAT_Server` has
 one subclass per client, `claude-code` and `codex` (CONSTRUCT_INTERACTION
-§8), which implements `configure` (the client's files), `agent_of_call`
+§8), which implements `configure` (the client's files), `launch_arguments`
+(what the launcher gives the client before the user's arguments,
+CLIENT_HOOKS.md §3), `agent_of_call`
 (the calling `Agent` of a tool call, from the `PreToolUse` announcement
 that preceded it; the handler raises that agent's working-call count
 in a `try/finally` around the body as soon as it is named, before any
@@ -1425,19 +1431,23 @@ managers, the two procedures sharing the first two:
    (COMPILATION.md §5); the plugins (§4.4); the `Forest`, handed to the
    ending object. Here `compile_TAT` calls `compile` with the hooks the
    `Loaded` yields and returns.
-3. **`launch_TAT` alone:** the `TAT_Server` subclass the client's name
-   selects makes the agent directory, `TAT.agents/`, when it is absent,
-   and writes the client's files into it and the two scripts into `.tat/`
-   (`configure`, CLIENT_HOOKS.md: the MCP entry, the settings, the hooks;
-   the Codex subclass also looks up the real path of `/etc/resolv.conf`
-   for its profile), a file it cannot write being a `TAT_StartupError`,
-   `TAT cannot write <path>: <strerror>`; the server, a port that cannot
-   be bound being a `TAT_StartupError` too, `TAT cannot serve on
-   127.0.0.1:<port>: <strerror>`; the port line of `tat.lock`; the line `TAT is serving on
-   http://127.0.0.1:<port>/mcp` printed to the Isabelle side, which
-   nothing depends on and the launcher does not echo (§5); then serving
+3. **`launch_TAT` alone:** the socket, bound and listening on the port
+   asked for — 0 for one the system assigns — a port that cannot be
+   bound being a `TAT_StartupError`, `TAT cannot serve on
+   127.0.0.1:<port>: <strerror>`; the `TAT_Server` subclass the client's
+   name selects, constructed on that socket, from which its port and URL
+   derive; its `configure`, which makes the agent directory,
+   `TAT.agents/`, when it is absent, and writes the client's files into
+   it and the two scripts into `.tat/` (CLIENT_HOOKS.md: the MCP entry
+   with that URL, the settings, the hooks; the Codex subclass also looks
+   up the real path of `/etc/resolv.conf` for its profile), a file it
+   cannot write being a `TAT_StartupError`, `TAT cannot write <path>:
+   <strerror>`; the server accepting; the port line of `tat.lock`; the
+   round trip `TAT.serving` (§2.6) with the URL, the agent directory's
+   canonical path and the client's launch arguments (`launch_arguments`,
+   CLIENT_HOOKS.md §3), before which no client can exist; then serving
    until the conversation's ending (above), after which the layers exit in
-   reverse and the lock is released.
+   reverse, the socket with the server's, and the lock is released.
 
 Every file `configure` writes is written from a Python value through its
 format's one encoder — JSON through `json.dumps`, TOML strings through

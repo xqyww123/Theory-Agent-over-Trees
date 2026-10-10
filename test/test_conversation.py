@@ -122,19 +122,20 @@ async def test_a_fresh_conversation_holds_nothing(conversation):
     assert conversation.log.directory.parent == conversation.working_directory / ".tat" / "log"
     assert stand_ins.events("conversation", conversation.log.directory) == [
         "start", "store_opened", "plugins_loaded", "configured", "serving"]
-    # the client's files and the scripts, written before the server listened
+    # the client's files and the scripts, written with the port bound
     # (CLIENT_HOOKS.md): the agent directory beside `.tat/`
     assert (conversation.working_directory / "TAT.agents" / ".mcp.json").is_file()
     assert (conversation.working_directory / ".tat" / "hook.py").is_file()
-    told, trip = stand_ins.records("round_trip", conversation.log.directory)
+    told, served, trip = stand_ins.records("round_trip", conversation.log.directory)
     assert told["data"]["name"] == "TAT.log_directory" and "result" not in told["data"]
+    assert served["data"]["name"] == "TAT.serving" and "result" not in served["data"]
     assert trip["data"] == {"name": "TAT.state_exists", "arguments": "nobody", "result": False,
                             "duration": trip["data"]["duration"]}
     # the Isabelle side's own file (LOGGING.md §5): every callback it ran,
-    # the two above included, once the directory was told
+    # the three above included, once the directory was told
     isabelle = stand_ins.records("isabelle", conversation.log.directory)
     callbacks = [r["data"] for r in isabelle if r["event"] == "callback"]
-    assert [c["name"] for c in callbacks][-2:] == ["TAT.log_directory", "TAT.state_exists"]
+    assert [c["name"] for c in callbacks][-3:] == ["TAT.log_directory", "TAT.serving", "TAT.state_exists"]
     assert all(c["outcome"] == "returned" and c["duration"] >= 0 for c in callbacks)
     assert all(r["category"] == "isabelle" and "agent" not in r and "call" not in r for r in isabelle)
 

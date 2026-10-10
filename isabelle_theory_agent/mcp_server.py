@@ -97,6 +97,13 @@ MINIMAL = ("/bin", "/sbin", "/usr", "/etc", "/lib", "/lib64", "/nix/store", "/ru
 SANDBOX_STATE = "codex/sandbox-state-meta"      # the capability, and the `_meta` key it brings (§5)
 
 
+def agent_directory(working_directory: Path) -> Path:
+    """The agent directory's canonical path, symbolic links resolved: the
+    client's working directory, and on Codex its trust key (CLIENT_HOOKS.md
+    §3)."""
+    return (working_directory / AGENTS).resolve()
+
+
 def toml_string(value: str) -> str:
     """The TOML basic string for `value` (TOML 1.0): `"` and `\\` escaped,
     every control character and DEL as `\\uXXXX`."""
@@ -454,9 +461,10 @@ class Ending:
 
 
 class TAT_Server:
-    """The server of one conversation, constructed on the running loop:
-    `async with` binds the port (`TAT_StartupError` when it cannot be),
-    starts the session manager and listens, and on leaving stops; `serve`
+    """The server of one conversation, constructed on the running loop
+    over a socket `served` bound and listening (`_bind`), from which its
+    port and URL derive: `async with` starts the session manager and
+    accepts, and on leaving stops; `serve`
     runs the conversation until its ending and raises what ended it.  The
     ending is `ending`'s, given; the server keeps no ending state of its
     own.  One subclass per agent client (CONSTRUCT_INTERACTION §8), each
@@ -477,9 +485,11 @@ class TAT_Server:
     interrupting_tool: ClassVar[str]        # the parent's tool that stops a subagent (CONSTRUCT_INTERACTION §7)
     experimental: ClassVar[dict[str, dict[str, Any]]] = {}     # declared in `initialize`
 
-    def __init__(self, ending: Ending, port: int, tools: list[Tool], agents: dict[str, Agent]):
+    def __init__(self, ending: Ending, sock: socket.socket, tools: list[Tool], agents: dict[str, Agent]):
         self.ending = ending
-        self._port = port
+        self._socket = sock
+        self.port: int = sock.getsockname()[1]      # the socket's, bound by `served`
+        port = self.port
         self._tools = {tool.name: tool for tool in tools}
         self.url = f"http://{HOST}:{port}{PATH}"
 
@@ -523,7 +533,8 @@ class TAT_Server:
     def configure(self, working_directory: Path) -> None:
         """The client's files, written whole into the agent directory, and
         the scripts its hooks run into `.tat/` (CLIENT_HOOKS.md); called
-        before the port is bound (MODULE_STRUCTURE §4.6).  Each file replaces
+        with the port bound, so `url` is final, before the server accepts
+        (MODULE_STRUCTURE §4.6).  Each file replaces
         whatever stands at its name; one that cannot be written is a
         `TAT_StartupError`."""
         self._working_directory = working_directory
@@ -541,6 +552,14 @@ class TAT_Server:
     def _client_files(self, working_directory: Path) -> dict[str, str]:
         """The client's files, by name within the agent directory, each the
         text its format's one encoder gives (MODULE_STRUCTURE §4.6)."""
+        raise NotImplementedError
+
+    @staticmethod
+    def launch_arguments(agent_directory: Path) -> list[str]:
+        """What the launcher gives the client before the user's arguments,
+        for the client it starts in `agent_directory`, the agent directory's
+        canonical path (CLIENT_HOOKS.md §3); static: nothing of the server's
+        goes into them."""
         raise NotImplementedError
 
     def _hook(self, working_directory: Path, script: str, matcher: str | None = None) -> dict[str, Any]:
@@ -730,7 +749,6 @@ class TAT_Server:
         Code does not."""
 
     async def __aenter__(self) -> TAT_Server:
-        self._socket = _bind(self._port)
         try:
             await self._running.enter_async_context(self._manager.run())
             await self._uvicorn.startup(sockets=[self._socket])
@@ -739,7 +757,6 @@ class TAT_Server:
             # cancelled inside `create_server`: uvicorn has no server to
             # close yet, but the loop has a reader on this descriptor
             asyncio.get_running_loop().remove_reader(self._socket.fileno())
-            self._socket.close()
             raise
         return self
 
@@ -1031,12 +1048,16 @@ class Claude_Code_Server(TAT_Server):
     boundary_wait: ClassVar[float] = 10.0   # seconds a `PostCompact` and its boundary may lie apart (the second check)
     boundary_poll: ClassVar[float] = 0.25   # seconds between the readings while a hook waits
 
-    def __init__(self, ending: Ending, port: int, tools: list[Tool], agents: dict[str, Agent]):
-        super().__init__(ending, port, tools, agents)
+    def __init__(self, ending: Ending, sock: socket.socket, tools: list[Tool], agents: dict[str, Agent]):
+        super().__init__(ending, sock, tools, agents)
         self._readings: dict[str, _Reading] = {}            # by the agent's identity
         self._transcripts: dict[Path, _Transcript] = {}
         self._sessions: dict[str, _Session] = {}            # by `transcript_path`
         self._poller: asyncio.Task[None] | None = None      # the second check's reading, while a hook waits
+
+    @staticmethod
+    def launch_arguments(agent_directory: Path) -> list[str]:
+        return []
 
     def _main_identity(self, payload: dict[str, Any]) -> str:
         return self.main_identity
@@ -1365,6 +1386,13 @@ class Codex_Server(TAT_Server):
             "PreCompact": [hook], "PostCompact": [hook]}}
         return {".codex/config.toml": "\n".join(config), ".codex/hooks.json": _json(hooks)}
 
+    @staticmethod
+    def launch_arguments(agent_directory: Path) -> list[str]:
+        """CLIENT_HOOKS.md §3: project hooks run only under the flag and in a
+        trusted project, so the agent directory is trusted at launch."""
+        trust = f'projects={{{toml_string(str(agent_directory))}={{trust_level="trusted"}}}}'
+        return ["--dangerously-bypass-hook-trust", "-c", trust]
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, indent=2) + "\n"
@@ -1463,10 +1491,15 @@ async def _answer(send: Any, status: int, body: bytes, content_type: str) -> Non
 
 
 def _bind(port: int) -> socket.socket:
+    """A socket bound to `port` — 0 for one the system assigns — and
+    listening, the server's from its construction on (`served`); it listens
+    here because under `SO_REUSEADDR` a bound socket that does not listen
+    keeps no second bind off its port."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind((HOST, port))
+        sock.listen()
     except OSError as e:
         sock.close()
         raise TAT_StartupError(f"TAT cannot serve on {HOST}:{port}: {e.strerror}") from e
