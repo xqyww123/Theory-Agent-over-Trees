@@ -733,18 +733,15 @@ since step 14; the hook `remove_proof_stores_of_no_tree` in
 when `<folder>/<T>.thy` is no tree's `file_path()`. Tests in
 test_theorem.py: the in-process compile of a proven, an unchecked and an
 unproven theorem (`by aoa` / `sorry` / `sorry`) with the hook's keeps
-and removals, passing; and `isabelle TAT_compile` on a directory a
-conversation of the plugin's run left — the hook runs in the tool's
-process, and the tool's Isabelle reads the ROOT (`sessions
-"Minilang_AoA"`) and the header (the declared import) — the step's
-"done when", written but not yet run: its first run (2026-10-10) found
-the `Minilang_AoA` heap out of date against Isa-Mini's uncommitted
-edits (the AoA session's, in `Agent/agent*.ML`), and the launcher's
-rebuild failed in them, leaving no heap; every Isabelle-backed case
-waits for Isa-Mini to compile again, and so does the one ML change
-since: `TAT.Theorem.construct`'s two handler arms now call
-`MiniLang_Agent_AoA.method_error` (Isa-Mini ca26050, the review's
-shared give-up renderer), uncommitted until that run. Isa-Mini's two
+and removals; and `isabelle TAT_compile` on a directory made with
+`TAT_new -P` (the tool reads the plugin from the database; a harness
+case's directory alone carries none) that a conversation of the
+plugin's run left — the hook runs in the tool's process, and the tool's
+Isabelle reads the ROOT (`sessions "Minilang_AoA"`) and the header (the
+declared import) — the step's "done when". Both pass (2026-10-11; 38
+Isabelle-backed, 552 in-process). `TAT.Theorem.construct`'s two handler
+arms call `MiniLang_Agent_AoA.method_error` (Isa-Mini ca26050, the
+review's shared give-up renderer) since the same run. Isa-Mini's two
 changes for step 15 are committed by the AoA session (contrib/Isa-Mini
 62f6b89).
 Open with the owner: the end-to-end case can call a language model only

@@ -30,7 +30,7 @@ from isabelle_theory_agent.std.theorem import Proof_Check, Proof_Job, Statement,
 from isabelle_theory_agent.store import Forest_Store
 from test_compile import listing
 from test_descriptions import descriptions
-from test_launcher import compiled, leave
+from test_launcher import compiled, leave, tat_new
 from test_model import locked, run, slot
 from test_session_theory import Forest_Under_Test, session, theory
 
@@ -582,14 +582,17 @@ async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_agai
 
 @pytest.mark.isabelle(deadline=300)
 async def test_isabelle_tat_compile_writes_the_theory_and_isabelle_reads_it(std_harness, request, tmp_path):
-    """`isabelle TAT_compile` on a directory a conversation of the plugin's
-    run left, a theory of one theorem admitted: the file holds §5's text
-    with `sorry` under the header carrying the declared import, the ROOT's
-    `sessions` clause names `Minilang_AoA`, the package's hook ran in the
-    tool's process — a proof store of no tree is gone —, and the tool's
-    Isabelle read the ROOT and the header, the import resolved: exit 0."""
+    """`isabelle TAT_compile` on a directory made with the plugin (`TAT_new
+    -P`, which the tool reads the plugin from) that a conversation of the
+    plugin's run left, a theory of one theorem admitted: the file holds
+    §5's text with `sorry` under the header carrying the declared import,
+    the ROOT's `sessions` clause names `Minilang_AoA`, the package's hook
+    ran in the tool's process — a proof store of no tree is gone —, and
+    the tool's Isabelle read the ROOT and the header, the import resolved:
+    exit 0."""
     wd = tmp_path / "wd"
     wd.mkdir()
+    assert tat_new("-P", std_harness.plugin, str(wd)).returncode == 0
     await leave(std_harness, request, wd, "TAT_Std_C",
                 ts.theory("TAT_Std_C_A") | {"children": [lemma("rev_length")]}, evaluate=1)
     (wd / "TAT_Std_C" / "Gone.proof-store").write_text("of no tree")

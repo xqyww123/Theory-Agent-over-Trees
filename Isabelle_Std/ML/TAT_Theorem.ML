@@ -121,9 +121,10 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
       let val (ctxt, sequent) = goal_of (#get goal) in
         #fork_job env {id = id, work = fn () =>
           let
-            (*the two give-ups the `aoa` method renders, rendered its way: the
-              agent's, and the engine's own failure; Sync raises them at the call,
-              the join joins a value*)
+            (*the two give-ups the `aoa` method renders, rendered as it renders
+              them — the agent's, and the engine's own failure; any other
+              Auto_Fail is re-raised.  Sync raises them at the call, the join
+              joins a value*)
             val (times, text) =
               let val (fut, _) =
                     MiniLang_Agent_AoA.hammer_or_AoA'
@@ -132,10 +133,8 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
                        read_store = SOME true, write_store = SOME true,
                        task = MiniLang_Agent_AoA.usual, user_operations = []} ctxt sequent
               in Future.join fut end
-              handle MiniLang_Agent_AoA.Agent_Give_Up (reason, detail, _) =>
-                       error (MiniLang_Agent_AoA.banner_of reason ^ "\n" ^ detail)
-                   | Phi_Sledgehammer_Solver.Auto_Fail (Phi_Sledgehammer_Solver.Internal_Failure msg) =>
-                       error msg
+              handle exn as MiniLang_Agent_AoA.Agent_Give_Up _ => MiniLang_Agent_AoA.method_error exn
+                   | exn as Phi_Sledgehammer_Solver.Auto_Fail _ => MiniLang_Agent_AoA.method_error exn
             val (cpu, wall) = Phi_Proof_Store.ms_of_times times
           in SOME (pack_product (text, cpu, wall)) end}
       end,
