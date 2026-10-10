@@ -21,7 +21,7 @@ language. A concept that needs a name gets one here first.
 | **tree** | one Isabelle theory; the root's name is the short name of the theory |
 | **node** | one semantic unit in a tree |
 | **node class** | the kind of a node — `Theorem`, `Define`, … — extensible |
-| **plugin** | a node class as delivered: the Isabelle theory carrying its evaluator and the Python package carrying the rest (§6); TAT's own are always loaded, any other is named to `isabelle TAT_new` (§9) |
+| **plugin** | a node class as delivered: the Isabelle theory carrying its evaluator and the Python package carrying the rest (§6); TAT's own are always loaded, any other is named by `-P` to `isabelle TAT_new` or `isabelle TAT` (§9) |
 | **segment** | one Isabelle span in an emitted file |
 | **state slot** | a name standing for one `Toplevel.state` held on the Isabelle side |
 | **state slot table** | the Isabelle-side map from state slot names to their `Toplevel.state` values, one per conversation (EVALUATOR_DESIGN §1.1) |
@@ -32,7 +32,7 @@ language. A concept that needs a name gets one here first.
 | **emit** | a node writing its own Isar text (§4) |
 | **compile** | turning the forest into `.thy` files and a ROOT on disk, by `isabelle TAT_compile` (§4, §9) |
 | **conversation** | one run of TAT, from Isabelle's call into Python — or, within that call, from `TAT.reset` beginning a fresh conversation on the same Isabelle process — until either process stops, the connection between them closes, a bug, a `TAT_DisasterError` or a `TAT_StartupError` refusing the client (§9) ends it from inside, or its host ends it to begin a fresh one; one per working directory (§9); a compile (§4) is not one |
-| **launcher** | the Isabelle tools of `tat.scala`: `TAT_new`, which makes a working directory, and `TAT_mcp` and `TAT_compile`, which start the Isabelle process on the chosen base heap through the boot and call `TAT_Framework.start` or its compile counterpart (§9) |
+| **launcher** | the Isabelle tools of `tat.scala`: `TAT_new`, which makes a working directory, and `TAT_mcp`, `TAT_compile` and `TAT`, which start the Isabelle process on the chosen base heap through the boot and call `TAT_Framework.start` or its compile counterpart — `TAT` making the working directory first when needed, and starting the agent client once the conversation is served (§9) |
 | **boot** | `ML/TAT_Boot.ML`, the one ML file the launcher loads into the Isabelle process before TAT's theory exists; it defines the protocol command `TAT.boot` (MODULE_STRUCTURE §5) |
 | **working directory** | the one directory TAT is started on; it holds the forest's database, the lock file that claims it for one conversation or one compile (§4, §9), each conversation's or compile's log (LOGGING.md), the ROOT, one folder per `Session` for its trees' `.thy` files (§4), and the agent directory; with their own tools the agents read and write nothing of it but the agent directory, short of the gaps listed at the end of CLIENT_HOOKS.md §5 |
 | **agent directory** | `<working directory>/TAT.agents/`, the directory the agent client is started in: it holds the client's files, which the server's `configure` writes at launch, and whatever the agents write, and apart from it the agents' shell and file tools read and write no file of the user's, short of the gaps listed at the end of CLIENT_HOOKS.md §5; `TAT_new` does not make it |
@@ -133,8 +133,8 @@ plain text is the agent system the method falls back to, and the one a
 `Session` and `Theory` are the framework's. The node classes of
 Isabelle's standard commands — `Theorem`, and the others of this
 section as they are specified — are one plugin, `Isabelle_Std`
-(MODULE_STRUCTURE §4.5), which a working directory takes with
-`isabelle TAT_new -P`.
+(MODULE_STRUCTURE §4.5), which a working directory takes with `-P` to
+`isabelle TAT_new` or `isabelle TAT`.
 
 **`Theorem`** is specified in [node_classes/THEOREM.md](node_classes/THEOREM.md):
 four kinds (`lemma`, `theorem`, `corollary`, `proposition`), a `name`, a
@@ -842,13 +842,16 @@ directory included, short of the gaps listed at the end of
 CLIENT_HOOKS.md §5: an agent works on the forest through TAT's tools, not
 on its files.
 
-**Launching.** The launcher is three Isabelle tools the component adds
-(MODULE_STRUCTURE §5), the same in development and in production: a
-working directory is first made by `isabelle TAT_new`, a conversation is
-started on it by `isabelle TAT_mcp`, and its forest is compiled by
-`isabelle TAT_compile` (§4):
+**Launching.** The launcher is four Isabelle tools the component adds
+(MODULE_STRUCTURE §5), the same in development and in production:
+`isabelle TAT` creates the working directory when needed, starts a
+conversation on it and starts the agent client in the agent directory;
+`isabelle TAT_new` and `isabelle TAT_mcp` do the first two on their own,
+for a client started by hand; `isabelle TAT_compile` compiles the forest
+(§4):
 
 ```
+isabelle TAT [-P PLUGIN]... [-c CLIENT] [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY [CLIENT_ARGS ...]
 isabelle TAT_new [-P PLUGIN]... WORKING_DIRECTORY
 isabelle TAT_mcp [-c CLIENT] [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY
 isabelle TAT_compile [-l BASE] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY
@@ -860,8 +863,8 @@ the forest will use, each named by the theory that defines it,
 changes nothing else; it writes no client files. The record is names
 only, so a working directory opens on any host on which those plugins'
 Isabelle sessions are declared, by a registered component or by a ROOT
-under a `-d` given at each launch. `TAT_mcp` chooses the agent client with
-`-c CLIENT` (`claude-code`, the default, or `codex`) and passes the name
+under a `-d` given at each launch. `TAT` and `TAT_mcp` choose the agent
+client with `-c CLIENT` (`claude-code`, the default, or `codex`) and pass the name
 on to the Python side, which writes the client's files into the agent
 directory (`configure`; CONSTRUCT_INTERACTION §8, CLIENT_HOOKS.md,
 MODULE_STRUCTURE §4.6) and, once a client connects, reads the version
@@ -872,7 +875,8 @@ the Isabelle process on the base heap `BASE` (§8; the default is
 Isabelle's `ISABELLE_LOGIC`; a base heap that is missing or outdated is
 built first), loads TAT's theory and the recorded plugins' theories into
 it from source, and calls `TAT_Framework.start` with those theories, the
-working directory, the port and the client's name; the port defaults to 8191, and one that
+working directory, the port and the client's name; the port is one the
+system assigns unless `-p` fixes one, and one that
 cannot be bound is a `TAT_StartupError` (MODULE_STRUCTURE §4.6). The call
 does not return, so the Isabelle process lives as long as the
 conversation; how it ends decides the launcher's exit code (MODULE_STRUCTURE
@@ -880,14 +884,17 @@ conversation; how it ends decides the launcher's exit code (MODULE_STRUCTURE
 plugins, and calls the Python procedure `compile_TAT`, which returns; the
 tool prints the compile's report and exits `0` when every tree was
 written, `1` when the compile completed with some tree unwritten, `2` when
-it did not complete, and every end of either tool that is not a normal
-return exits `2`, but for Isabelle's own `130` (MODULE_STRUCTURE §5,
-COMPILATION.md §2, §5). TAT's
-lifetime is an external manager's: when the client process
-ends, the manager terminates TAT with SIGTERM, and the conversation ends
-with the Isabelle process — its ending running only under an RPC host
-started elsewhere, the host Isabelle started exiting with it
-(MODULE_STRUCTURE §4.6). Either order of the two processes
+it did not complete, and every end of `TAT_mcp` and `TAT_compile` that is
+not a normal return exits `2`, but for Isabelle's own `130`
+(MODULE_STRUCTURE §5, COMPILATION.md §2, §5). The conversation's
+lifetime: under `isabelle TAT` the client's exit ends the conversation,
+and a conversation that ends first ends the client; under `TAT_mcp`
+alone the conversation ends with its process, nothing ties that process
+to the client's, and whoever started `TAT_mcp` ends it when the client
+ends. Either way the conversation ends with the Isabelle process — its
+ending running only under an RPC host started elsewhere, the host
+Isabelle started exiting with it (MODULE_STRUCTURE §4.6). Either order
+of the two processes
 works: Isabelle first, which opens an RPC host of its own, or a Python RPC
 host first, on an address the environment variable `RPC_Host` hands to the
 Isabelle process started next (`contrib/Isabelle_RPC`); the launcher does

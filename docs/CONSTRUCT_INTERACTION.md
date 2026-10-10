@@ -17,18 +17,25 @@ what the agent sees, and how an agent is kept from leaving work behind.
 
 ## 1. Premises
 
-- One `isabelle TAT_mcp` process serves one working directory and **one
+- One serving process — `isabelle TAT`, or `isabelle TAT_mcp` for a
+  client started by hand — serves one working directory and **one
   agent client process** — Claude Code or Codex, chosen at launch (§8),
   started from the agent directory, `TAT.agents/` under the working
   directory (ARCHITECTURE §1). The **agents** are that
   process's main conversation and its subagents; their parents are not
-  recorded.
-- TAT's lifetime is an external manager's: when the client process ends,
-  the manager terminates TAT with SIGTERM, and the conversation ends with
-  the Isabelle process; the ending (§9) runs only under an RPC host
-  started elsewhere, since the host the Isabelle process started exits
-  with it (MODULE_STRUCTURE §4.6). TAT
-  neither detects the client's death nor exits on its own.
+  recorded. A further client process on a running conversation — beside
+  its client under `isabelle TAT` or `TAT_mcp`, or after it under
+  `TAT_mcp` alone — is outside this premise, and TAT does not tell it
+  from the first: on Claude Code its new transcript reads as a
+  compaction (CLIENT_HOOKS.md §2).
+- The conversation's lifetime is ARCHITECTURE §9's: under `isabelle TAT`
+  the launcher, as the client's parent, learns of the client's exit and
+  ends the conversation; under `TAT_mcp` alone the conversation ends
+  with its process, which whoever started `TAT_mcp` ends when the client
+  ends. The ending (§9) runs only under an RPC host started elsewhere,
+  since the host the Isabelle process started exits with it
+  (MODULE_STRUCTURE §4.6). The Python side neither detects the client's
+  death nor exits on its own.
 - Everything under the working directory is TAT's to write, except what
   the agents write in the agent directory, the one place they can
   (CLIENT_HOOKS.md §5).
@@ -843,8 +850,9 @@ LOGGING.md §4) and the ending.
 
 ## 8. The server and the client
 
-`isabelle TAT_mcp -c <client>` (default `claude-code`) chooses the client for
-the launch. `TAT_Server` has one subclass per client, which implements
+`isabelle TAT -c <client>` and `isabelle TAT_mcp -c <client>` (default
+`claude-code`) choose the client for the launch; the first also starts
+it (MODULE_STRUCTURE §5). `TAT_Server` has one subclass per client, which implements
 `configure`, `launch_arguments` (CLIENT_HOOKS.md §3), `agent_of_call`,
 `event_of_hook` and the result envelope.
 The client's version is read where the client states it: every MCP
@@ -859,9 +867,11 @@ with the client `-c` chose; a version that is lower, or cannot be read,
 or a name that is another client's, refuses the session: no tool is
 served, and TAT ends the conversation with a `TAT_StartupError` naming
 both versions, which the launcher prints before exiting 2 (MODULE_STRUCTURE
-§5). Nothing
-is read from the `claude` or `codex` on TAT's own path: that program
-need not be the one that connects. On Codex the subclass also checks
+§5). Nothing is read from the client's program itself: `isabelle TAT`
+only finds it on the path and starts it, under `TAT_mcp` alone the
+program that connects is started by hand and need not be the one on
+TAT's path, and in both cases what is checked is what the connecting
+client states in `initialize`. On Codex the subclass also checks
 the sandbox the client runs its agents in: every tool call carries the
 policy in force, and a call whose policy is not the profile TAT
 configured refuses the session the same way, with
@@ -943,8 +953,8 @@ subagents as much as for the main conversation
   Code's transcripts cannot be trusted.`; a `PostCompact` for a session TAT
   does not read yet starts no check. Neither check clears a seen set.
 
-`SessionEnd` is not handled: the process's end is the ending's (§9),
-and the event also fires while agents still work.
+`SessionEnd` is not handled: what follows the client's exit is
+ARCHITECTURE §9's, and the event also fires while agents still work.
 
 `agent_of_call` never guesses. On both clients a `PreToolUse` hook
 (matcher `mcp__TAT__.*`) announces every call before the client sends

@@ -7,7 +7,8 @@ there, not every one on the versions TAT requires. TAT requires of the
 client that connects at least Claude Code 2.1.286 or Codex 0.156.1,
 read from its MCP `initialize` (CONSTRUCT_INTERACTION §8).
 
-One `isabelle TAT_mcp` serves one agent client process, Claude Code or
+One conversation — `isabelle TAT`, or `isabelle TAT_mcp` for a client
+started by hand — serves one agent client process, Claude Code or
 Codex, chosen at launch by `-c` (MODULE_STRUCTURE §5). Before serving, the
 server subclass for that client writes the client's files whole into the
 agent directory, `<working directory>/TAT.agents/` (ARCHITECTURE §1),
@@ -20,7 +21,8 @@ there refused (MODULE_STRUCTURE §4.6), and touching nothing else in
 MCP server entry, the hooks below,
 and the client's settings, which also keep the agents inside the agent
 directory (§5). `isabelle TAT_new` writes none of them. The client is
-started in the agent directory, where its project-level files are read.
+started in the agent directory, by `isabelle TAT` or by hand, where its
+project-level files are read.
 The two scripts are Python, standard library only, run under the
 interpreter TAT's Python side runs under, as `'<python>' -I
 '<working directory>/.tat/<script>'`; each finds what it needs from its
@@ -267,8 +269,8 @@ lost (CONSTRUCT_INTERACTION §7, AGENT_CLIENTS_MEASURED.md).
 ## 4. What is not handled
 
 `SessionEnd` fires on Claude Code's `/clear` and `/resume` and on Codex's
-idle unload while agents still work, and the process's end is the
-ending's, so TAT registers no `SessionEnd` hook. The client behaviours
+idle unload while agents still work, and what follows the client's exit
+is ARCHITECTURE §9's, so TAT registers no `SessionEnd` hook. The client behaviours
 that bypass every hook — Escape, Claude Code's stall watchdog and
 `maxTurns`, a session ended with a subagent running, SIGINT — are
 accepted as they are (CONSTRUCT_INTERACTION §1). So is a result held
@@ -293,7 +295,8 @@ user's but those of the agent directory, short of the gaps listed at the
 end of this section: not the working directory, of which the agent
 directory is a subdirectory, nor the rest of the user's files. Each
 client's own sandbox enforces it, configured by the files `configure`
-writes (§2, §3); TAT starts no client and wraps none. Whatever keeps the
+writes (§2, §3); `isabelle TAT` starts the client and wraps it in
+nothing, and the sandbox is the client's own. Whatever keeps the
 agents in holds whether or not TAT runs: the sandbox settings, deny
 entries, and on Claude Code a guard script, `.tat/guard.py`, which opens
 no connection. The conversation's hooks (§1) are the only ones TAT
@@ -453,6 +456,17 @@ Accepted as they are:
   a client runs makes the interpreter exit 2 at every hook, which both
   clients read as a block: of every write, every subagent launch, every
   TAT call and every stop.
+- Under `isabelle TAT` the client runs in Isabelle's settings
+  environment, like every program an Isabelle tool starts, and that
+  environment's `LD_LIBRARY_PATH` can end in an empty element (measured
+  on this host), which the loader reads as the current directory. The
+  client's current directory is the agent directory, where the agents
+  write, and the hooks' commands run there with the client's
+  environment; so a shared library an agent writes into the agent
+  directory under a name the loader looks for is loaded outside the
+  sandbox by the hooks' commands at every hook, on Claude Code by the
+  program that starts its sandbox, and by the next client — the
+  loader's documented behaviour, not measured.
 
 Both sandboxes leave empty directories behind: Codex a `.git/` and an
 `.agents/` in the agent directory, Claude Code a `.git/config.worktree`

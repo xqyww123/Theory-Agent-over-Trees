@@ -1,6 +1,6 @@
-# lib/tat.jar is committed; no_build keeps every `isabelle` invocation from
-# rebuilding it on the user's machine.  To rebuild after a change: remove the
-# no_build line, run isabelle scala_build, restore it.
+# lib/tat.jar is committed, and no_build keeps every `isabelle` invocation
+# from rebuilding it on the user's machine; after a change to tat.scala the
+# jar is rebuilt as docs/MODULE_STRUCTURE.md §5 says.
 title = Isabelle/Scala/TAT
 module = lib/tat.jar
 no_build = true

@@ -15,8 +15,8 @@ plugin `Isabelle_Std`: its Python half, with its two job classes
 `Proof_Job` and `Proof_Check`, is `isabelle_theory_agent/std/theorem.py`,
 its ML half `Isabelle_Std/ML/TAT_Theorem.ML`, loaded by the plugin's
 theory `TAT_Isabelle_Std`, which imports AoA's. A working directory has
-it when it was made with `isabelle TAT_new -P
-TAT_Isabelle_Std.TAT_Isabelle_Std`. Its agent-facing wording lives here: the
+it when it was made with `-P TAT_Isabelle_Std.TAT_Isabelle_Std` to
+`isabelle TAT_new` or `isabelle TAT`. Its agent-facing wording lives here: the
 `description` texts of its construct schema (§3), the sentences its
 `gen` and its jobs render, and the words on its line — pinned by the
 baseline tests the way SESSION_AND_THEORY.md's are.

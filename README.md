@@ -34,7 +34,7 @@ are implemented.**
 | [docs/PLUGIN_SYSTEM.md](docs/PLUGIN_SYSTEM.md) | How node classes register, and how their schemas complete the `edit` tool's |
 | [docs/PRINT.md](docs/PRINT.md) | Rendering: the modes, the marks, the errors, the forest root |
 | [docs/RECALL.md](docs/RECALL.md) | The `recall` tool: what it reads, what it renders, the call |
-| [docs/CLIENT_HOOKS.md](docs/CLIENT_HOOKS.md) | The hook files `TAT_new` writes for each agent client, and the endpoint they call |
+| [docs/CLIENT_HOOKS.md](docs/CLIENT_HOOKS.md) | The agent client's files, written at every launch (the MCP entry, the hooks, the sandbox settings), its launch arguments, and the endpoint the hooks call |
 | [docs/RENDER_BASELINES.md](docs/RENDER_BASELINES.md) | The approved agent-facing wording: every error, and the lines the framework writes |
 | [docs/node_classes/SESSION_AND_THEORY.md](docs/node_classes/SESSION_AND_THEORY.md) | The `Session` and `Theory` node classes |
 | [docs/OPEN_QUESTIONS.md](docs/OPEN_QUESTIONS.md) | What is undecided, and what it blocks |
@@ -45,37 +45,31 @@ TAT is a Python process and an Isabelle process. The Python side owns the forest
 and serves the Model Context Protocol (MCP) tools; the Isabelle side runs an evaluator that TAT provides,
 driving Isabelle one command at a time.
 
-Node classes are extensible: every node class is a plugin — an Isabelle
-theory and a Python package — and one beyond TAT's own is named to
-`isabelle TAT_new` by the full name (SESSION.THEORY) of the theory that
-defines it, and loaded from source when the conversation starts.
+### How to use
 
-Register this directory, `contrib/Isabelle_RPC` and
-`contrib/Performant_Isabelle_ML` as Isabelle components
-(`isabelle components -u <directory>`). Two commands follow:
+Once, from the repository root, register the six Isabelle components
+TAT's sessions build on:
 
-```
-Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
+    isabelle components -u contrib/Theory-Agent-over-Trees -u contrib/Isabelle_RPC -u contrib/Performant_Isabelle_ML -u contrib/auto_sledgehammer -u contrib/Isa-Mini -u contrib/Semantic_Embedding
 
-  Options are:
-    -P PLUGIN    a plugin to load in this working directory. Give the full
-                 name (SESSION.THEORY) of the theory that defines the plugin.
-                 Example: -P My_Nodes.Locale_Node
+Then:
 
-  Create WORKING_DIRECTORY for TAT. Afterwards, you can start TAT on it
-  with: isabelle TAT_mcp WORKING_DIRECTORY
+    isabelle TAT -P TAT_Isabelle_Std.TAT_Isabelle_Std -l Minilang_AoA [-c claude-code|codex] WORKING_DIRECTORY [CLIENT_ARGS ...]
 
-Usage: isabelle TAT_mcp [OPTIONS] WORKING_DIRECTORY
+`-P` records the plugin of Isabelle's standard commands (`Theorem` among
+them) in WORKING_DIRECTORY: this launch and every later one load it,
+giving `-P` again changes nothing, and nothing removes it. `-l` names the
+base heap holding the `aoa` method the plugin's proofs use; the working
+directory does not record it, so it is given at every launch, and this
+one command line serves for every launch. Without the plugin the forest
+holds sessions and theories only. The command creates WORKING_DIRECTORY
+if needed, starts a TAT conversation on it, and starts the agent client
+(Claude Code by default) in `WORKING_DIRECTORY/TAT.agents/`, where it
+writes the client's configuration at every launch. Arguments after
+WORKING_DIRECTORY are passed to the client. The conversation ends with
+the client; the forest stays in WORKING_DIRECTORY for the next one.
 
-  Options are:
-    -l BASE      the base heap (default: ISABELLE_LOGIC)
-    -p PORT      the port of the MCP server (default: 8191)
-    -d DIR       as Isabelle's -d: a further directory whose ROOT declares
-                 Isabelle sessions
-    -o OPTION    as Isabelle's -o: override an Isabelle system option
-
-  Start a TAT conversation on WORKING_DIRECTORY, providing the MCP service
-  at http://127.0.0.1:PORT/mcp.
-```
-
-Start the agent's client in WORKING_DIRECTORY and give it that URL.
+Lower-level commands: `isabelle TAT_new` creates a working directory;
+`isabelle TAT_mcp` serves a conversation on it over HTTP, for a client
+started by hand; `isabelle TAT_compile` writes its theories and a ROOT
+into it. Each prints its usage when run without arguments.

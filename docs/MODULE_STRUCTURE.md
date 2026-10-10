@@ -13,7 +13,7 @@ Theory_Agent_over_Trees.thy   ML_file "ML/TAT_Framework.ML"; ML_file "ML/TAT_Com
 ML/TAT_Framework.ML           structure TAT_Framework (§2)
 ML/TAT_Common_Nodes.ML        structure TAT_Common_Nodes (§3)
 ML/TAT_Boot.ML                the boot: the protocol command `TAT.boot`, loaded before TAT's theory (§5)
-src/scala/tat.scala           the launcher: the Isabelle tools `TAT_new`, `TAT_mcp` and `TAT_compile`, and the Scala function `TAT.reserved_name` (§5)
+src/scala/tat.scala           the launcher: the Isabelle tools `TAT`, `TAT_new`, `TAT_mcp` and `TAT_compile`, and the Scala functions `TAT.reserved_name` and `TAT.check_options` (§5)
 lib/tat.jar                   the launcher compiled by `isabelle scala_build`; committed, as Isabelle_RPC's jar is
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
@@ -402,7 +402,7 @@ Python halves of both are framework classes in `model.py` (§4.1).
 
 TAT is an Isabelle component (§1) and an MCP server for one agent client
 process (ARCHITECTURE §9). Launching the Isabelle process is the launcher's
-business, `isabelle TAT_mcp` and `isabelle TAT_compile` (§5).
+business, `isabelle TAT`, `isabelle TAT_mcp` and `isabelle TAT_compile` (§5).
 
 ```
 isabelle_theory_agent/
@@ -1145,7 +1145,8 @@ nothing (EVALUATOR_DESIGN §5). Its theory `TAT_Isabelle_Std` imports
 `Isabelle_Std/ML/`; the Python half is the subpackage
 `isabelle_theory_agent.std`, which the theory's registrations name
 (§2.5), one module per class. A working directory takes the plugin with
-`isabelle TAT_new -P TAT_Isabelle_Std.TAT_Isabelle_Std` (§5) and is
+`-P TAT_Isabelle_Std.TAT_Isabelle_Std` to `isabelle TAT_new` or
+`isabelle TAT` (§5) and is
 launched on the base heap `Minilang_AoA` (`-l`), so that AoA's theory is
 not loaded from source at every launch; `TAT_Isabelle_Std` being on the
 session search path, no `-d` is needed. The plugin declares the import
@@ -1277,12 +1278,15 @@ third layer, so that the server stops only after the ending's calls are
 answered, or at the context's exit, for whatever else escapes the start
 or a compile once the log exists, a `TAT_StartupError` included;
 whichever door is reached first enters it, and `end` writes the `ending`
-record there (LOGGING.md §4). The external manager's SIGTERM
-ends the launcher and the Isabelle process with it (ARCHITECTURE §9):
-under an RPC host started elsewhere it arrives through the connection's
-door; the host the Isabelle process started exits with that process, and
-no ending runs — the client is gone, the kernel releases the lock, the
-database holds its last commit, and only the log's last records are lost.
+record there (LOGGING.md §4). What stops the Isabelle process — under
+`isabelle TAT` the client's exit, or a SIGTERM or a hangup to the tool;
+the end of `TAT_mcp`'s process (ARCHITECTURE §9) — ends the conversation
+with it: under an RPC host started elsewhere the end arrives through the
+connection's door; the host the Isabelle process started exits with that
+process, and no ending runs — no call is answered with the ending's line,
+a client still running finds the connection closed, the kernel releases
+the lock, the database holds its last commit, and only the log's last
+records are lost.
 In it `end`, in one synchronous stretch, cancels every running
 construction job — the jobs found by walking the forest, no registry;
 none when the `Forest` is not yet built — through its own `cancel(None)`,
@@ -1473,8 +1477,8 @@ descriptor.
 
 ## 5. The launcher
 
-`src/scala/tat.scala` defines the Isabelle tools `TAT_new`, `TAT_mcp` and
-`TAT_compile` (ARCHITECTURE §9) and the Scala functions
+`src/scala/tat.scala` defines the Isabelle tools `TAT`, `TAT_new`,
+`TAT_mcp` and `TAT_compile` (ARCHITECTURE §9) and the Scala functions
 `TAT.reserved_name` and `TAT.check_options` (§2.3), registered through
 `etc/build.props` the way `contrib/Isabelle_RPC` registers its Scala
 functions — the tools through `Isabelle_Scala_Tools`, the functions
@@ -1482,10 +1486,15 @@ through a `Scala.Functions` service; `lib/tat.jar` is
 committed, and `etc/build.props` sets `no_build`, so no `isabelle`
 invocation on a user's machine rebuilds it; after a change the jar is
 rebuilt by removing that line, running `isabelle scala_build`, and
-restoring it. The
+restoring it — only while no TAT tool runs, which
+`pgrep -af 'Isabelle_Tool [T]AT'` tells: any Isabelle Scala tool started
+while the line is out builds the jar itself, since `bin/isabelle` runs
+`scala_build` before each one, and a running TAT tool shows a test run
+in progress. The
 tools run in the JVM that `isabelle` starts, like every Isabelle/Scala
 tool. Every end of `TAT_mcp` and `TAT_compile` that is not a normal return
-exits `2`: `Getopts` in its `internal` mode and `Build.build_logic`
+exits `2`, and so does every end of `TAT` but the client's exit, whose
+code is `TAT`'s normal return: `Getopts` in its `internal` mode and `Build.build_logic`
 with `strict = true` raise instead of exiting, the process terminating
 without `TAT.finished` is an error, and `Command_Line.tool` turns each
 into `2`; the one exception is an interrupt before the Isabelle process
@@ -1517,8 +1526,8 @@ store's, and reads a file without `plugins` as no plugins.
 
 `TAT_mcp [-c CLIENT] [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]...
 WORKING_DIRECTORY`, `CLIENT` one of `claude-code` (the default) and
-`codex`, any other refused with `TAT knows no client <name>`, exiting
-`2`, in order:
+`codex`, any other refused with `TAT doesn't know the agent client <name>`,
+exiting `2` — the lookup `TAT_mcp` and `TAT` share — in order:
 
 1. resolves `WORKING_DIRECTORY` to an absolute path — the path is handed
    on to the Python side, which under the `RPC_Host` order is a process
@@ -1559,15 +1568,23 @@ WORKING_DIRECTORY`, `CLIENT` one of `claude-code` (the default) and
    `Command_Line.ML_tool(List("Isabelle_Process.init_build ()"))` as
    `eval_main`; then waits for the process to be ready, reporting a failed
    start with the process's own syslog and exiting `2`;
-4. sends `TAT.boot` with `TAT.start`, the working directory, the port,
-   default 8191, the client's name, and the plugins' theory names;
-5. waits for `TAT.finished` (§2.6) or for the Isabelle process to
-   terminate, whichever comes first — meanwhile printing where the
-   conversation's log is, once the protocol message `TAT.log_directory`
-   names it, and each `warning` record written to it
-   (LOGGING.md §7) — prints the messages `TAT.finished`
-   carried, stops the process, and exits with its code: `0` when the
-   conversation ended by `start` returning; `2` when an exception ended
+4. sends `TAT.boot` with `TAT.start`, the working directory, the port —
+   `PORT`, else `0`, for one the system assigns — the client's name, and
+   the plugins' theory names;
+5. waits for the first of the conversation's end and, under `TAT`, the
+   client's exit (below), read once — the conversation's end being
+   `TAT.finished` (§2.6), the Isabelle process's termination, or a
+   failure of the launcher's own `TAT.finished` or `TAT.serving`
+   handler, each of which turns its own failure into an end — meanwhile
+   printing where the conversation's log is, once the protocol message
+   `TAT.log_directory` names it, each `warning` record written to it
+   (LOGGING.md §7), and, once the protocol message `TAT.serving` (§2.6)
+   arrives, `TAT is serving on http://127.0.0.1:<port>/mcp`; then,
+   through the launcher's `start`, which alone prints the messages of
+   the end and exits, for `TAT_mcp` and `TAT` alike, prints the messages
+   the end carried, stops the process, and exits with the end's code:
+   `0` when the conversation ended by `TAT_Framework.start` returning;
+   `2` when an exception ended
    it — a bug, a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that
    did not load, the Python side going away before `launch_TAT`
    answered, an interrupt at the terminal, whose message is `Interrupt`
@@ -1576,7 +1593,9 @@ WORKING_DIRECTORY`, `CLIENT` one of `claude-code` (the default) and
    `Isabelle process terminated:` and Isabelle's own wording of the
    return code; and `2` when `TAT.finished` arrived but could not be
    decoded, the launcher's own error, with
-   `TAT.finished could not be decoded:` and the failure. The launcher prints and exits
+   `TAT.finished could not be decoded:` and the failure; and `2` when
+   `TAT.serving` arrived but could not be decoded, with
+   `TAT.serving could not be decoded:` and the failure. The launcher prints and exits
    itself rather than letting the failure out of the tool. Once the
    Isabelle process is started, an interrupt at the terminal terminates
    it, and the conversation ends as above; before that, the interrupt is
@@ -1586,6 +1605,83 @@ WORKING_DIRECTORY`, `CLIENT` one of `claude-code` (the default) and
    finds the heap in place ignores it. Earlier still, `Getopts` in its
    `internal` mode raises on an unknown option, a wrong number of
    arguments or a rejected option argument, and the tool exits `2`.
+
+`TAT [-P PLUGIN]... [-c CLIENT] [-l BASE] [-p PORT] [-d DIR]... [-o OPTION]...
+WORKING_DIRECTORY [CLIENT_ARGS ...]` reads its options up to
+`WORKING_DIRECTORY`; the rest is `CLIENT_ARGS`, untouched. No
+`WORKING_DIRECTORY`, or a bad option, is a usage error, the usage text on
+stderr and exit `2`. It then, before anything is created, refuses an
+unknown `CLIENT` through the lookup above and finds the client's command
+— `claude` for `claude-code`, `codex` for `codex` — on `PATH` as the
+shell does: the entries split at `:`, an empty one the current
+directory, the first regular executable file taken and made absolute, no
+symbolic link followed and no `..` rewritten, none refused with
+`TAT cannot find <command> on the path`, exit `2`; creates the working
+directory as `TAT_new` does, with its refusals and its `-P` plugins;
+prints `Starting TAT... It may take a while`; and runs `TAT_mcp`'s steps
+1 to 5, with these differences:
+- its own output goes to stderr, stdout being the client's: the waiting
+  line, the base heap's build, the `Log:` line, the URL line, usage
+  errors, refusals, and the messages of the end;
+- it echoes no `warning` record, which stays in the log (LOGGING.md §7);
+- on `TAT.serving` it also starts the client, in the agent directory the
+  message carries, with the launch arguments the message carries
+  followed by `CLIENT_ARGS` (§4.6, CLIENT_HOOKS.md §3), the terminal
+  inherited; a client that cannot be started is the end
+  `TAT cannot start <command>: <message>`;
+- the end is the first of two events, kept once and never overwritten:
+  the conversation's end, or the client's exit. When the client's exit
+  came first, nothing more is printed and the tool exits with the
+  client's code. When the conversation's end came first, the launcher
+  ends the client — SIGTERM; a wait bounded by `CLIENT_BOUND`, 5 s; when
+  the client still runs then, SIGKILL to it and to every process that
+  was its descendant just before the SIGTERM or at the bound, exactly
+  those: a process that is a descendant at neither moment is not
+  reached — one already orphaned when the end begins, one born after
+  the first snapshot whose parent exits before the second, one left
+  behind by a client that exits within the bound — though a signal to
+  the tool's process group reaches it unless it left the group; then
+  the wait for the client; the whole run once, every caller waiting for
+  it — then prints the messages and exits `2`. A client that exits on
+  its own in the short interval between the Python side's beginning to
+  end and `TAT.finished` reaching the JVM counts as the client's exit;
+  the log's `ending` record still names the cause. Nothing asks whether
+  the client is still alive;
+- while a client exists, an interrupt at the terminal belongs to the
+  client and the launcher does nothing with it; before that, step 5's
+  sentence applies. A SIGTERM or a hangup to the tool, or to its process
+  group, ends the client the same way, through a JVM shutdown hook, and
+  the JVM exits only after it;
+- the terminal's mode (the line settings, as `stty -g` prints them) is
+  saved just before the client starts when the tool's stdin is a
+  terminal, its stdout that same terminal, and its process group the
+  terminal's foreground group, and is restored once the client has been
+  reaped, whichever event came first, when the process group is still
+  the foreground group then; otherwise the shell has already taken the
+  terminal back and restores its own mode. A process sharing the job
+  through a pipe, such as a pager, sets the terminal's mode itself,
+  which is why both streams must be the terminal; a job member reached
+  through stderr alone is the limit that remains. The modes a client
+  sets with escape sequences are the client's to undo, which the SIGTERM
+  and the bounded wait let it do.
+
+A refusal before the client starts, from the directory's creation or
+from steps 1 to 3, is printed and the tool exits `2`; the client never
+starts. The client inherits Isabelle's settings environment, like every
+program an Isabelle tool starts (CLIENT_HOOKS.md §5's entry on
+`LD_LIBRARY_PATH`). A supervisor that ends `TAT` from outside signals
+its process group, then waits until no process of the group runs, not
+for the pid: for every Scala tool of Isabelle, `TAT` included,
+`lib/Tools/java` keeps a bash without signal handlers between the
+command's pid and the JVM, and that bash dies of the signal at once — a
+shell reports 128 plus the signal's number, 143 for SIGTERM, 129 for a
+hangup — while the JVM first ends the client, the Isabelle process and
+the Python side. Under the attached RPC host, the default, the Python
+side's end releases the working directory's lock; under an RPC host
+started elsewhere (`RPC_Host`, ARCHITECTURE §9), the Python side belongs
+to that host, its ending runs through the connection's door and releases
+the lock once unwound, and the end of the tool's group does not wait for
+that.
 
 `TAT_compile [-l BASE] [-d DIR]... [-o OPTION]... WORKING_DIRECTORY`
 (COMPILATION.md) shares steps 1 to 3; its step 4 sends `TAT.boot` with

@@ -79,7 +79,7 @@ def test_a_client_the_launcher_does_not_know_is_refused(tmp_path):
     and a known one passes on to the directory's checks."""
     r = tat_mcp("-c", "emacs", str(tmp_path))
     assert r.returncode == 2 and r.stdout == "", r
-    assert r.stderr.strip() == "*** TAT knows no client emacs"
+    assert r.stderr.strip() == "*** TAT doesn't know the agent client emacs"
     r = tat_mcp("-c", "codex", str(tmp_path))
     assert r.returncode == 2 and r.stdout == "", r
     assert r.stderr.strip() == f"*** {tmp_path} holds no TAT.sqlite; run isabelle TAT_new first"
