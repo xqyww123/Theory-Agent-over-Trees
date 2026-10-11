@@ -75,7 +75,8 @@ its records carry neither.
 **Levels.** `info` is the ordinary record. `debug` is detail one reads
 only when hunting something: a `note`, the reading of a transcript.
 `warning` is an alarm: TAT saw something it does not expect and went on.
-`error` is what ended the conversation. Every `warning` and `error`
+`error` is a cause reaching the conversation's ending: what ended it, or
+what reached the ending after it (`while_ending`). Every `warning` and `error`
 record has a `data.message`, one sentence for a person. Nothing is
 filtered by level: every record is written.
 
@@ -92,21 +93,23 @@ Arguments, results and payloads are recorded whole, never cut.
 
 | event | level | data |
 | --- | --- | --- |
-| `start` | info | TAT's version, the pid, the working directory, the Python packages; for a conversation also the port and the client's name |
+| `start` | info | TAT's version, the pid, the working directory, the Python packages; for a conversation also the port asked for — 0 when the system chooses one — and the client's name |
 | `store_opened` | info | the schema version, the number of nodes |
 | `plugins_loaded` | info | the kinds, each with its package |
 | `configured` | info | the files written for the client |
-| `serving` | info | the URL |
+| `serving` | info | the URL, with the port bound |
 | `client_connected` | info | the `clientInfo` of the MCP `initialize`: name, version |
 | `client_refused` | error | the same, and `message`: what refused it (CONSTRUCT_INTERACTION §8); the call's `_meta` when a call's sandbox policy did |
 | `ending` | error | what ended the conversation: its class, `message`, the traceback |
+| `while_ending` | error | a further cause reaching the ending object's `end` (MODULE_STRUCTURE §4.6), each once: its class, `message`, the traceback; the end stays the first cause's |
 | `ended` | info | written by the ending object's exit once the unwinding is over (MODULE_STRUCTURE §4.6): how long the unwinding took; each call's and each job's fate is in its own record; a compile that returns normally writes neither `ending` nor `ended` |
 
 An RPC host that the Isabelle process started — the default; not one
 started elsewhere under `RPC_Host` (ARCHITECTURE §9) — exits as soon as
 that process goes (`contrib/Isabelle_RPC`, its lifeline). So the usual
-end, the manager's SIGTERM or an interrupt at the terminal, leaves no
-`ended`, and the log stops where the conversation stood.
+end, the conversation ending with the Isabelle process as ARCHITECTURE §9
+states it, leaves no `ended`, and the log stops where the conversation
+stood.
 
 ### `tool`
 
@@ -321,6 +324,12 @@ included, printing each `warning` record as it is written:
 ### <message> (agent.jsonl, 07:24:05.039123Z)
 ```
 
-At the end it reads what is left, then prints the messages `TAT.finished`
-carried (MODULE_STRUCTURE §5). An `error` record is not followed: it is
-what ended the conversation, which those messages say.
+Under `isabelle TAT`, which runs the client in the same terminal
+(MODULE_STRUCTURE §5), the launcher does not echo `warning` records; they
+stay in the log. At the end it reads what is left, then prints the
+messages `TAT.finished` carried (MODULE_STRUCTURE §5). An `error` record
+is not followed: what ended the conversation, and each cause that reached
+the ending after it (`while_ending`), are in the log. The messages
+`TAT.finished` carried are what the Isabelle side received: the traceback
+of what left `launch_TAT` — chaining the first cause when a later one
+escaped the drain — or nothing when the connection went first.

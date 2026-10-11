@@ -10,10 +10,13 @@ review/LOGGING_AGENT_DIRECTORY_RULING.md, `_2.md` and
 review/LOGGING_IMPLEMENTATION_PLAN_RULING.md (whose corrections K2–K13
 this revision carries).
 
-Nothing here is implemented. No step runs `isabelle build`; the ML side is
-exercised through the test harness, which drives a real `isabelle
-TAT_mcp`, and the launcher is rebuilt with `isabelle scala_build` (the
-owner's standing exception) after steps 8 and 12.
+Steps 1–6 and 8–12 are implemented and committed (LOGGING_DECISIONS.md
+records each step's shapes, the reviews and the owner's rulings); step 7
+waits for the jobs session's `fork_job`, step 13 for both plans. No step
+runs `isabelle build`; the ML side is exercised through the test harness,
+which drives a real `isabelle TAT_mcp`, and the launcher is rebuilt with
+`isabelle scala_build` (the owner's standing exception) after steps 8
+and 12.
 
 **Division of work** (agreed with the jobs session [682d5e], 2026-10-03,
 its DOC_SYNC_LIST.md entry 16): that session builds the client machinery

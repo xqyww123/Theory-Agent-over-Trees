@@ -1982,6 +1982,262 @@ Committed by it as `0319ba4`. Its step 5 next (compaction events, the
 `agent.compaction` record — the first writer of that event); it tells
 this session before opening mcp_server.py again.
 
+**`agent.compaction`'s `learned_from` gains `pre_compact`** (2026-10-05, the
+jobs session's step 5): CLIENT_HOOKS §3 makes Codex's `PreCompact` a
+compaction event as much as `PostCompact`, and LOGGING §4's set had only
+`post_compact` — a gap in the log's vocabulary, not a design change,
+closed under the owner's standing word that a LOGGING §4 row may gain
+what adds information (2026-10-03). The row and log.py's `Literal` carry
+it; the writers are the jobs session's — its step 5, in the tree the same
+day: Codex's three hooks clear the named thread's set; Claude Code reads
+the agent's transcript at each announcement, writing `transcript_read`,
+`compaction` (`compact_boundary`, `transcript_path_changed`) and
+`check_failed` for the two checks, and refuses an agent with no
+transcript through `_refuse`, so `client_refused` is written there too.
+The first writers of those `agent` records are thus in place; this
+session wrote none of them. Committed by it as `e4de5f7`, the two
+`pre_compact` lines swept in and named. Its step 6 next is the evaluation
+jobs' wire — `fork_job` in TAT_Framework.ML, jobs.py, isabelle_driver.py,
+the test plugin — whose "Done when" asks this session to read the code
+against LOGGING §4's `isabelle` rows (`job_forked`, `job_ended`,
+`report_undelivered`): step 7 of the logging plan. It sends the diff
+when it stands.
+
+**Step 7, the review of the jobs session's `fork_job` records** —
+2026-10-05, on its step 6 in the tree (`structure Jobs`,
+TAT_Framework.ML): the records are right as written. `job_forked {id}`;
+`job_ended {id, failure, duration, cancelled}` with `failure` the wire's
+value as JSON (`["ok"]`, `["messages", […]]`, `["bug", <message>]`),
+absent when the work was interrupted, `cancelled` true then; `bug
+{message, job}` beside the callback's `bug {message, callback}`;
+`report_undelivered {id, failure, message}`, `failure` the job's own
+result, the sentence ending on the reason the delivery failed; `reset`
+with the real count of futures cancelled. Checked: exactly one
+`job_ended` per `job_forked` (the task's or the canceller's, by the
+phase); `job_forked` written inside the table's change, so a racing
+cancel cannot write `job_ended` first; the log captured at the fork in
+every write; the report made with interrupts deferred. LOGGING §4's
+`report_undelivered` row was ambiguous between the two failures and now
+says "the failure that went unreported" and `<reason>`. Also for that
+session: `Learned_From` is a module-level alias in log.py, as `Judged`
+is, for its one import; `Ending`'s docstring names a compaction check's
+wait among the spawned tasks. With this, the logging plan has one step
+left: 13, the live run.
+
+The jobs session's commits since (2026-10-05): `e787dd8`, its step 6;
+`af034bf`, with this session's three lines swept in and named (the
+`report_undelivered` row, `Learned_From`, `Ending`'s docstring line);
+`49b8113`, its step 7 — `job.message_posted` and `job.message_delivered`
+written by `jobs.post`/`jobs.deliver`, `tool.result` carrying the real
+`messages` and `trailer`, `tool.given_up` the messages the mailbox holds.
+Its step 8 (construction jobs) changes `Ending.end`: every running
+construction job cancelled in the one synchronous stretch, after the
+ending is marked entered; it sends the exact change first. Waiting for
+the owner, from its review, two points on the log's vocabulary: a
+`learned_from` value for a transcript cut short or replaced under TAT's
+reading position; whether Claude Code's `PostCompact` keeps `judged:
+"compaction"` in `hook.answer`.
+
+**`learned_from` gains `transcript_changed`** (owner, 2026-10-06, ruled to
+the jobs session: a Claude Code transcript found changed under TAT's
+reading position — another inode, or the bytes before the kept offset
+gone, the file cut short or rewritten — is that agent's compaction
+event, the seen set cleared, the file read again from its first line):
+LOGGING §4's row and log.py's `Learned_From` carry the value, with the
+fact `file`, the jobs session's spelling. Its `PostCompact` on Claude
+Code keeps `judged: "compaction"`, the hook's kind (the owner widened the
+2026-10-03 rule so that TAT reads its `transcript_path` for the session;
+no record of this session's changes). The jobs session's rebuild of the
+second check (told before it entered mcp_server.py): `PostCompact` an
+event of its own; the per-agent transcript state split per file, per
+agent and per session; a `PostCompact` matched one-to-one with a
+boundary within 10 s before or after, a task of the ending's reading the
+session's transcripts every 0.25 s while a hook waits; the `check_failed`
+record for `post_compact_without_boundary` carrying `session`, `waited`,
+`unmatched` as free facts under LOGGING §4's row, which stays. Nothing of
+this session's touched; committed by it as `90733eb` with the two
+`transcript_changed` lines swept in and named. Its step 8 (construction
+jobs): the one change to `Ending.end`, sent as a diff first — every
+running construction job cancelled through its own `cancel(None)` in the
+synchronous stretch, `forest` None when the start failed before it was
+built — agreed with one amendment: `_entered.set()` moves up, right
+after the `ending` record and before the job loop and the task loop, so
+the invariant start-1 pinned (nothing that can raise before the set)
+holds by position whatever the three calls of other code come to;
+observably the same, `end` being one synchronous stretch. The jobs
+session made the edit as amended (the docstring clause "the event set
+first, so that nothing below can leave the ending half entered"), to go
+in with its step-8 commit. Its step 9 (2026-10-07) adds one line to that
+loop, agreed: `node.drop_evaluation_job("ending")` after the construction
+cancel — synchronous, `job.evaluation_dropped` with `dropped_by="ending"`,
+no `TAT.job_cancel` sent — below the set, so the invariant holds.
+Committed by it with step 9, named. Its review of steps 8 and 9
+(2026-10-07): the loop body in `end` is the one line `node.jobs_leave(None,
+"ending")`, a `Node` method the edit's completed events share — no
+behaviour change, position unchanged; and one finding of this session's
+(F13): `Ending.spawn` after the ending is entered created a task `end`
+would never cancel — a `start` reached during the unwinding would spawn a
+run nothing cancels and the drain would wait for it. Fixed by the author:
+`spawn` cancels the task at once when `_ended_by` is set, as `end` would
+have, so the caller still gets a task (`CancelledError` at its first
+await, what every other task got) and `unwound` waits only for its
+unwinding; not refusing, since a drop or a start reached during the
+unwinding is the unwinding's own work. One test, `Ending` alone. The two
+hunks went in with the jobs session's commits (its steps 9–11 are
+committed up to `268aae2`).
+
+A fourth session, mlml-98 [e237e6] (2026-10-07), starts the `isabelle TAT`
+command (ai-artifacts/ISABELLE_TAT_PLAN.md, owner-approved 2026-10-06):
+the server binding in its constructor with port 0 by default, the bound
+port announced, a `TAT.serving` callback, `TAT_mcp -q` silencing the
+follower's `###` echo, a shell `lib/Tools/TAT`. Told what of this
+session's it meets: `configure` writes `self.url` into the client's
+files, so it must run after the bind with the url final; `tat.lock`'s two
+lines are what hook.py reads, so the bound port is what `announce`
+writes; under `-q` the `Log:` line stays. It says when mcp_server.py and
+toplevel.py are free; the configure and hook tests are re-run then.
+
+A finding of the jobs session's review on `configure` (2026-10-07),
+fixed: each client's interrupting tool was spelled twice — the
+`interrupting_tool` ClassVar the interruption judgement compares against,
+and a literal in `configure`'s `PreToolUse` matcher; had they differed,
+the hook would be registered on one tool and judged on another, and every
+interruption silently allowed. Both `_client_files` now build the matcher
+from `self.interrupting_tool`; the written files are unchanged.
+
+2026-10-07, later: the compilation session's socket is gone and no listed
+session bears its name; the jobs session's question to it (moving
+compile.py's `_cartouche` into model.py as `cartouche`, for `Theory`'s
+`description`) reached this session instead and could not be relayed.
+Told the jobs session so and the owner.
+
+**The `isabelle TAT` command, mlml-98's step 1** (2026-10-11, its notice):
+`served` binds the port first and hands the bound socket to the server's
+constructor, so `configure` runs after the bind with `self.url` final;
+`tat.lock` keeps its two lines, the second the bound port; the line `TAT
+is serving on <url>` leaves toplevel.py, the launcher printing it from a
+`TAT.serving` round trip once its step 2's jar is in (a window with no URL
+line between the two commits — the hooks read the port from the lock);
+under `isabelle TAT` the launcher does not echo `warning` records. Its
+proposals for LOGGING.md, made by this session as documentation of the
+owner-approved plan (ISABELLE_TAT_PLAN.md, 2026-10-06): §4's `start` row
+— the port asked for, 0 when the system chooses — and `serving` — the URL
+with the port bound; §4's paragraph after the `conversation` table names
+the usual end as ARCHITECTURE §9 states it, in place of "the manager's
+SIGTERM"; §7's sentence on `isabelle TAT` not echoing `warning` records.
+Isabelle-backed runs held until mlml-98 says its `Minilang_AoA` build is
+done.
+
+**`conversation.while_ending`** (owner, 2026-10-11, 「照此加」 to the shape
+put to him here, after the jobs session relayed his "record it"): a cause
+reaching `Ending.end` once the ending is entered — `cancel_jobs_at_once`'s
+`cancel(ids)` failing is the case — is written `while_ending`, level
+error, the `ending` record's three fields (`log._exception_data`, shared);
+the end stays the first cause's. Not written *(author)*: a cancellation,
+and the ending's own cause arriving by another door — the server's exit
+enters the ending with the exception escaping `serve`, then the same
+exception reaches `Ending.__aexit__`, which calls `end` again; before the
+row that second call was silent, and recording it would present the one
+cause as two (caught by
+`test_what_escapes_the_servers_block_before_serve_enters_the_ending_at_its_exit`,
+whose three `conversation` records became four). The §4 row carries the
+exclusion as an informative clause. One caller relied on the silence
+*(author)*: `_result_of` answered a cancelled tool body by calling `end`
+with a fresh `TAT_InternalError("the body of … was cancelled")` whether
+the cancellation was the ending's own or one the body let escape; the
+same test caught the spurious `while_ending`, and the call is now made
+only when the ending is not entered (the escaped-cancellation case,
+`test_the_boundary_failing_is_a_bug_that_ends_the_conversation`'s
+`escapes`). The other callers that construct a fresh exception
+(`_check_client`, `_check_sandbox`'s policy refusal, the unannounced
+call) are guarded by `entered` already or write their own record first.
+Test:
+`test_a_cause_reaching_the_entered_ending_is_recorded_and_changes_nothing`.
+CONSTRUCT_INTERACTION §3.2's "lost when the ending is already entered"
+(the cleanup's bug) is the jobs session's to reword, told 2026-10-11.
+
+**The review of `while_ending`** (2026-10-11, owner's 「跑」; workflow
+`wf_759f5554-0ac`, record `ai-artifacts/review/LOGGING_WHILE_ENDING_REVIEW.md`):
+nine findings, none rejected. Two of them corrected errors of mine in the
+shape above, and the owner left the resolution to me (「如果跟设计无关的话……
+请你自决」): (1) the identity exclusion compared only against the first
+cause, so a *second* cause escaping the serving block was written twice,
+at the server's exit and again at the context's — my bug; (2) the
+cancellation exclusion kept out no cancellation of the ending's own
+(every door catches `Exception` only or constructs a fresh exception) and
+exactly one real cause: the RPC host cancelling `launch_TAT` — the
+connection going — after another cause had entered, while the same event
+arriving as a `ConnectionResetError` was written; the rule depended on
+the cause's form. Both replaced by one rule *(author)*: `Ending` keeps
+the list of causes recorded, the first being the end (`ended_by`,
+`entered` derive from it; `_ended_by` is gone); any object reaching `end`
+is written once — `ending` for the first, `while_ending` for each later
+one, whatever its kind — and ignored when it arrives again. The §4 row
+now reads "a further cause reaching the ending object's `end`
+(MODULE_STRUCTURE §4.6), each once". Consequence accepted: with several
+round trips in flight when the connection goes, `rpc.py` makes one
+`ConnectionResetError` per pending future, so one `while_ending` per
+extra call. (3) `_result_of`'s guard asked "is the ending entered" where
+the question is "did the ending cancel this body": a body letting its own
+cancellation escape (a bug) between another door's entry and its call's
+resumption — a two-iteration window the reviewers reproduced — went
+unrecorded. Now `Ending` remembers the tasks its own `cancel()` reached
+(`_cancel`, `cancelled(task)`), and `_result_of` asks that; the
+reviewers' `body.cancelling() == 0` was refuted (a body cancelling its
+own task would then not end the conversation, against MODULE_STRUCTURE
+§4.6's boundary rule). (4) LOGGING §3 defined `error` as "what ended the
+conversation" and §7 said an `error` record "is what ended the
+conversation" — contradicted by a `while_ending` of level error;
+reworded as "a cause of the conversation's end: what ended it, or what
+reached the ending after it", and §7 "the first is what ended the
+conversation …; a `while_ending` after it … stays in the log" —
+`while_ending` is never echoed at the terminal; one clause added to
+MODULE_STRUCTURE §4.6 after "`end` writes the `ending` record there",
+mlml-98 and the jobs session told. (5) Tests: the unit test's second
+cause is now a raised exception of the first's class and message (it
+could not tell identity from class, and a never-raised exception's
+traceback is one line, so that assertion checked nothing); the
+cancellation is asserted written; `test_uvicorns_loop_failing_on_its_own_still_drains`
+asserts the `while_ending` it already produced through a real door;
+`test_the_hosts_cancellation_enters_the_ending_and_is_raised` asserts no
+`while_ending` for the body the ending cancelled; new
+`test_an_escaped_cancellation_is_a_bug_once_another_door_entered_the_ending_too`
+for the window of (3). Eight mutants (class or first-only comparison, the
+cancellation exclusion, overwriting the end, not writing; the `entered`
+guard, always and never calling `end` on a cancelled body) each fail at
+least one test; the five Python-side files give 123 passed.
+
+**The second review** (2026-10-11, owner's 「跑」; `wf_173e1fbe-395`,
+record `ai-artifacts/review/LOGGING_WHILE_ENDING_REVIEW_2.md`): five
+findings, none rejected, all implementation, resolved by this session:
+(1) `_cancel`'s `if task.cancel()` — what keeps a body that finished
+before `end` ran, its removal callback still queued, out of `_cancelled`
+— had no test (a `_cancel` that always adds passed the suite);
+`test_the_ending_counts_as_cancelled_only_the_tasks_its_cancel_reached`
+pins it and `spawn`'s use of `_cancel`. (2) `cancelled`'s docstring said a
+task "cancelled by anything else" is not counted — false for one still
+running when the ending reached it; it now states what the set holds.
+(3) LOGGING §7's "which those messages say" tied `TAT.finished`'s messages
+to the first `error` record; what the Isabelle side receives is the
+traceback of what left `launch_TAT` — chaining the first cause when a
+later one escaped the drain — or nothing when the connection went first
+(`Isabelle_RPC_Host/rpc.py:355-382`, read here); reworded, and §3's
+`error` wording aligned with the §4 row ("a cause reaching the
+conversation's ending"). (4) The example lists in `end`'s docstring,
+MODULE_STRUCTURE §4.6's clause and the unit test's docstring left out the
+commonest case — a tool body's failure read only after another door
+entered the ending — and were not marked as examples; all three now read
+"whenever it arose — for example …". (5) `end`'s parameter `ended_by`
+received causes that ended nothing — renamed `cause` (the `ended_by`
+property and `log.ending(ended_by)` stay, both exact); `Ending.cancelled`
+beside `Task.cancelled()` judged a nit, kept. Left as they are *(author)*,
+the owner told: a body cancelling its own task, the cancellation still
+undelivered when another door enters the ending, counts as the ending's
+and its escape goes unrecorded (two faults in one loop turn; the
+alternative, `Task.cancelling()`, was refuted in round one) — the
+docstring says so; and the optional end-to-end `call_soon` test, since
+the unit test kills the same mutants.
+
 **State for a resumption of this session** (2026-10-05, context near its
 limit): everything of the logging plan that this session can do is
 committed — last `94e721b`; the working tree holds only this record's

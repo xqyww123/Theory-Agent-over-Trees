@@ -119,6 +119,15 @@ def _event(level: Level) -> Callable[[Callable[Concatenate[Any, P], None]],
     return declare
 
 
+def _exception_data(exception: BaseException) -> dict[str, str]:
+    """An exception's `class`, `message` and `traceback` (§4).  `message`
+    is Python's one-line form, class first, which the standard library
+    renders even when the exception's own `str` fails."""
+    return {"class": type(exception).__name__,
+            "message": "".join(traceback.format_exception_only(exception)).rstrip("\n"),
+            "traceback": "".join(traceback.format_exception(exception))}
+
+
 class _Category:
     category: ClassVar[str]
 
@@ -157,13 +166,13 @@ class _Conversation(_Category):
     def client_refused(self, *, name: str, version: str, message: str, _meta: Any = None) -> None: ...
 
     def ending(self, ended_by: BaseException) -> None:
-        """What ended the conversation (§4).  `message` is Python's one-line
-        form of the exception, class first, which the standard library
-        renders even when the exception's own `str` fails."""
-        self._log._write(self.category, "ending", "error", {
-            "class": type(ended_by).__name__,
-            "message": "".join(traceback.format_exception_only(ended_by)).rstrip("\n"),
-            "traceback": "".join(traceback.format_exception(ended_by))})
+        """What ended the conversation (§4)."""
+        self._log._write(self.category, "ending", "error", _exception_data(ended_by))
+
+    def while_ending(self, cause: BaseException) -> None:
+        """A cause reaching the ending once it is entered (§4): the same
+        data as `ending`'s, the end unchanged."""
+        self._log._write(self.category, "while_ending", "error", _exception_data(cause))
 
     @_event("info")
     def ended(self, *, duration: float) -> None: ...

@@ -345,9 +345,10 @@ def test_the_boundary_failing_is_a_bug_that_ends_the_conversation(tool, ended_ty
 @pytest.mark.parametrize("another_door_first", [False, True])
 def test_uvicorns_loop_failing_on_its_own_still_drains(another_door_first):
     """uvicorn's loop failing on its own is a bug that enters the ending,
-    unless another door was reached first (MODULE_STRUCTURE §4.6): `serve`
-    raises what ended the conversation and stops accepting, and the call
-    in flight is still answered."""
+    unless another door was reached first (MODULE_STRUCTURE §4.6) — then it
+    is written `while_ending` (LOGGING.md §4): `serve` raises what ended the
+    conversation and stops accepting, and the call in flight is still
+    answered."""
     async def scenario():
         port = free_port()
         bodies = Bodies()
@@ -380,6 +381,13 @@ def test_uvicorns_loop_failing_on_its_own_still_drains(another_door_first):
                     assert isinstance(exn, RuntimeError) and str(exn) == "loop-bug"
                 await refused_at_the_transport(server.url)
             assert stand_ins.events("tool")[-1] == "result"
+        if another_door_first:
+            [record] = [r for r in stand_ins.records("conversation") if r["event"] == "while_ending"]
+            assert record["data"]["message"] == "RuntimeError: loop-bug"
+            assert 'raise RuntimeError("loop-bug")' in record["data"]["traceback"]
+            assert stand_ins.events("conversation") == ["client_connected", "ending", "while_ending", "ended"]
+        else:
+            assert stand_ins.events("conversation") == ["client_connected", "ending", "ended"]
     run(scenario)
 
 
@@ -441,10 +449,65 @@ def test_a_task_spawned_after_the_ending_is_cancelled_at_once():
     run(scenario)
 
 
+def test_the_ending_counts_as_cancelled_only_the_tasks_its_cancel_reached():
+    """`cancelled` (MODULE_STRUCTURE §4.6): a task still running when the
+    ending was entered, or spawned after, the ending cancelled; one that
+    finished before — here letting its own cancellation escape, its removal
+    from the ending's tasks still queued — it did not."""
+    async def scenario():
+        async def escapes():
+            raise asyncio.CancelledError()
+
+        async with stand_ins.ending() as ending:
+            early = ending.spawn(escapes())
+            running = ending.spawn(asyncio.Event().wait())
+            await asyncio.sleep(0)
+            assert early.done() and early in ending._tasks    # finished, its removal callback still queued
+            ending.end(RuntimeError("over"))
+            late = ending.spawn(asyncio.Event().wait())
+            await asyncio.wait({early, running, late})
+            assert not ending.cancelled(early)
+            assert ending.cancelled(running) and ending.cancelled(late)
+    run(scenario)
+
+
+def test_a_cause_reaching_the_entered_ending_is_recorded_once_and_changes_nothing():
+    """A cause reaching `end` once the ending is entered, whenever it arose
+    — for example a tool body's failure read only after another door
+    entered the ending, the unwinding's own work failing, a cancellation —
+    is written `while_ending` (LOGGING.md §4; MODULE_STRUCTURE §4.6), the
+    end staying the first cause's; a cause arriving again by another door,
+    the first included, is written once: the same object, not the same
+    class and message."""
+    async def scenario():
+        async with stand_ins.ending() as ending:
+            first = RuntimeError("first")
+            ending.end(first)
+            try:
+                raise RuntimeError("first")
+            except RuntimeError as raised:  # the name is unbound past the clause
+                second = raised
+            ending.end(second)
+            ending.end(first)
+            ending.end(second)
+            ending.end(asyncio.CancelledError())
+            assert ending.ended_by is first
+            second_record, cancelled = [r for r in stand_ins.records("conversation") if r["event"] == "while_ending"]
+            assert second_record["level"] == "error"
+            assert second_record["data"]["class"] == "RuntimeError"
+            assert second_record["data"]["message"] == "RuntimeError: first"
+            assert "Traceback (most recent call last)" in second_record["data"]["traceback"]
+            assert 'raise RuntimeError("first")' in second_record["data"]["traceback"]
+            assert cancelled["data"]["class"] == "CancelledError"
+        assert stand_ins.events("conversation") == ["ending", "while_ending", "while_ending", "ended"]
+    run(scenario)
+
+
 def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
     """The RPC host cancelling `launch_TAT` (the connection gone): a call in
     flight is answered `Isabelle is gone`, and `serve` raises the
-    cancellation for `launch_TAT` to pass on."""
+    cancellation for `launch_TAT` to pass on; the body the ending cancelled
+    is no cause, so no `while_ending` (LOGGING.md §4)."""
     async def scenario():
         port = free_port()
         bodies = Bodies()
@@ -455,6 +518,47 @@ def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
             waiting = await in_flight
             assert waiting.isError and text_of(waiting) == GONE
             assert await ended(serve) is asyncio.CancelledError
+        assert stand_ins.events("conversation") == ["client_connected", "ending", "ended"]
+    run(scenario)
+
+
+def test_an_escaped_cancellation_is_a_bug_once_another_door_entered_the_ending_too():
+    """Two bodies woken together, the first a bug that enters the ending,
+    the second letting a cancellation escape before its call resumes: it was
+    not the ending that cancelled the second (MODULE_STRUCTURE §4.6), so its
+    escape is the boundary's bug still, written `while_ending` (LOGGING.md
+    §4); both calls get the internal-error line."""
+    async def scenario():
+        bodies = Bodies()
+        go = asyncio.Event()
+
+        async def bug_on_go(agent, arguments):
+            bodies.began("bug_on_go").set()
+            await go.wait()
+            raise RuntimeError("other-door")
+
+        async def escape_on_go(agent, arguments):
+            bodies.began("escape_on_go").set()
+            await go.wait()
+            raise asyncio.CancelledError()
+
+        tools = bodies.tools() + [Tool("bug_on_go", "the bug_on_go tool", SCHEMA, bug_on_go, read_only=False),
+                                  Tool("escape_on_go", "the escape_on_go tool", SCHEMA, escape_on_go, read_only=False)]
+        async with serving(free_port(), tools) as (server, serve), client(server.url) as session:
+            await session.list_tools()      # the SDK's one listing, while something accepts
+            first = asyncio.create_task(session.call_tool("bug_on_go", {}))
+            await bodies.began("bug_on_go").wait()
+            second = asyncio.create_task(session.call_tool("escape_on_go", {}))
+            await bodies.began("escape_on_go").wait()
+            go.set()
+            for answer in (await first, await second):
+                assert answer.isError and text_of(answer) == INTERNAL
+            exn = await ended(serve)
+            assert isinstance(exn, RuntimeError) and str(exn) == "other-door"
+            [record] = [r for r in stand_ins.records("conversation") if r["event"] == "while_ending"]
+            assert record["data"]["class"] == "TAT_InternalError"
+            assert record["data"]["message"].endswith("the body of `escape_on_go` was cancelled")
+        assert stand_ins.events("conversation") == ["client_connected", "ending", "while_ending", "ended"]
     run(scenario)
 
 

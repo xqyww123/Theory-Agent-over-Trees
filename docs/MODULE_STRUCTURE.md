@@ -1278,8 +1278,14 @@ third layer, so that the server stops only after the ending's calls are
 answered, or at the context's exit, for whatever else escapes the start
 or a compile once the log exists, a `TAT_StartupError` included;
 whichever door is reached first enters it, and `end` writes the `ending`
-record there (LOGGING.md §4). What stops the Isabelle process — under
-`isabelle TAT` the client's exit, or a SIGTERM or a hangup to the tool;
+record there (LOGGING.md §4); a cause reaching `end` after that, whenever
+it arose — for example a tool body's failure read only after another door
+entered the ending, the unwinding's own work failing, the connection
+going — is written `while_ending` there, once each, and changes nothing;
+the first cause reaching `end` again by a later door is not written
+again. What stops the Isabelle process — under
+`isabelle TAT` the client's exit, or a terminal hangup, or a SIGTERM or a
+hangup to the JVM or to the tool's process group;
 the end of `TAT_mcp`'s process (ARCHITECTURE §9) — ends the conversation
 with it: under an RPC host started elsewhere the end arrives through the
 connection's door; the host the Isabelle process started exits with that

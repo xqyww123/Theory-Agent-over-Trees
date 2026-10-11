@@ -389,21 +389,22 @@ class Ending:
     def __init__(self, log: Log):
         self.log = log
         self.forest: Forest | None = None
-        self._ended_by: BaseException | None = None
+        self._causes: list[BaseException] = []      # recorded: the end, then each cause reaching it after
+        self._cancelled: set[asyncio.Task[Any]] = set()   # the tasks the ending's cancel reached
         self._entered = asyncio.Event()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._since = 0.0                   # when `end` ran
 
     @property
     def entered(self) -> bool:
-        return self._ended_by is not None
+        return bool(self._causes)
 
     @property
     def ended_by(self) -> BaseException:
         """What ended the conversation; asked once the ending is entered."""
-        if self._ended_by is None:
+        if not self._causes:
             raise TAT_InternalError("the conversation is not ending")
-        return self._ended_by
+        return self._causes[0]
 
     async def wait(self) -> None:
         await self._entered.wait()
@@ -415,11 +416,21 @@ class Ending:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        if self._ended_by is not None:
-            task.cancel()
+        if self._causes:
+            self._cancel(task)
         return task
 
-    def end(self, ended_by: BaseException) -> None:
+    def _cancel(self, task: asyncio.Task[Any]) -> None:
+        if task.cancel():                   # not one already done
+            self._cancelled.add(task)
+
+    def cancelled(self, task: asyncio.Task[Any]) -> bool:
+        """Whether the ending's cancellation reached `task` before it was
+        done, whoever else cancelled it too; one done before the ending
+        reached it is not among them."""
+        return task in self._cancelled
+
+    def end(self, cause: BaseException) -> None:
         """Enter the ending, unless it is entered, in one synchronous
         stretch, the event set first, so that nothing below can leave the
         ending half entered: write the `ending` record (LOGGING.md §4),
@@ -429,18 +440,27 @@ class Ending:
         evaluation job, with `evaluation_dropped` and no `cancel(ids)`
         sent, and cancel every spawned task; each tool handler answers its
         own call.  `forest` is None when the start failed before it was
-        built: nothing to walk."""
-        if self._ended_by is not None:
+        built: nothing to walk.  A cause reaching here once the ending is
+        entered, whenever it arose — for example a tool body's failure read
+        only after another door entered the ending, the unwinding's own
+        work failing, the connection going after another cause — is
+        written `while_ending` and changes nothing; a cause arriving again
+        by another door, the first at the context's exit included, is
+        written once."""
+        if any(recorded is cause for recorded in self._causes):
             return
-        self._ended_by = ended_by
+        self._causes.append(cause)
+        if len(self._causes) > 1:
+            self.log.conversation.while_ending(cause)
+            return
         self._since = time.monotonic()
-        self.log.conversation.ending(ended_by)
+        self.log.conversation.ending(cause)
         self._entered.set()
         if self.forest is not None:
             for node in self.forest._tree_order():
                 node.jobs_leave(None, "ending")
         for task in self._tasks:
-            task.cancel()
+            self._cancel(task)
 
     async def unwound(self) -> None:
         """Every spawned task has ended: the server waits for this before it
@@ -454,7 +474,7 @@ class Ending:
     async def __aexit__(self, _: object, exc: BaseException | None, __: object) -> None:
         if exc is not None:
             self.end(exc)
-        if self._ended_by is None:          # a compile that returned
+        if not self._causes:                # a compile that returned
             return
         await self.unwound()                # nothing left on the serving path
         self.log.conversation.ended(duration=time.monotonic() - self._since)
@@ -1002,8 +1022,9 @@ class TAT_Server:
         enters the ending, which answers — None.  The boundary itself
         failing is a bug like any other."""
         try:
-            if body.cancelled():            # the ending's, or a cancellation the body let escape
-                self.ending.end(TAT_InternalError(f"the body of `{name}` was cancelled"))
+            if body.cancelled():
+                if not self.ending.cancelled(body):   # the body let a cancellation escape: a bug
+                    self.ending.end(TAT_InternalError(f"the body of `{name}` was cancelled"))
             else:
                 exn = body.exception()
                 if exn is None:
