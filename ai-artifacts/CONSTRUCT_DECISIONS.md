@@ -851,11 +851,13 @@ verbatim, `X` standing for a full node id.
   variable and premise names Isabelle identifiers in the `\<name>` form
   — a letter or letter symbol, then letters, digits, `_`, `'`, and
   `\<^sub>` before a letter or digit — so `ε` and `x⇩1` pass; unique; a
-  variable's not ending in `_` (`InvalidField`: `The field
-  \`statement.for_any[0].name\` must be an Isabelle identifier.` / `The
-  field \`statement.for_any[0].name\` must not end with an underscore.`
-  / `The field \`statement.premises[1].name\` binds \`ne\` a second
-  time.`); terms and `english` normalised once when the construct is
+  variable's not ending in `_` (`InvalidField`, since 2026-10-11 one
+  sentence for both, carrying the fact name's grammar text, written
+  once in the framework: `The field \`statement.for_any[0].name\` must
+  be an Isabelle identifier: it starts with a letter and continues with
+  letters, digits, underscores and primes ('), and does not end with an
+  underscore.` / `The field \`statement.premises[1].name\` binds \`ne\`
+  a second time.`); terms and `english` normalised once when the construct is
   accepted (newlines to spaces, whitespace runs to one space; printing,
   emission and evaluation use the stored text; `Session`'s and
   `Theory`'s `description` stay as written). The carry on amend when

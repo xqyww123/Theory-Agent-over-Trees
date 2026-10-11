@@ -193,10 +193,13 @@ the new node's job, and the commit copies the store's image
 The `InvalidField` sentences:
 
 ```
-The field `statement.for_any[0].name` must be an Isabelle identifier.
-The field `statement.for_any[0].name` must not end with an underscore.
+The field `statement.for_any[0].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 The field `statement.premises[1].name` binds `ne` a second time.
 ```
+
+The grammar text after the colon is the framework's, the one
+`InvalidName` renders for a fact name (below), written once and used by
+both.
 
 The `InvalidName` rendering:
 

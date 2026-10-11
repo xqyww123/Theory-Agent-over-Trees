@@ -15,7 +15,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver, jobs
 from ..compile import paths
-from ..exceptions import BadTheoremNodeParent, InvalidField, InvalidName
+from ..exceptions import GRAMMARS, BadTheoremNodeParent, InvalidField, InvalidName
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
     INDENT, RECALL, CannotEvaluate, Forest, Isar_State_Slot, Leaf, Node, Ready, Theory, _emit_lines,
@@ -375,9 +375,7 @@ def _statement_of(raw: LongStatement_RawAST) -> Statement:
 
 
 def _check_name(name: IsaTerm, field: str, earlier: list[IsaTerm], *, variable: bool) -> None:
-    if not is_identifier(name.ascii):
-        raise InvalidField(field, "must be an Isabelle identifier")
-    if variable and name.ascii.endswith("_"):
-        raise InvalidField(field, "must not end with an underscore")
+    if not is_identifier(name.ascii) or (variable and name.ascii.endswith("_")):
+        raise InvalidField(field, f"must be an Isabelle identifier: it {GRAMMARS['fact name']}")
     if any(e.ascii == name.ascii for e in earlier):
         raise InvalidField(field, f"binds `{name.unicode}` a second time")

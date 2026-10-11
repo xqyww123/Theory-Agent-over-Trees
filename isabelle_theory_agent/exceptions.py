@@ -301,16 +301,22 @@ class InvalidName(BadEdit):
         self.grammar = grammar
 
     def _cause(self) -> str:
-        continues = {
-            "name": "letters, digits, underscores, primes (') and interior hyphens,"
-                    " and does not end with a hyphen or an underscore",
-            "theory name": "letters, digits and underscores, with no hyphen and no dot",
-            "session name": "letters, digits, underscores and interior hyphens, and does"
-                            " not end with a hyphen or an underscore",
-            "fact name": "letters, digits, underscores and primes ('), and does not end with an underscore",
-        }[self.grammar]
-        return (f"`{self.name}` is not a valid {self.grammar}: a {self.grammar}"
-                f" starts with a letter and continues with {continues}.")
+        return f"`{self.name}` is not a valid {self.grammar}: a {self.grammar} {GRAMMARS[self.grammar]}."
+
+
+# Each grammar's text, a predicate of the name, rendered by `InvalidName`
+# after its subject; a class refusing a field by the fact name's grammar
+# renders the same text (node_classes/THEOREM.md §4).
+GRAMMARS = {
+    "name": "starts with a letter and continues with letters, digits, underscores, primes (') and interior"
+            " hyphens, and does not end with a hyphen or an underscore",
+    "theory name": "starts with a letter and continues with letters, digits and underscores, with no hyphen"
+                   " and no dot",
+    "session name": "starts with a letter and continues with letters, digits, underscores and interior"
+                    " hyphens, and does not end with a hyphen or an underscore",
+    "fact name": "starts with a letter and continues with letters, digits, underscores and primes ('), and"
+                 " does not end with an underscore",
+}
 
 
 class DuplicateTheoryShortName(BadEdit):

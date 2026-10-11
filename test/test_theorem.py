@@ -118,18 +118,18 @@ def test_gen_refuses_as_section_4_says():
                                                if line.startswith("A `lemma` cannot be placed")][0]
     e = refused(f, f, [lemma("p", kind="theorem")], BadTheoremNodeParent)
     assert (e.kind, e.parent_id) == ("theorem", "Sessions")
-    invalid, *fields = fenced_lines(TH, "4.")[3:4] + fenced_lines(TH, "4.")[:3]
+    identifier, binds, invalid = fenced_lines(TH, "4.")
     e = refused(f, x, [lemma("rev-length")], InvalidName)
     assert (e.name, e.grammar) == ("rev-length", "fact name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "rev_", "rev length", "x'y-"):
         assert refused(f, x, [lemma(name)], InvalidName).grammar == "fact name"     # the class's sentence, not the framework's
-    e = refused(f, x, [lemma("p", for_any=({"name": "1x"},))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + fields[0] and e.field == "statement.for_any[0].name"
-    e = refused(f, x, [lemma("p", for_any=({"name": "x_"},))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + fields[1]
+    for name in ("1x", "x_", "x y"):                       # one sentence, the grammar text the fact name's
+        e = refused(f, x, [lemma("p", for_any=({"name": name},))], InvalidField)
+        assert str(e) == "At `constructs[0]`: " + identifier and e.field == "statement.for_any[0].name", name
+    assert identifier.endswith(": it " + invalid.split(": a fact name ")[1])
     e = refused(f, x, [lemma("p", premises=({"name": "ne", "term": "a"}, {"name": "ne", "term": "b"}))],
                 InvalidField)
-    assert str(e) == "At `constructs[0]`: " + fields[2] and e.field == "statement.premises[1].name"
+    assert str(e) == "At `constructs[0]`: " + binds and e.field == "statement.premises[1].name"
     e = refused(f, x, [lemma("p", for_any=({"name": "xs"}, {"name": "xs"}))], InvalidField)
     assert (e.field, e.reason) == ("statement.for_any[1].name", "binds `xs` a second time")
     e = refused(f, x, [lemma("p", premises=({"name": "x y", "term": "a"},))], InvalidField)
