@@ -1587,7 +1587,8 @@ exiting `2` — the lookup `TAT_mcp` and `TAT` share — in order:
    `TAT.log_directory` names it, each `warning` record written to it
    (LOGGING.md §7), and, once the protocol message `TAT.serving` (§2.6)
    arrives, `TAT is serving on http://127.0.0.1:<port>/mcp`; then, in
-   `launch`, ends the client, reads the log's last records and stops the
+   `launch`, ends the client under `TAT` (below), reads the log's last
+   records and stops the
    process; and, through the launcher's `start`, which alone prints the
    messages of the end and exits, for `TAT_mcp` and `TAT` alike, prints
    the messages the end carried and exits with the end's code:
@@ -1653,8 +1654,8 @@ prints `Starting TAT... It may take a while`; and runs `TAT_mcp`'s steps
   prints the messages and exits `2`. A client that exits on
   its own in the short interval between the Python side's beginning to
   end and `TAT.finished` reaching the JVM counts as the client's exit;
-  the log's `ending` record still names the cause. Nothing asks whether
-  the client is still alive;
+  the log's `ending` record still names the cause; which came first is
+  read from that record alone, never from whether the client still runs;
 - while a client exists, an interrupt at the terminal belongs to the
   client and the launcher does nothing with it; before that, step 5's
   sentence applies. A terminal hangup, or a SIGTERM or a hangup to the

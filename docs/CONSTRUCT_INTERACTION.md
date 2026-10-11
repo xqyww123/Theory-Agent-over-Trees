@@ -30,9 +30,11 @@ what the agent sees, and how an agent is kept from leaving work behind.
   compaction (CLIENT_HOOKS.md §2).
 - The conversation's lifetime is ARCHITECTURE §9's: under `isabelle TAT`
   the launcher, as the client's parent, learns of the client's exit and
-  ends the conversation; under `TAT_mcp` alone the conversation ends
+  ends the conversation, and a conversation that ends first ends the
+  client; under `TAT_mcp` alone the conversation ends
   with its process, which whoever started `TAT_mcp` ends when the client
-  ends. The ending (§9) runs only under an RPC host started elsewhere,
+  ends. When the Isabelle process stops first, the ending (§9) runs only
+  under an RPC host started elsewhere,
   since the host the Isabelle process started exits with it
   (MODULE_STRUCTURE §4.6). The Python side neither detects the client's
   death nor exits on its own.
