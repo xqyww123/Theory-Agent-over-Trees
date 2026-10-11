@@ -702,7 +702,7 @@ def test_an_empty_tool_list_and_an_unknown_tool():
     run(scenario)
 
 
-def test_the_endpoint_answers_as_soon_as_it_listens():
+def test_the_endpoint_answers_as_soon_as_it_accepts():
     """The session manager runs from `async with` on, not from `serve`: a
     request between the two is answered normally."""
     async def scenario():
@@ -741,11 +741,11 @@ def test_a_port_that_cannot_be_bound_is_a_startup_error():
             _bind(port)
 
 
-def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
+def test_a_failed_startup_leaves_no_reader_on_the_socket(monkeypatch):
     """`startup` failing, or being cancelled at its one cancellation point
     (`create_server`'s final tick, with the loop's reader already
-    registered and no server uvicorn could close): the port is free again
-    and the next conversation on it is served."""
+    registered and no server uvicorn could close): no reader of the loop
+    is left on the socket it was lent; closing the socket is `served`'s."""
     real_startup = uvicorn.Server.startup
     reached_the_window = False
 
@@ -763,8 +763,8 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
             reached_the_window = self.servers == []   # past `_start_serving`
             raise
 
-    async def enter(port):                            # a task of its own takes the cancellation
-        with _bind(port) as sock:
+    async def enter():                                # a task of its own takes the cancellation
+        with _bind(0) as sock:
             try:
                 async with stand_ins.ending() as ending, TAT_Server(ending, sock, [], {}):
                     pass
@@ -772,16 +772,10 @@ def test_a_failure_after_the_bind_releases_the_port(monkeypatch):
                 assert not asyncio.get_running_loop().remove_reader(sock.fileno())
 
     async def scenario():
-        port = free_port()
         for broken, raised in ((failing, RuntimeError), (cancelled_at_the_tick, asyncio.CancelledError)):
             monkeypatch.setattr(uvicorn.Server, "startup", broken)
             with pytest.raises(raised):
-                await asyncio.create_task(enter(port))
-            monkeypatch.setattr(uvicorn.Server, "startup", real_startup)
-            with _bind(port) as sock:
-                async with stand_ins.ending() as ending, \
-                        Claude_Code_Server(ending, sock, [], {}) as again, client(again.url) as session:
-                    assert (await session.list_tools()).tools == []
+                await asyncio.create_task(enter())
         assert reached_the_window
     run(scenario)
 
@@ -965,17 +959,17 @@ def test_the_launch_arguments_are_the_documented_ones(working_directory):
     directory's canonical path filled in — Codex's flag and the project
     trust, whose TOML names that path, which `agent_directory` gives with
     symbolic links resolved; Claude Code takes none."""
-    agents = agent_directory(working_directory)
+    directory = agent_directory(working_directory)
     link = working_directory.parent / "link"
     link.symlink_to(working_directory)
-    assert agents == (working_directory / AGENTS).resolve() == agent_directory(link)
+    assert directory == (working_directory / AGENTS).resolve() == agent_directory(link)
     _, _, block = fenced_blocks(DOCS / "CLIENT_HOOKS.md", "3.")
     flag, option, trust = block
-    arguments = Codex_Server.launch_arguments(agents)
-    assert arguments[:2] == [flag, option]
-    assert tomllib.loads(arguments[2]) == documented([trust], {"<agent directory>": str(agents)}, tomllib.loads) \
-        == {"projects": {str(agents): {"trust_level": "trusted"}}}
-    assert Claude_Code_Server.launch_arguments(agents) == []
+    given_flag, given_option, given_trust = Codex_Server.launch_arguments(directory)
+    assert (given_flag, given_option) == (flag, option)
+    assert tomllib.loads(given_trust) == documented([trust], {"<agent directory>": str(directory)}, tomllib.loads) \
+        == {"projects": {str(directory): {"trust_level": "trusted"}}}
+    assert Claude_Code_Server.launch_arguments(directory) == []
 
 
 def test_the_resolvers_entry_is_its_real_path_outside_minimal(tmp_path):

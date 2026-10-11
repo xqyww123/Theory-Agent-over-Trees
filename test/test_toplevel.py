@@ -154,12 +154,17 @@ def test_the_client_selects_the_server_and_the_bound_is_read(tmp_path):
                                                   ("codex", Codex_Server, "3", 3)):
             directory = tmp_path / client
             directory.mkdir()
+            connection = Recorder()
             async with toplevel.served([], str(directory), free_port(), client, text,
-                                       cast(Any, Recorder())) as (forest, _, server):
+                                       cast(Any, connection)) as (forest, _, server):
                 assert type(server) is server_class
                 assert forest.conversation.max_concurrent_construction_jobs == bound
                 [log_directory] = log_directories(directory)
                 assert stand_ins.records("conversation", log_directory)[0]["data"]["client"] == client
+                # the Isabelle side told the class's launch arguments for the agent directory
+                agents = (directory / "TAT.agents").resolve()
+                assert connection.calls[-1] == \
+                    ("TAT.serving", (server.url, str(agents), server_class.launch_arguments(agents)))
         directory = tmp_path / "refused"
         directory.mkdir()
         for text in ("0", "-1", "abc", "3.0", " 3", "+3"):

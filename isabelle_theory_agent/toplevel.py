@@ -34,7 +34,7 @@ DATABASE = "TAT.sqlite"                 # the launcher's, shared with the plugin
 LOCK = "tat.lock"
 LOG = Path(DOT_TAT) / "log"             # the logs' directory, under the working directory (LOGGING.md §2)
 
-Announce = Callable[[int], None]        # the lock's port line, written once the server listens
+Announce = Callable[[int], None]        # the lock's port line, written once the server accepts
 
 
 @contextmanager
@@ -46,8 +46,8 @@ def _held(working_directory: Path) -> Generator[Announce]:
     `flock` conflicts between two descriptors in one process — what
     refuses a second holder in this host as well as in another.  The holder
     writes its pid into the file when it takes the lock and, a conversation
-    only, through the `announce` it yields, its port once the server is
-    listening, one line each, and clears the file on release; each reader
+    only, through the `announce` it yields, its port once the server
+    accepts, one line each, and clears the file on release; each reader
     takes the line it needs — the refusal here the first, the hooks of
     CLIENT_HOOKS.md the second, and the first to see the holder is alive.
     Between taking the lock and writing, the file is still empty or still
@@ -161,9 +161,9 @@ async def served(python_packages: list[str], working_directory: str, port: int, 
                 announce(server.port)       # accepting: the hooks may call
                 forest.conversation.log.conversation.serving(url=server.url)
                 # the launcher starts the client on this message, after the port line
-                agents = agent_directory(forest.conversation.working_directory)
-                await isabelle_driver.serving(forest.conversation, server.url, agents,
-                                              server.launch_arguments(agents))
+                directory = agent_directory(forest.conversation.working_directory)
+                await isabelle_driver.serving(forest.conversation, server.url, directory,
+                                              server.launch_arguments(directory))
                 yield forest, loaded, server
 
 

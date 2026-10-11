@@ -115,8 +115,8 @@ async def serving(conversation: Conversation, url: str, agent_directory: Path,
     agent directory's canonical path and the arguments the client takes
     at its launch — which it passes to the launcher as the protocol message
     `TAT.serving` (MODULE_STRUCTURE §2.6, §4.6): a conversation's one round
-    trip once its port is bound, after which the launcher may start the
-    client."""
+    trip once the server accepts and `tat.lock` holds its port, after which
+    the launcher may start the client."""
     await call(conversation, "TAT.serving", (url, str(agent_directory), list(launch_arguments)))
 
 

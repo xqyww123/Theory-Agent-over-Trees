@@ -321,7 +321,8 @@ the agent client's name, and starts the conversation:
    the Isabelle side appends its records to (LOGGING.md §5) and passes
    the name on to the launcher, as the protocol message
    `TAT.log_directory`, sent as `TAT.finished` is (LOGGING.md §7),
-   `TAT.serving`, which the Python side calls once its port is bound,
+   `TAT.serving`, which the Python side calls once the server accepts and
+   `tat.lock` holds its port,
    with the URL, the agent directory's canonical path and the client's
    launch arguments (§4.6), passed on to the launcher the same way as
    the protocol message `TAT.serving`, and
@@ -1473,7 +1474,7 @@ otherwise; `flock`, not a POSIX record lock, because only `flock`
 conflicts between two open descriptors in one process, which refuses a
 second conversation in this host as well as in another. The holder writes
 its pid into the file when it takes the lock and, a conversation only, its
-port once the server is listening, one line each, and clears the file on
+port once the server accepts, one line each, and clears the file on
 release; each reader takes the line it needs and no more — the refusal
 above the first, the hook script of CLIENT_HOOKS.md §1 the second and the
 first, to see the holder is alive — so the refusal's parenthesis is
@@ -1585,10 +1586,11 @@ exiting `2` — the lookup `TAT_mcp` and `TAT` share — in order:
    printing where the conversation's log is, once the protocol message
    `TAT.log_directory` names it, each `warning` record written to it
    (LOGGING.md §7), and, once the protocol message `TAT.serving` (§2.6)
-   arrives, `TAT is serving on http://127.0.0.1:<port>/mcp`; then,
-   through the launcher's `start`, which alone prints the messages of
-   the end and exits, for `TAT_mcp` and `TAT` alike, prints the messages
-   the end carried, stops the process, and exits with the end's code:
+   arrives, `TAT is serving on http://127.0.0.1:<port>/mcp`; then, in
+   `launch`, ends the client, reads the log's last records and stops the
+   process; and, through the launcher's `start`, which alone prints the
+   messages of the end and exits, for `TAT_mcp` and `TAT` alike, prints
+   the messages the end carried and exits with the end's code:
    `0` when the conversation ended by `TAT_Framework.start` returning;
    `2` when an exception ended
    it — a bug, a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that
@@ -1639,25 +1641,26 @@ prints `Starting TAT... It may take a while`; and runs `TAT_mcp`'s steps
   the conversation's end, or the client's exit. When the client's exit
   came first, nothing more is printed and the tool exits with the
   client's code. When the conversation's end came first, the launcher
-  ends the client — SIGTERM; a wait bounded by `CLIENT_BOUND`, 5 s; when
-  the client still runs then, SIGKILL to it and to every process that
-  was its descendant just before the SIGTERM or at the bound, exactly
-  those: a process that is a descendant at neither moment is not
-  reached — one already orphaned when the end begins, one born after
-  the first snapshot whose parent exits before the second, one left
-  behind by a client that exits within the bound — though a signal to
-  the tool's process group reaches it unless it left the group; then
-  the wait for the client; the whole run once, every caller waiting for
-  it — then prints the messages and exits `2`. A client that exits on
+  ends the client, when it still runs — SIGTERM; a wait bounded by
+  `CLIENT_BOUND`, 10 s; then SIGKILL to it and to every process that
+  was its descendant just before the SIGTERM or, when it still runs at
+  the bound, at the bound, exactly those: a process that is a descendant
+  at neither moment is not reached — one already orphaned when the end
+  begins, one born after the first snapshot whose parent exits before
+  the second — though a signal to the tool's process group reaches it
+  unless it left the group; then the wait for the client; the whole run
+  once, every caller waiting for it, and nothing in it can fail — then
+  prints the messages and exits `2`. A client that exits on
   its own in the short interval between the Python side's beginning to
   end and `TAT.finished` reaching the JVM counts as the client's exit;
   the log's `ending` record still names the cause. Nothing asks whether
   the client is still alive;
 - while a client exists, an interrupt at the terminal belongs to the
   client and the launcher does nothing with it; before that, step 5's
-  sentence applies. A SIGTERM or a hangup to the tool, or to its process
-  group, ends the client the same way, through a JVM shutdown hook, and
-  the JVM exits only after it;
+  sentence applies. A terminal hangup, or a SIGTERM or a hangup to the
+  JVM or to the tool's process group, ends the client the same way,
+  through a JVM shutdown hook, and the JVM exits only after it; a signal
+  to the command's pid alone reaches only Isabelle's bash (below);
 - the terminal's mode (the line settings, as `stty -g` prints them) is
   saved just before the client starts when the tool's stdin is a
   terminal, its stdout that same terminal, and its process group the

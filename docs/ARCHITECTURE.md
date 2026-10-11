@@ -891,9 +891,9 @@ lifetime: under `isabelle TAT` the client's exit ends the conversation,
 and a conversation that ends first ends the client; under `TAT_mcp`
 alone the conversation ends with its process, nothing ties that process
 to the client's, and whoever started `TAT_mcp` ends it when the client
-ends. Either way the conversation ends with the Isabelle process — its
-ending running only under an RPC host started elsewhere, the host
-Isabelle started exiting with it (MODULE_STRUCTURE §4.6). Either order
+ends. When the Isabelle process stops first, the conversation ends with
+it — its ending running only under an RPC host started elsewhere, the
+host Isabelle started exiting with it (MODULE_STRUCTURE §4.6). Either order
 of the two processes
 works: Isabelle first, which opens an RPC host of its own, or a Python RPC
 host first, on an address the environment variable `RPC_Host` hands to the

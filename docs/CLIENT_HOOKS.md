@@ -66,7 +66,7 @@ The script is `hook.py` of the Python package (MODULE_STRUCTURE §4),
 copied into `.tat/` by `configure`. It finds the running conversation
 through `tat.lock` beside its own directory — the conversation's pid on
 the first line when it takes the lock, its port on the second once the
-server listens, both cleared on release (MODULE_STRUCTURE §4.6) — so no
+server accepts, both cleared on release (MODULE_STRUCTURE §4.6) — so no
 file carries a port and nothing depends on the hook's current directory.
 It reads the two lines, checks the pid is alive, posts its standard input
 to `http://127.0.0.1:<port>/hook` with `http.client`, connecting to the

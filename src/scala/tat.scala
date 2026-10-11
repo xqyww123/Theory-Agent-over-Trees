@@ -266,16 +266,18 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
   // state, ppid, pgrp, session, tty_nr, tpgid
   private val Proc_Stat = """(?s).*\) (\S+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) .*""".r
 
-  // the tool's process group is the terminal's foreground group
-  def foreground(): Boolean =
-    Exn.capture(File.read(Path.explode("/proc/self/stat"))) match {
+  // the tool's process group is the terminal's foreground group; read through
+  // the JDK, which reads to the end -- procfs reports the file's size as 0,
+  // and Isabelle's File.read reads that many bytes
+  private def foreground(): Boolean =
+    Exn.capture(Files.readString(JPath.of("/proc/self/stat"))) match {
       case Exn.Res(Proc_Stat(_, _, pgrp, _, _, tpgid)) => tpgid != "-1" && pgrp == tpgid
       case _ => false
     }
 
   // stty on the tool's own fd 0, which must be the terminal and not a pipe:
   // the trimmed output on exit 0
-  def stty(args: List[String]): Option[String] =
+  private def stty(args: List[String]): Option[String] =
     Exn.capture {
       val builder =
         isabelle.setup.Environment.process_builder(("stty" :: args).asJava, null, null, false)
@@ -298,37 +300,44 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 
   // the mode as `stty -g` prints it; None when stdin is no terminal, or the
   // condition above fails
-  def saved_terminal_mode(): Option[String] =
+  private def saved_terminal_mode(): Option[String] =
     if (foreground() && same_streams()) stty(List("-g")) else None
 
 
-  // SIGTERM's grace, within "a few seconds"; test/harness.py's TERMINATION
-  // is the tests' counterpart
-  val CLIENT_BOUND: Time = Time.seconds(5)
+  // SIGTERM's grace (the owner: at least 10 s); test/harness.py's
+  // TERMINATION is the tests' counterpart
+  val CLIENT_BOUND: Time = Time.seconds(10)
 
   /* The client once started: its process and the mode saved before it.
-     `terminate` ends it (MODULE_STRUCTURE §5): a snapshot of its
-     descendants, SIGTERM, the bounded wait; when the client still runs at
-     the bound, a second snapshot, SIGKILL to the client and then to every
-     process of either snapshot, the wait; then the mode restored when one
-     was saved and the tool still holds the terminal.  Run once, every
-     caller waiting for it; its own failures stay inside it. */
+     `terminate` ends a client that still runs (MODULE_STRUCTURE §5): a
+     snapshot of its descendants, SIGTERM, the bounded wait, a second
+     snapshot when the client still runs at the bound, then SIGKILL to the
+     client and to every process of either snapshot, and the wait; a client
+     already gone is left as it is.  Then the mode is restored when one was
+     saved and the tool still holds the terminal.  Run once, every caller
+     waiting for it; nothing in it can fail: a snapshot that cannot be taken
+     is empty, and the rest runs uninterruptibly, as Bash.Process.terminate
+     does. */
 
-  final class Started_Client(val process: Process, saved_mode: Option[String]) {
+  final class Started_Client(process: Process, saved_mode: Option[String]) {
     def terminate(): Unit = terminated
+
+    private def descendants(): List[ProcessHandle] =
+      Exn.capture(process.descendants().toList.asScala.toList) match {
+        case Exn.Res(processes) => processes
+        case Exn.Exn(_) => Nil
+      }
 
     private lazy val terminated: Unit =
       Isabelle_Thread.try_uninterruptible {
-        def descendants(): List[ProcessHandle] = process.descendants().toList.asScala.toList
-        Exn.capture {
+        if (process.isAlive) {
           val before = descendants()
           process.destroy()
-          if (!process.waitFor(CLIENT_BOUND.ms, TimeUnit.MILLISECONDS)) {
-            val after = descendants()
-            process.destroyForcibly()
-            for (p <- before ::: after) p.destroyForcibly()
-            process.waitFor()
-          }
+          val after =
+            if (process.waitFor(CLIENT_BOUND.ms, TimeUnit.MILLISECONDS)) Nil else descendants()
+          process.destroyForcibly()
+          for (p <- before ::: after) p.destroyForcibly()
+          process.waitFor()
         }
         for (mode <- saved_mode if foreground()) stty(List(mode))
       }
@@ -449,7 +458,7 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
     // arguments and then the user's: the state records it, or the failure
     // as the conversation's end
     def start_client(st: Launch_State, c: Client, agent_directory: String,
-      launch_arguments: List[String]): (Option[Started_Client], Launch_State) = {
+      launch_arguments: List[String]): Launch_State = {
       val saved_mode = saved_terminal_mode()
       val builder =
         isabelle.setup.Environment.process_builder(
@@ -458,11 +467,13 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
       builder.inheritIO()
       Exn.capture(builder.start()) match {
         case Exn.Res(process) =>
-          val started = new Started_Client(process, saved_mode)
-          (Some(started), st.copy(client = Some(started)))
+          // on an executor, never in this thread, which holds the lock that
+          // is recording the client: `finish` under it would be overwritten
+          process.onExit().thenRunAsync(() => finish(process.exitValue(), Nil))
+          st.copy(client = Some(new Started_Client(process, saved_mode)))
         case Exn.Exn(exn) =>
-          (None, st.ended(Process_Result.RC.failure,
-            List("TAT cannot start " + c.command + ": " + Exn.message(exn))))
+          st.ended(Process_Result.RC.failure,
+            List("TAT cannot start " + c.command + ": " + Exn.message(exn)))
       }
     }
 
@@ -499,14 +510,9 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
             }
             progress.echo("TAT is serving on " + url)
             for (c <- client) {
-              val started =
-                state.change_result(st =>
-                  if (st.end.isDefined || st.client.isDefined || st.closed) (None, st)
-                  else start_client(st, c, agent_directory, launch_arguments))
-              // registered outside the locked section: a client already gone
-              // runs this at once, in this thread, and `finish` must not run
-              // under the lock, which would overwrite it
-              for (s <- started) s.process.onExit().thenRun(() => finish(s.process.exitValue(), Nil))
+              state.change(st =>
+                if (st.end.isDefined || st.client.isDefined || st.closed) st
+                else start_client(st, c, agent_directory, launch_arguments))
             }
           }
           // a failure let out would leave neither a client nor an end
