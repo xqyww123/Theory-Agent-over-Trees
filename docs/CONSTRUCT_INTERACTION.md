@@ -203,7 +203,8 @@ the run still the job's? Every legitimate cancellation — `cancel`, by
 first, so a run that is no longer the job's is one somebody cancelled,
 and the wrapper neither settles, reports nor tells anything; what its
 cleanup raises is still its class's bug and enters the ending (§9) —
-lost when the ending is already entered. A run that is still the job's has ended
+recorded `while_ending` when the ending is already entered (LOGGING.md
+§4). A run that is still the job's has ended
 on its own: a return settles it, in one synchronous stretch under no
 lock — records the outcome and the product, persists them, drains its
 question queue (§3.4), applies an attach made from inside `_run`
