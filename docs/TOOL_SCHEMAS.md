@@ -70,7 +70,7 @@ included, which does not inherit the replaced node's.
 Beyond the schema, TAT checks: `append`'s target can hold children
 (`HoldsNoChildren`); no `children` on `amend`'s first construct or on a
 leaf construct (`UnexpectedChildren`); and every construct's fields against
-its class's argument schema (`UnexpectedField`, `MissingField`,
+its class's construct schema (`UnexpectedField`, `MissingField`,
 `InvalidField`), which the schema already enforces for a client that
 validates it.
 
@@ -129,7 +129,8 @@ No `evaluate`: there is nothing new to see (MCP_SPECIFICATION §3.2).
 ## 4. What a call renders
 
 A **malformed call** — an argument missing, one the tool does not take,
-of the wrong type, outside its allowed set, or an empty `constructs` —
+of the wrong type, outside its allowed set, an empty `constructs`, or
+nested deeper than 100 levels —
 is refused against the schema the tool advertises, before any operation
 is named and as a construct's fields are checked (EXCEPTIONS.md §3's
 `MissingField`, `UnexpectedField` and `InvalidField`, in their forms for

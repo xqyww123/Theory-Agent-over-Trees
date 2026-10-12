@@ -1,9 +1,11 @@
 # Jobs and the agents
 
 Status: decided, last on 2026-10-02, after four design reviews
-(ai-artifacts/review/CONSTRUCT_RULING*.md); the AoA round (§10) is open.
-What a node class makes of the machinery is its own document:
-node_classes/THEOREM.md.
+(ai-artifacts/review/CONSTRUCT_RULING*.md); §3.1's carry and §3.2's
+bound revised 2026-10-12 with the node-class rounds
+(ai-artifacts/review/NODE_CLASS_RULINGS.md); the AoA round (§10) is
+open. What the classes with a proof obligation make of the machinery is
+node_classes/COMMON.md §3, what each class makes of it its own document.
 
 A **job** is work done on a node's behalf that outlives the tool call it
 began in. There are two kinds. A **construction job** is started by an
@@ -114,7 +116,7 @@ names a job class of either kind.
 `RUNNING`, the run's settlement `SUCCEEDED` or `FAILED`, `cancel`
 `NOT_STARTED`. `product` is the class's, a MessagePack-representable
 value — for `Theorem` the proof: the method text AoA writes to its proof
-store, with the two times of its replay (THEOREM.md §1);
+store, with the two times of its replay (node_classes/COMMON.md §3);
 while the outcome is `SUCCEEDED` it stays on the node,
 also while an evaluation job finds it wanting (`bad proof`), and a new
 `start` replaces the outcome whole.
@@ -127,12 +129,20 @@ change; the value written for
 (ARCHITECTURE §4.1) and a `start` clears a previous failure. That value —
 the outcome with `RUNNING` read as `NOT_STARTED` — is the store's image.
 A `cancel` writes nothing: the image it leaves is the one already stored.
-On an amend the old node's running job is cancelled; the class's `gen`
-may carry the old job's outcome into the new node's job (`Theorem` does
-when the statement is unchanged but for `english`, THEOREM.md §4): `gen`
-records the intent by calling the framework's `carry_job_from(old)` on
-the new node, and the commit copies the image then, so nothing that
-happens to the old job meanwhile is lost.
+On an amend the old node's running job is cancelled, and the
+replacement's job may take the old job's image: the carry. The amend's
+commit asks the replacement `_carries_job_from(old)`, a hook of the
+node, synchronous and free of side effects, false by default, asked
+only when the two nodes are of one class that names a construction job
+class. On true it copies the old job's image onto
+the replacement's job, first in its synchronous block (MODULE_STRUCTURE
+§4.2), so a run that settled while the constructs were built is in the
+image, and one still running is carried as `NOT_STARTED` and then
+cancelled (§9). The stored check is never carried: a carried
+`SUCCEEDED` is checked again (§3.3) before the node is finished.
+`Isabelle_Std`'s `Proof_Obligation` answers it by default with true when
+`goal_structure()` is unchanged; a class deriving from it may override,
+saying why in its own document (node_classes/COMMON.md §3).
 
 **What is unfinished.** The framework's `_unfinished()` (ARCHITECTURE
 §3.2; the class's part of `finished`) answers `None` or an `Unfinished`.
@@ -185,7 +195,7 @@ proof construction on \`X\` belongs to another agent.` /
 node was deleted.`, `… amended.`, `… its context changed.`. The
 notification of a cancelled job names the node the job belongs to, on
 an amend the replaced node. A class replaces what it wants said
-otherwise (`Theorem`: THEOREM.md §7).
+otherwise (`Proof_Obligation`: node_classes/COMMON.md §3).
 
 **The run.** `start` spawns the framework's wrapper around `_run`
 through the ending (§9), never `_run` itself. The wrapper, in order:
@@ -195,7 +205,11 @@ inherit none; `call` it inherits, the `construct`'s or none; waits for
 every earlier run's task of the job that has not unwound yet
 (`asyncio.wait` over them — an `await` of a cancelled task would cancel
 this run too); `result = await self._run()`, under the bound on runs
-when the conversation has one (THEOREM.md §7) — the place is held from
+when the conversation has one — the runs of every class's construction
+jobs at once, read at the start from the Isabelle environment variable
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, unset or empty meaning no bound,
+a value that is not a positive integer refused as MODULE_STRUCTURE §4.6
+says; a compile has none — the place is held from
 the start of `_run` until it returns or its cancellation has propagated
 out of it, the wait in `ask` and a cancelled run's cleanup included; a
 run waiting for its place is `RUNNING`, and a cancellation while it
@@ -264,8 +278,8 @@ turns a `TAT_Error` into a `TAT_InternalError` as `_completed` does —
 and the conversation ends, the ending dropping the job.
 `Node.attach_evaluation_job(job)` puts a job on the node, dropping the
 one there; a class may attach a job it built and settled itself —
-`Theorem`'s proof
-construction does from its `_run` (THEOREM.md §7): from inside a run,
+`Proof_Obligation`'s proof
+construction does from its `_run` (node_classes/COMMON.md §3): from inside a run,
 `attach_evaluation_job` accepts a settled job only, and the attach takes
 effect at the run's settlement, with the outcome, and is discarded with
 a cancelled run.
@@ -291,7 +305,7 @@ ends it calls the framework's remote procedure `job_finished(id, failure)`,
 `failure` the work's errors, none on success, or the message of a `Bug`
 the work raised (MODULE_STRUCTURE §2.4). A construction job whose work
 is ML's forks it the same way, through `Construction_Job.forked` (§3.2),
-and its report carries the product the work yields (THEOREM.md §7).
+and its report carries the product the work yields (node_classes/COMMON.md §3).
 The framework's ML half offers the fork and the report as one function:
 it forks the work, keeps the future under the job's id in a table of its
 own, and runs the report after the work with interrupts deferred, so
@@ -310,10 +324,10 @@ limit. The work applies no Toplevel
 transition and registers nothing in Isabelle's execution table — a
 construction's, AoA's search and its store's write-back, forks Future
 tasks under the job's group alone, every call inside it synchronous
-(THEOREM.md §7) — so a library load's `Execution.reset`
+(node_classes/COMMON.md §3) — so a library load's `Execution.reset`
 (EVALUATOR_DESIGN §6), which empties that table and collects its
 groups' errors, never meets it; no lock orders the jobs against a load. `Proof_Check`'s work replays the stored product on the goal
-`goal_state` holds, through the function AoA exports (THEOREM.md §7).
+`goal_state` holds, through the function AoA exports (node_classes/COMMON.md §3).
 
 **The report.** `finished` answers at once. Its body is synchronous and
 takes no lock; the table from a job's id to the job is the process's —
@@ -691,8 +705,9 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
   evaluated` says the node's first own operation did not run — never
   reached, invalidated or blocked; a node whose first operation ran and
   whose later one did not, a nesting node stopped inside, is
-  `incomplete`, and the summary below tells what stopped it. `Theorem`
-  overrides `mark` with its two slots (THEOREM.md §7).
+  `incomplete`, and the summary below tells what stopped it.
+  `Proof_Obligation` overrides `mark` with its two slots
+  (node_classes/COMMON.md §3).
 - **The tags.** After its mark, inside the same parentheses, a node's
   line carries what the framework adds. A node whose construction job
   has automatic construction on carries `automatic construction`, in
@@ -738,8 +753,8 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
   `No proof of \`lemma_P\` was found:` + the message on the
   lines below, indented, `The proof construction on \`lemma_P\`
   was cancelled: the node was deleted.` / `… amended.` / `… its context
-  changed.`, and `Theorem`'s failed proof check, which gives no reason
-  and tells what to do next (THEOREM.md §7): `The proof of
+  changed.`, and `Proof_Obligation`'s failed proof check, which gives no reason
+  and tells what to do next (node_classes/COMMON.md §3): `The proof of
   \`lemma_P\` no longer holds. Call \`construct\` to prove it
   again.` — for a node under automatic construction `The proof of
   \`lemma_P\` no longer holds, so its proof construction was
@@ -1042,15 +1057,15 @@ synchronous commit block, before its store write (MODULE_STRUCTURE
 
 ## 10. The AoA round
 
-Decided on 2026-10-03 and stated in THEOREM.md §6–§7: the drive path —
-`Proof_Job._run` through the class's callback `TAT.Theorem.construct` on
+Decided on 2026-10-03 and stated in node_classes/COMMON.md §3 and THEOREM.md §6: the drive path —
+`Proof_Job._run` through `Proof_Obligation`'s callback `TAT.Proof_Obligation.construct` (node_classes/COMMON.md §3) on
 the `goal_state` slot the evaluation fills, one call of AoA's
 `hammer_or_AoA'` — the entry beside `hammer_or_AoA` with the replay
 times beside the text — forked through `fork_job`, the proof store read and
 written on AoA's own path, the product returned with its times —, the
 driver and the budget from Isabelle's configuration, the bound on
 concurrent runs from the Isabelle environment variable
-`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, the function AoA
+`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS` (§3.2), the function AoA
 exports for the replay of one record, and emission keeping `by aoa`.
 
 Still the round's: the question kinds — AoA's `request` tool, which
@@ -1069,10 +1084,10 @@ cancellation on the AoA side — how soon the Python half learns of the
 interrupt of the forked task, and that AoA's own `group = NONE` forks
 end with the job —, which waits for the round's scripted driver; that
 TAT's process serves `IsaMini.AoA` is measured: the plugin's package
-imports it (THEOREM.md §7).
+imports it (node_classes/COMMON.md §3).
 The two requirements of the owner's bind the remainder: AoA's `request`
 reports to the TAT agent as a question, and AoA is told it runs under
 TAT. What `product` holds is decided, the method text AoA writes to its
 proof store with its times, and so is the proof check: a replay of that
 text under limits derived from the times recorded with it, with no
-reason shown when it fails (THEOREM.md §1, §7).
+reason shown when it fails (node_classes/COMMON.md §3).

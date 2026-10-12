@@ -5,7 +5,9 @@ fields, the name grammar, §3), 2026-09-16 (§4), 2026-09-22/23 (the name
 grammars, the `imports` items, the reserved names, §3), 2026-09-30
 (`parent_session`'s check, §3) and 2026-10-02 (the ROOT entry, the checks
 through Isabelle, the messages on the status values, `import_sessions`,
-`file_path()`, §3, §4; COMPILATION.md); the classes are in `model.py`, their
+`file_path()`, §3, §4; COMPILATION.md) and 2026-10-12 (`keywords`,
+`print_name`, `imports` non-empty by the framework's check, §2–§3;
+ai-artifacts/review/NODE_CLASS_RULINGS.md); the classes are in `model.py`, their
 descriptions pinned by `test/test_descriptions.py` and §3's sentences by
 `test/test_session_theory.py`.
 
@@ -59,8 +61,8 @@ The session's theories
 
 A `Session` owns its ROOT entry, which `compile` writes from its fields
 (COMPILATION.md §2): `session "<name>" in "<name>" = "<parent_session>" +`,
-then `description` as one cartouche when not empty — `‹`, `›`, `\<open>`
-and `\<close>` in it replaced by `"` — `options` when not empty, in the
+then `description` as one cartouche when not empty, through the
+framework's `cartouche` (COMPILATION.md §3), `options` when not empty, in the
 ROOT's own spelling with every name and value quoted (a value the agent
 supplied in quotes is unquoted first), `sessions` listing the session of
 every theory the session's written trees import that is neither the
@@ -129,6 +131,7 @@ putting the theory value into the theory table through `end_theory`
 | `imports` | `list[str]`, non-empty; each item a theory name in one of two shapes, `<short name>` or `<session>.<short name>`, each half in the session name's grammar (§1), so that the AFP's hyphenated theory names (`AList-Utils`) can be imported; no quotes, no path, no `.thy`. The header quotes every item | authored |
 | `description` | `str`, empty by default; kept as written, no normalisation | authored |
 | `import_sessions` | `list[str]`: the session of each import, `Resources.theory_qualifier` of its resolved long name, recorded when the header runs; stored, since the ROOT's `sessions` clause is written from a loaded forest (COMPILATION.md §2) | recorded |
+| `keywords` | `frozenset[str] \| None`: the words of the theory's outer-syntax keyword table that are Isabelle identifiers — minor keywords such as `and`, `where`, `open`, `for`, and command names such as `lemma` — in Isabelle's `\<name>` spelling, listed from the two lexicons of `Thy_Header.get_keywords` when the header runs; `None` until a header run records it, which a missing row reads as too (COMPILATION.md §4); stored, since names are written into files from a loaded forest (COMPILATION.md §3). A theory of TAT's declares no keyword of its own, so the table is its imports' | recorded |
 
 Its construct declares `children`, `items` being `#/$defs/Construct`. What
 the header's and the `end`'s runs reported is no field: it lives on the
@@ -160,9 +163,8 @@ The theory's declarations
 ```
 
 A non-empty `description` is emitted as a `text ‹…›` block before the
-`theory` line, the content as written and no period added; `‹`, `›`,
-`\<open>` and `\<close>` in it are replaced by `"`, so the cartouche closes
-where it should and nothing is refused (ARCHITECTURE §4, §5). It is never
+`theory` line, the content as written and no period added, through the
+framework's `cartouche` (COMPILATION.md §3; ARCHITECTURE §4, §5). It is never
 run: evaluation runs the header and the `end` alone. An amend that
 changes it re-evaluates the tree like any other amend. `Theory` writes its
 text through `emit_beginning` — that block, then the header, each line
@@ -188,21 +190,37 @@ theory name's grammar (`InvalidName`); the short name, through
 names no tree can bear — those the Isabelle session layout declares
 global, `Main`, `FOL`, …, and those Isabelle reserves, `Path.is_reserved`'s
 and `Sessions.illegal_theory`'s, asked through Isabelle's own predicates
-(`ReservedTheoryName`, EVALUATOR_DESIGN §7; COMPILATION.md §2); `imports`
-non-empty, each item non-empty and in one of its two shapes
-(`InvalidField`, §3). The short name's uniqueness within the forest and the
+(`ReservedTheoryName`, EVALUATOR_DESIGN §7; COMPILATION.md §2); each
+item of `imports` non-empty and in one of its two shapes
+(`InvalidField`, §3) — an empty `imports` is refused before `gen` by the
+framework's check of the construct, `must not be empty`
+(MODULE_STRUCTURE §4.4). The short name's uniqueness within the forest and the
 batch is the framework's, comparing names without regard to case, since
 Isabelle refuses two theory files whose names differ only in case
 (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §3; `DuplicateTheoryShortName`
 names the holder). Whether an import exists is reported by `begin_theory`
-at evaluation, which also records `import_sessions`.
+at evaluation, which also records `import_sessions` and `keywords`.
+
+`print_name(name)` is how a name of the tree is written into its file:
+in double quotes — as Isabelle's string token (COMPILATION.md §3) —
+when the name's `ascii` spelling is in `keywords` —
+`lemma "open":`, `fixes "for"` — and bare otherwise, the rule of
+Isabelle's own `Token.print_name` for a name that is an identifier,
+which every name a class writes through it is. A keyword as a name is no
+failure: Isabelle accepts it quoted at every use. `Theory.can_emit` is
+the framework's default and `keywords` known: a tree whose keyword
+table is `None` is not written (COMPILATION.md §3, §4). A node of the
+plugin reaches its theory through `theory()` of its base
+`Theory_Member` (node_classes/COMMON.md §1); `recall` writes names
+bare, in the `unicode` spelling — `print_name` is emission's alone.
 
 ## 3. The `InvalidField` reasons
 
 The two classes' gen checks render these sentences (RENDER_BASELINES §2's
 `InvalidField` shape, with the reason the class's own): the first for an
-empty `parent_session`, an empty `imports`, an empty item of `imports`,
-and an empty option name or value; the second and third for
+empty `parent_session`, an empty item of `imports`, and an empty option
+name or value — the framework's check of the construct says it for an
+empty `imports` (MODULE_STRUCTURE §4.4); the second and third for
 `parent_session` naming no existing session, or the session itself (§1);
 the fourth for an option set twice; the fifth for an item of `imports`
 that is not a theory name in one of its two shapes; the sixth for a

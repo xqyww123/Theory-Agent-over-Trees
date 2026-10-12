@@ -72,19 +72,28 @@ The argument `constructs` <reason>.
 
 A schema check's own reasons are `must be` followed by the JSON type —
 `a string`, `an integer`, `a number`, `a boolean`, `a list`, `an object`
-— several joined with ` or `; for a tool call's arguments also `must be one of`
-followed by the schema's `enum`, backticked, and `must not be empty` for
-its `minItems`:
+— several joined with ` or `, each JSON type once, in the order the schema first names them; `must be one of` followed by the `enum`,
+backticked, and `must not be empty` for `minItems`, for a tool call's
+arguments and a construct's fields alike (MODULE_STRUCTURE §4.4); and
+`must not be nested deeper than 100 levels`, said of a tool call's
+argument before any other check, each object or array a level:
 
 ```
 The field `statement` must be an object.
 The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
 The argument `constructs` must not be empty.
+The argument `constructs` must not be nested deeper than 100 levels.
+The field `types` must not be empty.
+The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`.
 ```
 
 `UnexpectedField` — the holder is the kind, or a nested container's path,
-and `it takes` lists that holder's fields in declaration order; for a
-tool call's own arguments the holder is the tool:
+and `it takes` lists that holder's fields in the order the schema
+declares them, less `kind` and `children` at a construct's top — for a
+union told apart by a `Literal` field, before
+that field has chosen an arm, every arm's fields in the order they
+first appear, the arms in the schema's order (MODULE_STRUCTURE §4.4);
+for a tool call's own arguments the holder is the tool:
 
 ```
 A `lemma` has no field `statment`; it takes `name`, `statement`.
@@ -95,15 +104,18 @@ The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constru
 
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
 framework's check), against the theory name's grammar (`Theory.gen`'s
-check), against the session name's (`Session.gen`'s check) and against
-the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4);
-`grammar` selects the rendering:
+check), against the session name's (`Session.gen`'s check), against
+the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4) and
+against the type name's (`Datatype.gen`'s check,
+node_classes/DATATYPE.md §4); `grammar` selects the rendering, the
+fact name's and the type name's sharing one text:
 
 ```
 `Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.
 `Foo-Bar` is not a valid theory name: a theory name starts with a letter and continues with letters, digits and underscores, with no hyphen and no dot.
 `S'` is not a valid session name: a session name starts with a letter and continues with letters, digits, underscores and interior hyphens, and does not end with a hyphen or an underscore.
 `rev-length` is not a valid fact name: a fact name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+`my-list` is not a valid type name: a type name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 ```
 
 `DuplicateName` — two siblings would share an id component
@@ -172,12 +184,9 @@ When amending a non-leaf node, `children` is not allowed: the amended node inher
 `theory_X.section_Basics` has 1 child, which a `lemma` cannot hold. Move or delete it first.
 ```
 
-`Bad<Class>NodeParent` — each node class carries its own sentence
-(EXCEPTIONS.md §3). `Theorem`'s `BadTheoremNodeParent`:
-
-```
-A `lemma` cannot be placed under `session_Arith`; it belongs inside a theory.
-```
+`Bad<Class>NodeParent` — one sentence per judgement of where a node may
+live (EXCEPTIONS.md §3). The plugin `Isabelle_Std`'s `NotInsideTheory`,
+shared by all its classes, is pinned in node_classes/COMMON.md §1.
 
 `Session`'s `BadSessionNodeParent`:
 

@@ -66,8 +66,9 @@ accompanies a `failed` line, a `Notice:` block a `complete` or
 `incomplete` one — `incomplete` when the class still owes what the
 notice is about.
 
-A class overrides `mark` to say more: `Theorem` answers two slots, its
-statement's state and its proof's (node_classes/THEOREM.md §7). Inside
+A class overrides `mark` to say more: `Proof_Obligation` answers two
+slots, the class's status and its proof's (node_classes/COMMON.md §3;
+`Theorem`'s words, node_classes/THEOREM.md §7). Inside
 the parentheses, after the mark, the framework adds its tags: `automatic
 construction` on a node whose construction job has that setting on, for
 every agent, and after it `needs your answer, call \`check_construct\` to
@@ -295,7 +296,7 @@ in `Out_Focus`; `theory_X` is the focus, and writes no field, since
 fields are `Recall`'s alone (§3) — its beginning ran and the stop inside
 it kept its ending from running, so it is `incomplete`; the call's depth
 is 0, so its children are in `Out_Focus`. `lemma_A` ran and still owes its
-proof: `Theorem`'s two-slot mark (node_classes/THEOREM.md §7).
+proof: `Proof_Obligation`'s two-slot mark (node_classes/COMMON.md §3).
 `definition_f` is a `Define`, a class not yet designed (§8); the block is
 the framework's `Error:` for its `CannotEvaluate`, and stands here to fix
 the block's place.

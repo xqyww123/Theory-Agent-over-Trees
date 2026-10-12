@@ -108,6 +108,10 @@ The same line sorts what node classes raise:
   `BadEdit` to veto the change while nothing has happened; a completed hook
   fires after the change, so rendering "Cannot …" for what it raises would
   be a lie — anything it raises, `TAT_Error` included, is its class's bug;
+- `_carries_job_from`, the question an amend's commit asks the
+  replacement (CONSTRUCT_INTERACTION §3.1), is asked through
+  `_completed`: anything it raises, `TAT_Error` included, is its class's
+  bug;
 - a construction job's `_run` has no tool call on the stack: it reports
   through the messages of CONSTRUCT_INTERACTION §3.4 and, while its run is
   still the job's, anything it raises is its class's bug, a cancellation
@@ -167,16 +171,16 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │                             (MCP_SPECIFICATION §2.1)            [framework]
 ├─ RawASTError                a submitted RawAST, or a tool call's own
 │  │                          arguments, is malformed.  The group carries
-│  │                          of_tool, written after the raise by
-│  │                          `check_call`, which read a tool's schema
+│  │                          of_tool, written after the raise only when
+│  │                          `check_call` read a tool's schema
 │  │                          (§4's shape): the holder is a tool,
 │  │                          the fields its arguments, and the three shape
 │  │                          errors' sentences say so (TOOL_SCHEMAS §4)
 │  ├─ MalformedRawAST         missing_kind — an object with no `kind`, or
 │  │                          not an object at all                [framework]
 │  ├─ UnknownKind             kind, available_kinds               [framework]
-│  ├─ MissingField            holder, field — derived from the class's or
-│  │                          the tool's declared argument schema, before
+│  ├─ MissingField            holder, field — derived from the class's
+│  │                          construct schema or the tool's schema, before
 │  │                          a gen                               [framework]
 │  ├─ UnexpectedField         holder, holder_is_top, field, takes — a field
 │  │                          the class does not declare; holder is the
@@ -205,7 +209,8 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          DuplicateName is [framework]; the theory
 │  │                          name's [Theory.gen]; the session name's
 │  │                          [Session.gen]; the fact name's
-│  │                          [Theorem.gen]; the four grammars are
+│  │                          [Theorem.gen]; the type name's
+│  │                          [Datatype.gen]; the five grammars are
 │  │                          RENDER_BASELINES §2's
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
@@ -231,14 +236,17 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          replacement class is a Leaf. Raised before
 │  │                          any gen runs                        [framework]
 │  ├─ Bad<Class>NodeParent    kind, parent_id — the class cannot live under
-│  │                          that parent. Not one class: each node class
-│  │                          derives its own from BadEdit, named after
-│  │                          itself, and raises it in its gen and
-│  │                          on_moving — BadTheoremNodeParent,
-│  │                          BadTheoryNodeParent, BadSessionNodeParent
-│  │                          (Session's gen refuses every parent but the
-│  │                          forest root). The framework checks no
-│  │                          containment
+│  │                          that parent. One exception per judgement of
+│  │                          where a node may live, derived from BadEdit
+│  │                          and owned by whoever makes the judgement,
+│  │                          raised in gen and on_moving:
+│  │                          BadSessionNodeParent and BadTheoryNodeParent,
+│  │                          the framework's (Session's gen refuses every
+│  │                          parent but the forest root); NotInsideTheory,
+│  │                          shared by every class of the plugin
+│  │                          Isabelle_Std and raised by its base
+│  │                          Theory_Member (node_classes/COMMON.md §1).
+│  │                          The framework checks no containment
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
 │  ├─ MoveBesideItself        id — the move is `before` or `after` the
@@ -305,7 +313,10 @@ class's `gen` supplies to a framework exception — `InvalidField`'s
 `<reason>`, whose shape alone is RENDER_BASELINES §2's — is approved in
 that class's document under docs/node_classes/ and pinned by that class's
 test, as `Session`'s and `Theory`'s reasons are in SESSION_AND_THEORY
-§3 and test_session_theory.py. Every other test that meets a rendering
+§3 and test_session_theory.py; a plugin's own exception class keeps its
+render baseline in the plugin's document, pinned by the plugin's tests,
+as `NotInsideTheory`'s is in node_classes/COMMON.md §1. Every other
+test that meets a rendering
 asserts the exception's class and fields, or reads the line from the
 documents (TOOL_SCHEMAS §4's malformed-call block, RENDER_BASELINES §6's
 success lines and RECALL.md §3's refusal block by test_mcp.py,

@@ -1,0 +1,392 @@
+# The `Datatype` node class
+
+Status: proposed 2026-10-06; revised 2026-10-12 after three review
+rounds (ai-artifacts/review/NODE_CLASS_RULINGS.md); awaiting the
+owner's word to commit.
+
+A `Datatype` defines an inductive or coinductive type — or several at
+once, when they are mutually recursive — each by its name, its type
+parameters and its constructors. It opens no proof obligation
+(INDEX.md): its evaluation runs the command and nothing more, and the
+node is finished when it is `ready`. It is a `Leaf` of the plugin
+`Isabelle_Std`: its Python half is `isabelle_theory_agent/std/datatype.py`,
+its ML half `Isabelle_Std/ML/TAT_Datatype.ML`. Its agent-facing wording
+lives here — the `description` texts of its construct schema (§3), the
+sentences its `gen` renders, and the words on its line — pinned by the
+baseline tests the way THEOREM.md's are.
+
+Kinds: `datatype` and `codatatype` — the two commands share one syntax
+and one implementation (`bnf_fp_def_sugar.ML`, `parse_co_datatype_cmd`),
+differing in the fixpoint taken. The kind heads the id component:
+`datatype_tree`, `codatatype_stream`.
+
+## 1. Fields
+
+| Field | Type | |
+| --- | --- | --- |
+| `kind` | `datatype` or `codatatype` | authored |
+| `english` | what is defined, `str` | authored |
+| `type_parameters` | `list[TypeParameter]` (§2), the parameters of every type defined, empty when there are none | authored |
+| `types` | the types defined, at least one (§2), each its `type_name`, `str`, and its `constructors`; the node's name is the types' names joined with `_`, so each is in the id grammar without hyphens — a letter, then letters, digits, underscores and primes, not ending in an underscore (MCP_SPECIFICATION §2) — and one outside it is refused with the grammar's own sentence, as a `Theorem`'s is | authored |
+
+What the last evaluation reported travels on the status the evaluation
+hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
+(messages)` when the definition failed, `Ready` with no messages when
+it went through.
+
+The class has no job and owns no slot: its `_unfinished` is the
+framework's default, so the node is finished when its one operation is
+`ready`.
+
+## 2. The definition
+
+A type is a name and its constructors, each a name with its arguments
+— an Isabelle type with an optional selector name — and an optional
+syntax, a mixfix annotation. The type parameters — each a type variable
+with an optional sort — are the node's, shared by every type it
+defines, since Isabelle requires the types of a mutually recursive
+group to have the same parameters (`merge_type_args`,
+`bnf_fp_def_sugar.ML`). A node defines one type, or several that are
+mutually recursive:
+
+```json
+{
+  "kind": "datatype",
+  "english": "Finite sequences",
+  "type_parameters": [{"name": "'a"}],
+  "types": [
+    {"type_name": "list",
+     "constructors": [
+       {"name": "Nil"},
+       {"name": "Cons", "arguments": [
+         {"type": "'a", "selector": "hd"},
+         {"type": "'a list", "selector": "tl"}],
+        "syntax": {"form": "infixr", "symbol": "#", "priority": 65}}]}
+  ]
+}
+```
+
+`kind`, `english` and `types` are required, and in a type `type_name`
+and `constructors`; `type_parameters` and a constructor's `arguments`
+are optional and empty when left out, a parameter's `sort`, an
+argument's `selector` and a constructor's `syntax` optional and absent
+when left out; an empty `sort` is no sort. An empty `types` or
+`constructors` is refused by the framework's check of the construct,
+`must not be empty` (MODULE_STRUCTURE §4.4). The node's name is the
+types' names joined with `_`, in their order — Isabelle's own name for
+the group, which qualifies its common theorems, `expr_bexp.induct` —
+computed from `types` and never stored; one type gives
+`datatype_list`. `gen` normalises every piece of Isabelle text and
+`english` once, when the construct is accepted: newlines become spaces
+and runs of whitespace one space — in a syntax's `symbol` or `template`
+newlines and tabs alone, since runs of spaces there are layout;
+printing, emission and evaluation all use the stored text.
+
+`type_parameters[].name`, `type_parameters[].sort`,
+`types[].constructors[].name`, `types[].constructors[].arguments[].type`,
+`types[].constructors[].arguments[].selector` and a syntax's `symbol`
+or `template` are `IsaTerm`s (MODULE_STRUCTURE §4.3); `types[].type_name` and
+`english` are `str`.
+
+`TypeParameter` is shared through `TYPE_PARAMETER_DEFS` and `Mixfix`
+through `MIXFIX_DEFS`, both the plugin's (COMMON.md §4); a type, a
+constructor and an argument are inline objects, used nowhere else.
+
+The class's construct schema:
+
+```jsonc
+{
+  "type": "object",
+  "properties": {
+    "kind":            { "type": "string", "enum": ["datatype", "codatatype"] },
+    "english":         { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "type_parameters": { "type": "array", "items": { "$ref": "#/$defs/TypeParameter" },
+                         "description": "the parameters of the types defined; sorts are usually not specified" },
+    "types":           { "type": "array", "minItems": 1,
+                         "description": "the types defined by this command: usually one; several only when they are mutually recursive",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type_name":    { "type": "string" },
+          "constructors": { "type": "array", "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name":      { "type": "string" },
+                "arguments": { "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type":     { "type": "string", "description": "An Isabelle type expression" },
+                      "selector": { "type": "string", "description": "the name of the function that extracts this argument from the constructor, as hd and tl in Cons (hd: 'a) (tl: \"'a list\"). Leave out if none" }
+                    },
+                    "required": ["type"],
+                    "additionalProperties": false } },
+                "syntax":    { "$ref": "#/$defs/Mixfix" }
+              },
+              "required": ["name"],
+              "additionalProperties": false } }
+        },
+        "required": ["type_name", "constructors"],
+        "additionalProperties": false } }
+  },
+  "required": ["kind", "english", "types"],
+  "additionalProperties": false,
+  "$defs": { ...TYPE_PARAMETER_DEFS, ...MIXFIX_DEFS }   // TypeParameter, Mixfix
+}
+```
+
+`TYPE_PARAMETER_DEFS` and `MIXFIX_DEFS`, the two definitions the schema
+refers to, with their checks and writers, are COMMON.md §4's.
+
+The class, `kind`, `type_name`, a constructor's `name` and a type
+parameter's `name` carry no description: the class name says what it
+is, the two kinds are Isabelle's own words, and those keys say what
+they hold; `selector` carries one, its key alone not saying what it
+holds (COMMON.md §5). The schema's examples are
+on `selector` and in `Mixfix`, where the shape does not show the
+meaning; they are Isabelle's own text, never JSON.
+
+What the class does not take: mixfix syntax on a type
+(`type_notation`'s, with `Notation`), discriminator names and
+`discs_sels`, the `for map: rel: pred:` names, selector defaults
+(`where`), `dead` and named type parameters, and the plugin options.
+
+## 3. Descriptions
+
+`english`:
+
+```
+what is defined, in English, as LaTeX text
+```
+
+`types`:
+
+```
+the types defined by this command: usually one; several only when they are mutually recursive
+```
+
+`type_parameters` and `TypeParameter.sort`:
+
+```
+the parameters of the types defined; sorts are usually not specified
+an Isabelle sort, such as linorder
+```
+
+`types[].constructors[].arguments[].type` and
+`types[].constructors[].arguments[].selector`:
+
+```
+An Isabelle type expression
+the name of the function that extracts this argument from the constructor, as hd and tl in Cons (hd: 'a) (tl: "'a list"). Leave out if none
+```
+
+`Mixfix`, then its three arms in the order infix, binder, general mixfix:
+
+```
+Isabelle's mixfix annotation
+an infix operator, as in (infixr "#" 65)
+a binder, as in (binder "∀" 10)
+a template with one _ per argument, as in ("⟨_, _⟩") or ("_ ! _" [100, 101] 100)
+```
+
+The general mixfix arm's `argument_priorities` and `priority`:
+
+```
+one per _; 0 when left out
+the result's; 1000 when left out
+```
+
+## 4. `gen`
+
+`Datatype.gen` calls `require_inside_theory` first (COMMON.md §1), then
+checks: every `type_name` against §1's grammar, since each is part of
+the node's name (`InvalidName` with `grammar` = `type name`,
+RENDER_BASELINES §2's fifth form), and no two types the same name;
+every type parameter's `name` a type variable — on the `ascii` form, a
+prime, then an Isabelle identifier as COMMON.md §5 judges one — and no
+two the same; every constructor's `name` and every `selector` an
+Isabelle identifier (COMMON.md §5) not ending with an underscore
+(COMMON.md §5's clause on internal names); no
+two constructors of one type the same name — Isabelle qualifies a
+constructor by its type, so two types of a group may share one; no two
+selectors of one constructor the same name (`InvalidField`). A sibling
+already bearing the node's id component is the framework's
+`DuplicateName` (MCP_SPECIFICATION §2); any other clash of the types'
+names in the theory — a `codatatype` sibling of the same name among
+them — is Isabelle's at evaluation.
+Whether the types parse, whether each argument's type is a bounded
+natural functor, whether every type is non-empty, and whether a mixfix
+annotation is well-formed are Isabelle's business at evaluation
+(MODULE_STRUCTURE §4.1); what Isabelle rejects is an evaluation failure,
+not an exception.
+
+The `InvalidField` sentences:
+
+```
+The field `types[1].type_name` binds `expr` a second time.
+The field `type_parameters[0].name` must be a type variable, such as 'a.
+The field `type_parameters[1].name` binds `'a` a second time.
+The field `types[0].constructors[1].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+The field `types[0].constructors[2].name` binds `Nil` a second time.
+The field `types[0].constructors[1].arguments[0].selector` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+The field `types[0].constructors[1].arguments[1].selector` binds `hd` a second time.
+```
+
+The grammar text after the colon is the framework's, the one
+`InvalidName` renders for the grammars `fact name` and `type name`
+(RENDER_BASELINES §2), written once and used by both (COMMON.md §5).
+
+A parent outside a theory is refused with the plugin's
+`NotInsideTheory`, whose sentence COMMON.md §1 pins.
+
+## 5. Emission
+
+The node emits, when its `can_emit` holds — `Datatype` keeps the
+framework's default (COMPILATION.md §3) — two commands:
+
+```
+text ‹Finite sequences.›
+datatype 'a list =
+    Nil
+  | Cons (hd: "'a") (tl: "'a list") (infixr "#" 65)
+```
+
+and, with several types:
+
+```
+text ‹Arithmetic and boolean expressions.›
+datatype expr =
+    Num "nat"
+  | Plus "expr" "expr"
+  | If "bexp" "expr" "expr"
+and bexp =
+    Less "expr" "expr"
+  | Not "bexp"
+```
+
+- The `text` line: `english` alone, no lead (COMMON.md §2).
+- The type parameters, written before every type's name by the
+  plugin's `type_parameters_text` (COMMON.md §4): none writes the name
+  alone, `datatype tree =`; one without a sort writes it bare,
+  `datatype 'a tree =`; otherwise they are parenthesised and
+  comma-separated, a sort in double quotes after `::`: `datatype ('a ::
+  "linorder", 'b) map =`.
+- The first constructor on its own line indented four spaces, every
+  further one on its own line indented two and led by `| `; each
+  argument's type in double quotes, an argument with a selector as
+  `(hd: "'a")`.
+- A constructor's `syntax` after its arguments, in parentheses as
+  Isabelle writes it, the symbol or template in double quotes:
+  `(infixr "#" 65)`, `(binder "∀" 10)`, `("⟨_, _⟩")`; a general
+  mixfix's argument priorities in brackets and its result priority after
+  them, each when given: `("_ ! _" [100, 101] 100)`.
+- Every further type as a block of the same shape, `and` at the left
+  margin in place of the command.
+- Every name — a type's, a constructor's, a selector's — is written
+  through the theory's `print_name` (SESSION_AND_THEORY §2): in double
+  quotes when it is a keyword of the theory, bare otherwise.
+- The whole text in the `\<name>` form (`IsaTerm.ascii`), every piece
+  in double quotes written as Isabelle's string token (COMPILATION.md
+  §3); the file reads as Unicode in jEdit all the same.
+
+## 6. Evaluation
+
+The evaluator runs the definition and never the `text` command. It goes
+through the ML interfaces. `Datatype._eval_opr` sends the class's
+callback `TAT.Datatype.evaluate` the input slot, the resulting slot, and
+the definition as structure — `kind`, the type parameters with their
+sorts, the types each with its name and its constructors with their
+arguments, selectors and syntax — each `IsaTerm` as its `ascii`. The ML
+side runs, under `TAT_Common_Nodes.operation` (MODULE_STRUCTURE §3),
+one transition on the input slot's state:
+
+```
+Toplevel.local_theory NONE NONE
+  (BNF_FP_Def_Sugar.co_datatype_cmd fp construct
+    (Ctr_Sugar.default_ctr_options_cmd, specs))
+|> Toplevel.command_errors true
+```
+
+— the shape of `begin_theory`, through `apply_transition`. `fp` and
+`construct` are `Least_FP` and `BNF_LFP.construct_lfp` for `datatype`,
+`Greatest_FP` and `BNF_GFP.construct_gfp` for `codatatype`: the
+function each command's parser hands its result to. `specs` is that
+parser's structure, one entry per type, built from the fields: the
+node's type parameters, each `(SOME Binding.empty, (name, sort))`, in
+every entry; the type's name as a binding; `NoSyn`; each constructor
+`((Binding.empty, name), arguments)` with its mixfix — `NoSyn` without
+`syntax`; otherwise the constructor of Isabelle's `mixfix` datatype
+the form names, `Infix`, `Infixl`, `Infixr`, `Binder` or `Mixfix`, with
+the symbol or template as `Input.string` of its `ascii`, the priorities
+as given — a binder's `priority` serving as both of its, as Isabelle
+reads `(binder "∀" 10)`; a general mixfix's argument priorities `[]`
+and result priority 1000 when left out — and `Position.no_range` —;
+each argument `(selector or Binding.empty, type)`; no `map`, `rel` or
+`pred` binding; no selector defaults. The
+result is written into the resulting
+slot: at theory level the same steps as a hand-written definition, and
+inside a `Context` or `Locale` the definition is made in that context.
+An interrupt and a `Bug` are re-raised; any other error is the
+definition's: no state is written, the callback answers the messages,
+and `_eval_opr` returns `CannotEvaluate` with them — the node is an
+obstacle. Otherwise `_eval_opr` returns `Ready` with no messages.
+
+## 7. The mark
+
+`Datatype` keeps the framework's default (PRINT.md §1): `complete` when
+the definition went through, `failed` when it is an obstacle, `not
+evaluated` otherwise; it owes nothing after its evaluation, so
+`incomplete` never appears on its line.
+
+## 8. What it prints
+
+`print_fields` (PRINT.md §3) writes the definition, and only under
+`Recall`; wherever it is called the framework writes the evaluation's
+messages after it:
+
+| mode | `print_fields` writes |
+| --- | --- |
+| `Out_Focus` | nothing |
+| `Briefing` | not called |
+| `Relative_Focus`, a focus | nothing |
+| `Recall`, depth 0 | the definition, `english` |
+| `Recall`, depth 1 and 2 | the definition |
+| `Recall`, depth 3 | nothing |
+
+The definition is one line per type: the type with its parameters as
+emitted (§5), `=`, the constructors as emitted, joined by ` | `, every
+further type's line led by `and ` — assembled from the stored text in
+the `unicode` spelling, every name bare, without a round trip to
+Isabelle; `english` follows at depth 0 alone; no line carries a key.
+One private helper writes a type's head and constructors, given the
+spelling and how names are written; emission and `print_fields` lay its
+lines out differently.
+
+```
+'a list = Nil | Cons (hd: "'a") (tl: "'a list") (infixr "#" 65)
+Finite sequences
+```
+
+```
+expr = Num "nat" | Plus "expr" "expr" | If "bexp" "expr" "expr"
+and bexp = Less "expr" "expr" | Not "bexp"
+Arithmetic and boolean expressions
+```
+
+The evaluation's messages are the framework's to print (PRINT.md
+§3–§4). A node under `recall` whose definition Isabelle refused — a
+`datatype` with no finite value, which only a `codatatype` can define:
+
+```
+- datatype_stream (failed)
+  'a stream = SCons "'a" "'a stream"
+  An infinite sequence
+  Error:
+    Cannot define empty datatype "stream"
+```
+
+## 9. Id properties
+
+None declared: a leaf's component is the last of every id, and the
+framework's defaults stand (MCP_SPECIFICATION §2.1).

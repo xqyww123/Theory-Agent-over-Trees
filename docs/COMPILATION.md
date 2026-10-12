@@ -2,13 +2,15 @@
 
 Status: design, tenth revision, revised 2026-10-03 after its sixth
 review and the owner's rulings on it (ai-artifacts/COMPILATION_REVIEW.md
-§13). A sentence ending in *(decided)* carries the owner's ruling, of
+§13), and 2026-10-12 with the node-class rounds (§3's text rules and
+what `emit` may read, §4's `keywords`, §5's hook;
+ai-artifacts/review/NODE_CLASS_RULINGS.md). A sentence ending in *(decided)* carries the owner's ruling, of
 2026-09-30, 2026-10-01, 2026-10-02 or 2026-10-03;
 every other sentence is the author's; §7 holds the approved wording and
 names. The document was approved on 2026-10-02. It is implemented
 (ai-artifacts/COMPILATION_IMPLEMENTATION_PLAN.md) but for what the
 construction jobs bring (ai-artifacts/CONSTRUCT_IMPLEMENTATION_PLAN.md):
-§4's stored check, and `Theorem`'s compile hook (§5).
+§4's stored check, and the plugin's compile hook (§5).
 
 Compile is turning the forest into `.thy` files and a ROOT on disk; emit
 is a node writing its own Isar text (ARCHITECTURE §1). TAT is the compiler
@@ -119,9 +121,9 @@ Isabelle's `\<name>` form with `Isabelle_RPC_Host.unicode.ascii_of_unicode`
 only then written (§5). A raw `‹` reaches no file: Isabelle/ML reads it
 as a symbol, not as a cartouche delimiter.
 
-A written file may hold `sorry`: a `Theorem` whose proof is not
-constructed, not checked, or failed its check writes `sorry` (THEOREM.md
-§5). Building such a file needs Isabelle's `quick_and_dirty` option,
+A written file may hold `sorry`: a node whose proof is not
+constructed, not checked, or failed its check writes `sorry`
+(`proof_text()`, node_classes/COMMON.md §3). Building such a file needs Isabelle's `quick_and_dirty` option,
 which is the builder's business, not TAT's: compile adds no option and
 reports a tree with `sorry` as written *(decided)*.
 
@@ -149,10 +151,8 @@ session "Sorting" in "Sorting" = "HOL" +
   `theories` items, every option's name — is written in double quotes: a
   name with a hyphen (`HOL-Library`) is not one token of the ROOT's
   syntax unquoted.
-- `description`, when not empty, is one cartouche, with `‹`, `›`,
-  `\<open>` and `\<close>` in the text replaced by `"` so that the
-  cartouche closes where it should — THEOREM.md §5's rule for the `text`
-  command. Left out when empty.
+- `description`, when not empty, is one cartouche, through the
+  framework's `cartouche` (§3). Left out when empty.
 - `options`, when not empty, in the ROOT's own spelling, every value
   quoted (SESSION_AND_THEORY §1). Left out when empty.
 - `sessions` lists the session of every theory the session's written
@@ -258,7 +258,7 @@ runs there (CLIENT_HOOKS.md) — is gone at the next compile. Files of
 other kinds a compile never touches; a plugin's compile hook handles
 its own, AoA's `<Theory>.proof-store` beside the `.thy` being the first
 case (§5): that store appears during the conversation, written by a
-`Theorem`'s construction through AoA (THEOREM.md §7), and a compile
+`Proof_Obligation`'s construction through AoA (node_classes/COMMON.md §3), and a compile
 leaves it where it is.
 
 **The report and the exit code.** The command prints one line per tree,
@@ -377,13 +377,29 @@ loader does *(decided)*.
 Isar, its output is the ROOT entry (§2) and the folder, produced by
 `compile` from its fields.
 
+**Text in a cartouche.** Isabelle text written into a file inside a
+cartouche — a `text` command's, the ROOT's `description` — goes through
+the framework's `cartouche` (model.py), which replaces `‹`, `›`,
+`\<open>` and `\<close>` in it by `"`, so the cartouche closes where it
+should and nothing is refused.
+
+**Text in double quotes.** Isabelle text written into a file inside
+double quotes — a term, a type, a sort, a mixfix symbol or template, a
+quoted name — is written as Isabelle's outer-syntax string token, by
+the rule of `Symbol_Pos.quote_string_qq`, Isabelle symbols left intact,
+through one framework function; the ROOT's quoted items (§2),
+`print_name` (node_classes/SESSION_AND_THEORY.md §2) and every class's
+emission go through it.
+
 **What `emit` may read.** A compile runs on a forest loaded from the
 database and never evaluated (§1), so `emit` and `can_emit` read only
 what is stored, through the public read-only accessors `job()` already
-is: authored fields; recorded fields the class stores;
-`last_evaluation_statuses()`, a tuple, the messages of a status included
-(§4); and the check's outcome through its accessor (§4), which
-`Theorem`'s choice between `by aoa` and `sorry` reads (THEOREM.md §5).
+is: authored fields; recorded fields the class stores; its `Theory`'s
+stored `keywords`, through `print_name` (node_classes/SESSION_AND_THEORY.md
+§2); `last_evaluation_statuses()`, a tuple, the messages of a status
+included (§4); and the check's outcome through its accessor (§4), which
+`Proof_Obligation`'s choice between `by aoa` and `sorry` reads
+(node_classes/COMMON.md §3).
 Reading an instant status there — `is_finished()`, `_operations_ready()`,
 the default `mark` — is a class bug: on a loaded forest every instant
 status is `not_evaluated`. The rule is kept by the store-mirror
@@ -400,7 +416,8 @@ stored check and the same `can_emit`, and the same result of compile's
 first step as text — every file's text keyed by its path, the ROOT's
 included, and the report as `report_lines` renders it, which names
 nodes by id, its `removed` empty since the disk step alone fills it. A recorded field read by emission but not stored —
-`import_sessions`, `reserved_names` (THEOREM.md §1) — fails it at once.
+`import_sessions`, `keywords` (node_classes/SESSION_AND_THEORY.md §2) —
+fails it at once.
 
 ## 4. The stored statuses, the messages, the stored check
 
@@ -434,8 +451,8 @@ failed; `Ready(messages)` the messages of a run that failed in part and
 carried on — a `Define` whose `termination` did not go through while its
 constant was defined (ARCHITECTURE §3.2) — or that reported warnings,
 and `Ready()` a clean run. `Ready` and `CannotEvaluate` are frozen
-dataclasses with one field, `messages: tuple[IsaTerm, ...]` (THEOREM.md
-§2), and each has exactly one form: there is no module-level `READY` or
+dataclasses with one field, `messages: tuple[IsaTerm, ...]`
+(MODULE_STRUCTURE §4.3), and each has exactly one form: there is no module-level `READY` or
 `CANNOT_EVALUATE`, a status's kind is tested with `isinstance`, and
 `==` compares the messages too *(decided)*. A module-level `Ready()`
 instance may be reused for clean runs, as a value and never by
@@ -552,15 +569,15 @@ with a stored `PASSED` is complete once rerun and the default `checks`
 replays only a proof whose stored `PASSED` was cleared, while one with a
 stored `FAILED` can be constructed again (CONSTRUCT_INTERACTION §3.1,
 §3.3) *(decided)*. The
-other readers: `emit`; `Theorem`'s mark and `Proof_Job._check()`
-(THEOREM.md §7); the failure blocks, printed from a `FAILED` outcome
+other readers: `emit`; `Proof_Obligation`'s mark and `Proof_Job._check()`
+(node_classes/COMMON.md §3); the failure blocks, printed from a `FAILED` outcome
 with the header from a class-level `failure_header`; and the summary
 under a cut-off nesting node, grouped by the carried class's title.
 
 **Storage.** One row of the node in `fields`, named
 `last_evaluation_statuses`, holding the list with each status's
 messages in their `unicode` spelling, as every stored term is held
-(THEOREM.md §2) *(decided)*. It is a reserved framework field beside
+(MODULE_STRUCTURE §4.3) *(decided)*. It is a reserved framework field beside
 `kind`, `children`, `job`, `check` and the construction job's
 automatic-construction field (ARCHITECTURE §4.1), written by
 `_store_node` and gone with `delete_node`. A row that is missing, or
@@ -572,9 +589,11 @@ value meaning nothing to trust, while the structural rows `kind` and
 `children` stay refused — so the schema version is unchanged; a row that
 is not a list of status values is refused at start as a malformed
 `children` row is. `Theory.from_store` reads a missing `import_sessions`
-row as the empty list: such a database predates both rows, which ship
-together, so its header reads `not_evaluated`, the tree is not written,
-and the header's rerun records the field.
+row as the empty list and a missing `keywords` row as `None`, and
+`Theory.can_emit` refuses while `keywords` is `None`
+(node_classes/SESSION_AND_THEORY.md §2): on a database written before
+the row, a `Ready` header's tree is not written until a walk reruns
+the header and records both.
 
 **When the store is written.** An edit stores every node whose status
 its commit wrote and every node still in the forest that a completed
@@ -593,7 +612,7 @@ jobs it dropped, emptying each, while the nodes it passed accumulate
 for `blocking` to wait on (CONSTRUCT_INTERACTION §5) — the importers a
 cascade invalidated among them,
 and `_store_node` writes the whole node *(decided)*. So a field an
-evaluation hook recorded — `reserved_names`, `import_sessions` — rides
+evaluation hook recorded — `keywords`, `import_sessions` — rides
 with the status that run left. Each synchronous step of a job that
 changes the job or the check on its node — a construction `start`, a
 run's settlement, an evaluation job's `finished` report, an attach, a
@@ -607,8 +626,10 @@ for a node a job step stored meanwhile, and keeps the ones before it,
 which the next walk reruns or trusts as after any restart.
 
 **Tests this section relies on**, beside §3's helper: a database
-written without the `last_evaluation_statuses`, `check` and
-`import_sessions` rows, checking the missing-row rules; a restart
+written without the `last_evaluation_statuses`, `check`,
+`import_sessions` and `keywords` rows, checking the missing-row rules —
+a `Ready` header with an `import_sessions` row and no `keywords` row
+among the cases; a restart
 followed by a walk, checking that what the walk reached was rerun and
 stored, recorded fields included, that the rest of its tree and the
 importers were invalidated in both fields, and that a tree it did not
@@ -710,14 +731,15 @@ folders after them, and writes the ROOT last *(decided)*. A hook
 removes only paths the path listing yields, writes only beside a tree's
 file, creating each file afresh, and never touches a `.thy` or the
 ROOT; anything it raises is the
-plugin's bug, and the compile did not complete. `Theorem`'s package
-registers one for AoA's `<Theory>.proof-store`, the proof cache AoA
+plugin's bug, and the compile did not complete. The plugin `Isabelle_Std`
+registers one (`common.py`, node_classes/COMMON.md §3) for AoA's
+`<Theory>.proof-store`, the proof cache AoA
 keeps beside a theory's file: today, to remove each `<T>.proof-store`
 and `<T>.proof-store.*` the path listing yields whose `<folder>/<T>.thy` is
 no tree's file path — the lock file `with_file_lock` creates and never
 removes, a temporary file a killed process left — without which the
 folder never empties. The stores themselves are written during the
-conversation, by the constructions' AoA calls (THEOREM.md §7), not by
+conversation, by the constructions' AoA calls (node_classes/COMMON.md §3), not by
 the hook; a build's `by aoa` replays them.
 
 **`toplevel.py`**: a second procedure beside `launch_TAT`.

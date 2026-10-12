@@ -117,11 +117,11 @@ method — Sledgehammer first, falling back to the AoA proof agent when it
 times out; while a node has no proof, or its stored check is not
 `PASSED`, it emits `sorry` instead (§2.2). A build of the emitted file
 finds the proof in the theory's proof store, `<short name>.proof-store`
-beside the file, where the node's construction recorded it (THEOREM.md
-§5, §7), so `by aoa` there replays and searches nothing. A `Theorem` node carries what is claimed,
+beside the file, where the node's construction recorded it
+(node_classes/COMMON.md §3), so `by aoa` there replays and searches nothing. A `Theorem` node carries what is claimed,
 never a proof subtree; the proof its construction job found is that job's
 product — the method text AoA writes to its proof store, such as `(simp
-add: …)` or `aoa_replay "…"` (§3.6, THEOREM.md §1) — which the framework
+add: …)` or `aoa_replay "…"` (§3.6, node_classes/COMMON.md §3) — which the framework
 stores on the node (CONSTRUCT_INTERACTION §3.1).
 
 Throughout this repository, `aoa` in code font is that proof method. AoA in
@@ -209,8 +209,9 @@ and re-evaluating the node writes that same name again. The Python side never
 holds a state, only a name. A class may own further slots beside the
 node's own: it mints them itself and names the operation that writes
 each, and the framework releases them with that operation's result
-(MODULE_STRUCTURE §4.1); `Theorem`'s `goal_state`, the
-state in which its goal stands open (THEOREM.md §6), is the one so far.
+(MODULE_STRUCTURE §4.1); the plugin's `goal_state`, the state in which
+a proof obligation's goal stands open (node_classes/COMMON.md §3), is
+the one so far.
 
 A node's resulting state is the slot of its next sibling, or, for a last child,
 the slot its parent keeps for the position after all its children. The
@@ -674,7 +675,7 @@ must live in an Isabelle session some ROOT declares.
 
 | part | side | |
 | --- | --- | --- |
-| data definition and argument schema | Python | becomes the MCP tool schema |
+| data definition, the construct schema and the argument schema | Python | the construct schema becomes the class's part of `edit`'s schema and is what a submitted construct is checked against; the argument schema, a TypedDict the loader holds to it, types `gen`'s `raw` |
 | emission | Python | `can_emit` and `emit` — on a nesting node `emit_beginning` and `emit_ending` — reading the stored statuses, run by a compile (§4) |
 | construction job | Python | `construction_job_class`, the class of the job `construct` starts, for classes that have one; `job()` returns the node's (CONSTRUCT_INTERACTION §3.2) |
 | evaluation job | Python and ML | `evaluation_job_class`, the class of the job an evaluation starts, for classes that have one; its work runs as a Future task on the ML side (CONSTRUCT_INTERACTION §3.3) |
@@ -923,8 +924,8 @@ synchronous step under no lock, atomic against every call on the one
 event loop. Under `checks: "blocking"` an `evaluate_to` keeps the lock
 after its walk until every evaluation job running on a node it passed
 has ended. The ending cancels every construction job and drops every
-evaluation job. `Theorem`'s construction job drives AoA through its ML
-callback on the state its evaluation recorded (THEOREM.md §7).
+evaluation job. `Proof_Obligation`'s construction job drives AoA through its ML
+callback on the state its evaluation recorded (node_classes/COMMON.md §3).
 
 What the framework contributes to such work is thread safety where it can
 reach shared state: the state slot table and the theory table are locked,

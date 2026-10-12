@@ -146,8 +146,9 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   `operation`'s shape (§3): the state, or the errors as messages, markup
   stripped; a folded interrupt is re-raised. `Theory`'s header goes
   through it (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
-  transition through it, and `Theorem` builds two transitions from its
-  statement's structure (THEOREM.md §6). Nothing splits a node's text into
+  transition through it, and a proof obligation's evaluation runs the
+  class's own transition and then `sorry`'s half through it
+  (node_classes/COMMON.md §3). Nothing splits a node's text into
   spans or registers anything in Isabelle's execution table, which a
   library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6). The
   output buffers below, `Output_Routing.new_buffer` and `take_buffer`,
@@ -155,7 +156,7 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
 - `end_theory` — `Toplevel.end_theory`, yielding the value the theory table
   stores.
 - `fork_job` — the jobs' one function (CONSTRUCT_INTERACTION §3.3; a
-  construction whose work is ML's, THEOREM.md §7, forks it the same way):
+  construction whose work is ML's, node_classes/COMMON.md §3, forks it the same way):
   given a job's id and its work, forks the work as a Future task
   on Isabelle's worker pool, keeps the future under the id in the
   framework's table, and when the work ends calls Python's remote
@@ -383,14 +384,18 @@ text.
 `operation`, the helper a node class writes its callbacks against (§2.5),
 then `Theory`'s section, a client of §2.5. The rows after `Theory` are
 the plugin `Isabelle_Std`'s, one structure per class in a file of its
-own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem`.
+own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem` —
+after the plugin's shared half, `TAT_Proof_Obligation`
+(node_classes/COMMON.md §3).
 
 | section | what it runs |
 | --- | --- |
 | `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through |
-| `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
-| `Theorem` | `TAT.Theorem.evaluate`: the statement opened and admitted, two direct-ML transitions on the input slot's state, the first's result into the node's `goal_state` slot, the second's into the resulting slot (THEOREM.md §6); `TAT.Theorem.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Theorem.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way (THEOREM.md §7) |
+| `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2), and the identifier-shaped words of the theory's keyword table, the two lexicons of `Thy_Header.get_keywords`, which it records as `keywords` (node_classes/SESSION_AND_THEORY.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
+| `Proof_Obligation` | the plugin's shared half, `TAT_Proof_Obligation` (§4.5), for the classes that derive from `Proof_Obligation` (node_classes/COMMON.md §3): `TAT_Proof_Obligation.evaluate`, an ML function a class's evaluation callback calls with the three slots and the class's own function from the input state to the state with the goal open — run under `operation`, its state into the node's `goal_state` slot, then `sorry`'s half, `Toplevel.end_proof Proof.global_skip_proof`, into the resulting slot; `TAT.Proof_Obligation.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Proof_Obligation.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way |
+| `Theorem` | `TAT.Theorem.evaluate`: one call of `TAT_Proof_Obligation.evaluate` with the statement's transition and, on the open goal, the undeclared-variable check (THEOREM.md §6) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
+| `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure, under `operation` (DATATYPE.md §6) |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
 `Theory`'s evaluator is registered like every other class's. `Session`
@@ -419,7 +424,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5), one module per node class: theorem.py, Theorem with Proof_Job and Proof_Check (THEOREM.md) and the compile hook for AoA's proof stores (COMPILATION.md §5); statement.py, the statement's schema definitions
+  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — Theory_Member and NotInsideTheory, Proof_Obligation with Proof_Job and Proof_Check, the english line, the shared $defs and their writers, the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); statement.py, the statement's schema definitions
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -432,15 +437,16 @@ own modules use it across files; a node class and a plugin never touch it.
 ### 4.1 `model.py`
 
 `Node` is the Python half of the node class contract (ARCHITECTURE §6): the
-authored and recorded fields, the argument schema — a TypedDict the
-framework checks submitted constructs against (§4.2, §4.4), and which types
-`gen`'s `raw` for the static checker — `gen` (below), `can_emit` and `emit` (COMPILATION.md §3), the name it gives the node and its two omissibility
+authored and recorded fields, the two schemas — the construct schema,
+which `check_call` checks a submitted construct against (§4.2, §4.4),
+and the argument schema, the TypedDict that types `gen`'s `raw`, which
+the loader holds to the construct schema (PLUGIN_SYSTEM §5) — `gen` (below), `can_emit` and `emit` (COMPILATION.md §3), the name it gives the node and its two omissibility
 flags (MCP_SPECIFICATION §2.1), `index_of()` — the node's position in its
 parent's `sub_nodes`, computed, never stored — the class attributes
 `construction_job_class` and `evaluation_job_class`, `None` by default,
 with `job()` returning the node's construction job (CONSTRUCT_INTERACTION
 §3.1), `to_store` and `from_store` for persistence (ARCHITECTURE §4.1),
-`_unfinished()` (ARCHITECTURE §3.2), `_own_statuses()` — the statuses of the node's own
+`_unfinished()` (ARCHITECTURE §3.2), `_carries_job_from(old)` — the question an amend's commit asks the replacement, whether the replaced node's job outcome still holds for it, false by default (CONSTRUCT_INTERACTION §3.1) —, `_own_statuses()` — the statuses of the node's own
 operations, in the order it runs them: `[self._status]` for a `Leaf`, the
 beginning's and the ending's for a `StdBlock`, none for an
 `Unchained_Node`; the three implementations are `final`, and the loader
@@ -526,10 +532,9 @@ class NodeConfig(NamedTuple):
                              # the node this construct takes the place of: an
                              # amendment's `old` for the batch's first construct,
                              # else None. Read it to carry over recorded fields the
-                             # class judges still valid — Theorem asks for the old
-                             # job's outcome to be carried, as the store's image,
-                             # when for_any, premises and conclusion are unchanged
-                             # (CONSTRUCT_INTERACTION §3.1, THEOREM.md §4)
+                             # class judges still valid; the job outcome is not one
+                             # of them — the commit asks `_carries_job_from`
+                             # (CONSTRUCT_INTERACTION §3.1)
 
 @classmethod
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
@@ -537,11 +542,12 @@ async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
 
 `gen` checks and constructs; the framework owns placement. Where a node
 may live is the node's own judgement: its `gen` refuses a parent its class
-cannot live under — `Bad<Class>NodeParent`, EXCEPTIONS.md §3 — and on a
-move its `on_moving` does; the framework checks no containment. A `gen`
-that amends may ask the framework to carry the replaced node's job
-outcome to the new node, `carry_job_from(old)`, which the commit honours
-(CONSTRUCT_INTERACTION §3.1). It may read
+cannot live under — its `Bad<Class>NodeParent`, or the plugin's shared
+`NotInsideTheory` raised by its base `Theory_Member`, EXCEPTIONS.md §3 —
+and on a move its `on_moving` does; the framework checks no containment. `gen`
+has no part in the replaced node's job outcome: the amend's commit asks
+the replacement `_carries_job_from(old)` (CONSTRUCT_INTERACTION §3.1).
+It may read
 over the wire through the framework's query functions (§4.3) — `Theory.gen`
 checks its short name against the base heap — and those functions answer
 data or raise `TAT_IsabelleError`, a bug (EXCEPTIONS.md §1), so a failure
@@ -621,9 +627,10 @@ the Python side. Persistence keeps neither the name nor the connection: a
 loaded forest is reassigned its slots.
 
 Every node holds one, `state`, the state before it. A class may own
-further slots — `Theorem`'s `goal_state` (THEOREM.md §6) — and does so
-itself: it mints each where the node is built, in `gen` and
-`from_store`; appends it in `_states_inside()`, so that it is deleted
+further slots — the plugin's `goal_state` (node_classes/COMMON.md §3) —
+and does so itself: it mints each where the node is built, in `gen` and
+`from_store`, or once in a constructor both reach, as `Proof_Obligation`
+does; appends it in `_states_inside()`, so that it is deleted
 with the node; and names it in `_slots_written_by(operation)`, empty by
 default, which answers the further slots an operation writes besides
 its resulting state — `operation` as `on_invalidated` is told it. The
@@ -719,12 +726,15 @@ the same `Evaluation` (the invalidation functions, below).
 - `Theory(StdBlock)` — the root of a tree (node_classes/SESSION_AND_THEORY.md
   §2); owns its resulting slot, `_state_after_ending`, which nothing
   reads; `file_path()`, `<Session name>/<short name>.thy`, which the
-  header's `master_dir`, the compile and the compile hooks share; and
-  `import_sessions`, recorded when the header runs (COMPILATION.md §2).
+  header's `master_dir`, the compile and the compile hooks share;
+  `import_sessions` and `keywords`, recorded when the header runs
+  (COMPILATION.md §2; node_classes/SESSION_AND_THEORY.md §2); and
+  `print_name`, which writes a name of the tree into its file over
+  `keywords`.
   Before its header runs it makes its `Session`'s folder when that is
   absent, with the function the compile uses (COMPILATION.md §2, §5), so
   that AoA's proof store beside the file has a directory to be written
-  in (THEOREM.md §7). A folder that cannot be made — its path holds
+  in (node_classes/COMMON.md §3). A folder that cannot be made — its path holds
   something that is not a directory, or the system refuses — ends the
   conversation with a `TAT_StartupError` (EXCEPTIONS.md §1): the
   working directory's structure is TAT's alone, and nothing an agent
@@ -743,8 +753,8 @@ the same `Evaluation` (the invalidation functions, below).
 the forest does not store — this list and no other: the connection to the
 Isabelle side, the working directory (ARCHITECTURE §4), the log
 (LOGGING.md §2), the ending object (§4.6), the bound on the
-construction jobs running at once, None for none (node_classes/THEOREM.md
-§7; a compile has none), and the agents of the client process by the
+construction jobs running at once, None for none (CONSTRUCT_INTERACTION
+§3.2; a compile has none), and the agents of the client process by the
 identity the client gives them (CONSTRUCT_INTERACTION §4), which the
 server creates and whose seen sets `forget` reaches (§4.1). A node
 reaches it through `forest().conversation` (PLUGIN_SYSTEM §2).
@@ -906,10 +916,13 @@ left; `move` nothing, the caller holding the moved node.
 
 Two fields of a construct belong to the framework: `kind` selects the
 node class (§4.4), and `children` — which no `gen` ever sees — holds a
-nesting node's contents. The framework checks the construct's mechanical
+nesting node's contents, for a class whose construct schema declares
+it: a Leaf's is `UnexpectedChildren`, and a nesting class's that
+declares none is a field the class does not declare, `UnexpectedField`.
+The framework checks the construct's mechanical
 shape — no field the class does not declare, required fields present,
-types right — against the class's declared argument schema
-(`check_fields`, §4.4), raising `UnexpectedField` / `MissingField` /
+types right — against the class's construct schema, by the
+tool-argument checker (`check_call`, §4.4), raising `UnexpectedField` / `MissingField` /
 `InvalidField` before the class is consulted. The JSON tool schemas are
 hand-written, as AoA's (`contrib/Isa-Mini/IsaMini/AoA/tools/`).
 
@@ -921,7 +934,8 @@ and its resolved imports, the `Theory` nodes themselves
    `children`-legality checks (`UnexpectedChildren`,
    `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
    table alone, so they run before any `gen`), the class lookup, the
-   schema check, `gen`, then — for a nesting class — its `children`, built
+   schema check (§4.4; a `children` that is not a list meets it there,
+   `must be a list`), `gen`, then — for a nesting class — its `children`, built
    by the framework onto the fresh, still-detached node the same way. The
    framework assigns each new node a fresh state slot and reads the name
    off the finished node: a name outside the grammar of
@@ -956,7 +970,12 @@ and its resolved imports, the `Theory` nodes themselves
    the instant status (`evaluation_status`); every other new slot stays empty, as befits
    `not_evaluated` nodes. Then one synchronous block, nothing awaited
    inside it, so a call holding no lock never sees a part-changed forest
-   (MCP_SPECIFICATION §5): the pointer surgery, which cannot fail — the
+   (MCP_SPECIFICATION §5): on amend first the carry — the replacement's
+   `_copy_carried_job(old)`, which, for a replacement of the replaced
+   node's own class, asks `_carries_job_from(old)` and copies the old
+   job's image (CONSTRUCT_INTERACTION §3.1); what the
+   question raises is the class's bug, raised while the forest is
+   untouched —; then the pointer surgery, which cannot fail — the
    batch is linked in; on amend the replacement takes `old`'s position,
    state slot, identity number and children; then the in-memory
    invalidation, `Forest._invalidate_from(position, ev)` (§4.1; `move`
@@ -1066,10 +1085,16 @@ round trips (CONSTRUCT_INTERACTION §3.2). `call` shields the round
 trip: a callback is a two-phase exchange on the RPC connection that must
 not be interrupted, so a cancellation of the caller unwinds it at once
 while the round trip in flight completes on its own and its result is
-dropped. Isabelle text crosses here as `IsaTerm`
-(`Isabelle_RPC_Host.unicode`): a function takes it and sends `.ascii`,
-and wraps the text Isabelle returns with `IsaTerm.from_isabelle`, so no
-caller converts (THEOREM.md §2).
+dropped. Every piece of Isabelle text is an `IsaTerm`
+(`Isabelle_RPC_Host.unicode`, shared with AoA): one value holding the
+text in both spellings, `unicode` as the agent writes and reads it and
+`ascii` in Isabelle's `\<name>` form, the only form Isabelle/ML reads;
+built by `IsaTerm.from_agent` at `gen` and by `IsaTerm.from_isabelle`
+where Isabelle's text comes back, `str()` refused, two equal when their
+`ascii` is. Printing writes `.unicode`, emission and every ML call
+`.ascii`; the store holds `.unicode`. A function here takes it and
+sends `.ascii`, and wraps the text Isabelle returns with
+`IsaTerm.from_isabelle`, so no caller converts.
 
 ### 4.4 `plugin.py`
 
@@ -1087,17 +1112,38 @@ packages define. The loader checks a hook is a plain function of one
 positional argument, neither a coroutine nor a generator. The table is what `edit`
 dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
-schema, is PLUGIN_SYSTEM.md. `check_call(schema, tool, arguments)` checks
-a tool call's own arguments against the schema the tool advertises — the
-one object the agent is told and held to — the way `check_fields`
-checks a construct's fields against its class's declaration: an argument
-the schema does not name, a required one missing, a type, an `enum`, an
-empty `constructs` (`minItems`), an object's fields by their names and a
-typed `items`' elements by their index, the innermost at fault reported;
-the constructs themselves it leaves to `edit.py`. The refusal is marked
-as the call's on its way out (`RawASTError.of_tool`), which the three
-shape errors render as tool and argument (RENDER_BASELINES §2). The two
-checkers render in one vocabulary, the JSON types' phrases, held once.
+schema, is PLUGIN_SYSTEM.md. `check_call` — given a schema, the holder
+and the top-level fields to pass over — is the one checker: of a tool
+call's own arguments against the schema the tool advertises, the one
+object the agent is told and held to; and, handed one by one by
+`edit.py`, of each submitted construct against its class's construct
+schema, the holder the kind, `kind` passed over unread — the kind table
+chose the class from it, and it may be a bare `const`. Shared by both:
+a field the schema does not name, a required one missing, a type, an
+`enum` by membership, an empty list under `minItems: 1`, an object's
+fields by their names and a typed `items`' elements by their index, a
+`$ref` followed into the class's `$defs`, an `anyOf` in this order — a
+value of no arm's JSON type, `must be` the arms' distinct JSON types,
+each once, in the order the schema first names them, joined by `or`; a
+value of one arm's type, against that arm; an object among objects told
+apart by an `enum` field, a field none of them declares,
+`UnexpectedField`, whose `it takes` lists their fields in the order
+they first appear, then the choosing field missing, `MissingField`,
+then its value not a string or outside every arm, `must be one of …`,
+then the chosen arm — the innermost at fault reported, so a typo in a
+field's name is told before the hole it leaves; and an `items` that
+names `Construct` or a node class — `edit`'s `constructs`, a class's
+`children` — checked to be an array, with `minItems` where declared,
+its elements left to `edit.py`, which checks each against its own
+class's construct schema (§4.2), the framework checking no containment.
+The tool call's entry point alone, before the check, refuses an
+argument nested deeper than 100 levels, each object or array a level,
+`must not be nested deeper than 100 levels`, and marks every refusal as
+the call's on its way out (`RawASTError.of_tool`), which the three shape
+errors render as tool and argument (RENDER_BASELINES §2); a construct's
+refusal is never so marked, renders with the word `field`, and its `it
+takes` lists the top-level fields less `kind` and `children`. The
+vocabulary is one, the JSON types' phrases, held once.
 `validate_call_schema(schema, where)` refuses, as the tools are built
 (§4.6), a schema saying anything the check does not enforce or its
 sentences cannot say, and one saying too little for the check to read —
@@ -1108,7 +1154,8 @@ grammar of its own: a well-formed JSON schema that is an object carrying
 them; a `string`, an `integer` or a `number`, each optionally with an
 `enum` of one or more values of its type; a `boolean`; an `array` with
 `items`, either a schema of this
-grammar or the `Construct` `$ref` the check leaves to `edit.py`, and
+grammar or a `$ref` to `Construct` or a node class, whose elements the
+check leaves to `edit.py` (above), and
 optionally `minItems: 1`, the only count its sentence can say;
 `description` anywhere, `$defs` at the top alone; and one property
 declared as a bare `object`, `answer`'s `answer`, which the check reads
@@ -1116,17 +1163,37 @@ as "an object" until the pending question's own schema — itself within
 this grammar — takes its place at call time (CONSTRUCT_INTERACTION §5).
 
 The argument schema grammar lives here too. A declaration's annotations
-come from a closed grammar — `str`, `bool`, `int`, `float`, `Any`,
-`list[X]`, a TypedDict, and unions of those holding at most one
-TypedDict and no arm another makes moot (`Any`, `int` beside `float`),
-each field optionally wrapped in `NotRequired[X]` or
-`Required[X]`, which the loader reads off the annotation itself — so every
-check renders within RENDER_BASELINES §2's
-vocabulary; `@TAT_node` refuses anything else when the class is
-registered, as it refuses a TypedDict that nests itself and an annotation
-Python cannot resolve. `check_fields` checks a submitted construct
-against the declaration; `edit.py` runs it before the class's `gen`
-(§4.2).
+come from a closed grammar — `str`, `bool`, `int`, `float`,
+`Literal[...]` of strings, `list[X]`, a non-empty list
+`Annotated[list[X], NON_EMPTY]`, a TypedDict, and unions — each field
+optionally wrapped in `NotRequired[X]` or `Required[X]`, which the
+loader reads off the annotation itself — which, through the agreement
+check (PLUGIN_SYSTEM §5), keeps every construct schema within what
+`check_call` enforces and its sentences can say, RENDER_BASELINES §2's
+vocabulary. A union's arms are `str`, `bool`,
+`int`, `float`, `list[X]` and TypedDicts, no two of one JSON type —
+`int` and `float` are both numbers — except TypedDicts declaring one
+and the same required `Literal` field, one such field only, its values
+disjoint from the other arms', which chooses among them: the value's
+JSON type chooses the arm, and among such TypedDicts the choosing
+field. A `Literal` and a non-empty list are never arms: their refusals,
+`must be one of …` and `must not be empty`, speak for the whole field,
+and would be false where another arm accepts what they refuse. There is
+no `Any`: a field the construct schema structures is checked as deep as
+the value goes, and the grammar offers no field left opaque. A
+TypedDict may nest itself, and does exactly where the construct schema
+refers back to a definition the agreement check is already inside
+(PLUGIN_SYSTEM §5) — every cycle of `$ref`s passes through an object,
+so the TypedDict that nests itself is always there to meet it —; it is
+then defined at module level, where Python resolves the reference. `@TAT_node` refuses anything else when the
+class is registered, as it refuses an annotation Python cannot resolve.
+A submitted construct is checked against its construct schema, not the
+declaration, by `check_call` (above), which `edit.py` runs before the
+class's `gen` (§4.2); the declaration types `gen`'s `raw`, and the
+agreement check (PLUGIN_SYSTEM §5) — comparing values, fields and arms
+as sets, since an annotation does not reliably keep its order: typing's
+cache hands one union's arms, or one `Literal`'s values, to an equal
+one written in another order — is what makes the two one object.
 
 ### 4.5 The plugin `Isabelle_Std`
 
@@ -1142,23 +1209,24 @@ resolve — so TAT requires Isa-Mini present, which is no loss, since the
 `aoa` proof method the plugin needs lives there and TAT without it does
 nothing (EVALUATOR_DESIGN §5). Its theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and
-`Minilang_AoA.Minilang_AoA` and loads one ML file per node class from
-`Isabelle_Std/ML/`; the Python half is the subpackage
-`isabelle_theory_agent.std`, which the theory's registrations name
-(§2.5), one module per class. A working directory takes the plugin with
+`Minilang_AoA.Minilang_AoA` and loads from `Isabelle_Std/ML/` the
+plugin's shared ML, `TAT_Proof_Obligation.ML`, then one ML file per node
+class; the Python half is the subpackage `isabelle_theory_agent.std`,
+which the theory's registrations name (§2.5), `common.py` and one
+module per class (node_classes/COMMON.md). A working directory takes the plugin with
 `-P TAT_Isabelle_Std.TAT_Isabelle_Std` to `isabelle TAT_new` or
 `isabelle TAT` (§5) and is
 launched on the base heap `Minilang_AoA` (`-l`), so that AoA's theory is
 not loaded from source at every launch; `TAT_Isabelle_Std` being on the
 session search path, no `-d` is needed. The plugin declares the import
 `Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined, for the
-forest's theories (PLUGIN_SYSTEM §1, node_classes/THEOREM.md §5).
+forest's theories (PLUGIN_SYSTEM §1; node_classes/SESSION_AND_THEORY.md §2).
 
-`Theorem` is its first class, and
-brings two job classes (THEOREM.md §7): `Proof_Job`, its
+`Theorem` is its first class. The two job classes are
+`Proof_Obligation`'s (node_classes/COMMON.md §3): `Proof_Job`, the
 construction job, whose `_run` drives the AoA search and returns the
 proof as the job's product, which
-the framework stores on the node; and `Proof_Check`, its evaluation job,
+the framework stores on the node; and `Proof_Check`, the evaluation job,
 whose `_start` forks the replay of that proof on the ML side (§2.4's
 `fork_job`). The framework, not the class, posts the jobs' notifications
 to the owner's or starter's mailbox (CONSTRUCT_INTERACTION §3.4) and
@@ -1236,7 +1304,7 @@ defaults.
 
 - It is registered with the SDK's input validation off
   (`validate_input=False`): the framework checks a submitted construct
-  against the class's declared argument schema itself and answers
+  against its class's construct schema itself, by `check_call`, and answers
   `UnknownKind`, `MissingField`, `UnexpectedField` and `InvalidField`
   (EXCEPTIONS.md §3); the SDK's jsonschema message never reaches the agent.
 - It renders a `TAT_Error` into the result and renders nothing else. Any
@@ -1410,8 +1478,8 @@ working directory, the port, the client's name and the text of
 return — an empty text is no bound on the construction jobs running at
 once, and any other that is not a positive integer is a
 `TAT_StartupError`, `TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS
-to be a positive integer, but it is <value>` (node_classes/THEOREM.md
-§7); and `compile_TAT` with the package list and the working
+to be a positive integer, but it is <value>` (CONSTRUCT_INTERACTION
+§3.2); and `compile_TAT` with the package list and the working
 directory, which returns whether every tree was written and the
 report's lines (COMPILATION.md §5). The start is three layers of context
 managers, the two procedures sharing the first two:

@@ -1,7 +1,9 @@
 # The `Theorem` node class
 
 Status: decided, last on 2026-10-02, after four design reviews
-(ai-artifacts/review/CONSTRUCT_RULING*.md); the AoA round is open. The
+(ai-artifacts/review/CONSTRUCT_RULING*.md); revised 2026-10-12 with the
+node-class rounds (ai-artifacts/review/NODE_CLASS_RULINGS.md), what
+every class shares moved to COMMON.md; the AoA round is open. The
 machinery this class uses — jobs, agents, messages, the tools — is
 CONSTRUCT_INTERACTION.md; this file says only what `Theorem` makes of
 it.
@@ -11,8 +13,10 @@ A `Theorem` states a fact and never proves it in the tree (ARCHITECTURE
 the proof construction, finds a proof, which its evaluation job, the
 proof check, replays in the current context, and which the emitted
 theory carries as `by aoa`. It is a `Leaf`, the first node class of the
-plugin `Isabelle_Std`: its Python half, with its two job classes
-`Proof_Job` and `Proof_Check`, is `isabelle_theory_agent/std/theorem.py`,
+plugin `Isabelle_Std`, deriving from the plugin's `Theory_Member` and
+`Proof_Obligation` (COMMON.md §1, §3), whose job classes `Proof_Job` and
+`Proof_Check` are `Proof_Obligation`'s: its Python half is
+`isabelle_theory_agent/std/theorem.py`,
 its ML half `Isabelle_Std/ML/TAT_Theorem.ML`, loaded by the plugin's
 theory `TAT_Isabelle_Std`, which imports AoA's. A working directory has
 it when it was made with `-P TAT_Isabelle_Std.TAT_Isabelle_Std` to
@@ -32,7 +36,6 @@ heads the id component: `lemma_P`.
 | `kind` | one of the four | authored |
 | `name` | the fact's name, `str`, in the id grammar without hyphens — a letter, then letters, digits, underscores and primes, not ending in an underscore — since it is the node's id component (MCP_SPECIFICATION §2); a name outside it is refused with the grammar's own sentence, as a `Theory`'s is | authored |
 | `statement` | `LongStatement` (§2) | authored |
-| `reserved_names` | `set[str]`: the names of the statement — the fact's, the variables', the premises' — that the last evaluation found reserved by the input theory's keyword table, in their `ascii` spelling, written in double quotes at emission (§5); stored, since emission runs on a loaded forest and reads only stored fields | recorded |
 
 What the last evaluation reported is no field of the class: the
 messages travel on the status the evaluation hook returns —
@@ -42,42 +45,9 @@ them (COMPILATION.md §4, PRINT.md §3).
 
 Three things more are recorded on the node by the framework, not by
 the class: the two jobs' outcomes and the construction job's
-automatic-construction setting (CONSTRUCT_INTERACTION §3.2). `proof` is
-the construction job's outcome (CONSTRUCT_INTERACTION §3.1):
-`NOT_STARTED`, `RUNNING`, `SUCCEEDED(product)` or `FAILED(message)`,
-`product` being the proof: the method text AoA writes to its proof
-store, such as `(simp add: …)` or `aoa_replay "…"`, with the two times of
-its replay — the thread's CPU time and the wall time, in milliseconds,
-as AoA records them beside a proof, in the standard-machine form its
-store holds — which the proof check derives its limits from (§7); it is
-stored. The proof check's outcome — `RUNNING`, `PASSED`, `FAILED` —
-is read through the framework's `check_outcome()`: `RUNNING` while a
-running proof check is on the node, the stored check otherwise, which
-is cleared when a stored status of the node leaves `ready`, when a proof
-construction starts, or when another check takes its place, and by
-nothing else (CONSTRUCT_INTERACTION §3.3, ARCHITECTURE §4.1). The mark
-(§7), `_check()` (§7), emission (§5) and the failure block (§8) read it
-there.
-
-One thing more the node holds in the process and never stores:
-`goal_state`, a state slot the class owns beside the node's own
-(ARCHITECTURE §3.1, MODULE_STRUCTURE §4.1), holding the `Toplevel.state`
-in which the statement's goal stands open and no proof step has been
-taken — what the evaluation's first transition yields (§6). It holds a
-state exactly while the node's instant status is `ready`: the class
-mints it where the node is built, in `gen` and `from_store`, so that a
-loaded node's is empty, like its `state`; appends it in
-`_states_inside()`, so that it is deleted with the node; and names it
-in `_slots_written_by`, so that the framework releases it with the
-node's resulting state when the status goes to `not_evaluated`. Only
-the evaluation callback writes it, and it clears it when a rerun of a
-`ready` node fails, a rewrite that releases nothing.
-The proof construction and the proof check both work on the
-goal it holds (§7).
-
-The construction job is compulsory: the node is finished only when
-`proof` is `SUCCEEDED` and the proof check `PASSED` (ARCHITECTURE §3.2,
-the framework's `_unfinished`).
+automatic-construction setting (CONSTRUCT_INTERACTION §3.2). `proof`,
+its product, the proof check's outcome, the slot `goal_state` and the
+compulsory construction job are `Proof_Obligation`'s (COMMON.md §3).
 
 ## 2. The statement
 
@@ -85,8 +55,7 @@ the framework's `_unfinished`).
 (`Variable` and `LongStatement`, adapted from
 `contrib/Isa-Mini/IsaMini/AoA/tools/cc_edit.jsonc` — TAT's copy, with
 the descriptions of §3) so that every class
-using it — a future `Define` — merges the same definition (PLUGIN_SYSTEM
-§5):
+using it merges the same definition (PLUGIN_SYSTEM §5):
 
 ```json
 {
@@ -105,16 +74,10 @@ in `for_any`: one Isabelle fixed by itself is refused at evaluation (§6).
 is accepted: newlines become spaces and runs of whitespace one space;
 printing, emission and evaluation all use the stored text.
 
-Every piece of Isabelle text is an `IsaTerm` (`Isabelle_RPC_Host.
-unicode`, shared with AoA): one value holding the text in both
-spellings, `unicode` as the agent writes and reads it and `ascii` in
-Isabelle's `\<name>` form, the only form Isabelle/ML reads; built by
-`IsaTerm.from_agent` at `gen` and by `IsaTerm.from_isabelle` where
-Isabelle's text comes back, `str()` refused, two equal when their
-`ascii` is. `for_any[].name`, `for_any[].type`, `premises[].name`,
+Every piece of Isabelle text is an `IsaTerm` (MODULE_STRUCTURE §4.3):
+`for_any[].name`, `for_any[].type`, `premises[].name`,
 `premises[].term` and `conclusion` are `IsaTerm`s; `english` and `name`
-are `str`. Printing writes `.unicode`, emission and every ML call
-`.ascii`; the store holds `.unicode`.
+are `str`.
 
 The class's construct schema:
 
@@ -123,7 +86,7 @@ The class's construct schema:
   "type": "object",
   "properties": {
     "kind":      { "type": "string", "enum": ["lemma", "theorem", "corollary", "proposition"] },
-    "name":      { "type": "string", "description": "The fact's name" },
+    "name":      { "type": "string" },
     "statement": { "$ref": "#/$defs/LongStatement" }
   },
   "required": ["kind", "name", "statement"],
@@ -142,12 +105,6 @@ framework's setting on the construction job (CONSTRUCT_INTERACTION
 
 ## 3. Descriptions
 
-`name`:
-
-```
-The fact's name
-```
-
 `LongStatement`, in the order `english`, `for_any`, `for_any[].type`,
 `premises`, `premises[].name`, `premises[].term` and `conclusion`:
 
@@ -165,30 +122,25 @@ Isabelle/HOL term with all literal numbers annotated with types
 
 ## 4. `gen`
 
-`Theorem.gen` checks: the parent is inside a theory — a `Theory`, or a
-nesting node under one; never a `Session` or the root
-(`BadTheoremNodeParent`, RENDER_BASELINES §2); `name` against §1's
+`Theorem.gen` calls `require_inside_theory` first (COMMON.md §1), then
+checks: `name` against §1's
 grammar (`InvalidName` with `grammar` = `fact name`, rendered as
 RENDER_BASELINES §2's fourth form with that grammar); every `for_any`
-variable's `name` and every premise's `name` an Isabelle identifier — on
-the `ascii` form, a letter or one of Isabelle's letter symbols, then
-letters, digits, underscores, primes, and `\<^sub>` before a letter or
-digit, judged in Python beside `IsaTerm` with the symbol table's letter
-symbols (`get_LETTER_SYMBOLS()` of `Isabelle_RPC_Host.unicode`), so `ε`
-and `x⇩1` pass — a variable's not ending with an
-underscore, and no two of either the same (`InvalidField`). Whether the
+variable's `name` and every premise's `name` an Isabelle identifier
+(COMMON.md §5), a variable's not ending with an underscore (COMMON.md
+§5's clause on internal names), and no two of either the same
+(`InvalidField`). Whether the
 terms parse is Isabelle's business at evaluation (MODULE_STRUCTURE
 §4.1); a term Isabelle rejects is an evaluation failure, not an
-exception. On an amend, `gen` compares the new `for_any`, `premises` and
-`conclusion` with those of the node it replaces — `config.replaces()`,
-the `Amendment`'s `old` for the batch's first construct (MODULE_STRUCTURE
-§4.1) — names included and `english` aside, through the one private
-helper that also builds the structure
-sent to Isabelle (§6), so what is compared is what the check replays;
-when equal it asks, through the framework's `carry_job_from(old)`, for
-the replaced job's outcome to be carried into
-the new node's job, and the commit copies the store's image
-(CONSTRUCT_INTERACTION §3.1), the replay times with it.
+exception. `Theorem`'s `goal_structure()` (COMMON.md §3) is the
+`for_any`, `premises` and `conclusion`, names included — each binds a
+fact a stored proof may cite —, each `IsaTerm`
+as its `ascii`, built by the one private helper that also builds the
+structure sent to Isabelle (§6). `english`, `kind` and `name` are not
+in it, since Isabelle opens the same goal for the four kinds and for
+any name: on an amend a rename, a change of kind or a reworded
+`english` keeps the proof, and a change to any other part of the
+statement does not. `gen` has no part in it.
 
 The `InvalidField` sentences:
 
@@ -198,14 +150,8 @@ The field `statement.premises[1].name` binds `ne` a second time.
 ```
 
 The grammar text after the colon is the framework's, the one
-`InvalidName` renders for a fact name (below), written once and used by
-both.
-
-The `InvalidName` rendering:
-
-```
-`rev-length` is not a valid fact name: a fact name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
-```
+`InvalidName` renders for the grammar `fact name` (RENDER_BASELINES
+§2), written once and used by both.
 
 ## 5. Emission
 
@@ -221,27 +167,17 @@ lemma rev_length:
   by aoa
 ```
 
-- The `text` line: the kind capitalised, the name, a period, then
-  `english`, with a period added when it ends without `.`, `!` or `?`.
-  `‹`, `›`, `\<open>` and `\<close>` in `english` are replaced by `"` at
-  emission, so the cartouche always closes where it should; nothing is
-  refused.
+- The `text` line's lead: the kind capitalised and the name, `Lemma
+  rev_length.`; the line is COMMON.md §2's.
 - A variable without `type` is fixed bare (`fixes xs`); an empty
   `for_any` or `premises` omits its clause; every term in double quotes.
-- A name in `reserved_names` (§1) is written in double quotes — `lemma
-  "open":`, `fixes "for"`, `assumes "if":` — the rule of Isabelle's own
-  `Token.print_name`; every other name bare.
-- `by aoa` when `proof` is `SUCCEEDED` and the proof check's stored
-  outcome (§1) is `PASSED`; `sorry` otherwise — an unchecked proof is
-  written as `sorry`. A build of the file finds the proof in the
-  theory's proof store, `<short name>.proof-store` beside the file,
-  where the construction's AoA call recorded it (§7), and replays it
-  without searching. The `aoa` method is defined in
-  `Minilang_AoA.Minilang_AoA`, which the plugin has the theory import:
-  it is added to the header of every theory that imports no theory of
-  the forest, at evaluation and at emission alike, and reaches the
-  others through their imports; the agent writes no such import, and
-  the `imports` line it reads shows only its own.
+- Every name — the fact's, a variable's, a premise's — is written
+  through the theory's `print_name` (SESSION_AND_THEORY §2): in double
+  quotes when it is a keyword of the theory, `lemma "open":`, `fixes
+  "for"`, `assumes "if":`, bare otherwise.
+- The terminal proof, `by aoa` or `sorry`, is `Proof_Obligation`'s
+  `proof_text()` (COMMON.md §3); the `aoa` method's import is the
+  plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
 - The whole text in the `\<name>` form (`IsaTerm.ascii`, §2); the file
   reads as Unicode in jEdit all the same.
 
@@ -249,14 +185,17 @@ lemma rev_length:
 
 The evaluator runs the statement and admits it, never a proof
 (ARCHITECTURE §3.6), and never runs the `text` command. It goes through
-the ML interfaces. `Theorem._eval_opr` sends the class's callback
-`TAT.Theorem.evaluate` the input slot, the node's `goal_state` slot
-(§1), the resulting slot, and the statement as structure — `kind`,
-`name`, the `for_any` variables with their types, the premises, the
-conclusion — each `IsaTerm` as its `ascii` (§2). The ML side builds two
-transitions and applies them in turn to the input slot's state: the
-`lemma` command's own, and the half of `sorry` that ends a toplevel
-goal (`Isar_Cmd.skip_proof`):
+the ML interfaces. `Proof_Obligation`'s `_eval_opr` (COMMON.md §3)
+sends the class's callback — `evaluation_callback`,
+`TAT.Theorem.evaluate` — the input slot, `goal_state`, the resulting
+slot, and its `message()`: `kind`, `name` and `goal_structure()` — the
+`for_any` variables with their types, the premises, the conclusion —
+each `IsaTerm` as its `ascii` (§2). The callback is one call of
+`TAT_Proof_Obligation.evaluate` (COMMON.md §3) with `Theorem`'s own
+function, which builds the `lemma` command's transition;
+`TAT_Proof_Obligation.evaluate` applies the half of `sorry` that ends a
+toplevel goal
+(`Isar_Cmd.global_skip_proof`):
 
 ```
 Toplevel.local_theory_to_proof NONE NONE
@@ -268,18 +207,14 @@ Toplevel.end_proof Proof.global_skip_proof
 ```
 
 — the shape of `begin_theory`, through `apply_transition`, no proof step.
-The first's result, the goal open and no step taken, is written into
+The first's result, the goal open and no step taken, goes into
 `goal_state`, where the proof construction and the proof check find
-their goal (§7); the second's into the resulting slot: at theory level
-the same four steps as a hand-written `theory_init … exit_global`, and
-inside a future `Context` or `Locale` the statement is checked in that
-context, as ARCHITECTURE §2 promises. An interrupt and a `Bug` are
-re-raised; any other error is the statement's: no state is written into
-either slot, the callback empties `goal_state` — a rerun of a `ready`
-node rewrites its status and releases nothing, so the earlier run's
-goal would stand there otherwise —, answers the messages, and `_eval_opr` returns
-`CannotEvaluate` with them — the node is an obstacle. Between the two
-transitions, the goal open, the callback refuses the statement whose
+their goal; the second's into the resulting slot (COMMON.md §3): at
+theory level the same four steps as a hand-written `theory_init …
+exit_global`, and inside a future `Context` or `Locale` the statement
+is checked in that context, as ARCHITECTURE §2 promises. A failure is
+`TAT_Proof_Obligation.evaluate`'s (COMMON.md §3). Between the two transitions, the goal open,
+`Theorem`'s function refuses the statement whose
 free variables — in the goal, or in the premises assumed beside it —
 `for_any` does not declare, which Isabelle fixed by itself (§2): the
 same failure, one message naming them in alphabetical order,
@@ -289,175 +224,22 @@ Undeclared variable `x`: declare it in `for_any`.
 Undeclared variables `x` and `y`: declare them in `for_any`.
 ```
 
-Otherwise the callback answers, for the fact's name, each
-variable's and each premise's, whether `Thy_Header.print_name` would
-quote it in this theory; `_eval_opr` returns `Ready` with no
-messages, the class records the names as `reserved_names` (§1), and
-emission quotes them (§5). A reserved name
-is not a failure: Isabelle accepts it quoted at every use.
-
-The proof check is started apart from the evaluation, by the framework's
-`start_evaluation_job()` (CONSTRUCT_INTERACTION §3.3): with the job
-already on the node, `Proof_Check._start` calls the class's second
-callback `TAT.Theorem.check` with the node's `goal_state` slot, the
-stored `product` — the text and its times — and the job's `id`; the
-callback forks the check as a Future task (§7) and returns. The proof
-construction's callback, `TAT.Theorem.construct`, is the class's third
-(§7).
+Otherwise `_eval_opr` returns `Ready` with no messages. The proof check
+and the proof construction, with their callbacks
+`TAT.Proof_Obligation.check` and `TAT.Proof_Obligation.construct`, are
+`Proof_Obligation`'s (COMMON.md §3).
 
 ## 7. The jobs and the mark
 
-### `Proof_Job`
-
-`title()` is `proof construction`, `title(plural=True)` `proof
-constructions`; `compulsory` is true. Its `_run` calls the class's third
-callback `TAT.Theorem.construct` with the node's `goal_state` slot (§1,
-§6) and the id of the run's fork (CONSTRUCT_INTERACTION §3.2), and
-waits for the report. The callback takes the
-slot's `Proof.state` (`Toplevel.proof_of`), its context and goal
-(`Proof.goal`), and forks through the framework's `fork_job`
-(MODULE_STRUCTURE §2.4) one call of AoA's `hammer_or_AoA'`
-(`contrib/Isa-Mini/Agent/agent_server.ML`) on them — what the `aoa`
-method does on a goal: the proof store looked up first, then
-Sledgehammer, then the AoA agent, and the proof found written back into
-the store — a task of its own, which may land after the report —, all
-on AoA's own path with both store switches on; the driver
-and the budget are what Isabelle's configuration gives AoA
-(`AoA_driver`, Minilang's default budget), TAT setting neither. The
-report brings the product: the method text and its two times in the
-store's standard-machine form, which `hammer_or_AoA'`, the entry beside
-`hammer_or_AoA`, returns beside the text. How many runs are inside `_run` at once
-(CONSTRUCT_INTERACTION §3.2) is bounded by the Isabelle environment variable
-`TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`, unbounded when it is unset or
-empty; a value that is not a positive integer refuses the start, with
-`TAT requires TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS to be a positive
-integer, but it is <value>`. A run waiting for its turn is `RUNNING`,
-and shows as any running one, `proving`. AoA's Python half, the remote procedure `IsaMini.AoA`, is
-served by TAT's own process — the plugin's package imports it —, so a
-question the search asks reaches the job through the process's job
-table (CONSTRUCT_INTERACTION §3.3); the questions themselves — AoA's
-`request` as a question to the owner, what it asks and what the answer
-does, and AoA being told it runs under TAT — are the AoA round's
-remainder (CONSTRUCT_INTERACTION §10). On success the run attaches
-`Proof_Check.passed(node)` to the node and returns `SUCCEEDED` with the
-product: a run that reaches its end saw no context change (the default
-`_on_context_change` below), so the proof AoA verified holds in the
-current context and the node is `proven` from the run's settlement on.
-`_check()` answers whether a proof can be constructed on the node as it
-stands — the framework's `can_start()` having answered false off `ready`
-(CONSTRUCT_INTERACTION §3.2); a node answered false for is skipped by
-`construct` and by automatic construction, with no sentence of its own:
-
-| the node | `_check()` |
-| --- | --- |
-| no proof — `NOT_STARTED` or `FAILED` | true |
-| `SUCCEEDED`, the proof check `PASSED` | false: it is proven |
-| `SUCCEEDED`, no proof check yet or one `RUNNING` | false: the proof is checked first |
-| `SUCCEEDED`, the proof check `FAILED` | true |
-
-`_on_context_change` is the default: the job is cancelled with
-`CONTEXT_CHANGED` whenever the walk writes the node's status while it
-runs — leaving `ready`, or rewriting it on a rerun. Overriding it to
-continue on the new context and repair the stored proof is the AoA
-round's.
-
-Its sentences (the rest are the framework's defaults from `title`):
-
-| situation | |
-| --- | --- |
-| `finished_notification`, success | `` `theory_X.lemma_P` is proven. `` |
-| `finished_notification`, failure | `` No proof of `theory_X.lemma_P` was found: `` + the message |
-| `failure_header` | `No proof was found:` |
-
-### `Proof_Check`
-
-`Theorem.evaluation_job_class`. `title()` is `proof check`,
-`title(plural=True)` `proof checks`. `make` is the default; `_start`
-calls `TAT.Theorem.check` (§6) once the framework has put the job on the
-node. Its work, the Future task the callback forks: the goal is
-`Proof.goal` of the `Proof.state` the node's `goal_state` slot holds
-(§1, §6) — the goal the construction worked on; no Toplevel transition
-— and the stored `product`, the text with its times, is replayed on
-that goal through a function exported from AoA: the part of
-`Proof_Store_AoA.store_hit_replay`
-(`contrib/Isa-Mini/Agent/proof_store_AoA.ML`) that takes one record,
-derives the replay limits from its times
-(`Phi_Proof_Store.replay_limits`) and evaluates its text as a method on
-the goal (`Phi_Sledgehammer_Solver.eval_prf_str`). TAT writes no limit
-of its own; the check reads nothing from AoA's proof store, which only
-the construction's AoA call reads and writes (`Proof_Job` above). A
-`product` of the form `aoa_replay "<b64>"` is itself a method
-that re-runs the recorded Minilang commands; one Sledgehammer found is
-a plain method text such as `metis …`. The check and the construction
-work on the same goal, the one `goal_state` holds. A theorem out is `PASSED` and is
-discarded. No theorem — the method failing, subgoals left, a limit
-exceeded — is `FAILED` with an empty message: the replay reports a
-class of failure and no text, and the agent can only have the proof
-constructed again; the callback reports it as one empty error. Nothing
-in the work applies a Toplevel transition or forks a proof, so it never
-enters Isabelle's execution table (CONSTRUCT_INTERACTION §3.3).
-`_finished` is the default. The class method `passed(node)` builds an
-instance with `outcome = PASSED` without running, for `Proof_Job`.
-
-Its sentences. The failure block is the header alone, its colon a
-period since no message follows (CONSTRUCT_INTERACTION §6); the
-notification tells what to do next, and names several nodes in one
-sentence or one list (CONSTRUCT_INTERACTION §3.4):
-
-```
-The proof no longer holds.
-The proof of `theory_X.lemma_P` no longer holds. Call `construct` to prove it again.
-The proof of `theory_X.lemma_P`, of `theory_X.lemma_Q` and of `theory_X.lemma_R` no longer holds. Call `construct` to prove them again.
-The following proofs no longer hold; call `construct` to prove them again:
-  - theory_X.lemma_P
-  - theory_X.lemma_Q
-  - theory_X.lemma_R
-  - theory_Y.lemma_S
-```
-
-For the nodes under automatic construction the failure starts the
-proof construction at once (CONSTRUCT_INTERACTION §3.3), and the
-notification says so in place of the instruction:
-
-```
-The proof of `theory_X.lemma_C` no longer holds, so its proof construction was started automatically; call `check_construct` before you exit.
-The proof of `theory_X.lemma_C`, of `theory_X.lemma_G` and of `theory_X.lemma_K` no longer holds, so their proof constructions were started automatically; call `check_construct` before you exit.
-The following proofs no longer hold, so their proof constructions were started automatically; call `check_construct` before you exit:
-  - theory_X.lemma_C
-  - theory_X.lemma_G
-  - theory_X.lemma_K
-  - theory_X.lemma_M
-```
-
-### The mark
-
-`Theorem` overrides `mark` with two slots, `(<statement>, <proof>)`; the
-framework's `complete` never appears on its line.
-
-The statement slot, from the node's evaluation status: `valid statement`
-(`ready`), `invalid statement` (`cannot_evaluate`), `not evaluated`.
-
-The proof slot, from `proof` and the proof check:
-
-| `proof` | proof check | word |
-| --- | --- | --- |
-| `NOT_STARTED` | | `proof not started` |
-| `RUNNING` | | `proving` |
-| `FAILED` | | `failed to prove` |
-| `SUCCEEDED` | none | `unchecked proof` |
-| `SUCCEEDED` | `RUNNING` | `proof checking` |
-| `SUCCEEDED` | `PASSED` | `proven` |
-| `SUCCEEDED` | `FAILED` | `bad proof` |
-
-Under `invalid statement` the proof slot is left out: `(invalid
-statement)`. Under `not evaluated` a stored proof is left out and the
-other two words written: `(not evaluated)`, `(not evaluated, proof not
-started)`, `(not evaluated, failed to prove)`. A running proof check
-exists only under `valid statement` — a stored check survives under
-`not evaluated`, where the proof slot is left out — and a running proof
-construction only there too, so the line reads one of eleven ways, plus
-the tags of CONSTRUCT_INTERACTION §6: `automatic construction` for every
-agent, `needs your answer …` for the owner:
+The proof construction, `Proof_Job`, the proof check, `Proof_Check`,
+their callbacks `TAT.Proof_Obligation.construct` and
+`TAT.Proof_Obligation.check`, their sentences, and the two-slot mark
+`(<status>, <proof>)` are `Proof_Obligation`'s (COMMON.md §3).
+`Theorem`'s own are `valid_word` and `invalid_word`: `valid statement`
+(`ready`) and `invalid statement` (`cannot_evaluate`). Its line reads
+one of eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
+`automatic construction` for every agent, `needs your answer …` for the
+owner:
 
 ```
 (valid statement, proof not started)  (valid statement, proving)         (valid statement, failed to prove)
@@ -502,11 +284,8 @@ whole under `Recall` at depth 0 and 1, elsewhere once per run, through
 the seen set, whose keys the framework keeps and discards at every
 status write.
 
-The jobs' blocks — the framework prints them after `print_fields`, when
-detailed, while the outcome is `FAILED` and the node is not an obstacle
-(CONSTRUCT_INTERACTION §6) — are the failure blocks alone: the header of
-§7 and the message one level deeper. A pending question is never printed
-here; the tag on the line sends the agent to `check_construct`, after
+The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3). A pending
+question is never printed here; the tag on the line sends the agent to `check_construct`, after
 the tag `automatic construction` when that setting is on
 (CONSTRUCT_INTERACTION §6). The line
 with a question waiting; a focus in a quickview after a failed proof

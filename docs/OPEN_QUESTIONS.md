@@ -7,19 +7,21 @@ Nothing here is settled. Ordered by what it blocks.
 **Blocks:** most of what an agent would actually write.
 
 The node classes of the plugin `Isabelle_Std` are listed in
-node_classes/INDEX.md; every one but `Theorem` (node_classes/THEOREM.md)
-and the part of `Define` ARCHITECTURE §2.2 gives is unspecified.
+node_classes/INDEX.md, whose last column says which are specified.
 `Context` and `Locale` also need their two omissibility flags
-(MCP_SPECIFICATION §2.1).
+(MCP_SPECIFICATION §2.1). Open on `Proof_Obligation`, the base the
+classes with a proof obligation share: a goal that opens with no
+subgoal (node_classes/COMMON.md §3).
 
 ## 2. The AoA round
 
 **Blocks:** a `Theorem` that is ever proven.
 
-The drive path is decided (2026-10-03; THEOREM.md §6–§7,
-CONSTRUCT_INTERACTION §10): the evaluation records the state in which
-the goal stands open in the class's `goal_state` slot; the construction
-job calls AoA's `hammer_or_AoA'` on it through the class's callback, the
+The drive path is decided (2026-10-03; node_classes/COMMON.md §3,
+THEOREM.md §6, CONSTRUCT_INTERACTION §10): the evaluation records the
+state in which the goal stands open in `Proof_Obligation`'s `goal_state`
+slot; the construction job calls AoA's `hammer_or_AoA'` on it through
+`Proof_Obligation`'s callback, the
 proof store read and written on AoA's own path, the product and its
 times returned; the check replays the product on the same goal; the
 driver and the budget are Isabelle's configuration; the bound on
@@ -36,9 +38,9 @@ change and repairs its stored proof — today the default
 `_on_context_change` cancels it and the construction is started again.
 To measure at implementation: cancellation on the AoA side, and that
 TAT's process serves `IsaMini.AoA`. What `product` holds is decided: the
-method text AoA writes to its proof store with its times (THEOREM.md
-§1); the proof check replays it under limits derived from those times
-(THEOREM.md §7).
+method text AoA writes to its proof store with its times
+(node_classes/COMMON.md §3); the proof check replays it under limits derived from those times
+(node_classes/COMMON.md §3).
 
 ## 3. Whether to check completeness against Isabelle's own record
 

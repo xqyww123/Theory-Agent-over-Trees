@@ -261,7 +261,7 @@ Four conditions, all required together:
   proof — `Goal.prove_future`, `Goal.prove_sorry` — and the tactics a
   replay runs prove through `Goal.prove`, which never forks;
   `Proof_Check`'s work is a goal built in ML and `eval_prf_str`
-  (THEOREM.md §7). So no lock orders the jobs against a load.
+  (node_classes/COMMON.md §3). So no lock orders the jobs against a load.
 
 `load` is handed the one name the Isabelle session layout gives the
 file: `<session>.<short name>`, or the short name alone when the layout

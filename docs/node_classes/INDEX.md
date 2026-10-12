@@ -18,8 +18,12 @@ command takes effect: a `lemma`'s statement, a `typedef`'s non-emptiness,
 an `instance`'s class axioms. The tree holds no proof (ARCHITECTURE
 §2.1): a class whose commands open one discharges it the way `Theorem`
 does — a construction job finds the proof, an evaluation job checks it,
-emission writes `by aoa` or `sorry` (THEOREM.md §5–§7; CONSTRUCT_INTERACTION
-§3) — and how exactly is its own document's.
+emission writes `by aoa` or `sorry` (CONSTRUCT_INTERACTION §3) — through
+`Proof_Obligation`, for the classes COMMON.md §3 names; how exactly
+each class discharges its own is its own document's. What every class
+of the plugin shares besides — its base `Theory_Member`, the `english`
+field and its `text` line, the `$defs` merged across classes — is
+COMMON.md.
 
 ## 1. The classes
 
@@ -33,11 +37,11 @@ emission writes `by aoa` or `sorry` (THEOREM.md §5–§7; CONSTRUCT_INTERACTION
 | `Instantiation` | `instantiation`, whose ending emits `instance`; whether a lone `instance` is a kind of it is decided with it | `StdBlock`, beginning and ending | the class axioms, on the ending | not yet |
 | `Interpretation` | `interpretation`, `global_interpretation` | `Leaf` | the locale's assumptions | not yet |
 | `Sublocale` | `sublocale` | `Leaf` | the locale's assumptions | not yet |
-| `Datatype` | `datatype`, `codatatype` | `Leaf` | none | not yet |
+| `Datatype` | `datatype`, `codatatype` | `Leaf` | none | DATATYPE.md |
 | `Record` | `record` | `Leaf` | none | not yet |
 | `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | not yet |
 | `QuotientType` | `quotient_type` | `Leaf` | the relation is an equivalence | not yet |
-| `LiftDefinition` | `lift_definition` | `Leaf` | the function respects the representation | not yet |
+| `LiftDefinition` | `lift_definition` | `Leaf` | the function respects the representation | not yet; what is decided ahead of it, LIFT_DEFINITION.md |
 | `Define` | `definition`, `fun`, `function`, the `form` recorded at evaluation; `abbreviation`, a kind of it or a class of its own, decided with it | `Leaf` | pattern completeness and termination, under `function` | ARCHITECTURE §2.2 in part; OPEN_QUESTIONS §4 |
 | `TypeSynonym` | `type_synonym` | `Leaf` | none | not yet |
 | `Inductive` | `inductive`, `coinductive`, `inductive_set`, `coinductive_set` | `Leaf` | none | not yet |

@@ -69,12 +69,15 @@ A node's identity is an opaque number that survives renaming and moving; the
 id renders its position and id component, not that identity, so a rename
 never disturbs results already in flight.
 
-The name is what the agent supplied, as the node class's `gen` set it: a
+The name is what the agent supplied, as the node class's `gen` set it —
+one field of the construct, or a name computed from its fields: a
 `Theorem`'s theorem name, a `Section`'s or a `Text`'s title, a `Theory`'s
-short name, a `Session`'s Isabelle session name. The framework makes the
-node's **id component** from it, the kind joined to the name —
+short name, a `Session`'s Isabelle session name, a `Datatype`'s type
+names joined with `_` (node_classes/DATATYPE.md §2). The framework makes
+the node's **id component** from it, the kind joined to the name —
 `lemma_P`, `theorem_Q`, `corollary_R`, `section_Basics`, `text_intro`,
-`theory_X`, `session_Arith`; a kind keeps to the name grammar below, which
+`datatype_expr_bexp`, `theory_X`, `session_Arith`; a kind keeps to the
+name grammar below, which
 the loader checks when the class registers (PLUGIN_SYSTEM §5). The tree
 root is a `Theory` node, and it owns
 the theory header, the `imports` list and the `end`; above the trees, the
@@ -174,7 +177,8 @@ droppable even while they qualify Isabelle's names, the id being TAT's name
 and not Isabelle's. Shortest-form printing of an id is the same computation
 as Isabelle's shortest-form printing of a qualified name.
 
-The **id** changes on a rename, on a change of a `Theorem`'s `kind`, and on
+The **id** changes on an amend that changes the node's kind or its name —
+a `Theorem`'s `kind`, a `Datatype`'s type names — and on
 any move except between positions under the same parent; a move can also
 change the printed short form alone, by creating or removing an ambiguity.
 The **qualified name** changes only on a move into or out of a `Locale` or a
@@ -213,11 +217,12 @@ replacement — a rename is an amend, and results in flight still find the
 node — and a construction job running on it is cancelled, its owner
 told the node was amended (CONSTRUCT_INTERACTION §3.2). Which of the
 node's recorded fields survive is its class's judgement, made in `gen`
-through `config.replaces()` (MODULE_STRUCTURE §4.1): `Theorem` asks for
-the old job's outcome to be carried into the new node's job, as the
-store's image, when `for_any`, `premises` and `conclusion` are unchanged
-(node_classes/THEOREM.md §4), so a rename or a reworded `english` costs
-no search. Constructs after the first are added after the replacement,
+through `config.replaces()` (MODULE_STRUCTURE §4.1). The construction
+job's outcome survives when the class answers the commit's
+`_carries_job_from(old)` with true (CONSTRUCT_INTERACTION §3.1):
+`Theorem` does when `for_any`, `premises` and `conclusion` are
+unchanged (node_classes/THEOREM.md §4), so a rename, a change of `kind`
+or a reworded `english` costs no search. Constructs after the first are added after the replacement,
 so one call turns a lemma into a definition and two lemmas.
 
 An `edit` is atomic: nothing touches the forest until every construct

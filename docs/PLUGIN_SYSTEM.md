@@ -1,6 +1,9 @@
 # The plugin system
 
-Status: design, approved 2026-09-04.
+Status: design, approved 2026-09-04; §2, §3 and §5 revised 2026-10-12
+with the node-class rounds (ai-artifacts/review/NODE_CLASS_RULINGS.md):
+the construct checked against its construct schema, the agreement
+check at every depth, the grammar without `Any`.
 
 A node class is a plugin: an Isabelle theory carrying its evaluator, and a
 Python package carrying everything else (ARCHITECTURE §6). This document is
@@ -57,7 +60,7 @@ the listed packages define beside the kind table.
 A plugin's package may also declare imports: theories that the forest's
 theories import besides what the agent wrote — `Isabelle_Std`'s declares
 `Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined
-(node_classes/THEOREM.md §5). The declaration is a module-level call
+(node_classes/COMMON.md §3). The declaration is a module-level call
 `TAT_import(<theory name>)`, the name in the `imports` field's qualified
 shape, registered at import as a compile hook is, into a registry of its
 own, swept the same way, and returned by `load` for the listed packages
@@ -80,34 +83,39 @@ arguments. An `Unchained_Node` chains no children, so a child class that
 has a result owns the slot for it, as `Theory` does: it mints the slot in
 `gen` and `from_store`, returns it from `resulting_state()`, and appends it
 in `_states_inside()`, so it is released when the node leaves.
-A class may own a further slot besides, as `Theorem` does with
-`goal_state`: it mints and appends it the same way, and names it in
-`_slots_written_by(operation)`, so that the framework releases it with
-the result of the operation that writes it (MODULE_STRUCTURE §4.1,
-"States").
+A class may own a further slot besides, as `Proof_Obligation` does with
+`goal_state`: it mints it where the node is built — in `gen` and
+`from_store`, or once in a constructor both reach — appends it the same
+way, and names it in `_slots_written_by(operation)`, so that the
+framework releases it with the result of the operation that writes it
+(MODULE_STRUCTURE §4.1, "States").
 Besides its hooks a class declares, as class attributes:
 
 | attribute | what it is |
 | --- | --- |
 | `construct_schema` | the complete JSON schema of a construct of this class, hand-written (§3) |
-| `argument_schema` | a TypedDict of the same fields, which the framework checks a submitted construct against and which types `gen`'s `raw` (MODULE_STRUCTURE §4.4) |
+| `argument_schema` | a TypedDict of the same fields, which types `gen`'s `raw`; a submitted construct is checked against `construct_schema` itself, and the loader holds the two to each other (§5; MODULE_STRUCTURE §4.4) |
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1; compulsory in both directions and priority 0 by default, so an omissible class declares them and a leaf declares none |
 | `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.2), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
 | `construction_job_class`, `evaluation_job_class`, optional | the class's job classes, `None` by default: the `Construction_Job` subclass `construct` starts on the node, the `Evaluation_Job` subclass an evaluation starts on it (CONSTRUCT_INTERACTION §3) |
 
 The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5). Isabelle
-text among a class's fields is typed `IsaTerm` (node_classes/THEOREM.md
-§2), which `gen` builds with `IsaTerm.from_agent` from the submitted
+text among a class's fields is typed `IsaTerm` (MODULE_STRUCTURE §4.3),
+which `gen` builds with `IsaTerm.from_agent` from the submitted
 string.
 
-A class sets `name` in its `gen` to the name the agent supplied; the
+A class sets `name` in its `gen` to the name the agent supplied, or to
+one computed from its fields (a `Datatype`'s, DATATYPE.md §2); the
 framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
 §2). Besides its own node, a class may read `forest().conversation` — what
 MODULE_STRUCTURE §4.1 lists; of its log a class writes `note` records
-alone, the named events being the framework's (LOGGING.md §3, §5) — and
+alone, the named events being the framework's (LOGGING.md §3, §5) —,
+`forest().id_of` for a node's id as the agent sees it, and its
+`Theory`'s `print_name` over the stored `keywords`
+(node_classes/SESSION_AND_THEORY.md §2), and
 nothing with a leading underscore, except the hooks it is
-meant to override: `_unfinished` on the node, `_states_inside` and
+meant to override: `_unfinished` and `_carries_job_from` on the node, `_states_inside` and
 `_slots_written_by` for a slot the class owns, and on its job classes
 `_run`, `_check`, `_on_context_change`, `_start` and `_finished`
 (CONSTRUCT_INTERACTION §3.2, §3.3), as the evaluation hooks `_eval_opr`,
@@ -122,12 +130,12 @@ invents no key and rewrites no schema of the class's own.
 
 ```python
 @TAT_node
-class Theorem(Leaf):
+class Theorem(Theory_Member, Proof_Obligation, Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
             "kind":      {"type": "string", "enum": ["lemma", "theorem", "corollary", "proposition"]},
-            "name":      {"type": "string", "description": "The fact's name"},
+            "name":      {"type": "string"},
             "statement": {"$ref": "#/$defs/LongStatement"},
         },
         "required": ["kind", "name", "statement"],
@@ -144,12 +152,17 @@ class Theorem(Leaf):
   "#/$defs/Construct"}, ...}`, or with a narrower `items`, such as
   `Session`'s `{"type": "array", "items": {"$ref": "#/$defs/Theory"}}`.
   One that does not declare it takes contents only through later `edit`
-  calls. A leaf class declares no `children`.
-- Shared structures go in the class's own `$defs` and are used through
-  `$ref`; a `$ref` may name a key of that `$defs`, `Construct`, or another
-  node class. Recursion is ordinary: a definition may refer to itself. The
-  argument schema's grammar has no recursion (MODULE_STRUCTURE §4.4), so
-  the TypedDict types such a field as `Any`.
+  calls — a `children` in its construct is refused — and a narrower
+  `items` describes where the classes' `gen`s let a node stand, the
+  framework checking no containment (MODULE_STRUCTURE §4.2). A leaf
+  class declares no `children`.
+- Shared structures go in the class's own `$defs`, each key a Python
+  identifier, and are used through `$ref`; a `$ref` under the top-level
+  `children` names `Construct` or a node class (the bullet above), every other
+  `$ref` a key of that `$defs`. Recursion is ordinary: a definition may
+  refer to itself, provided every cycle of `$ref`s passes through an
+  object — no `$defs` entry is a bare `$ref` — whose TypedDict nests
+  itself and is defined at module level (MODULE_STRUCTURE §4.4).
 - Every `description` is agent-facing text. For a class TAT ships, it is
   approved wording, kept in the class's document under `docs/node_classes/`
   beside its field table; for a class delivered separately, it is its
@@ -191,18 +204,22 @@ registration, per class:
 - `construct_schema` is a well-formed JSON schema
   (`jsonschema.Draft202012Validator.check_schema`), an object with
   `additionalProperties: false` at the top;
-- `properties.kind` is present with an `enum` or a `const`, every value a
-  string within the name grammar of MCP_SPECIFICATION §2 — it heads every
-  id component `<kind>_<name>` — and `kind` is in `required`;
+- `properties.kind` is present with an `enum` or a `const`, not both,
+  and nothing else but `type` — `"string"` when present — and
+  `description`, every value a string
+  within the name grammar of MCP_SPECIFICATION §2 — it heads every id
+  component `<kind>_<name>` — and `kind` is in `required`;
 - no kind it names is registered by another class, and no other class has
   the same Python class name;
 - no field of `construct_schema` bears the name of a row the framework
   stores, `kind` and `children` aside — `last_evaluation_statuses`
   (COMPILATION.md §4), `job`, `check` and `auto_construct` (ARCHITECTURE
   §4.1): such a class would load and then fail at its first store;
-- if `children` is declared, the class is not a `Leaf`, and the property
-  is `{"type": "array", "items": X, ...}` with `X` a `$ref` of the form
-  `#/$defs/<Name>`, or an `anyOf` of such;
+- if `children` is declared, the class is not a `Leaf`, `children` is
+  not in `required` — no construct must carry it, and an amend's may not
+  — and the property is `{"type": "array", "items": X}` and nothing else
+  but a `description`, with `X` a `$ref` of the form `#/$defs/<Name>`,
+  or an `anyOf` of such;
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
 - a `construction_job_class`, when the class declares one, is a
@@ -237,18 +254,41 @@ registration, per class:
   fields — within the closed annotation grammar (MODULE_STRUCTURE §4.4),
   a field optionally wrapped in `NotRequired[X]` or `Required[X]`, which
   the loader reads off the annotation itself;
-- the two schemas agree: the keys of `properties`, less `kind` and
-  `children`, are exactly the TypedDict's keys less `kind`, and
-  `required`, less `kind` and `children`, is exactly the TypedDict's
-  required keys less `kind`.
+- every `$defs` key is a Python identifier, and no `$defs` entry is a
+  bare `$ref`; every `$ref` outside the top-level `children` has the
+  form `#/$defs/<Name>` and names a key of the class's own `$defs`, and
+  every cycle of such `$ref`s passes through an object — judgeable now,
+  since a class carries what it refers to;
+- the two schemas agree, at every depth, a `$ref` followed into
+  `$defs`: an object carries `additionalProperties: false`, its
+  `properties` are exactly the TypedDict's keys and its `required`
+  exactly the TypedDict's required keys — at the top, `kind` and
+  `children` set aside on the schema's side and `kind` on the
+  TypedDict's, for `properties` and `required` alike; below the top,
+  nothing set aside; a `string` is a `str`, or with an `enum` a
+  `Literal` of those values; a `boolean`, an `integer` and a `number`
+  are `bool`, `int` and `float`; an `array` is a list of what its
+  `items` is, with `minItems: 1` a non-empty list; an `anyOf`, no arm
+  of which is itself an `anyOf`, is a union whose arms pair with its
+  own one for one — by JSON type, and TypedDicts told apart by a
+  `Literal` by the values of the choosing field; a `$ref` met again
+  with the annotation it was met with agrees without being followed
+  again, which is how a definition that refers to itself meets a
+  TypedDict that nests itself; and no schema carries a keyword besides
+  these, `description`, and `$defs` at the top alone. Values, fields
+  and arms are compared as
+  sets, never by position, since an annotation does not reliably keep
+  its order (MODULE_STRUCTURE §4.4). So what a construct schema says of
+  the class's own fields — which the check enforces — is what `gen`'s
+  `raw` holds. Which classes a
+  `children` property's `items` admit describes where the classes'
+  `gen`s let a node stand — `Bad<Class>NodeParent`, `NotInsideTheory` —
+  the framework checking no containment (MODULE_STRUCTURE §4.2).
 
 At assembly, once every class is known:
 
-- every `$ref` in every class's schema has the form `#/$defs/<Name>`, and
-  `<Name>` is a key of that class's own `$defs`, `Construct`, or a node
-  class name;
-- every `$ref` under a `children` property names `Construct` or a node
-  class, never a `$defs` entry of the class itself — a target only
+- every `$ref` under the top-level `children` names `Construct` or a
+  node class, never a `$defs` entry of the class itself — a target only
   judgeable once every class is registered;
 - no class's `$defs` uses a reserved name — `Construct` or any node class
   name;
@@ -263,7 +303,8 @@ A compile hook (§1) is checked at registration too: a plain function of
 one positional argument, neither a coroutine nor a generator. A compile runs on a forest
 loaded from the database and never evaluated, every instant status
 `not_evaluated`, so `can_emit`, `emit` and a hook read only what is
-stored — authored fields, the recorded fields the class stores,
+stored — authored fields, the recorded fields the class stores, its
+`Theory`'s stored `keywords` through `print_name`,
 `last_evaluation_statuses()`, `check_outcome()` and `job()`
 (COMPILATION.md §3).
 A hook finds its paths through `paths(working_directory)` of
