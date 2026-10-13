@@ -1,6 +1,8 @@
 """What the classes of `Isabelle_Std` share (node_classes/COMMON.md), with
 no Isabelle: `NotInsideTheory`'s sentence, and `Theory_Member` over every
-class the package registers (§1).
+class the package registers (§1); the `text` line (§2);
+`Proof_Obligation`'s abstraction (§3).  What `Proof_Obligation` does on
+a node is pinned through `Theorem`, test_theorem.py.
 Run: python -m pytest test/test_common.py
 """
 
@@ -11,7 +13,7 @@ from baselines import DOCS, fenced_lines
 from isabelle_theory_agent import edit, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit
 from isabelle_theory_agent.std import theorem
-from isabelle_theory_agent.std.common import NotInsideTheory, Theory_Member
+from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Obligation, Theory_Member, text_line
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
@@ -71,3 +73,30 @@ def test_every_registered_class_is_a_theory_member_refused_outside_a_theory():
         run(locked(f, edit.delete(node)))
     assert f.sub_nodes == [s] and s.sub_nodes == [x, y] and x.sub_nodes == [b] and b.sub_nodes == [c]
     assert y.sub_nodes == []
+
+
+def test_the_text_line_is_section_2_s():
+    """§2: a period added when `english` ends without `.`, `!` or `?`; the
+    class's lead before it; the text through the framework's `cartouche`."""
+    assert text_line("The length of a reversed list") == "text ‹The length of a reversed list.›"
+    assert [text_line(e) for e in ("Bang!", "Why?", "Done.")] == ["text ‹Bang!›", "text ‹Why?›", "text ‹Done.›"]
+    assert text_line("Bang", "Lemma q.") == "text ‹Lemma q. Bang.›"
+    assert text_line("‹Quoted› \\<open>here\\<close>") == 'text ‹"Quoted" "here".›'
+
+
+def test_proof_obligation_enforces_its_abstract_methods():
+    """§3: `Proof_Obligation` derives from `Node`, so a class that leaves
+    `goal_structure()` or `message()` out fails at its first instantiation;
+    `Theorem` has both."""
+    class Without_Goal_Structure(Theory_Member, Proof_Obligation, M.Leaf):
+        def message(self): return ()
+        def emit(self, indent, out): return indent
+
+    class Without_Message(Theory_Member, Proof_Obligation, M.Leaf):
+        def goal_structure(self): return ()
+        def emit(self, indent, out): return indent
+
+    for cls, missing in ((Without_Goal_Structure, "goal_structure"), (Without_Message, "message")):
+        with pytest.raises(TypeError, match=missing):
+            cls(None, None)
+    assert issubclass(theorem.Theorem, Proof_Obligation) and theorem.Theorem.__abstractmethods__ == frozenset()

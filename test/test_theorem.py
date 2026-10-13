@@ -26,8 +26,8 @@ from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, mod
 from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, statement, theorem
-from isabelle_theory_agent.std.common import NotInsideTheory
-from isabelle_theory_agent.std.theorem import Proof_Check, Proof_Job, Statement, Theorem
+from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Check, Proof_Job, Proof_Obligation
+from isabelle_theory_agent.std.theorem import Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
 from test_compile import listing
 from test_descriptions import descriptions
@@ -99,10 +99,12 @@ def test_gen_keeps_the_statement_normalised_as_isaterms():
     assert (v.name.unicode, v.type.unicode) == ("xs", "'a list")
     [ne] = p.statement.premises
     assert (ne.name.unicode, ne.term.unicode, ne.term.ascii) == ("ne", "xs ≠ []", "xs \\<noteq> []")
-    assert p.goal_state is not p.state
+    assert isinstance(p, Proof_Obligation) and p.goal_state is not p.state
     assert p.goal_state in p._states_inside() and p._slots_written_by(None) == (p.goal_state,)
     assert f.id_of(p) == "lemma_rev_length" and p.statement.structure() == (
         [("xs", "'a list")], [("ne", "xs \\<noteq> []")], "length (rev xs) = length xs")
+    assert p.goal_structure() == p.statement.structure()                 # COMMON §3; §4, §6
+    assert p.message() == ("lemma", "rev_length", *p.goal_structure())
     inv(f)
     # an untyped variable, no premises
     (q,) = insert(f, x, 1, [lemma("q", for_any=({"name": "n"},), premises=())])
@@ -386,7 +388,7 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
 
     async def evaluate(conversation, name, args):
         assert name == "TAT.Theorem.evaluate"
-        return True, []
+        return []
     monkeypatch.setattr(isabelle_driver, "call", evaluate)
     run(x.evaluate_to(None, False))                                          # `Y` stays unevaluated: not written
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
@@ -421,6 +423,29 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
     assert text == C.render(f).files[C.Path("Arith/X.thy")]                  # the hook left the file whole
     assert "\n".join(ascii_of_unicode(line) for line in lines) in text         # the document's block, proven
     assert [line for line in text.splitlines() if line in ("  by aoa", "  sorry")] == ["  by aoa", "  sorry", "  sorry"]
+
+
+def test_the_store_mirror_catches_a_proof_text_read_off_an_instant_status(monkeypatch):
+    """COMPILATION.md §3: `proof_text()` reads the job's image and the stored
+    check, which a loaded forest holds too; one that reads an instant
+    status writes `by aoa` in memory and `sorry` once loaded, which the
+    package's helper says at once."""
+    f = Forest_Under_Test(kinds=KINDS)
+    (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [lemma("p")]})])
+    (x,) = s.sub_nodes
+    (p,) = x.sub_nodes
+
+    async def evaluate(conversation, name, args):
+        return []
+    monkeypatch.setattr(isabelle_driver, "call", evaluate)
+    run(x.evaluate_to(None, False))
+    with_proof(p, M.READY_CLEAN, PROVED, PASSED)
+    p._store_alone()                                                         # as a settlement stores it
+    assert_store_mirrors(f, KINDS, shape=ts.shape)                           # `proof_text()` as shipped: mirrored
+    monkeypatch.setattr(Theorem, "proof_text", lambda self: "by aoa" if all(
+        isinstance(st, M.Ready) for st in self.evaluation_statuses()) else "sorry")
+    with pytest.raises(AssertionError, match="Arith/X.thy: the loaded forest writes another text"):
+        assert_store_mirrors(f, KINDS, shape=ts.shape)
 
 
 # --- the evaluation, in the plugin's run of the harness (§6, §8) -----------------
@@ -482,11 +507,11 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
             "    Refused",
             "    Error:"], lines
         assert lines[12].startswith("      Type unification failed"), lines
-    passed, messages = await isabelle_driver.call(
+    messages = await isabelle_driver.call(
         forest.conversation, "TAT.Theorem.evaluate",
         (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(),
          ("lemma", "again", [["xs", "'a list"]], [], "xs = (0::nat)")))
-    assert not passed and messages
+    assert messages
     assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()
 
 

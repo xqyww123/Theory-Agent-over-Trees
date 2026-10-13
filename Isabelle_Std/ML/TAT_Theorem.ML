@@ -1,9 +1,10 @@
 (*  Title:      Isabelle_Std/ML/TAT_Theorem.ML
 
 The ML half of the plugin's `Theorem` (isabelle_theory_agent/std/theorem.py;
-docs/node_classes/THEOREM.md §6, §7): the statement opened and admitted, never
-proved in the tree; the proof construction, AoA's standard entry on the goal
-so opened; the proof check, the proof replayed on that goal.
+docs/node_classes/THEOREM.md §6): the statement opened as the `lemma` command's
+goal, with the undeclared-variable check on it; what admits the goal, and the
+proof construction and the proof check on it, are `TAT_Proof_Obligation`'s
+(COMMON.md §3).
 *)
 
 structure TAT_Theorem =
@@ -34,10 +35,6 @@ fun statement_transition ((kind, name, for_any, premises, conclusion) : statemen
          Element.Assumes (map (fn (p, t) => ((Binding.name p, []), [(t, [])])) premises)]
         (Element.Shows [(Binding.empty_atts, [(conclusion, [])])]))
 
-(*the half of `sorry` that ends a toplevel goal (Isar_Cmd.global_skip_proof)*)
-val admit_transition =
-  Toplevel.make "sorry" Position.none |> Toplevel.end_proof Proof.global_skip_proof
-
 (*§6's check once the goal is open: the statement's free variables -- in the
   goal and in the premises assumed beside it -- that `for_any` does not
   declare, which Isabelle fixed by itself; sorted*)
@@ -58,104 +55,25 @@ fun undeclared_sentence names =
       else "Undeclared variables " ^ listed ^ ": declare them in `for_any`."
   end
 
-(*the two transitions in turn from the input slot's state: the goal, open and
-  no step taken, into `goal_state`, then the undeclared variables refused; the
-  admitted fact into the resulting slot.  A failure of any is the statement's:
-  `goal_state` emptied -- a rerun of a `ready` node releases nothing, so an
-  earlier run's goal would stand there -- the resulting slot left to the
-  framework, the messages answered.*)
+(*`Theorem`'s function for TAT_Proof_Obligation.evaluate: the statement's
+  transition from the input state to the state with the goal open, refused --
+  no state, one message -- when a variable is undeclared*)
+fun open_goal statement st =
+  (case TAT_Framework.apply_transition (statement_transition statement) st of
+    (SOME st', []) =>
+      (case undeclared statement st' of
+        [] => (SOME st', [])
+      | names => (NONE, [undeclared_sentence names]))
+  | refused => refused)
+
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["isabelle_theory_agent.std"]} (fn env =>
   {name = "TAT.Theorem.evaluate",
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env,
                                unpack_statement),
-    ret_schema = packPair (packBool, packList packString),
+    ret_schema = packList packString,
     function = fn (input, goal, result, statement) =>
-      let
-        val st = #get input ()
-        val errors =
-          TAT_Common_Nodes.operation goal (fn () =>
-            TAT_Framework.apply_transition (statement_transition statement) st)
-        val errors =
-          if null errors
-          then (case undeclared statement (#get goal ()) of [] => [] | names => [undeclared_sentence names])
-          else errors
-        val errors =
-          if null errors
-          then TAT_Common_Nodes.operation result (fn () =>
-                 TAT_Framework.apply_transition admit_transition (#get goal ()))
-          else errors
-      in
-        if null errors then (true, []) else (#put goal NONE; (false, errors))
-      end,
-    timeout = NONE}))
-
-(*the product on the wire (THEOREM.md §1): the method text and the two times of
-  its replay in milliseconds, thread CPU then wall, as the store orders them*)
-val pack_product = packTuple3 (packString, packInt, packInt)
-val unpack_product = unpackTuple3 (unpackString, unpackInt, unpackInt)
-
-(*the goal `goal_state` holds (§7): the Proof.state's context and goal*)
-fun goal_of get =
-  let val {context, goal, ...} = Proof.goal (Toplevel.proof_of (get ()))
-   in (context, goal) end
-
-(*the proof construction (§7): one call of AoA's standard entry on the goal, the
-  proof store read and written on AoA's own path, forked as the job's work; its
-  product the proof.  The agent's give-up is the failure's message, as the `aoa`
-  method renders it.  AoA's Python half is served by this process: the plugin's
-  package imports it.*)
-val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
-  {name = "TAT.Theorem.construct",
-    on_interrupt = Remote_Procedure_Calling.Reraise,
-    arg_schema = unpackPair (#slot_unpacker env, unpackInt),
-    ret_schema = packUnit,
-    function = fn (goal, id) =>
-      let val (ctxt, sequent) = goal_of (#get goal) in
-        #fork_job env {id = id, work = fn () =>
-          let
-            (*the two give-ups the `aoa` method renders, rendered as it renders
-              them — the agent's, and the engine's own failure; any other
-              Auto_Fail is re-raised.  Sync raises them at the call, the join
-              joins a value*)
-            val (times, text) =
-              let val (fut, _) =
-                    MiniLang_Agent_AoA.hammer_or_AoA'
-                      {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
-                       hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
-                       read_store = SOME true, write_store = SOME true,
-                       task = MiniLang_Agent_AoA.usual, user_operations = []} ctxt sequent
-              in Future.join fut end
-              handle exn as MiniLang_Agent_AoA.Agent_Give_Up _ => MiniLang_Agent_AoA.method_error exn
-                   | exn as Phi_Sledgehammer_Solver.Auto_Fail _ => MiniLang_Agent_AoA.method_error exn
-            val (cpu, wall) = Phi_Proof_Store.ms_of_times times
-          in SOME (pack_product (text, cpu, wall)) end}
-      end,
-    timeout = NONE}))
-
-(*the proof check (§7): the stored product replayed on the same goal through
-  the function AoA exports, forked as the job's work; no theorem is one empty
-  error -- the replay says only that it failed; anything else the replay
-  raises is a bug, AoA's own classification of it, and ends the conversation*)
-val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
-  {name = "TAT.Theorem.check",
-    on_interrupt = Remote_Procedure_Calling.Reraise,
-    arg_schema = unpackTuple3 (#slot_unpacker env, unpack_product, unpackInt),
-    ret_schema = packUnit,
-    function = fn (goal, (text, cpu, wall), id) =>
-      let val (ctxt, sequent) = goal_of (#get goal) in
-        #fork_job env {id = id, work = fn () =>
-          let
-            val replayed =
-              (case Exn.capture_body (fn () =>
-                      Proof_Store_AoA.replay_record (ctxt, sequent)
-                        (Phi_Proof_Store.times_of_ms (cpu, wall), text)) of
-                Exn.Res replayed => replayed
-              | Exn.Exn exn =>
-                  if TAT_Framework.interrupted exn then Exn.reraise exn
-                  else raise TAT_Framework.Bug ("the proof check's replay raised: " ^ Runtime.exn_message exn))
-          in (case replayed of SOME _ => NONE | NONE => error "") end}
-      end,
+      TAT_Proof_Obligation.evaluate (input, goal, result) (open_goal statement),
     timeout = NONE}))
 
 end

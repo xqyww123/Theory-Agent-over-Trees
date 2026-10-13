@@ -1,8 +1,8 @@
 """`Theorem`, the first node class of the plugin `Isabelle_Std`
 (node_classes/THEOREM.md): a fact stated and admitted, never proved in
-the tree — its evaluation opens the goal and admits it, its construction
-job finds a proof and its evaluation job replays it, the emitted theory
-carrying `by aoa`."""
+the tree — a `Proof_Obligation` (COMMON.md §3), whose evaluation opens
+the goal and admits it, whose proof construction finds a proof and whose
+proof check replays it, the emitted theory carrying `by aoa`."""
 
 from __future__ import annotations
 
@@ -10,15 +10,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
-import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§7)
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
-from .. import isabelle_driver, jobs
 from ..exceptions import GRAMMARS, InvalidField, InvalidName
-from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
-from ..model import INDENT, RECALL, CannotEvaluate, Isar_State_Slot, Leaf, Ready, cartouche, emit_lines
+from ..model import INDENT, RECALL, Leaf, emit_lines
 from ..plugin import TAT_node
-from .common import Theory_Member
+from .common import Proof_Obligation, Theory_Member, text_line
 from .statement import STATEMENT_DEFS, LongStatement_RawAST
 
 KINDS = ("lemma", "theorem", "corollary", "proposition")   # the Isar commands Isabelle treats alike
@@ -54,9 +51,8 @@ class Statement:
     conclusion: IsaTerm
 
     def structure(self) -> Any:
-        """The statement as structure, each `IsaTerm` as its `ascii`: what
-        the evaluation sends to Isabelle (§6) and what an amend compares
-        (§4), `english` aside."""
+        """The statement as structure, each `IsaTerm` as its `ascii`:
+        `Theorem`'s `goal_structure()` (§4, §6), `english` aside."""
         return ([(v.name.ascii, v.type.ascii if v.type is not None else None) for v in self.for_any],
                 [(p.name.ascii, p.term.ascii) for p in self.premises],
                 self.conclusion.ascii)
@@ -96,92 +92,8 @@ def _normalised(text: str) -> str:
     return " ".join(text.split())
 
 
-_PRODUCT = ("text", "thread_cpu", "wall")    # the proof as stored (§1); on the wire, a triple in this order
-
-
-class Proof_Job(jobs.Construction_Job):
-    """`Theorem`'s proof construction (§7): one call of AoA's standard entry
-    on the goal `goal_state` holds, forked by `TAT.Theorem.construct`; the
-    product the proof — the method text with the two times of its replay —
-    and the node's check `Proof_Check.passed` from the run's settlement."""
-
-    @classmethod
-    def title(cls, plural=False):
-        return "proof constructions" if plural else "proof construction"
-
-    @classmethod
-    def failure_header(cls, failure):
-        return "No proof was found:"
-
-    def finished_notification(self, outcome):
-        if isinstance(outcome, Succeeded):
-            return f"`{self.shown_id}` is proven."
-        return with_message(f"No proof of `{self.shown_id}` was found:", outcome.message)
-
-    def _check(self):
-        """§7's table: a proof is constructed where none stands, or where
-        the one standing failed its check; a proof not yet checked, or
-        checked and passed, stands."""
-        if not isinstance(self.outcome, Succeeded):
-            return True
-        return isinstance(self.node.check_outcome(), Failed)
-
-    async def _run(self):
-        node = self.node
-        assert isinstance(node, Theorem)
-        errors, product = await self.forked("TAT.Theorem.construct", node.goal_state.to_msgpack())
-        if errors:
-            return Failed("\n".join(errors))
-        node.attach_evaluation_job(Proof_Check.passed(node))
-        return Succeeded(dict(zip(_PRODUCT, product)))
-
-
-class Proof_Check(jobs.Evaluation_Job):
-    """`Theorem`'s proof check (§7): the stored product replayed on the goal
-    `goal_state` holds, through the function AoA exports, forked by
-    `TAT.Theorem.check`; no theorem out is `FAILED` with an empty message."""
-
-    @classmethod
-    def title(cls, plural=False):
-        return "proof checks" if plural else "proof check"
-
-    @classmethod
-    def failure_header(cls, failure):
-        return "The proof no longer holds:"
-
-    @classmethod
-    def failure_notification(cls, ids, automatic):
-        several = len(ids) > 1
-        if automatic:
-            tail = (", so " + ("their proof constructions were" if several else "its proof construction was")
-                    + " started automatically; call `check_construct` before you exit")
-        else:
-            tail = ". Call `construct` to prove " + ("them" if several else "it") + " again"
-        return jobs.listed(ids, lambda of: f"The proof {of} no longer holds{tail}.",
-                           "The following proofs no longer hold"
-                           + (tail if automatic else "; call `construct` to prove them again") + ":",
-                           preposition="of")
-
-    @classmethod
-    def passed(cls, node):
-        """The check a proof construction attaches at its settlement (§7):
-        `PASSED` without running."""
-        job = cls(node, None)
-        job.outcome = PASSED
-        return job
-
-    async def _start(self):
-        node = self.node
-        assert isinstance(node, Theorem)
-        job = node.job()
-        assert job is not None and isinstance(job.outcome, Succeeded)   # a check runs on a proven node (§3.3)
-        product = job.outcome.product
-        await isabelle_driver.call(self.conversation, "TAT.Theorem.check",
-                                   (node.goal_state.to_msgpack(), tuple(product[k] for k in _PRODUCT), self.id))
-
-
 @TAT_node
-class Theorem(Theory_Member, Leaf):
+class Theorem(Theory_Member, Proof_Obligation, Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -194,19 +106,16 @@ class Theorem(Theory_Member, Leaf):
         "$defs": STATEMENT_DEFS,
     }
     argument_schema = Theorem_RawAST
-    construction_job_class = Proof_Job
-    evaluation_job_class = Proof_Check
+    evaluation_callback = "TAT.Theorem.evaluate"
+    valid_word, invalid_word = "valid statement", "invalid statement"       # the mark's first slot (§7)
 
     name: str
     statement: Statement
-    goal_state: Isar_State_Slot         # the state with the goal open and no step taken, held
-                                        # exactly while the node is `ready` (§1, §6); never stored
 
-    def __init__(self, parent, state, name: str, statement: Statement, goal_state: Isar_State_Slot):
+    def __init__(self, parent, state, name: str, statement: Statement):
         super().__init__(parent, state)
         self.name = name
         self.statement = statement
-        self.goal_state = goal_state
 
     @classmethod
     async def gen(cls, config, raw: Theorem_RawAST):
@@ -214,12 +123,7 @@ class Theorem(Theory_Member, Leaf):
         name = raw["name"]
         if not _FACT_NAME.fullmatch(name) or name.endswith("_"):
             raise InvalidName(name, "fact name")
-        statement = _statement_of(raw["statement"])
-        conversation = config.parent.forest().conversation
-        return cls(config.parent, config.state, name, statement, Isar_State_Slot.assign(conversation))
-
-    def _carries_job_from(self, old):
-        return old.statement.structure() == self.statement.structure()      # the proof stands when the goal does (§4)
+        return cls(config.parent, config.state, name, _statement_of(raw["statement"]))
 
     def to_store(self, rows):
         rows.put("name", self.name)
@@ -227,59 +131,17 @@ class Theorem(Theory_Member, Leaf):
 
     @classmethod
     def from_store(cls, config, rows):
-        conversation = config.parent.forest().conversation
-        return cls(config.parent, config.state, rows.get("name"), Statement.of_image(rows.get("statement")),
-                   Isar_State_Slot.assign(conversation))
+        return cls(config.parent, config.state, rows.get("name"), Statement.of_image(rows.get("statement")))
 
-    def _states_inside(self, out=None):
-        out = super()._states_inside(out)
-        out.append(self.goal_state)
-        return out
+    def goal_structure(self):
+        return self.statement.structure()
 
-    def _slots_written_by(self, operation):
-        return (self.goal_state,)
+    def message(self):
+        """`kind`, `name` and the goal structure, as `TAT.Theorem.evaluate`
+        unpacks them (§6)."""
+        return (self.kind, self.name, *self.goal_structure())
 
-    async def _eval_opr(self):
-        """`TAT.Theorem.evaluate` (§6): the statement opened and admitted in
-        two transitions, the goal into `goal_state`, the admitted fact into
-        the resulting slot; failed, the node is an obstacle with the
-        messages; passed, `Ready` with what Isabelle said."""
-        conversation = self.forest().conversation
-        passed, messages = await isabelle_driver.call(
-            conversation, "TAT.Theorem.evaluate",
-            (self.state.to_msgpack(), self.goal_state.to_msgpack(), self.resulting_state().to_msgpack(),
-             (self.kind, self.name, *self.statement.structure())))
-        texts = tuple(IsaTerm.from_isabelle(m) for m in messages)
-        return CannotEvaluate(texts) if not passed else Ready(texts)
-
-    # --- what it prints (§7, §8)
-
-    def mark(self, mode, depth):
-        """Two slots, `(<statement>, <proof>)` (§7): the statement's from the
-        evaluation status; the proof's from the job's outcome and the
-        check, left out under `invalid statement`, a stored proof left out
-        under `not evaluated`; no proof slot while no job class is named."""
-        (status,) = self.evaluation_statuses()
-        if isinstance(status, CannotEvaluate):
-            return "invalid statement"
-        statement = "valid statement" if isinstance(status, Ready) else "not evaluated"
-        job = self.job()
-        if job is None:
-            return statement
-        outcome = job.outcome
-        if outcome is RUNNING:
-            proof = "proving"
-        elif isinstance(outcome, Failed):
-            proof = "failed to prove"
-        elif isinstance(outcome, Succeeded):
-            if statement == "not evaluated":
-                return statement
-            check = self.check_outcome()
-            proof = ("unchecked proof" if check is None else "proof checking" if check is RUNNING
-                     else "proven" if check is PASSED else "bad proof")
-        else:
-            proof = "proof not started"
-        return f"{statement}, {proof}"
+    # --- what it prints (§8)
 
     def print_fields(self, indent, out, mode, depth):
         """Under `Recall` alone (§8): the proposition at depths 0 to 2,
@@ -292,10 +154,7 @@ class Theorem(Theory_Member, Leaf):
     # --- emission (§5)
 
     def emit(self, indent, out):
-        english = self.statement.english
-        if english and english[-1] not in ".!?":
-            english += "."
-        emit_lines(indent, out, f"text {cartouche(f'{self.kind.capitalize()} {self.name}. {english}')}")
+        emit_lines(indent, out, text_line(self.statement.english, f"{self.kind.capitalize()} {self.name}."))
         print_name = self.theory().print_name               # every name through it (§5)
         lines = [f"{self.kind} {print_name(self.name)}:"]
         if self.statement.for_any:
@@ -306,9 +165,7 @@ class Theorem(Theory_Member, Leaf):
             lines.append("  assumes " + " and ".join(
                 f'{print_name(p.name.ascii)}: "{p.term.ascii}"' for p in self.statement.premises))
         lines.append(f'  shows "{self.statement.conclusion.ascii}"')
-        job = self.job()
-        proven = job is not None and isinstance(job.outcome, Succeeded) and self.check_outcome() is PASSED
-        lines.append("  by aoa" if proven else "  sorry")
+        lines.append("  " + self.proof_text())
         emit_lines(indent, out, "\n".join(lines))
         return indent
 

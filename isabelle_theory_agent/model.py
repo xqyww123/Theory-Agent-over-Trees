@@ -2656,19 +2656,19 @@ class Theory(StdBlock):
         if not errors:                                      # stored with the status this run leaves
             self.import_sessions = import_sessions
             self.keywords = frozenset(keywords)
-        return _status_of_errors(errors)
+        return status_of_errors(errors)
 
     async def _eval_ending_opr(self):
         conversation = self.forest().conversation
         errors = await isabelle_driver.call(
             conversation, "TAT.Theory.end",
             (self._state_before_ending.to_msgpack(), self._state_after_ending.to_msgpack()))
-        return _status_of_errors(errors)
+        return status_of_errors(errors)
 
 
-def _status_of_errors(errors: list[str]) -> Ready | CannotEvaluate:
-    """The status a callback's answer leaves: the errors it reported, in
-    Isabelle's spelling, or a clean `Ready`."""
+def status_of_errors(errors: list[str]) -> Ready | CannotEvaluate:
+    """The status a callback's answer leaves (ARCHITECTURE §6.2): the
+    errors it reported, in Isabelle's spelling, or a clean `Ready`."""
     if errors:
         return CannotEvaluate(tuple(IsaTerm.from_isabelle(e) for e in errors))
     return READY_CLEAN
