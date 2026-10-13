@@ -2274,16 +2274,22 @@ with `EnterWorktree` denied and the `Agent|Task` guard refusing first.
 LOGGING_IMPLEMENTATION_PLAN.md's first paragraph: all thirteen steps
 done.
 
-**State for a resumption of this session** (2026-10-05, context near its
-limit): everything of the logging plan that this session can do is
-committed — last `94e721b`; the working tree holds only this record's
-tail uncommitted. Open, neither startable here: step 7's review of the
-jobs session's `fork_job` once written; step 13, the one live run with
-the jobs session, when the owner says. The standing rules of the session
-are at the top of this record and in CLAUDE.md; the sessions' refs after
-the restart: jobs [9ffa3c] at `uds:/run/user/1002/cc-socks/5611.sock`,
-compilation [ebfd21] at `uds:/run/user/1002/cc-socks/7431.sock`, this
-one [b341d7].
+**State at this session's close** (2026-10-13): all thirteen steps of the
+logging plan are done and committed — last `22614d9` (step 13), before it
+`b02e1ea` (`while_ending`). Nothing of this session is uncommitted or
+running. Open with the owner, nothing started: the `ending` of a
+cancellation carries no sentence for a person; Codex's `SessionStart
+{source: startup}` writes a `compaction` at the conversation's start;
+whether a configured `WorktreeCreate` hook makes Claude Code advise
+worktree isolation stays unobserved (a probe without the `EnterWorktree`
+deny and the `Agent|Task` guard would show it). Claude Code's internal
+agents (live17 REPORT §4.1) were ruled by the owner and implemented by
+the jobs session (`fb5692f`). Optional cleanups noted earlier: `Recorder`
+and `cancelled_by_the_host` from test_toplevel.py into stand_ins. The
+standing rules of the session are at the top of this record and in
+CLAUDE.md; peers: jobs [9ffa3c] at `uds:/run/user/1002/cc-socks/5611.sock`,
+mlml-98 (the `isabelle TAT` command) at
+`uds:/run/user/1002/cc-socks/849289.sock`; this one [b341d7].
 
 **`ending` is always `error`** (owner, 2026-10-04: 「连接断开的日志级别要从
 info 改成 error」, said to the compilation session, which relayed it; put
