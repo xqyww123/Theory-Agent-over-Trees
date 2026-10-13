@@ -14,13 +14,11 @@ import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served b
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver, jobs
-from ..compile import identity, paths
-from ..exceptions import GRAMMARS, BadTheoremNodeParent, InvalidField, InvalidName
+from ..exceptions import GRAMMARS, InvalidField, InvalidName
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
-from ..model import (
-    INDENT, RECALL, CannotEvaluate, Forest, Isar_State_Slot, Leaf, Node, Ready, Theory, _emit_lines,
-    _parent_id, cartouche)
-from ..plugin import TAT_compile_hook, TAT_node
+from ..model import INDENT, RECALL, CannotEvaluate, Isar_State_Slot, Leaf, Ready, cartouche, emit_lines
+from ..plugin import TAT_node
+from .common import Theory_Member
 from .statement import STATEMENT_DEFS, LongStatement_RawAST
 
 KINDS = ("lemma", "theorem", "corollary", "proposition")   # the Isar commands Isabelle treats alike
@@ -183,12 +181,12 @@ class Proof_Check(jobs.Evaluation_Job):
 
 
 @TAT_node
-class Theorem(Leaf):
+class Theorem(Theory_Member, Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
             "kind": {"type": "string", "enum": list(KINDS)},
-            "name": {"type": "string", "description": "The fact's name"},
+            "name": {"type": "string"},
             "statement": {"$ref": "#/$defs/LongStatement"},
         },
         "required": ["kind", "name", "statement"],
@@ -216,8 +214,7 @@ class Theorem(Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Theorem_RawAST):
-        if not _inside_a_theory(config.parent):
-            raise BadTheoremNodeParent(raw["kind"], _parent_id(config))
+        cls.require_inside_theory(config, raw["kind"])
         name = raw["name"]
         if not _FACT_NAME.fullmatch(name) or name.endswith("_"):
             raise InvalidName(name, "fact name")
@@ -272,9 +269,10 @@ class Theorem(Leaf):
         evaluation status; the proof's from the job's outcome and the
         check, left out under `invalid statement`, a stored proof left out
         under `not evaluated`; no proof slot while no job class is named."""
-        if isinstance(self._status, CannotEvaluate):
+        (status,) = self.evaluation_statuses()
+        if isinstance(status, CannotEvaluate):
             return "invalid statement"
-        statement = "valid statement" if isinstance(self._status, Ready) else "not evaluated"
+        statement = "valid statement" if isinstance(status, Ready) else "not evaluated"
         job = self.job()
         if job is None:
             return statement
@@ -307,7 +305,7 @@ class Theorem(Leaf):
         english = self.statement.english
         if english and english[-1] not in ".!?":
             english += "."
-        _emit_lines(indent, out, f"text {cartouche(f'{self.kind.capitalize()} {self.name}. {english}')}")
+        emit_lines(indent, out, f"text {cartouche(f'{self.kind.capitalize()} {self.name}. {english}')}")
         lines = [f"{self.kind} {self._quoted(self.name)}:"]
         if self.statement.for_any:
             lines.append("  fixes " + " and ".join(
@@ -320,42 +318,13 @@ class Theorem(Leaf):
         job = self.job()
         proven = job is not None and isinstance(job.outcome, Succeeded) and self.check_outcome() is PASSED
         lines.append("  by aoa" if proven else "  sorry")
-        _emit_lines(indent, out, "\n".join(lines))
+        emit_lines(indent, out, "\n".join(lines))
         return indent
 
     def _quoted(self, name: str) -> str:
         """A reserved name in double quotes, as `Token.print_name` would
         write it (§5); every other bare."""
         return f'"{name}"' if name in self.reserved_names else name
-
-
-_PROOF_STORE = re.compile(r"(.+?)\.proof-store(?:\..*)?", re.DOTALL)   # `<T>.proof-store`, `<T>.proof-store.*`
-
-
-@TAT_compile_hook
-def remove_proof_stores_of_no_tree(forest: Forest) -> None:
-    """The package's compile hook (COMPILATION.md §5): AoA keeps a theory's
-    proofs in `<T>.proof-store` beside its file, with `<T>.proof-store.*` —
-    its lock and temporary files among them.  Each such entry the path
-    listing yields, not a folder, whose folder and `T` are no tree's is
-    removed, and nothing else; the folder by its identity, as the compile
-    knows its own, since its spelling on disk may differ from the session's."""
-    directory = forest.conversation.working_directory
-    trees = {(identity(directory / tree.session().folder()), tree.name) for tree in forest._trees()}
-    for entry in list(paths(directory)):
-        if (entry.kind != "folder" and (found := _PROOF_STORE.fullmatch(entry.path.name))
-                and (identity(directory / entry.path.parent), found[1]) not in trees):
-            (directory / entry.path).unlink()
-
-
-def _inside_a_theory(parent: Node) -> bool:
-    """Whether `parent` is a `Theory` or a nesting node under one (§4)."""
-    n: Node | None = parent
-    while n is not None:
-        if isinstance(n, Theory):
-            return True
-        n = n.parent
-    return False
 
 
 def _statement_of(raw: LongStatement_RawAST) -> Statement:

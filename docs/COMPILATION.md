@@ -330,7 +330,9 @@ proposal; Isabelle's own files write commands at column 0 at every
 nesting depth, so today every class returns what it was given, and the
 parameter is kept for a layout that may want otherwise *(decided)*.
 Every emission method writes whole lines ending in a newline
-*(decided)*. `Theory`'s header ends with one.
+*(decided)*. A class writes its lines through the framework's
+`emit_lines(indent, out, text)` (model.py), which puts every line of
+`text` at `indent` and ends each with a newline.
 
 A `Leaf` implements `emit` itself. A `StdBlock`'s `emit` is the
 framework's, and the class implements one method per operation of the
@@ -400,7 +402,7 @@ stored `keywords`, through `print_name` (node_classes/SESSION_AND_THEORY.md
 included (§4); and the check's outcome through its accessor (§4), which
 `Proof_Obligation`'s choice between `by aoa` and `sorry` reads
 (node_classes/COMMON.md §3).
-Reading an instant status there — `is_finished()`, `_operations_ready()`,
+Reading an instant status there — `evaluation_statuses()`, `is_finished()`,
 the default `mark` — is a class bug: on a loaded forest every instant
 status is `not_evaluated`. The rule is kept by the store-mirror
 invariant the test suites already run after every edit and walk
@@ -715,8 +717,9 @@ report holds nodes, not text.
 **Compile hooks.** A plugin registers a function, not a class: a
 module-level function under the decorator `TAT_compile_hook` (§7 for
 the name), of one argument, the forest root, returning nothing
-*(decided)*. It reads stored fields and the directory, as `emit` does,
-and `forest.conversation` gives it the working directory. Importing
+*(decided)*. Like `emit`, it reads stored fields (§3); it also reads
+the trees, `forest.trees()`, and the working directory, which
+`forest.conversation` gives it. Importing
 registers it, as `TAT_node` registers a class (PLUGIN_SYSTEM §1)
 *(decided)*. The registry is a process-wide one of its own,
 `compile_hooks`, kept in registration order, which holds a hook exactly
@@ -730,7 +733,9 @@ its files are written, in registration order, removes the empty
 folders after them, and writes the ROOT last *(decided)*. A hook
 removes only paths the path listing yields, writes only beside a tree's
 file, creating each file afresh, and never touches a `.thy` or the
-ROOT; anything it raises is the
+ROOT; it knows a tree's folder by `identity(path)` of `compile.py`, as
+the compile knows a `Session`'s, since the folder's spelling on disk may
+differ from the session's name; anything it raises is the
 plugin's bug, and the compile did not complete. The plugin `Isabelle_Std`
 registers one (`common.py`, node_classes/COMMON.md §3) for AoA's
 `<Theory>.proof-store`, the proof cache AoA

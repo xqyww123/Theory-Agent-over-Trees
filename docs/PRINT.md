@@ -41,10 +41,11 @@ framework's tags after it inside the parentheses (CONSTRUCT_INTERACTION
 and the forest root writes no line of its own: `Sessions:` is a header
 (§6).
 
-The framework's default `mark` reads the node's own operations' statuses
-through `_own_statuses()` — none for a `Session`, one for a leaf, the
-beginning and the ending for a nesting node (MODULE_STRUCTURE §4.1) —
-and `finished` (ARCHITECTURE §3.2). The first row that applies wins:
+The framework's default `mark` reads the node's own operations' instant
+statuses through `evaluation_statuses()` — none for a `Session`, one for
+a leaf, the beginning and the ending for a nesting node (MODULE_STRUCTURE
+§4.1) — and `finished` (ARCHITECTURE §3.2). The first row that applies
+wins:
 
 | the node | mark |
 | --- | --- |
@@ -66,12 +67,14 @@ accompanies a `failed` line, a `Notice:` block a `complete` or
 `incomplete` one — `incomplete` when the class still owes what the
 notice is about.
 
-A class overrides `mark` to say more: `Proof_Obligation` answers two
-slots, the class's status and its proof's (node_classes/COMMON.md §3;
-`Theorem`'s words, node_classes/THEOREM.md §7). Inside
-the parentheses, after the mark, the framework adds its tags: `automatic
-construction` on a node whose construction job has that setting on, for
-every agent, and after it `needs your answer, call \`check_construct\` to
+A class overrides `mark` to say more, and reads its instant statuses
+through `evaluation_statuses()` as the default does. `Proof_Obligation`
+answers two slots, the class's status and its proof's
+(node_classes/COMMON.md §3; `Theorem`'s words, node_classes/THEOREM.md
+§7). Inside the parentheses, after the mark, the framework adds its
+tags: `automatic construction` on a node whose construction job has that
+setting on, for every agent, and after it `needs your answer, call
+\`check_construct\` to
 see it` on a node whose construction job waits for the agent the
 rendering is for (CONSTRUCT_INTERACTION §6).
 The framework's words are RENDER_BASELINES §5's; a class's words are its

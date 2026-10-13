@@ -23,9 +23,10 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
 from harness import text_of
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, model as M, plugin
-from isabelle_theory_agent.exceptions import BadTheoremNodeParent, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
-from isabelle_theory_agent.std import statement, theorem
+from isabelle_theory_agent.std import common, statement, theorem
+from isabelle_theory_agent.std.common import NotInsideTheory
 from isabelle_theory_agent.std.theorem import Proof_Check, Proof_Job, Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
 from test_compile import listing
@@ -36,6 +37,7 @@ from test_session_theory import Forest_Under_Test, session, theory
 
 table = ts.table                    # the fake state slot table and the fake wire, per test
 TH = DOCS / "node_classes" / "THEOREM.md"
+COMMON = DOCS / "node_classes" / "COMMON.md"
 KINDS = {**ts.KINDS, **{kind: Theorem for kind in theorem.KINDS}}
 
 
@@ -80,8 +82,8 @@ def test_the_schema_and_the_descriptions_are_the_documents(monkeypatch):
     monkeypatch.setitem(plugin.imports, "Other.Thy", __name__)        # another package's: not the plugin's
     loaded = plugin.load(["isabelle_theory_agent.std"])
     assert loaded.imports == ("Minilang_AoA.Minilang_AoA",) and loaded.kinds["lemma"] is Theorem
-    name, *long = fenced_lines(TH, "3.")
-    assert sorted(descriptions(Theorem.construct_schema)) == sorted([name] + long + [long[-1]])   # the last twice (§3)
+    long = fenced_lines(TH, "3.")
+    assert sorted(descriptions(Theorem.construct_schema)) == sorted(long + [long[-1]])   # the last twice (§3)
 
 
 # --- `gen` (§4) --------------------------------------------------------------
@@ -108,17 +110,17 @@ def test_gen_keeps_the_statement_normalised_as_isaterms():
 
 
 def test_gen_refuses_as_section_4_says():
-    """TH §4's fenced lines and RB §2's: the parent outside a theory, the
-    fact name's grammar, the identifiers and the repeated names."""
+    """§4's refusals: the parent, checked first (COMMON §1's `NotInsideTheory`,
+    pinned for every class by test_common.py), the fact name's grammar
+    (RENDER_BASELINES §2's line), the identifiers and the repeated names
+    (TH §4's fenced lines)."""
     f, x = forest()
     (s,) = f.sub_nodes
-    e = refused(f, s, [lemma("p")], BadTheoremNodeParent)
-    assert (e.kind, e.parent_id) == ("lemma", "session_Arith")
-    assert str(e) == "At `constructs[0]`: " + [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
-                                               if line.startswith("A `lemma` cannot be placed")][0]
-    e = refused(f, f, [lemma("p", kind="theorem")], BadTheoremNodeParent)
-    assert (e.kind, e.parent_id) == ("theorem", "Sessions")
-    identifier, binds, invalid = fenced_lines(TH, "4.")
+    e = refused(f, s, [lemma("rev-length")], NotInsideTheory)        # a bad name too: the parent is checked first
+    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lemma", "session_Arith", "constructs[0]")
+    identifier, binds = fenced_lines(TH, "4.")
+    [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
+                 if line.startswith("`rev-length` is not a valid fact name")]
     e = refused(f, x, [lemma("rev-length")], InvalidName)
     assert (e.name, e.grammar) == ("rev-length", "fact name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "rev_", "rev length", "x'y-"):
@@ -209,7 +211,7 @@ def test_print_fields_writes_the_proposition_and_english_by_depth():
 
 INVALID = M.CannotEvaluate((IsaTerm.from_agent("no"),))
 PROVED = Succeeded({"text": "by simp", "thread_cpu": 3, "wall": 5})
-BAD = Failed("")                                         # a failed check: its message is empty (§7)
+BAD = Failed("")                                         # a failed check: its message is empty (COMMON §3)
 
 
 def with_proof(node, status, outcome, check=None):
@@ -224,10 +226,10 @@ def with_proof(node, status, outcome, check=None):
 
 def test_the_mark_reads_one_of_eleven_ways():
     """§7's mark, state by state: the statement slot from the status, the
-    proof slot from the outcome and the check — §7's table —, left out
+    proof slot from the outcome and the check — COMMON §3's table —, left out
     under `invalid statement`, a stored proof left out under `not
     evaluated`; the eleven, and no other, are the document's block."""
-    [_, _, block] = fenced_blocks(TH, "7.")
+    [block] = fenced_blocks(TH, "7.")
     f, x = forest(lemma("p"))
     (p,) = x.sub_nodes
     assert p.mark(M.BRIEFING, 0) == "not evaluated, proof not started"
@@ -250,13 +252,13 @@ def test_the_mark_reads_one_of_eleven_ways():
     assert len(marks) == 11 and marks == set(re.findall(r"\([^)]*\)", "\n".join(block)))
 
 
-def test_the_jobs_sentences_are_section_7_s():
+def test_the_jobs_sentences_are_common_section_3_s():
     """`Proof_Job`'s and `Proof_Check`'s words: the titles, the two
     notifications, the failure headers, the check's failure block — the
     header alone, its colon a period — and the notification's forms for
     one, three and four nodes, with and without automatic construction,
-    the document's lines verbatim."""
-    [sentences, automatic, _] = fenced_blocks(TH, "7.")
+    COMMON §3's lines verbatim."""
+    [sentences, automatic] = fenced_blocks(COMMON, "3.")
     f, x = forest(lemma("p"))
     (p,) = x.sub_nodes
     job = p.job()
@@ -280,7 +282,7 @@ def test_the_jobs_sentences_are_section_7_s():
     assert passed.outcome is PASSED and passed.starter is None and passed.node is p
 
 
-def test_check_answers_section_7_s_table():
+def test_check_answers_common_section_3_s_table():
     """`_check()`: true with no proof — `NOT_STARTED` or `FAILED`; on a
     proof, true only when its check `FAILED`; `can_start()` false off
     `ready` whatever `_check()` says, and false while `RUNNING`."""
@@ -365,7 +367,7 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
     unwritten tree's included, and nothing else is touched: not a `.thy`,
     not a folder of that name, not a `.proof-cache`, not a name that
     continues `.proof-store` without a dot, not a link's target."""
-    assert theorem.remove_proof_stores_of_no_tree in plugin.compile_hooks        # registered at import
+    assert common.remove_proof_stores_of_no_tree in plugin.compile_hooks         # registered at import
     [lines] = fenced_blocks(TH, "5.")
     f = Forest_Under_Test(kinds=KINDS)
     (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
@@ -391,7 +393,7 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
                  "Arith/notes.proof-store.txt", "X.proof-store"):
         (directory / file).write_text("of no tree")
     (directory / "Arith" / "Gone.proof-store.tmp.7").symlink_to("../elsewhere")     # the link goes, its target stays
-    report = C.compile(f, [theorem.remove_proof_stores_of_no_tree])
+    report = C.compile(f, [common.remove_proof_stores_of_no_tree])
     assert listing(directory) == [
         ("Arith/.proof-store", "file"),
         ("Arith/Dir.proof-store/keep", "file"), ("Arith/Dir.proof-store", "folder"),

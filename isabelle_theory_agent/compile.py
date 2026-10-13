@@ -80,7 +80,7 @@ def render(forest: Forest) -> Rendering:
     rule, render every written tree's text and the ROOT's in memory, and
     convert each once.  It reads only what is stored, so the store-mirror
     helper holds a loaded forest to the same answer."""
-    trees = forest._trees()
+    trees = forest.trees()
     table = forest._name_table()
     written = _decide(forest, trees, table)
     decided = tuple((tree, None if written[tree] else _reason(forest, tree, written, table))

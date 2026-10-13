@@ -36,8 +36,11 @@ meanwhile; AoA being told that it runs under TAT and given a way to
 talk to TAT; and whether a construction job continues through a context
 change and repairs its stored proof — today the default
 `_on_context_change` cancels it and the construction is started again.
-To measure at implementation: cancellation on the AoA side, and that
-TAT's process serves `IsaMini.AoA`. What `product` holds is decided: the
+To measure at implementation: cancellation on the AoA side; that
+TAT's process serves `IsaMini.AoA`; and whether the store's key, a hash
+of the goal, survives a context change that leaves the goal unchanged,
+so that a proof carried across an amend and checked again is found by
+a build's `by aoa`. What `product` holds is decided: the
 method text AoA writes to its proof store with its times
 (node_classes/COMMON.md §3); the proof check replays it under limits derived from those times
 (node_classes/COMMON.md §3).

@@ -146,7 +146,7 @@ def assert_invariants(forest, table):
                 else:
                     assert values.get(node._state_before_ending.name) == node.consumed_end, \
                         f"{node}: ending ready, consumed {node.consumed_end!r}"
-    trees = forest._trees()
+    trees = forest.trees()
     for tree in trees:
         if tree._operations_ready():
             assert tree.qualified_name() in table.theories, \

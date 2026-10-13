@@ -255,8 +255,7 @@ class UnexpectedField(RawASTError):
 
 class BadEdit(TAT_Error, ABC):
     """Remediation direction: rethink the change — "edit" in the broad sense
-    of the glossary (ARCHITECTURE §1).  Node classes derive their own
-    `Bad<Class>NodeParent` from this class (EXCEPTIONS.md §3)."""
+    of the glossary (ARCHITECTURE §1)."""
 
 
 # A coordinate into the submitted call ("constructs[0]", "children[2]"), which no
@@ -287,15 +286,16 @@ class DuplicateName(BadEdit):
 
 
 class InvalidName(BadEdit):
-    """Raised against one of four grammars, which `grammar` names: the
+    """Raised against one of five grammars, which `grammar` names: the
     framework's name grammar (MCP_SPECIFICATION §2), by the framework; the
     theory name's, by `Theory.gen`; the session name's, by `Session.gen`;
-    the fact name's, by `Theorem.gen` (node_classes/THEOREM.md §4).  Each
+    the fact name's, by `Theorem.gen` (node_classes/THEOREM.md §4); the
+    type name's, by `Datatype.gen` (node_classes/DATATYPE.md §4).  Each
     renders its own grammar, so the agent can correct the name from the
     message."""
 
     def __init__(self, name: str,
-                 grammar: Literal["name", "theory name", "session name", "fact name"] = "name"):
+                 grammar: Literal["name", "theory name", "session name", "fact name", "type name"] = "name"):
         super().__init__()
         self.name = name
         self.grammar = grammar
@@ -305,8 +305,11 @@ class InvalidName(BadEdit):
 
 
 # Each grammar's text, a predicate of the name, rendered by `InvalidName`
-# after its subject; a class refusing a field by the fact name's grammar
-# renders the same text (node_classes/THEOREM.md §4).
+# after its subject.  The fact name's and the type name's are one text
+# (RENDER_BASELINES §2), which `Isabelle_Std` also renders when it refuses
+# a field that is no Isabelle identifier (node_classes/COMMON.md §5).
+_FACT_OR_TYPE_NAME = ("starts with a letter and continues with letters, digits, underscores and primes ('), and"
+                      " does not end with an underscore")
 GRAMMARS = {
     "name": "starts with a letter and continues with letters, digits, underscores, primes (') and interior"
             " hyphens, and does not end with a hyphen or an underscore",
@@ -314,8 +317,8 @@ GRAMMARS = {
                    " and no dot",
     "session name": "starts with a letter and continues with letters, digits, underscores and interior"
                     " hyphens, and does not end with a hyphen or an underscore",
-    "fact name": "starts with a letter and continues with letters, digits, underscores and primes ('), and"
-                 " does not end with an underscore",
+    "fact name": _FACT_OR_TYPE_NAME,
+    "type name": _FACT_OR_TYPE_NAME,
 }
 
 
@@ -432,20 +435,6 @@ class BadTheoryNodeParent(BadEdit):
     def _cause(self) -> str:
         return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
                 " a theory lives directly under a session.")
-
-
-class BadTheoremNodeParent(BadEdit):
-    """`Theorem`'s parent check (EXCEPTIONS.md §3; node_classes/THEOREM.md
-    §4): raised by its gen for a parent outside a theory — a `Session` or
-    the root."""
-
-    def __init__(self, kind: str, parent_id: str):
-        super().__init__()
-        self.kind = kind
-        self.parent_id = parent_id
-
-    def _cause(self) -> str:
-        return f"A `{self.kind}` cannot be placed under `{self.parent_id}`; it belongs inside a theory."
 
 
 class MoveIntoOwnSubtree(BadEdit):

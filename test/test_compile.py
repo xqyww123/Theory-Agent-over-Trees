@@ -125,7 +125,7 @@ def test_the_report_and_the_root_of_compilation_md_section_2(tmp_path):
     assert [tree.name for tree, _ in report.trees] == [
         "Sorting", "Merge", "Sum", "Perm", "Uses", "Odd", "Early", "Late"]      # tree order
     assert by_name["Sorting"] is by_name["Merge"] is by_name["Late"] is None
-    trees = {t.name: t for t in f._trees()}
+    trees = {t.name: t for t in f.trees()}
     assert by_name["Sum"] == C.Does_Not_Emit(trees["Sum"].sub_nodes[0])
     assert by_name["Perm"] == C.Does_Not_Emit(trees["Perm"].sub_nodes[0])
     assert by_name["Uses"] == C.Import_Not_Written(trees["Sum"])
@@ -170,7 +170,7 @@ def test_the_store_mirror_catches_what_a_compile_could_not_read(tmp_path):
     helper says so at once — in `can_emit`, in a file's text, in the ROOT,
     in the report."""
     class Refuses_By_An_Instant_Status(Lemma):
-        def can_emit(self): return self._operations_ready()
+        def can_emit(self): return all(isinstance(s, M.Ready) for s in self.evaluation_statuses())
     class Emits_An_Instant_Status(Lemma):
         def emit(self, indent, out):
             out.write(f"text \\<open>{self.name}, finished: {self.is_finished()}\\<close>\n")
@@ -198,7 +198,7 @@ def test_the_store_mirror_catches_what_a_compile_could_not_read(tmp_path):
 
     f = mirrored("refusing", theory("A") | {"children": [{"kind": "refusing", "name": "x"}]},
                  "can_emit is True, and False once loaded")
-    assert all(n.can_emit() for n in f._trees()[0]._tree_order())       # in memory, it writes
+    assert all(n.can_emit() for n in f.trees()[0]._tree_order())       # in memory, it writes
     mirrored("emitting", theory("A") | {"children": [{"kind": "emitting", "name": "x"}]},
              "S/A.thy: the loaded forest writes another text")
     mirrored("forgetful", theory("A", "HOL-Library.Multiset", kind="forgetful"),
@@ -218,7 +218,7 @@ def test_an_import_cycle_writes_no_member(tmp_path):
         "S", theory("A", "B", kind="willing"), theory("B", "A", kind="willing"),
         theory("C", "B", kind="willing"), theory("Self", "Self", kind="willing"),
         theory("Free", kind="willing")))
-    a, b, c, itself, free = f._trees()
+    a, b, c, itself, free = f.trees()
     report = C.compile(f, [])
     assert dict(report.trees) == {a: C.Order_Constraint(b), b: C.Import_Not_Written(a),
                                   c: C.Import_Not_Written(b), itself: C.Order_Constraint(itself),
@@ -246,7 +246,7 @@ def test_the_reasons_in_their_order(tmp_path):
         theory("Refusing", "After") | {"children": [{"kind": "section", "name": "Older"}]},
         theory("Ordered", "After"),
         theory("After")))
-    bad, both, quiet, failing_importer, failed, refusing, ordered, after = f._trees()
+    bad, both, quiet, failing_importer, failed, refusing, ordered, after = f.trees()
     run(f.evaluate_to(None, True))
     # `Failed` and `Refusing` ran before a move put `After` behind them:
     # what they stored keeps its line
@@ -283,7 +283,7 @@ def test_which_tree_a_reason_names(tmp_path):
         theory("Earlier", "W2", "W1"),
         theory("W1"), theory("W2"),
         theory("U") | {"children": [lemma("u", fail=True)]}))
-    p, q, importer, early, earlier, w1, w2, u = f._trees()
+    p, q, importer, early, earlier, w1, w2, u = f.trees()
     run(f.evaluate_to(None, True))
     report = C.Compile_Report(C.render(f).trees, ())
     reasons = dict(report.trees)
@@ -308,7 +308,7 @@ def test_a_nesting_node_is_met_at_its_beginning_when_that_did_not_pass(tmp_path)
             {"kind": "block", "name": "B", "fail": True, "children": [lemma("inside")]}]},
         theory("Closing") | {"children": [
             {"kind": "block", "name": "E", "children": [lemma("inner", fail=True)]}]}))
-    opening, closing = f._trees()
+    opening, closing = f.trees()
     run(f.evaluate_to(None, True))
     reasons = dict(C.render(f).trees)
     assert reasons[opening] == C.Does_Not_Emit(opening.sub_nodes[0])    # the block, not `inside`

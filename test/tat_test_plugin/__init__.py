@@ -128,5 +128,5 @@ class Note(M.Leaf):
         return M.Ready()
 
     def emit(self, indent, out):
-        out.write(M.INDENT * indent + self.command() + "\n")
+        M.emit_lines(indent, out, self.command())
         return indent

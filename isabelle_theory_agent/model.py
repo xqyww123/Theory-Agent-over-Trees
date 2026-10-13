@@ -285,7 +285,7 @@ def _indented(indent: int, text: str) -> list[str]:
     return [INDENT * indent + line for line in text.split("\n")]
 
 
-def _emit_lines(indent: int, out: TextIO, text: str) -> None:
+def emit_lines(indent: int, out: TextIO, text: str) -> None:
     """Write `text` as whole lines at `indent`, each ending in a newline
     (COMPILATION.md §3)."""
     out.write("".join(line + "\n" for line in _indented(indent, text)))
@@ -302,8 +302,8 @@ def cartouche(text: str) -> str:
 def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
     """The message block (PRINT.md §3): `header` at `indent`, every line of
     the message one level deeper."""
-    _emit_lines(indent, out, header)
-    _emit_lines(indent + 1, out, message.rstrip("\n"))
+    emit_lines(indent, out, header)
+    emit_lines(indent + 1, out, message.rstrip("\n"))
 
 
 def is_valid_name(name: str) -> bool:
@@ -426,6 +426,13 @@ class Node(ABC):
         """The stored statuses, what `can_emit` and a compile read."""
         return tuple(self._last_evaluation_statuses)
 
+    @final
+    def evaluation_statuses(self) -> tuple[EvaluationStatus, ...]:
+        """The instant statuses, in `last_evaluation_statuses()`'s order: what
+        the walk and `mark` read, never `can_emit` or `emit` (ARCHITECTURE
+        §3.2; COMPILATION.md §3)."""
+        return tuple(self._own_statuses())
+
     # --- What the three setters share (MODULE_STRUCTURE §4.1, "Status").
     # A setter: the guard; the release when its operation goes from written
     # to unwritten; the instant status; `_written`.
@@ -464,7 +471,7 @@ class Node(ABC):
         leaves `Ready` (CONSTRUCT_INTERACTION §3.3); and last, both fields
         written, `on_invalidated` when the instant status, `old` before the
         write, left `Ready`."""
-        new = self._own_statuses()[index]
+        new = self.evaluation_statuses()[index]
         stored_before = self._last_evaluation_statuses[index]
         self._last_evaluation_statuses[index] = new
         operation = self._operation_names()[index]
@@ -730,9 +737,9 @@ class Node(ABC):
     def _own_statuses(self) -> list[EvaluationStatus]:
         """The statuses of the node's own operations, in the order it runs
         them: a leaf's one, a nesting node's beginning and ending, none for
-        a container that runs nothing.  What `_operations_ready` and the
-        default `mark` read; the three base classes answer, no class of
-        its own (PLUGIN_SYSTEM §5)."""
+        a container that runs nothing.  What `evaluation_statuses()`
+        returns; the three base classes answer, no class of its own
+        (PLUGIN_SYSTEM §5)."""
 
     @abstractmethod
     def _operation_names(self) -> list[Any]:
@@ -744,7 +751,7 @@ class Node(ABC):
     def _operations_ready(self) -> bool:
         """Whether every operation of this node — not its subtree — is
         `Ready`."""
-        return all(isinstance(s, Ready) for s in self._own_statuses())
+        return all(isinstance(s, Ready) for s in self.evaluation_statuses())
 
     # --- Rendering (PRINT.md).  The framework writes the line, the
     # operations' messages and descends; a class writes its fields, and
@@ -870,7 +877,7 @@ class Node(ABC):
             return
         seen = self.forest().agent.seen
         whole = mode is RECALL and depth < 2
-        for operation, status in zip(self._operation_names(), self._own_statuses()):
+        for operation, status in zip(self._operation_names(), self.evaluation_statuses()):
             if isinstance(status, NotEvaluated) or not status.messages:
                 continue
             key = (self.identity, operation)
@@ -905,7 +912,7 @@ class Node(ABC):
         """What the node's own operations say of PRINT.md §1's rows:
         `failed` under an obstacle, `not evaluated` when the first has not
         run, else None."""
-        statuses = self._own_statuses()
+        statuses = self.evaluation_statuses()
         if any(isinstance(s, CannotEvaluate) for s in statuses):
             return "failed"
         if statuses and statuses[0] is NOT_EVALUATED:
@@ -1504,10 +1511,11 @@ class Conversation:
     to the Isabelle side, the working directory (ARCHITECTURE §4), the log
     (LOGGING.md) and the ending object (MODULE_STRUCTURE §4.6); the bound
     on the construction jobs running at once, None for none
-    (node_classes/THEOREM.md §7); and the agents of the client process, by
-    the identity the client gives them (CONSTRUCT_INTERACTION §4) — the
-    server creates them, the seen sets are theirs (PRINT.md §4).  A node
-    reaches it through `forest().conversation`."""
+    (CONSTRUCT_INTERACTION §3.2; a compile has none); and the agents of
+    the client process, by the identity the client gives them
+    (CONSTRUCT_INTERACTION §4) — the server creates them, the seen sets
+    are theirs (PRINT.md §4).  A node reaches it through
+    `forest().conversation`."""
     connection: Connection
     working_directory: Path
     log: Log
@@ -1966,7 +1974,7 @@ class Forest(Unchained_Node):
             parent._set_ending(ev, NOT_EVALUATED, None)
             index, parent = parent.index_of() + 1, parent.parent
 
-    def _trees(self) -> list[Theory]:
+    def trees(self) -> list[Theory]:
         """The trees in tree order: the `Theory` nodes under the `Session`
         nodes under the root, selected by class at both levels — a root
         holding something else, as a test double's does, holds no tree."""
@@ -1984,7 +1992,7 @@ class Forest(Unchained_Node):
         tree for the root, every tree under a `Session`, else the tree
         containing the node."""
         if node is self:
-            return self._trees()
+            return self.trees()
         if isinstance(node, Session):
             return [t for t in node.sub_nodes if isinstance(t, Theory)]
         tree = self._tree_of(node)
@@ -1992,7 +2000,7 @@ class Forest(Unchained_Node):
         return [tree]
 
     def _name_table(self) -> dict[str, Theory]:
-        return {t.qualified_name(): t for t in self._trees()}
+        return {t.qualified_name(): t for t in self.trees()}
 
     @staticmethod
     def _import_of(tree: Theory, item: str, table: dict[str, Theory]) -> Theory | None:
@@ -2022,7 +2030,7 @@ class Forest(Unchained_Node):
         """The trees whose resolved imports contain `tree`, in tree order —
         `tree` itself when it imports itself."""
         table = self._name_table()
-        return [t for t in self._trees() if tree in self._resolved_imports(t, table)]
+        return [t for t in self.trees() if tree in self._resolved_imports(t, table)]
 
     def _closure(self, trees: Sequence[Theory]) -> list[Theory]:
         """The least set containing `trees` and closed under resolved
@@ -2035,7 +2043,7 @@ class Forest(Unchained_Node):
             if tree not in closed:
                 closed.add(tree)
                 pending.extend(self._resolved_imports(tree, table))
-        return [t for t in self._trees() if t in closed]
+        return [t for t in self.trees() if t in closed]
 
     def _order_violation(self, node: Node) -> tuple[str, Theory] | None:
         """The order constraint (ARCHITECTURE §3.3): the first `imports`
@@ -2057,7 +2065,7 @@ class Forest(Unchained_Node):
         compile share (COMPILATION.md §2): the `imports` items of `tree`
         whose forest tree does not lie strictly earlier in tree order, each
         with that tree, in the items' order."""
-        trees = self._trees()
+        trees = self.trees()
         if table is None:
             table = {t.qualified_name(): t for t in trees}
         position = trees.index(tree)
@@ -2138,7 +2146,7 @@ class Forest(Unchained_Node):
         table = self._name_table()
         return {t.identity: TreeRecord(t.qualified_name(),
                                        frozenset(self._resolved_imports(t, table)))
-                for t in self._trees()}
+                for t in self.trees()}
 
     def _invalidate_changed_trees(self, ev: Evaluation, before: Tree_Records
                                   ) -> tuple[list[Theory], list[str]]:
@@ -2153,7 +2161,7 @@ class Forest(Unchained_Node):
         removes from the ML theory table after its commit
         (EVALUATOR_DESIGN §3)."""
         after = self._record()
-        changed = [t for t in self._trees()
+        changed = [t for t in self.trees()
                    if t.identity in before and before[t.identity] != after[t.identity]]
         for tree in changed:
             tree._invalidate(ev)
@@ -2564,12 +2572,12 @@ class Theory(StdBlock):
         """A non-empty `description` as a `text ‹…›` block, then the header,
         the one `_eval_beginning_opr` runs (SESSION_AND_THEORY §2)."""
         if self.description:
-            _emit_lines(indent, out, f"text {cartouche(self.description)}")
-        _emit_lines(indent, out, self.header())
+            emit_lines(indent, out, f"text {cartouche(self.description)}")
+        emit_lines(indent, out, self.header())
         return indent
 
     def emit_ending(self, indent, out):
-        _emit_lines(indent, out, "end")
+        emit_lines(indent, out, "end")
         return indent
 
     def _set_ending(self, ev, new, duration):

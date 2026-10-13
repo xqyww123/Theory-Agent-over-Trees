@@ -8,7 +8,7 @@ cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadAnswer, BadEdit, BadSessionNodeParent, BadTheoremNodeParent, BadTheoryNodeParent,
+    AmbiguousId, BadAnswer, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
     ChildrenNotInheritable, ConstructionError,
     ConstructNotSupported, ConstructOwnedByAnother, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
@@ -92,15 +92,24 @@ def test_invalid_field():
     # A reason ending in a period does not double it.
     assert (str(InvalidField(field="statement", reason="is not a term."))
             == "The field `statement` is not a term.")
-    # The call check's two further reasons, a schema's `enum` and `minItems`.
+    # The schema check's own reasons, for a tool call's arguments.
     check(of_tool(InvalidField("action", "must be one of `append`, `insert_before`,"
                                " `insert_after`, `amend`")),
           "The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.")
     check(of_tool(InvalidField("constructs", "must not be empty")),
           "The argument `constructs` must not be empty.")
-    # The schema check's own reason form.
+    # The tool call's entry point's own refusal, before the check (MODULE_STRUCTURE §4.4).
+    check(of_tool(InvalidField("constructs", "must not be nested deeper than 100 levels")),
+          "The argument `constructs` must not be nested deeper than 100 levels.")
+    # The schema check's own reasons, for a construct's fields.
     check(InvalidField(field="statement", reason="must be an object"),
           "The field `statement` must be an object.")
+    check(InvalidField(field="types", reason="must not be empty"),
+          "The field `types` must not be empty.")
+    check(InvalidField(field="types[0].constructors[1].syntax.form",
+                       reason="must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`"),
+          "The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`,"
+          " `binder`, `mixfix`.")
 
 
 def test_unexpected_field():
@@ -149,6 +158,13 @@ def test_invalid_name():
           " letter and continues with letters, digits, underscores and"
           " interior hyphens, and does not end with a hyphen or an"
           " underscore.")
+    # The fact name's and the type name's grammars share one text.
+    check(InvalidName("rev-length", "fact name"),
+          "`rev-length` is not a valid fact name: a fact name starts with a letter and continues with"
+          " letters, digits, underscores and primes ('), and does not end with an underscore.")
+    check(InvalidName("my-list", "type name"),
+          "`my-list` is not a valid type name: a type name starts with a letter and continues with"
+          " letters, digits, underscores and primes ('), and does not end with an underscore.")
 
 def test_duplicate_theory_short_name():
     check(DuplicateTheoryShortName(short_name="List", holder="HOL.List"),
@@ -199,11 +215,7 @@ def test_bad_node_parent():
     check(BadTheoryNodeParent(kind="theory", parent_id="section_Basics"),
           "A `theory` cannot be placed under `section_Basics`; a theory lives"
           " directly under a session.")
-    check(BadTheoremNodeParent(kind="lemma", parent_id="session_Arith"),
-          "A `lemma` cannot be placed under `session_Arith`; it belongs inside a theory.")
-    check(InvalidName("rev-length", "fact name"),
-          "`rev-length` is not a valid fact name: a fact name starts with a letter and continues with"
-          " letters, digits, underscores and primes ('), and does not end with an underscore.")
+
 
 def test_move_into_own_subtree():
     check(MoveIntoOwnSubtree(id="theory_X.section_Basics",

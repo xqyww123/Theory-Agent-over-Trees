@@ -330,15 +330,14 @@ theory's proof store, `<short name>.proof-store` beside the file, where
 the construction's AoA call recorded it, and replays it without
 searching; the `aoa` method is `Minilang_AoA.Minilang_AoA`'s, which the
 plugin has every theory import (PLUGIN_SYSTEM §1; SESSION_AND_THEORY
-§2).
+§2). The plugin's compile hook for AoA's proof stores,
+`remove_proof_stores_of_no_tree` (COMPILATION.md §5), is `common.py`'s.
 
 **The blocks.** The jobs' blocks — the framework prints them after
 `print_fields`, when detailed, while the outcome is `FAILED` and the
 node is not an obstacle (CONSTRUCT_INTERACTION §6) — are the failure
 blocks alone: the header above and the message one level deeper (for
-example THEOREM.md §8). The plugin's compile hook for AoA's proof
-stores, `remove_proof_stores_of_no_tree` (COMPILATION.md §5), is
-`common.py`'s.
+example THEOREM.md §8).
 
 What stays the class's: its command's transition and what the agent
 authors; `evaluation_callback`, the name of its callback; `message()`;

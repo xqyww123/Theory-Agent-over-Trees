@@ -77,9 +77,10 @@ class Lemma(Stub, M.Leaf):
     def mark(self, mode, depth):
         """`Theorem`'s two slots (node_classes/THEOREM.md §7), which the
         documents' examples read."""
-        if isinstance(self._status, M.CannotEvaluate):
+        (status,) = self.evaluation_statuses()
+        if isinstance(status, M.CannotEvaluate):
             return "invalid statement"
-        statement = "valid statement" if isinstance(self._status, M.Ready) else "not evaluated"
+        statement = "valid statement" if isinstance(status, M.Ready) else "not evaluated"
         outcome = self.job().outcome
         if outcome is jobs.NOT_STARTED:
             proof = "proof not started"

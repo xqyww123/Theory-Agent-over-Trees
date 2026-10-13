@@ -451,8 +451,9 @@ operations, in the order it runs them: `[self._status]` for a `Leaf`, the
 beginning's and the ending's for a `StdBlock`, none for an
 `Unchained_Node`; the three implementations are `final`, and the loader
 refuses an override (PLUGIN_SYSTEM §5) — from which the framework
-derives `_operations_ready()`, `print_fields` and `mark` (PRINT.md), the
-stored list `last_evaluation_statuses()` in the same order, made by
+derives `evaluation_statuses()`, `_operations_ready()`, the operations'
+messages and the default `mark` (PRINT.md §1, §3), the stored list
+`last_evaluation_statuses()` in the same order, made by
 `Node`'s constructor from `_operation_names()`, the operations' names in
 that order, which the three base classes answer likewise
 (COMPILATION.md §4); and the event hooks (below).
@@ -683,9 +684,10 @@ and logs nothing again. At every write by the walk, a
 rerun's rewrite of `ready` included, it calls a running construction
 job's `_on_context_change`, through `_completed` as it fires
 `on_invalidated`, and drops the node's evaluation job
-(CONSTRUCT_INTERACTION §3.2, §3.3). Beside the instant statuses a node
-holds `_last_evaluation_statuses`, one list in `_own_statuses()`'s
-order, read through `last_evaluation_statuses()` and stored as the
+(CONSTRUCT_INTERACTION §3.2, §3.3). Beside the instant statuses, which
+a class reads through `evaluation_statuses()`, a tuple, a node holds
+`_last_evaluation_statuses`, one list in `_own_statuses()`'s order,
+read through `last_evaluation_statuses()` and stored as the
 reserved row `last_evaluation_statuses`, and the stored check,
 `_check_outcome`, read through `check_outcome()` (ARCHITECTURE §4.1);
 `_resulting_status()` is the status of the operation that writes
@@ -1231,7 +1233,7 @@ whose `_start` forks the replay of that proof on the ML side (§2.4's
 `fork_job`). The framework, not the class, posts the jobs' notifications
 to the owner's or starter's mailbox (CONSTRUCT_INTERACTION §3.4) and
 cancels or drops the jobs when the node is deleted or amended (§4.2).
-The module also registers the package's one compile hook,
+`common.py` registers the package's one compile hook,
 `remove_proof_stores_of_no_tree` (COMPILATION.md §5, "Compile hooks").
 
 ### 4.6 `mcp.py`, `mcp_server.py`, `toplevel.py`
