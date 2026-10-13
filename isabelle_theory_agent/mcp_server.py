@@ -1061,7 +1061,7 @@ class Claude_Code_Server(TAT_Server):
     guarding that reading."""
     name = "claude-code"
     client_name = "claude-code"
-    measured_version = "2.1.286"
+    measured_version = "2.1.296"
     call_key = "claudecode/toolUseId"
     announcement_answer = ALLOW             # the grant, without which Claude Code refuses the call under -p
     interrupting_tool = "TaskStop"          # the parent's tool that stops a subagent (CONSTRUCT_INTERACTION §7)

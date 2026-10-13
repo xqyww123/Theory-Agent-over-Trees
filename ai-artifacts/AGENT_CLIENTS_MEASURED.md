@@ -32,6 +32,12 @@ a decision.
   `server/discover` request; the `mcp` SDK (1.26.0) answers 400 and still
   issues a fresh `Mcp-Session-Id`, so every connection leaves one orphan
   session in the SDK's table besides the one it uses.
+- *measured* 2026-10-13 (2.1.296, interactive) — Claude Code's MCP log
+  names no `server/discover`; it connected over HTTP (protocol
+  2025-11-25) and the first request of the session to reach TAT after
+  `initialize` was `tools/list`. Whether it still sends the request is
+  not seen: the SDK would handle it before it reaches TAT, and Claude
+  Code's log does not list it.
 - *measured* — `--agents` accepts `mcpServers` as a list whose items are a
   server name or a one-key object `{name: definition}`; such inline
   servers are exempt from the folder-trust check (*docs*).
@@ -148,8 +154,9 @@ a decision.
   each subagent's whole life (no parallel subagents, no `TaskStop`).
   Agent-definition `hooks` add nothing at an abnormal end;
   `TaskCreated`/`TaskCompleted` are task-list events; `Notification` never
-  fired. Not measured: interactive project-settings `env` under trust; how a
-  user stops a background agent from the UI.
+  fired. Not measured: `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` from
+  interactive project settings; how a user stops a background agent from
+  the UI.
 - *measured* 2026-09-29 (2.1.283) — **the eight-block ceiling counts
   consecutive blocks with no tool call between them**: a block whose reason
   makes the agent run a tool (`echo`, so equally `check_construct`)
@@ -164,10 +171,12 @@ a decision.
   project `.claude/settings.json` `env` under `-p`, `0` in the process
   environment, and `"0"` through `--settings` in interactive mode all had
   15 text-only blocks honoured with no override; the settings `env` is
-  exported to the hook process and read by the ceiling logic. Not
-  measured: a project settings file in interactive mode (trust dialog);
-  whether `0` is "no cap" beyond 15; 2.1.284, which became the PATH's
-  `claude` on 09-29. Probe: `ai-artifacts/probes/block_cap_and_hook_cwd_claude_code/`.
+  exported to the hook process and read by the ceiling logic (probe:
+  `ai-artifacts/probes/block_cap_and_hook_cwd_claude_code/`). *measured*
+  2026-10-13 (2.1.296, interactive, the project folder trusted through
+  an enclosing git repository): `"0"` in the project
+  `.claude/settings.json` honoured 164 consecutive text-only `Stop`
+  blocks (`ai-artifacts/probes/live17/claude-code-5/`).
 - *measured* 2026-09-29 (2.1.283) — **a hook command's cwd is the
   conversation's cwd**, equal to the payload's `cwd`: the launch directory,
   moved by a Bash `cd` in the main conversation to a directory inside the
@@ -186,6 +195,43 @@ a decision.
 - *docs* — `SubagentStop` also fires for Claude Code's own internal agents
   (prompt suggestions, `/btw`), with an empty `agent_type`; an omitted,
   `""` or `"*"` matcher catches those too.
+- *measured* 2026-10-13 (2.1.296, interactive) — such a `SubagentStop` of
+  an internal agent follows every main-conversation turn, with a new
+  `agent_id`, `agent_type` `""`, an `agent_transcript_path` naming a file
+  that does not exist, and a suggested next prompt as
+  `last_assistant_message`; the compaction summariser is another
+  (`ai-artifacts/probes/live17/REPORT.md` §3.4).
+- *measured* 2026-10-13 (2.1.296, interactive) — twice a `PreToolUse` on
+  a TAT tool came under an `agent_id` found in no transcript, MCP log or
+  file under `~/.claude`, the key `agent_type` absent: once while a
+  blocked subagent waited in `check_construct`, once after 164 blocked
+  `Stop`s of the main conversation; neither call reached TAT
+  (`ai-artifacts/probes/live17/REPORT.md` §4.1). *source* (the 2.1.296
+  bundle, `ai-artifacts/review/steps_16_17/orphan_agent_static.md`):
+  these are Claude Code's internal agents — forked helper queries, the
+  prompt suggestion after a turn and the progress summary of a running
+  background subagent every 30 s — run on a copy of a conversation under
+  a fresh agent id with no `agentType` and no transcript
+  (`skipTranscript`); a tool call an internal agent's model emits runs
+  the `PreToolUse` hooks first and is then refused by the internal
+  agent's own permission function, whatever the hook answered. A
+  `SubagentStop` of an internal agent carries `agent_type` `""`; its
+  `PreToolUse` carries no `agent_type` key; every real subagent, teammate
+  and workflow agent carries one. *measured* 2026-10-13 (2.1.296,
+  interactive, `--debug`, `ai-artifacts/probes/orphan_agent/`): 25 such
+  `PreToolUse` in 125 blocked `Stop`s, each inside `Forked agent
+  [prompt_suggestion]` in the debug log and refused there ("Hook
+  approved tool use …, but canUseTool is required"); 0 in 207 with
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`; 30 in 99 with
+  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` (the advisor is not the source);
+  one inside `Forked agent [agent_summary]` 20.5 s into a blocked
+  background subagent's follow-up call.
+- *measured* 2026-10-13 (2.1.296, interactive, the agent directory inside
+  a trusted git repository) — the agents' context held the `CLAUDE.md`
+  of the enclosing repository and its auto-memory index (`MEMORY.md`
+  under `~/.claude/projects/<repository>/memory/`): a run's compaction
+  summary names both, and a subagent ran on Opus by that `CLAUDE.md`'s
+  rule (`ai-artifacts/probes/live17/claude-code/`).
 - *measured* — Hierarchy (main → child → grandchild, nesting allowed by
   default): no hook payload names a parent. `SubagentStart` carries only
   `session_id`, `transcript_path`, `cwd`, `prompt_id`, `agent_id`,
@@ -257,8 +303,10 @@ a decision.
   in the reason (`SendMessage` "CORMORANT" to the subagent) and did not
   retry the stop; its prompt said TAT's hooks may refuse calls and say
   what to do instead. Not measured: repeated denials, a foreground
-  subagent, interactive mode. Probe:
-  `ai-artifacts/probes/interrupt_denial_claude_code/`.
+  subagent. Probe: `ai-artifacts/probes/interrupt_denial_claude_code/`.
+  *measured* 2026-10-13 (2.1.296, interactive): the denial of a
+  `TaskStop` on a background subagent holding work reached the parent
+  (`ai-artifacts/probes/live17/claude-code-5/`, 01:58:00).
 - *measured* 2026-09-30 (2.1.285) — **`TaskStop`'s `tool_input.task_id`
   is the subagent's `agent_id`**, the same value as
   `SubagentStart`/`SubagentStop` `agent_id`, `PostToolUse(Agent)`
@@ -298,7 +346,12 @@ a decision.
   empty `PreToolUse` answer lets `TaskStop` through**: the task was
   stopped with `TaskStop` not in the allowed tools and `permission_denials:
   []`; the static read agrees, `TaskStop` defines no permission check
-  of its own. Not measured: a subagent as the caller, interactive mode.
+  of its own. Not measured: a subagent as the caller. *measured*
+  2026-10-13 (2.1.296, interactive): the main conversation's `TaskStop`
+  answered with nothing was allowed
+  (`ai-artifacts/probes/live17/claude-code/`, 21:59:25). A `TaskStop` on
+  a task already completed fires no `PreToolUse` (`…/claude-code-3/`,
+  01:02:18, "not running (status: completed)").
 - *source* 2026-09-30 (Codex 0.156.1, `hooks/src/engine/output_parser.rs`
   ~455; unit test `permission_decision_allow_without_updated_input_fails_open`)
   — **Codex answers a bare `permissionDecision: allow` (no
@@ -371,7 +424,18 @@ a decision.
   (`session/session.rs`: "one stable thread-owned MCP runtime handle";
   `codex-mcp/src/runtime.rs`: "the thread-owned MCP runtime"). A spawned
   subagent is a new thread with a new `Session`, so each subagent has its
-  own `Mcp-Session-Id`. Not measured.
+  own `Mcp-Session-Id`. *measured* 2026-10-13 (0.156.1): a subagent
+  thread's first TAT call opened a second MCP session; `clientInfo` is
+  `{name: "codex-mcp-client", version: "0.156.1"}` on each.
+- *measured* 2026-10-13 (0.156.1) — the hook payloads: every hook carries
+  `hook_event_name`, `session_id`, `transcript_path`, `cwd`, `model`;
+  every hook but `SessionStart` carries `turn_id`, and every hook but
+  `PreCompact`/`PostCompact` carries `permission_mode`. `PreToolUse` adds
+  `tool_name`, `tool_input`, `tool_use_id`, and in a subagent thread
+  `agent_id` and `agent_type`; `Stop` adds `last_assistant_message` and
+  `stop_hook_active`; `SubagentStop` adds those two and `agent_id`,
+  `agent_type`, `agent_transcript_path`; `PreCompact`/`PostCompact` add
+  `trigger`; `SessionStart` adds `source`.
 - *source* — `env_http_headers` reads the process environment
   (`rmcp_client.rs`, `env::var`): the same value for every thread; it
   identifies the launch, not the subagent.
@@ -755,11 +819,15 @@ Claude Code, when no transcript is written:
   writes none; `"0"` (or `""`) in the settings `env` turns transcripts
   back on (four probes; under `-p`, and interactively through
   `--settings`; an interactive session reading a trusted project's
-  settings file: not measured). An interactive session that inherits
+  settings file: measured 2026-10-13 (2.1.296): the transcript was
+  written under an inherited `=1`
+  (`ai-artifacts/probes/live17/claude-code-env/`)).
+  An interactive session that inherits
   `CLAUDE_CODE_CHILD_SESSION=1` (started from inside another Claude
   Code) writes none ("Transcript saving is off — inherited
   CLAUDE_CODE_CHILD_SESSION marker"); `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`
-  turns them back on (*docs* env-vars.md says the same), and does not
+  turns them back on (*docs* env-vars.md says the same; interactively
+  from a project settings file: not measured), and does not
   undo SKIP or the flag; under `-p` the marker suppresses nothing.
 
 Claude Code, context removed without a compaction:
@@ -838,7 +906,12 @@ Codex (0.156.1):
   `send_message`, `followup_task`, `wait_agent`, `interrupt_agent`,
   `list_agents`; its `spawn_agent` computes the child's depth and checks
   no limit. Review threads switch both features off
-  (`core/src/tasks/review.rs`).
+  (`core/src/tasks/review.rs`). *measured* 2026-10-13 (0.156.1,
+  `features.multi_agent_v2 = true`, `gpt-5.6-sol`): the interruption
+  tool is `collaborationinterrupt_agent`, `tool_input` `{"target":
+  "/root/<name>"}`, and a `PreToolUse` hook matching that name fires and
+  can deny it; the model is V2 by the catalog, so the run does not
+  separate the flag's effect.
 
 ## Both clients: confining the agents to the agent directory (2026-10-01)
 
@@ -857,6 +930,16 @@ agent's shell and the server's port unreachable from it (`curl` exit 7).
 The client's MCP requests are made outside the sandbox. A subagent is
 bound exactly as the main conversation is. Programs under `/home` are
 not found by the agent's shell.
+
+- *measured* 2026-10-13 (Claude Code 2.1.296, Codex 0.156.1, interactive
+  under `isabelle TAT`) — besides TAT, each client started the MCP
+  servers of the user's own configuration and account: Claude Code its
+  claude.ai connectors (docs, Gmail), claude-in-chrome, debugmcp and
+  isabelle-mcp (the last one launched in the agent's session,
+  `~/.cache/claude-cli-nodejs/<project>/mcp-logs-isabelle-mcp/`); Codex
+  `codex_apps`, `isabelle-lsp`, `isabelle-mcp`. Claude Code's
+  `--strict-mcp-config` limits it to the project's `.mcp.json`; not
+  measured under `isabelle TAT`.
 
 **Claude Code.**
 

@@ -55,13 +55,16 @@ verbatim, `X` standing for a full node id.
   reaches TAT; the leading dotted numbers are compared; lower, unreadable,
   or a `clientInfo.name` that is another client's than `-c` chose,
   refuses the session with the existing `TAT_StartupError` naming both
-  versions, and the launcher exits 1. Claude Code 2.1.285's preceding
-  `server/discover` probe is not in the specification and is answered
-  "method not found", after which it sends `initialize`; confirmed with
-  the library at implementation. *(author)* The expected versions are
-  the latest measured, Claude Code 2.1.286 (raised from 2.1.285 on
-  2026-10-02, the compaction probes having run on it) and Codex 0.156.1, raised
-  with every round of measurement.
+  versions, and the launcher exits 2. The first request of a session
+  to reach TAT after `initialize` is `tools/list` on both clients. In
+  `clientInfo.name` Claude Code names itself `claude-code`, Codex
+  `codex-mcp-client`; Codex opens one MCP session per thread, each
+  checked at its first request (measured 2026-10-13, Claude Code
+  2.1.296, Codex 0.156.1). Claude Code 2.1.296 connects and lists TAT's
+  tools without harm, and its MCP log names no `server/discover`.
+  *(author)* The expected versions are the latest measured, Claude Code
+  2.1.296 (raised from 2.1.286 on 2026-10-13, the live run having used
+  it) and Codex 0.156.1, raised with every round of measurement.
 
 ## 2. Jobs on a node
 
@@ -575,8 +578,12 @@ verbatim, `X` standing for a full node id.
   reason, or an empty answer (the wire form corrected by the author
   after review 4, below). *(author)* On Codex the tool name exists only
   under multi-agent V2 with the default tool namespace, so `configure`
-  writes `features.multi_agent_v2 = true` (source read; measured at
-  implementation).
+  writes `features.multi_agent_v2 = true` (source read; measured
+  2026-10-13 on 0.156.1: under it the tool is
+  `collaborationinterrupt_agent`, its `tool_input` `{"target":
+  "/root/<name>"}`, the hook matched and the denial reached the
+  parent — with `gpt-5.6-sol`, which the model catalog gives V2 by
+  itself, so the run does not show that the flag is what gives V2).
 - `agent_of_call` never guesses: every `tools/call` must have been
   announced by a `PreToolUse` hook (matcher `mcp__TAT__.*`); Claude Code
   matches `_meta["claudecode/toolUseId"]`, Codex `_meta.callId`; an
@@ -705,7 +712,7 @@ verbatim, `X` standing for a full node id.
   the author had recommended refusing the one call). *(author, 「怎么
   方便写代码怎么来就好」)* It is a `TAT_StartupError`, through the door
   the version refusal uses: the conversation enters its ending, the
-  launcher prints the message and exits 1. The launcher's line (approved
+  launcher prints the message and exits 2. The launcher's line (approved
   2026-10-01): `TAT cannot serve this client: Claude Code saves no
   transcript of the conversation. Start it without
   --no-session-persistence.` The line the agents' calls are answered
@@ -762,7 +769,9 @@ verbatim, `X` standing for a full node id.
   `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`; per-server `timeout` 43200000 ms;
   the stall watchdog left alone. Codex: `default_tools_approval_mode =
   "approve"`, `tool_timeout_sec` 43200, `check_for_update_on_startup =
-  false` (the layer verified at implementation); trust and
+  false` (the layer it is read from is not determined; the 2026-10-13
+  run showed no update banner, and its one TUI warning, whose text was
+  not captured, may concern this key); trust and
   `--dangerously-bypass-hook-trust` have no configuration equivalent
   and are given at launch. `check_construct` clamps to a minute under
   twelve hours. *(author)* TAT sends no progress notifications (the
@@ -1404,7 +1413,25 @@ or at its next code-mode yield, within 31 s (Codex); every
 deterministic path-to-thread mapping needs Codex's rollout file
 (`ai-artifacts/review/CODEX_PATH_MAPPING_RULING.md`).
 Pending at implementation: M6 (the suite with the inverted test),
-`check_for_update_on_startup`'s layer, the slot-release order. Measured
+`check_for_update_on_startup`'s layer, an interactive session reading
+`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` from the project settings, the
+slot-release order. Measured 2026-10-13 in interactive sessions
+(`ai-artifacts/probes/live17/`, Claude Code 2.1.296, Codex 0.156.1):
+the project-level files of CLIENT_HOOKS §2 and §3 are read;
+`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0` from the project settings honoured
+164 consecutive text-only `Stop` blocks;
+`CLAUDE_CODE_SKIP_PROMPT_HISTORY=0` there turns the transcript back on
+under an inherited `=1`; the first request after `initialize` is
+`tools/list`; Codex opens one MCP session per thread; after every
+main-conversation turn Claude Code fires a `SubagentStop` for an
+internal agent whose `agent_transcript_path` names no file; and twice a
+`PreToolUse` on a TAT tool came under an `agent_id` with no
+`agent_type` and no transcript — read in the 2.1.296 bundle
+(`ai-artifacts/review/steps_16_17/orphan_agent_static.md`), these are
+Claude Code's internal agents, whose calls its own permission function
+refuses after the hooks (`ai-artifacts/probes/live17/REPORT.md` §4.1;
+AGENT_CLIENTS_MEASURED.md); each time TAT ended the conversation by
+§10's rule, which waits for the owner's ruling. Measured
 2026-09-30 (probes `codex_subagent_compaction`,
 `claude_code_subagent_compaction`, both REPORT.md): Codex runs
 `PreCompact`/`PostCompact` for every thread, `agent_id` naming a

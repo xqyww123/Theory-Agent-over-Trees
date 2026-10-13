@@ -798,7 +798,12 @@ where it is: CI §7's rows "a question, and jobs running" and "messages
 only", a running construction job holding a stop, the plural state
 lines, the 503 while ending, the client refusals, an unannounced call, a
 subagent's compaction, the transcript-change events, the
-compaction-check failures, a seen set cleared non-empty (REPORT.md §2).
+compaction-check failures, a seen set cleared non-empty (REPORT.md §2) —
+mapped to the suite in `ai-artifacts/review/steps_16_17/done_when_gap.md`:
+ten pinned already, and three tests added to test_hooks.py for the rest
+(the 503 for a stop and an interruption while ending; an unannounced
+call on Codex; a `SubagentStop` blocked then allowed on Claude Code), so
+the gap is closed by the suite, by the owner's word.
 Measurements: the project-level file names; an interactive session reads
 the project settings' transcript `env` entries (the control without
 them is inconclusive); `tools/list` is the first request after
@@ -872,6 +877,22 @@ bound's refusal among the `TAT_StartupError`s of EXCEPTIONS.md §1.
   general over both kinds of job, the product not logged; MS §2.4's
   "one transition" two; the measurements of CI §10 and THEOREM §7
   recorded. Done.
+- Step 17 (2026-10-13, from the live run and its review, the owner's
+  word 「你可以自决」): CONSTRUCT_DECISIONS.md §1 — the launcher exits
+  2, the first request after `initialize`, the clients' `clientInfo`,
+  no `server/discover` seen, the measured Claude Code version 2.1.296
+  (also CI §8, CH's opening, `mcp_server.measured_version`); §10 —
+  "exits 2", the `multi_agent_v2` tool name,
+  `check_for_update_on_startup`'s layer not determined; §12 — the
+  interactive measurements and the source reading of the two unknown
+  agent ids; CH §4 — the `FORCE_SESSION_PERSISTENCE` entry's
+  interactive reading not measured (the env probe `claude-code-env` set
+  `CLAUDECODE=1`, not `CLAUDE_CODE_CHILD_SESSION=1`); CH §5 — the
+  enclosing repository's CLAUDE.md and memory, the user's own MCP
+  servers and MCP servers that write files, among the accepted gaps;
+  AGENT_CLIENTS_MEASURED — the measured items. CI §1's transcript
+  premise and the rule of CH §2 / CI §8 wait for the owner's ruling on
+  `ai-artifacts/probes/live17/REPORT.md` §4.1.
 
 ## 6. Not in this plan
 

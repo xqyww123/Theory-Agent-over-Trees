@@ -173,7 +173,7 @@ def test_an_announced_call_is_served_and_its_records_name_the_call_and_the_agent
                                     "bytes": Path(transcript_path).stat().st_size}
             [connected] = stand_ins.records("conversation")
             assert (connected["event"], connected["data"]) == (
-                "client_connected", {"name": "claude-code", "version": "2.1.286"})
+                "client_connected", {"name": "claude-code", "version": "2.1.296"})
             assert "call" not in connected and "agent" not in connected
     run(scenario)
 
@@ -353,12 +353,12 @@ def test_the_path_answers_503_while_ending_and_500_on_a_bug_and_ignores_other_ho
 
 
 @pytest.mark.parametrize("server_class, name, version, served", [
-    (Claude_Code_Server, "claude-code", "2.1.286", True), (Claude_Code_Server, "claude-code", "2.1.300", True),
+    (Claude_Code_Server, "claude-code", "2.1.296", True), (Claude_Code_Server, "claude-code", "2.1.300", True),
     (Claude_Code_Server, "claude-code", "3.0.0-beta", True),
-    (Claude_Code_Server, "claude-code", "2.1.285", False), (Claude_Code_Server, "claude-code", "2.1", False),
-    (Claude_Code_Server, "claude-code", "dev", False), (Claude_Code_Server, "codex-mcp-client", "2.1.286", False),
+    (Claude_Code_Server, "claude-code", "2.1.295", False), (Claude_Code_Server, "claude-code", "2.1", False),
+    (Claude_Code_Server, "claude-code", "dev", False), (Claude_Code_Server, "codex-mcp-client", "2.1.296", False),
     (Codex_Server, "codex-mcp-client", "0.156.1", True), (Codex_Server, "codex-mcp-client", "0.156.0", False),
-    (Codex_Server, "claude-code", "2.1.286", False)])
+    (Codex_Server, "claude-code", "2.1.296", False)])
 def test_the_client_info_check(server_class, name, version, served):
     """CONSTRUCT_INTERACTION §8; MODULE_STRUCTURE §4.6: at a session's first
     request the `clientInfo` is checked — the name against the one the
@@ -1217,4 +1217,79 @@ def test_codex_s_stop_and_interruption_are_judged_end_to_end(tmp_path):
             for payload in (stop, interrupt):
                 r = await post_hook(url, payload)
                 assert r.status_code == 200 and r.content == b"", payload
+    run(scenario)
+
+
+# --- the branches the live run did not reach (step 17's review) -----------
+
+def test_a_stop_and_an_interruption_are_answered_503_while_ending_and_judged_nothing():
+    """CONSTRUCT_INTERACTION §8: once the ending is entered every hook is
+    answered 503 before it is judged — a `Stop`, a `SubagentStop` and a
+    `TaskStop` alike — so no `stop_judged` or `interruption_judged`
+    record is written for them."""
+    async def scenario():
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            accepting = hold_accepting(server)
+            server.ending.end(RuntimeError("ended"))
+            for payload in (stop(), stop(CC_SUBAGENT), task_stop()):
+                r = await post_hook(url, payload)
+                assert r.status_code == 503 and r.content == b"", payload
+            accepting.set()
+            assert isinstance(await ended(serve), RuntimeError)
+        assert answers()[-3:] == [(None, 503)] * 3
+        assert judgements("stop_judged") == [] and judgements("interruption_judged") == []
+        assert server.agents == {}
+    run(scenario)
+
+
+@pytest.mark.parametrize("case", ["no announcement", "no thread id"])
+def test_an_unannounced_call_ends_the_conversation_on_codex(tmp_path, case):
+    """CONSTRUCT_INTERACTION §8 on Codex: a call no announcement named,
+    and an announced call whose `_meta` carries no `threadId`, name no
+    agent — the conversation ends with the `TAT_InternalError`, the call
+    is answered the first line of RENDER_BASELINES §4, and no agent is
+    created at the call."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools(), server_class=Codex_Server) as (server, serve), \
+                plain_client(server.url, info(Codex_Server)) as session:
+            server.configure(tmp_path)
+            url = hook_url(server.url)
+            meta = codex_meta("c9", CX_SESSION, tmp_path)
+            if case == "no thread id":
+                await post_hook(url, codex("echo", "c9"))
+                del meta["threadId"]
+            result = await session.call_tool("echo", {"text": "hi"}, meta=meta)
+            assert (text_of(result), result.isError) == (INTERNAL, True)
+            exn = await ended(serve)
+            assert isinstance(exn, TAT_InternalError) and str(exn) == UNANNOUNCED
+            assert tool_records()[-3:] == [("call", None, "c9"), ("unannounced", None, "c9"),
+                                           ("while_ending", None, "c9")]
+            assert server.agents == {}
+    run(scenario)
+
+
+def test_a_subagent_stop_blocked_then_allowed_on_claude_code(transcript_path):
+    """CONSTRUCT_INTERACTION §7 on Claude Code: a subagent's `SubagentStop`
+    blocked while its construction runs, and the next one — the client's
+    retry, `stop_hook_active` — allowed once the job is gone; the two
+    verdicts recorded for the subagent alone."""
+    async def scenario():
+        subagent_file(transcript_path, CC_SUBAGENT)
+        async with serving(free_port(), []) as (server, serve):
+            url = hook_url(server.url)
+            await announce(url, "toolu_s", transcript_path, CC_SUBAGENT)
+            f, (p,) = lemmas("P")
+            server.ending.forest = f
+            p.job().start(server.agents[CC_SUBAGENT])
+            r = await post_hook(url, stop(CC_SUBAGENT))
+            assert r.json() == {"decision": "block", "reason": "\n".join([
+                BLOCKED, "The proof construction on `lemma_P` is still running.",
+                "Call `check_construct` to wait for the running proof construction before you exit."])}
+            p.job().cancel(None)
+            r = await post_hook(url, {**stop(CC_SUBAGENT), "stop_hook_active": True})
+            assert r.status_code == 200 and r.content == b""
+            assert [(agent, data["allowed"]) for agent, data in judgements("stop_judged")] == [
+                (CC_SUBAGENT, False), (CC_SUBAGENT, True)]
     run(scenario)

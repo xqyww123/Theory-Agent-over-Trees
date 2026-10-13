@@ -4,7 +4,7 @@ Status: decided (2026-09-30, with CONSTRUCT_INTERACTION.md §7 and §8).
 The client facts these files rest on are measured in
 ai-artifacts/AGENT_CLIENTS_MEASURED.md, each on the version named
 there, not every one on the versions TAT requires. TAT requires of the
-client that connects at least Claude Code 2.1.286 or Codex 0.156.1,
+client that connects at least Claude Code 2.1.296 or Codex 0.156.1,
 read from its MCP `initialize` (CONSTRUCT_INTERACTION §8).
 
 One conversation — `isabelle TAT`, or `isabelle TAT_mcp` for a client
@@ -283,9 +283,10 @@ conversation — Claude Code's rewind menu restoring the conversation to
 an earlier prompt, or Esc Esc to edit an earlier prompt and send it
 again — removes context, fires no hook and writes no compaction
 boundary; TAT assumes it does not happen (CONSTRUCT_INTERACTION §1).
-The exact project-level file names above, and an interactive session
-reading the two transcript `env` entries from the project settings, are
-confirmed at implementation.
+Whether an interactive Claude Code started from inside another one reads
+`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` from the project settings is not
+measured; if it does not, TAT finds no transcript at the first
+announcement and ends the conversation (§2).
 
 ## 5. The agents stay in the agent directory
 
@@ -431,8 +432,15 @@ Accepted as they are:
   path under none of the roots above stays readable.
 - An MCP server the client has runs outside the sandbox and shows the
   agents whatever it reaches; one that reads files by their paths shows
-  them the working directory. A user who wants the working directory
-  hidden gives the client no such server.
+  them the working directory, and one that writes files writes where
+  the agents direct it. Besides TAT, each client starts the MCP servers
+  of the user's own configuration and of the user's account — Claude
+  Code its claude.ai connectors, Codex `codex_apps` (measured
+  2026-10-13, Claude Code 2.1.296 and Codex 0.156.1,
+  AGENT_CLIENTS_MEASURED.md). A user who wants the working directory
+  neither read nor written by the agents removes every such server from
+  the client's configuration; the account's connectors, which that
+  configuration does not list, stay.
 - A service of the machine that an agent's shell can reach is the
   agent's to use: over the network, TAT's own port included, and on
   Claude Code through a Unix socket outside `/run` — a tmux server's or
@@ -442,8 +450,13 @@ Accepted as they are:
 - Claude Code itself re-opens to the agents the user's git configuration
   (`~/.gitconfig`, `~/.config/git/`) and parts of `~/.claude` — skills,
   plugins, rules, agents, commands, shell snapshots.
-- Claude Code loads the `CLAUDE.md` of the directories above the agent
-  directory by itself, outside any sandbox; those files are the user's.
+- Claude Code loads by itself, outside any sandbox, the `CLAUDE.md` of
+  the directories above the agent directory and, when the agent
+  directory lies inside a git repository Claude Code trusts, the index
+  of the notes it keeps for that repository (its auto-memory,
+  `MEMORY.md` under `~/.claude/projects/<repository>/memory/`); those
+  files are the user's, and both are in the agents' context (measured
+  2026-10-13, Claude Code 2.1.296, AGENT_CLIENTS_MEASURED.md).
 - By Claude Code's documentation, a skill an agent writes into a
   subdirectory of the agent directory can carry hooks, which run outside
   the sandbox; not measured.
