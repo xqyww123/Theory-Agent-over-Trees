@@ -139,7 +139,7 @@ def proc(pid: int) -> Proc | None:
     """The running process with the pid: None for a pid without one, and for
     a zombie, which has exited and only waits to be reaped."""
     try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
+        stat = Path(f"/proc/{pid}/stat").read_text(errors="replace")   # `comm` is raw bytes, cut at 15
     except OSError:
         return None
     head, _, tail = stat.rpartition(")")          # the fields after the last `)`: state, ppid, pgrp, ...
@@ -206,38 +206,36 @@ async def end_group(process: subprocess.Popen[Any], exited: asyncio.Future[Any])
 class _Pipe:
     """One pipe of a tool, read by one task from the start into `data`, so
     that a full pipe never gates the exit; `more()` waits for the next
-    bytes or the end."""
+    bytes or the end.  An `Event`, not a shared future: a waiter cancelled
+    by a deadline leaves the reader untouched."""
 
-    def __init__(self, stream: Any):
-        self._stream = stream                   # Popen's file object
+    def __init__(self, transport: asyncio.ReadTransport, reader: asyncio.StreamReader):
         self.data = bytearray()
         self.closed = False
-        self._changed = asyncio.get_running_loop().create_future()
-        self.transport: asyncio.ReadTransport | None = None
-        self.task: asyncio.Task[None] | None = None
-
-    async def start(self) -> None:
-        loop = asyncio.get_running_loop()
-        reader = asyncio.StreamReader()
-        self.transport, _ = await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader), self._stream)
+        self._changed = asyncio.Event()
+        self._transport = transport
         self.task = asyncio.ensure_future(self._fill(reader))
 
-    def _notify(self) -> None:
-        changed, self._changed = self._changed, asyncio.get_running_loop().create_future()
-        changed.set_result(None)
+    @classmethod
+    async def connected(cls, stream: Any) -> _Pipe:
+        """The pipe of Popen's file object `stream`, its reader running."""
+        reader = asyncio.StreamReader()
+        transport, _ = await asyncio.get_running_loop().connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), stream)
+        return cls(transport, reader)
 
     async def _fill(self, reader: asyncio.StreamReader) -> None:
         try:
             while chunk := await reader.read(65536):
                 self.data += chunk
-                self._notify()
+                self._changed.set()
         finally:
             self.closed = True
-            self._notify()
+            self._changed.set()
 
     async def more(self) -> None:
-        await self._changed
+        self._changed.clear()
+        await self._changed.wait()
 
     def text(self) -> str:
         return bytes(self.data).decode(errors="replace")
@@ -247,9 +245,8 @@ class _Pipe:
         return self.text().split("\n")[:-1]
 
     def close(self) -> None:
-        assert self.task is not None and self.transport is not None
         self.task.cancel()
-        self.transport.close()
+        self._transport.close()
 
 
 class Tool_Handle:
@@ -337,10 +334,9 @@ async def tool(argv: list[str], env: dict[str, str], stdin: Any = subprocess.DEV
 
     process = subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE if stdout is None else stdout,
                                stderr=subprocess.PIPE, env=env, start_new_session=True, preexec_fn=preexec)
-    pipes = {name: _Pipe(stream) for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))
-             if stream is not None}
-    for pipe in pipes.values():
-        await pipe.start()
+    with anyio.CancelScope(shield=True):   # one loop turn: a cancellation lands in the block, under its exit
+        pipes = {name: await _Pipe.connected(stream)
+                 for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)) if stream is not None}
     exited = asyncio.ensure_future(asyncio.to_thread(process.wait))
     handle = Tool_Handle(argv, process, exited, pipes)
 
@@ -355,7 +351,6 @@ async def tool(argv: list[str], env: dict[str, str], stdin: Any = subprocess.DEV
                 await end_group(process, exited)
             else:
                 await asyncio.wait({exited})
-            # asyncio's wait, not a cancel scope: a bound reached leaves the readers as they are
             _, pending = await asyncio.wait([pipe.task for pipe in pipes.values()], timeout=JOIN)
             still_open = [name for name, pipe in pipes.items() if pipe.task in pending]
             for pipe in pipes.values():
@@ -383,6 +378,13 @@ async def run_tool(argv: list[str], env: dict[str, str]) -> subprocess.Completed
     async with tool(argv, env) as handle:
         rc = await handle.exited
     return subprocess.CompletedProcess(argv, rc, handle.stdout, handle.stderr)
+
+
+async def until(condition: Callable[[], bool], what: str, seconds: float = 10.0) -> None:
+    """`condition` polled until it holds, under a deadline."""
+    with deadline(seconds, what):
+        while not condition():
+            await asyncio.sleep(0.05)
 
 
 @contextmanager

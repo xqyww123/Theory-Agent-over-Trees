@@ -1747,15 +1747,17 @@ prints `Starting TAT... It may take a while`; and runs `TAT_mcp`'s steps
   through a pipe, such as a pager, sets the terminal's mode itself,
   which is why both streams must be the terminal; a job member reached
   through stderr alone is the limit that remains. Under the same
-  condition, right after the line settings and before the messages of
-  the end, the launcher writes to its stdout one fixed sequence that
+  condition, right after that restore and before the messages of the
+  end, the launcher writes to its stdout one fixed sequence that
   switches off, on the screen shown, the modes Claude Code and Codex set
   with escape sequences: the kitty keyboard protocol, modifyOtherKeys,
   mouse tracking, bracketed paste, focus events and colour-scheme
   notifications, and shows the cursor. Each part changes nothing where
-  its mode is already off. A client killed on the alternate screen
-  leaves the terminal there; the launcher does not leave it, because
-  leaving it when it is not shown moves the cursor in some terminals.
+  its mode is already off. The launcher never switches screens: a client
+  killed on the alternate screen leaves the terminal there, the messages
+  of the end are shown there, and the main screen keeps the kitty
+  keyboard protocol flags the client pushed on it, since the protocol
+  keeps one stack per screen.
 
 A refusal before the client starts, from the directory's creation or
 from steps 1 to 3, is printed and the tool exits `2`; the client never

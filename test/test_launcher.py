@@ -23,15 +23,17 @@ import termios
 import time
 import traceback
 import tty
-from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import anyio
 import pytest
 
+import fake_agent_client as fake
 import harness as H
-from harness import STARTUP, deadline, group, proc, run_tool, running, tool
+from harness import STARTUP, deadline, group, proc, run_tool, running, tool, until
 from isabelle_theory_agent import edit
 from isabelle_theory_agent.mcp_server import AGENTS, HOST, Claude_Code_Server, Codex_Server, agent_directory
 from isabelle_theory_agent.toplevel import LOG
@@ -300,12 +302,13 @@ async def test_a_compile_is_refused_while_a_conversation_holds_the_directory(har
 MARGIN = 3.0                                    # seconds a bounded wait may overrun: start-up, polling
 CHILD_STDOUT_LINE = "the child is running"
 CHILD_STDERR_LINE = "the child got SIGTERM"
+CHILD_LAST_LINE = "the child is exiting"
 CHILD_EXIT = 3
 
 # Laid out as a tool is under `lib/Tools/java`: a bash between the pid and
 # the program.  The program is not bash's last command — bash would exec it
 # in its own place — so `exit $?` follows.  The child ignores SIGINT and, on
-# SIGTERM, writes its line, waits, writes the marker and exits.
+# SIGTERM, writes its line, waits, writes its last line and the marker, and exits.
 CHILD = f'''
 import os, signal, sys, time
 signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -313,6 +316,8 @@ def on_sigterm(*_):
     sys.stderr.write({CHILD_STDERR_LINE!r} + "\\n")
     sys.stderr.flush()
     time.sleep(0.2)
+    sys.stderr.write({CHILD_LAST_LINE!r} + "\\n")
+    sys.stderr.flush()
     open(sys.argv[1], "w").close()
     sys.exit({CHILD_EXIT})
 signal.signal(signal.SIGTERM, on_sigterm)
@@ -339,13 +344,14 @@ async def test_a_process_left_in_the_group_fails_the_block(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_the_exit_ends_the_group_and_notes_the_output(monkeypatch, tmp_path):
-    """The exceptional path — a deadline expiring inside the block: SIGINT,
-    which the child ignores, the bound, then `end_group`'s SIGTERM, which
-    the child answers within its grace (the marker proves it was not
-    killed); the `TimeoutError` reaches the caller carrying both texts,
-    the line the child wrote while the block was ending included; the
-    leader's code is still readable."""
+@pytest.mark.parametrize("waiting_on", ["exited", "line"])
+async def test_the_exit_ends_the_group_and_notes_the_output(monkeypatch, tmp_path, waiting_on):
+    """The exceptional path — a deadline expiring inside the block, in either
+    wait a case makes there: SIGINT, which the child ignores, the bound,
+    then `end_group`'s SIGTERM, which the child answers within its grace
+    (the marker proves it was not killed); the `TimeoutError` reaches the
+    caller carrying both texts, every line the child wrote while the block
+    was ending included; the leader's code is still readable."""
     monkeypatch.setattr(H, "TERMINATION", 2.0)
     child = tmp_path / "child.py"
     child.write_text(CHILD)
@@ -360,12 +366,42 @@ async def test_the_exit_ends_the_group_and_notes_the_output(monkeypatch, tmp_pat
                 members = group(h.pid)
                 (other,) = [p for p in members if p.pid != h.pid]
                 assert len(members) == 2 and other.ppid == h.pid, members
-                await h.exited
+                if waiting_on == "exited":
+                    await h.exited
+                else:
+                    await h.line("stderr", lambda line: False)
     assert marker.exists()
     assert not group(h.pid)
     formatted = "".join(traceback.format_exception(expired.value))
-    assert CHILD_STDOUT_LINE in formatted and CHILD_STDERR_LINE in formatted, formatted
+    assert all(line in formatted for line in (CHILD_STDOUT_LINE, CHILD_STDERR_LINE, CHILD_LAST_LINE)), formatted
     assert h.exited.result() == -signal.SIGTERM
+
+
+@pytest.mark.anyio
+async def test_a_cancellation_at_the_start_reaches_the_block(monkeypatch):
+    """A cancellation already pending when `tool` starts its process lands
+    in the block, so the exit ends the group: nothing started escapes it."""
+    monkeypatch.setattr(H, "TERMINATION", 1.0)
+    pids = []
+    with anyio.move_on_after(0) as scope:
+        async with tool(["bash", "-c", "sleep 60; exit 0"], dict(os.environ)) as h:
+            pids.append(h.pid)
+            await h.exited
+    assert scope.cancelled_caught and pids and not group(pids[0])
+
+
+def test_a_process_whose_name_is_cut_mid_character_is_listed(tmp_path):
+    """The kernel cuts a process's name to 15 bytes, which can split a
+    character; `group` reads every process on the machine, and such a name
+    must not stop it."""
+    sleep = tmp_path / "a测试工具脚本"                 # 16 bytes: its name is cut inside the last character
+    sleep.symlink_to(shutil.which("sleep"))
+    process = subprocess.Popen([str(sleep), "60"], start_new_session=True)
+    try:
+        assert [p.pid for p in group(process.pid)] == [process.pid]
+    finally:
+        process.kill()
+        process.wait()
 
 
 @pytest.mark.anyio
@@ -399,143 +435,9 @@ async def test_a_pipe_held_outside_the_group_fails_the_block(monkeypatch, tmp_pa
 # tool's descendants: when its bash, the session leader, exits, the kernel's
 # hangup to the foreground group would hide leftovers.
 
-FAKE_LINE = "the fake agent client is running"           # the fakes' one line on stdout
-FAKE_SIGTERM_LINE = "the fake agent client got SIGTERM"  # on stderr, the `refused` act
-MARKER_EXIT = 7                                          # the `exit_on_marker` act's code
-RAW_EXIT = 5                                             # the `raw` act's code
-FAKE_VERSION = "0.0.1"                                   # below `measured_version`: refused
 # tat.scala's escape_sequence_modes_off, which the tool writes after the stty restore
 ESCAPE_SEQUENCE_MODES_OFF = (b"\x1b[<99u\x1b[>4m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
                              b"\x1b[?2004l\x1b[?1004l\x1b[?2031l\x1b[?25h")
-SIGTERM_DELAY = 5.0                                      # the `hold_a_child` act's exit after SIGTERM, in seconds
-
-# The fake `claude` and `codex`: a report of what it was given, one line on
-# stdout, then the act TAT_FAKE_ACT names.  The constants above head it.
-FAKE = r'''
-"""test_launcher.py's fake agent client."""
-import asyncio
-import json
-import logging
-import os
-import signal
-import subprocess
-import sys
-import time
-import tomllib
-import tty
-import urllib.error
-import urllib.request
-from pathlib import Path
-
-logging.disable(logging.CRITICAL)       # stderr carries this fake's lines alone, not the MCP client's logging
-REPORT = Path(os.environ["TAT_FAKE_REPORT"])
-ACT = os.environ["TAT_FAKE_ACT"]
-report = {"pid": os.getpid(), "cwd": os.getcwd(), "argv": sys.argv, "url": None, "status": None,
-          "signals": [], "children": []}
-started = []                            # the processes this fake started
-
-
-def write_report():
-    tmp = REPORT.with_name(REPORT.name + ".tmp")
-    tmp.write_text(json.dumps(report))
-    os.replace(tmp, REPORT)
-
-
-def url():
-    """TAT's URL from the file `configure` wrote for this client."""
-    if Path(sys.argv[0]).name == "claude":
-        servers = json.loads(Path(".mcp.json").read_text())["mcpServers"]
-    else:
-        servers = tomllib.loads(Path(".codex/config.toml").read_text())["mcp_servers"]
-    (server,) = servers.values()
-    return server["url"]
-
-
-def append_warning():
-    """A `warning` record in the conversation's log: under isabelle TAT the
-    launcher echoes none (MODULE_STRUCTURE §5)."""
-    (directory,) = (Path.cwd().parent / ".tat" / "log").iterdir()
-    record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()), "category": "conversation",
-              "event": "note", "level": "warning", "data": {"message": "a warning the fake agent client wrote"}}
-    with (directory / "conversation.jsonl").open("a") as log:
-        log.write(json.dumps(record) + "\n")
-
-
-def session():
-    """An MCP session as Claude Code opens one, at a version TAT refuses:
-    initialize, initialized, then — the warning appended and a second
-    later — tools/list, which the refusal answers."""
-    from mcp import ClientSession, types
-    from mcp.client.streamable_http import streamable_http_client
-
-    async def run():
-        async with streamable_http_client(report["url"]) as (read, write, _):
-            async with ClientSession(read, write, client_info=types.Implementation(
-                    name="claude-code", version=VERSION)) as s:
-                await s.initialize()
-                append_warning()
-                await asyncio.sleep(1)
-                await s.list_tools()
-    try:
-        asyncio.run(run())
-    except Exception:
-        pass
-
-
-def on_signal(signum, _frame):
-    report["signals"].append(signal.Signals(signum).name)
-    write_report()
-    if signum == signal.SIGTERM:
-        on_sigterm()
-
-
-def on_sigterm():
-    if ACT == "hold_a_child":               # within the bound, but after Isabelle's own termination
-        time.sleep(SIGTERM_DELAY)
-        sys.exit(0)
-    if ACT == "refused":                # the line, the sh killed, a second sleep; the signal ignored
-        os.write(2, (SIGTERM_LINE + "\n").encode())
-        os.kill(started[0].pid, signal.SIGKILL)
-        first = int(Path(os.environ["TAT_FAKE_PIDFILE"]).read_text())
-        second = subprocess.Popen(["sleep", "3600"])
-        report["children"] = [first, second.pid]
-        write_report()
-
-
-signal.signal(signal.SIGINT, on_signal)
-signal.signal(signal.SIGTERM, on_signal)
-report["url"] = url()
-write_report()
-try:                                    # to the address itself, whatever proxy the environment names
-    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(report["url"], timeout=30) as answer:
-        report["status"] = answer.status
-except urllib.error.HTTPError as e:
-    report["status"] = e.code
-write_report()
-if ACT == "hold_a_child":
-    started.append(subprocess.Popen(["sleep", "3600"]))
-    report["children"] = [started[0].pid]
-    write_report()
-if ACT == "refused":                    # a sh whose sleep it orphans when killed
-    started.append(subprocess.Popen(
-        ["sh", "-c", 'sleep 3600 & echo $! > "$1"; wait', "sh", os.environ["TAT_FAKE_PIDFILE"]]))
-if ACT == "exit_on_marker":
-    subprocess.run(["stty", "sane"], check=True)
-print(LINE, flush=True)
-
-if ACT == "exit_on_marker":
-    marker = Path(os.environ["TAT_FAKE_MARKER"])
-    while not marker.exists():
-        time.sleep(0.05)
-    sys.exit(MARKER_EXIT)
-if ACT == "raw":
-    tty.setraw(0)
-    sys.exit(RAW_EXIT)
-if ACT == "refused":
-    session()
-while True:
-    signal.pause()
-'''
 
 
 def environment(path_first: Path | None = None) -> dict[str, str]:
@@ -558,7 +460,8 @@ def executable(path: Path, text: str) -> None:
 
 
 class Fake_Clients:
-    """`directory` holds the fakes `claude` and `codex`; `broken` a `claude`
+    """`directory` holds the fakes `claude` and `codex` (fake_agent_client.py);
+    `broken` a `claude`
     whose shebang names no interpreter; `env` is the tools' environment
     with `directory` first on `PATH`; `variables(act, report, ...)` is what
     a fake reads from its environment — the client inherits the JVM's."""
@@ -568,11 +471,9 @@ class Fake_Clients:
         self.broken = root / "broken"
         self.directory.mkdir()
         self.broken.mkdir()
-        head = (f"#!{sys.executable}\nLINE = {FAKE_LINE!r}\nSIGTERM_LINE = {FAKE_SIGTERM_LINE!r}\n"
-                f"MARKER_EXIT = {MARKER_EXIT}\nRAW_EXIT = {RAW_EXIT}\nVERSION = {FAKE_VERSION!r}\n"
-                f"SIGTERM_DELAY = {SIGTERM_DELAY}\n")
+        program = f"#!{sys.executable}\n" + Path(fake.__file__).read_text()
         for name in ("claude", "codex"):
-            executable(self.directory / name, head + FAKE)
+            executable(self.directory / name, program)
         executable(self.broken / "claude", "#!/nonexistent/interpreter\n")
         self.env = environment(self.directory)
 
@@ -634,12 +535,6 @@ def report_of(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-async def until(condition: Callable[[], bool], what: str, seconds: float = 10.0) -> None:
-    with deadline(seconds, what):
-        while not condition():
-            await asyncio.sleep(0.05)
-
-
 async def conversation_exits(pid: int) -> None:
     """After a SIGTERM ended the JVM: its shutdown hooks end the Isabelle
     process, and the JVM exits without waiting for the attached RPC host,
@@ -693,7 +588,7 @@ async def test_claude_code_runs_in_the_agent_directory_until_it_exits(launcher, 
         async with launcher.tool(["isabelle", "TAT", str(wd)],
                                  fake_clients.variables("exit_on_marker", report, TAT_FAKE_MARKER=marker),
                                  stdin=slave, terminal=slave) as h:
-            await h.line("stdout", lambda line: line == FAKE_LINE)
+            await h.line("stdout", lambda line: line == fake.LINE)
             pid = conversation_pid(wd)
             h.signal_group(signal.SIGINT)
             await until(lambda: report.exists() and "SIGINT" in report_of(report)["signals"],
@@ -708,8 +603,8 @@ async def test_claude_code_runs_in_the_agent_directory_until_it_exits(launcher, 
                                       f" (its Python process is pid {pid})"), second
             assert not second_report.exists()
             marker.touch()
-            assert await h.exited == MARKER_EXIT
-        assert h.stdout == FAKE_LINE + "\n"
+            assert await h.exited == fake.MARKER_EXIT
+        assert h.stdout == fake.LINE + "\n"
         waiting, log, url = h.stderr.splitlines()
         assert (waiting, log) == (WAITING_LINE, f"Log: {log_directory(wd)}")
         given = report_of(report)
@@ -738,7 +633,7 @@ async def test_codex_gets_the_launch_arguments_and_the_sweep_reaches_its_child(l
     users = ["exec", "--skip-git-repo-check", "foo"]
     async with launcher.tool(["isabelle", "TAT", "-c", "codex", str(wd), *users],
                              fake_clients.variables("hold_a_child", report)) as h:
-        await h.line("stdout", lambda line: line == FAKE_LINE)
+        await h.line("stdout", lambda line: line == fake.LINE)
         pid = conversation_pid(wd)
         (java,) = [p for p in group(h.pid) if p.comm == "java"]
         os.kill(java.pid, signal.SIGTERM)
@@ -765,9 +660,9 @@ async def test_the_conversation_ending_first_ends_the_client(launcher, fake_clie
         assert await h.exited == 2
     lines = h.stderr.splitlines()
     assert lines[:2] == [WAITING_LINE, f"Log: {log_directory(wd)}"], lines
-    assert is_url_line(lines[2]) and lines[3] == FAKE_SIGTERM_LINE, lines
+    assert is_url_line(lines[2]) and lines[3] == fake.SIGTERM_LINE, lines
     assert all(line.startswith("***") for line in lines[4:]), lines
-    assert lines[-1].endswith(f"TAT cannot serve this client: it is claude-code {FAKE_VERSION}; "
+    assert lines[-1].endswith(f"TAT cannot serve this client: it is claude-code {fake.VERSION}; "
                               f"TAT requires claude-code {Claude_Code_Server.measured_version} or newer."), lines
     assert not any(line.startswith("###") for line in lines), lines
     given = report_of(report)
@@ -790,21 +685,16 @@ async def test_the_terminal_mode_is_restored_after_the_client_exits(launcher, fa
         before = termios.tcgetattr(slave)
         async with launcher.tool(["isabelle", "TAT", str(wd)], fake_clients.variables("raw", report),
                                  stdin=slave, stdout=slave, terminal=slave) as h:
-            assert await h.exited == RAW_EXIT
+            assert await h.exited == fake.RAW_EXIT
         assert termios.tcgetattr(slave) == before
-        expected = (FAKE_LINE + "\r\n").encode() + ESCAPE_SEQUENCE_MODES_OFF
+        # the group has exited, so every write has returned; read to EAGAIN,
+        # since one read may hand back only what the pty had already passed on
         received = bytearray()
         os.set_blocking(master, False)
-
-        def read_master() -> bool:
-            try:
-                received.extend(os.read(master, 4096))
-            except BlockingIOError:
-                pass
-            return len(received) >= len(expected)
-
-        await until(read_master, "the client's line, then the escape-sequence modes switched off")
-        assert bytes(received) == expected
+        with suppress(BlockingIOError):
+            while chunk := os.read(master, 4096):
+                received += chunk
+        assert bytes(received) == (fake.LINE + "\r\n").encode() + ESCAPE_SEQUENCE_MODES_OFF
         assert not running(conversation_pid(wd))
     finally:
         os.close(master)
