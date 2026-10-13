@@ -259,8 +259,9 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
 
   /* the terminal: its mode is saved before the client starts only when stdin
      is a terminal, stdout is that same terminal, and the tool's process
-     group is the terminal's foreground group; restored after the client has
-     been reaped when the tool still holds the terminal then (MODULE_STRUCTURE §5) */
+     group is the terminal's foreground group; restored, and the escape-sequence
+     modes switched off, after the client has been reaped when the tool still
+     holds the terminal then (MODULE_STRUCTURE §5) */
 
   // the fields after the last `)` of /proc/self/stat, by their proc(5) names:
   // state, ppid, pgrp, session, tty_nr, tpgid
@@ -303,9 +304,17 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
   private def saved_terminal_mode(): Option[String] =
     if (foreground() && same_streams()) stty(List("-g")) else None
 
+  // the escape-sequence modes Claude Code and Codex set, switched off on the
+  // screen shown: the kitty keyboard stack emptied (<99u), modifyOtherKeys at
+  // its initial value (>4), mouse tracking, bracketed paste, focus events,
+  // colour-scheme notifications, the cursor shown; each a no-op when off
+  private val escape_sequence_modes_off =
+    "\u001b[<99u\u001b[>4m\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l" +
+    "\u001b[?2004l\u001b[?1004l\u001b[?2031l\u001b[?25h"
+
 
   // SIGTERM's grace (the owner: at least 10 s); test/harness.py's
-  // TERMINATION is the tests' counterpart
+  // TERMINATION must exceed it plus Isabelle's own termination (about 2 s)
   val CLIENT_BOUND: Time = Time.seconds(10)
 
   /* The client once started: its process and the mode saved before it.
@@ -313,8 +322,9 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
      snapshot of its descendants, SIGTERM, the bounded wait, a second
      snapshot when the client still runs at the bound, then SIGKILL to the
      client and to every process of either snapshot, and the wait; a client
-     already gone is left as it is.  Then the mode is restored when one was
-     saved and the tool still holds the terminal.  Run once, every caller
+     already gone is left as it is.  Then the mode is restored, and the
+     escape-sequence modes switched off, when one was saved and the tool
+     still holds the terminal.  Run once, every caller
      waiting for it; nothing in it can fail: a snapshot that cannot be taken
      is empty, and the rest runs uninterruptibly, as Bash.Process.terminate
      does. */
@@ -339,7 +349,10 @@ Usage: isabelle TAT_new [OPTIONS] WORKING_DIRECTORY
           for (p <- before ::: after) p.destroyForcibly()
           process.waitFor()
         }
-        for (mode <- saved_mode if foreground()) stty(List(mode))
+        for (mode <- saved_mode if foreground()) {
+          stty(List(mode))
+          Output.print_stream(escape_sequence_modes_off, stdout = true)
+        }
       }
   }
 

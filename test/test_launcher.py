@@ -404,6 +404,9 @@ FAKE_SIGTERM_LINE = "the fake agent client got SIGTERM"  # on stderr, the `refus
 MARKER_EXIT = 7                                          # the `exit_on_marker` act's code
 RAW_EXIT = 5                                             # the `raw` act's code
 FAKE_VERSION = "0.0.1"                                   # below `measured_version`: refused
+# tat.scala's escape_sequence_modes_off, which the tool writes after the stty restore
+ESCAPE_SEQUENCE_MODES_OFF = (b"\x1b[<99u\x1b[>4m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+                             b"\x1b[?2004l\x1b[?1004l\x1b[?2031l\x1b[?25h")
 SIGTERM_DELAY = 5.0                                      # the `hold_a_child` act's exit after SIGTERM, in seconds
 
 # The fake `claude` and `codex`: a report of what it was given, one line on
@@ -776,7 +779,8 @@ async def test_the_conversation_ending_first_ends_the_client(launcher, fake_clie
 async def test_the_terminal_mode_is_restored_after_the_client_exits(launcher, fake_clients, tmp_path):
     """MODULE_STRUCTURE §5: the pty the tool's stdin, stdout and terminal,
     so the mode is saved; the client leaves it raw and exits on its own;
-    the tool exits with the client's code and the mode is back.  Here the
+    the tool exits with the client's code, the mode is back, and after the
+    client's line the escape-sequence modes were switched off.  Here the
     tool's bash leads the session and the group, so the case cannot tell
     the group from the session; step 4's probe does."""
     wd = tmp_path / "wd"
@@ -788,6 +792,19 @@ async def test_the_terminal_mode_is_restored_after_the_client_exits(launcher, fa
                                  stdin=slave, stdout=slave, terminal=slave) as h:
             assert await h.exited == RAW_EXIT
         assert termios.tcgetattr(slave) == before
+        expected = (FAKE_LINE + "\r\n").encode() + ESCAPE_SEQUENCE_MODES_OFF
+        received = bytearray()
+        os.set_blocking(master, False)
+
+        def read_master() -> bool:
+            try:
+                received.extend(os.read(master, 4096))
+            except BlockingIOError:
+                pass
+            return len(received) >= len(expected)
+
+        await until(read_master, "the client's line, then the escape-sequence modes switched off")
+        assert bytes(received) == expected
         assert not running(conversation_pid(wd))
     finally:
         os.close(master)
