@@ -47,7 +47,7 @@ documents:
 | `PreToolUse` on a TAT tool, `mcp__TAT__…` — the announcement | records the call for `agent_of_call` (CONSTRUCT_INTERACTION §8), an internal agent's announcement on Claude Code excepted (§2); Claude Code: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}`, which grants the call; Codex: an empty answer |
 | `PreToolUse` on `TaskStop` (Claude Code) or `collaborationinterrupt_agent` (Codex) — an interruption | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "<the two lines of CONSTRUCT_INTERACTION §7>"}}` when the interruption is refused, else an empty answer — `TaskStop` needs no grant, and Codex treats a bare `allow` as an unsupported decision and marks the hook failed |
 | `Stop`, `SubagentStop` — the agent is about to stop | `{"decision": "block", "reason": "<the reason of CONSTRUCT_INTERACTION §7>"}` when the stop is blocked, else an empty answer |
-| `SessionStart` (Codex) — the main conversation's context was replaced (`startup`, `resume`, `clear`, `fork`, `compact`) | an empty answer; the main conversation's seen set cleared (PRINT.md §4) |
+| `SessionStart` (Codex) — the main conversation's context was replaced (`resume`, `clear`, `fork`, `compact`; the hook's matcher leaves out `startup`, a new thread's start) | an empty answer; the main conversation's seen set cleared (PRINT.md §4) |
 | `PreCompact`, `PostCompact` (Codex) — a thread is about to compact; it has compacted | an empty answer; at each of the two, the seen set of the agent `agent_id` names — the main conversation when there is none — cleared |
 | `PostCompact` (Claude Code) — some agent has compacted | an empty answer; its `transcript_path` names the session, and for a session TAT reads the hook is matched with a compaction boundary in that session's transcripts (§2's second check); nothing else read from it |
 
@@ -266,7 +266,7 @@ default_tools_approval_mode = "approve"
                       { "matcher": "collaborationinterrupt_agent", "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
     "Stop":         [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
     "SubagentStop": [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
-    "SessionStart": [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
+    "SessionStart": [ { "matcher": "resume|clear|compact|fork", "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
     "PreCompact":   [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ],
     "PostCompact":  [ { "hooks": [ { "type": "command", "timeout": 10, "command": "'<python>' -I '<working directory>/.tat/hook.py'" } ] } ] } }
 ```

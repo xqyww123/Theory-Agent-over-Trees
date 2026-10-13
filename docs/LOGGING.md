@@ -100,8 +100,8 @@ Arguments, results and payloads are recorded whole, never cut.
 | `serving` | info | the URL, with the port bound |
 | `client_connected` | info | the `clientInfo` of the MCP `initialize`: name, version |
 | `client_refused` | error | the same, and `message`: what refused it (CONSTRUCT_INTERACTION §8); the call's `_meta` when a call's sandbox policy did |
-| `ending` | error | what ended the conversation: its class, `message` — Python's one-line form, class first — the traceback, one line when the cause was never raised |
-| `while_ending` | error | a further cause reaching the ending object's `end` (MODULE_STRUCTURE §4.6), each once: its class, `message`, the traceback; the end stays the first cause's |
+| `ending` | error | what ended the conversation: its class, `message` — Python's one-line form, class first; for a cancellation, which reaches the ending only from the RPC host, `The RPC host cancelled TAT: its connection to the Isabelle process closed, or the host is stopping.` — the traceback, one line when the cause was never raised |
+| `while_ending` | error | a further cause reaching the ending object's `end` (MODULE_STRUCTURE §4.6), each once: its class, `message` and traceback as for `ending`; the end stays the first cause's |
 | `ended` | info | written by the ending object's exit once the unwinding is over (MODULE_STRUCTURE §4.6): how long the unwinding took; each call's and each job's fate is in its own record; a compile that returns normally writes neither `ending` nor `ended` |
 
 An RPC host that the Isabelle process started — the default; not one

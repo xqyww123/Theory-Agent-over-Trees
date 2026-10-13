@@ -24,7 +24,7 @@ from mcp.shared.exceptions import McpError
 import stand_ins
 from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import client, free_port, text_of
-from isabelle_theory_agent import mcp_server, toplevel
+from isabelle_theory_agent import log, mcp_server, toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.jobs import Agent, Message, post
@@ -499,6 +499,7 @@ def test_a_cause_reaching_the_entered_ending_is_recorded_once_and_changes_nothin
             assert "Traceback (most recent call last)" in second_record["data"]["traceback"]
             assert 'raise RuntimeError("first")' in second_record["data"]["traceback"]
             assert cancelled["data"]["class"] == "CancelledError"
+            assert cancelled["data"]["message"] == log.CANCELLED
         assert stand_ins.events("conversation") == ["ending", "while_ending", "while_ending", "ended"]
     run(scenario)
 
@@ -506,8 +507,9 @@ def test_a_cause_reaching_the_entered_ending_is_recorded_once_and_changes_nothin
 def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
     """The RPC host cancelling `launch_TAT` (the connection gone): a call in
     flight is answered `Isabelle is gone`, and `serve` raises the
-    cancellation for `launch_TAT` to pass on; the body the ending cancelled
-    is no cause, so no `while_ending` (LOGGING.md §4)."""
+    cancellation for `launch_TAT` to pass on; the `ending` record says it in
+    a sentence; the body the ending cancelled is no cause, so no
+    `while_ending` (LOGGING.md §4)."""
     async def scenario():
         port = free_port()
         bodies = Bodies()
@@ -519,6 +521,10 @@ def test_the_hosts_cancellation_enters_the_ending_and_is_raised():
             assert waiting.isError and text_of(waiting) == GONE
             assert await ended(serve) is asyncio.CancelledError
         assert stand_ins.events("conversation") == ["client_connected", "ending", "ended"]
+        [ending_record] = [r for r in stand_ins.records("conversation") if r["event"] == "ending"]
+        assert ending_record["data"]["class"] == "CancelledError"
+        assert ending_record["data"]["message"] == log.CANCELLED
+        assert "CancelledError" in ending_record["data"]["traceback"]
     run(scenario)
 
 

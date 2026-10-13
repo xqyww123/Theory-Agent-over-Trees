@@ -95,6 +95,8 @@ RESOLV_CONF = "/etc/resolv.conf"
 # the system directories Codex's `:minimal` reads (CLIENT_HOOKS.md §5)
 MINIMAL = ("/bin", "/sbin", "/usr", "/etc", "/lib", "/lib64", "/nix/store", "/run/current-system/sw")
 SANDBOX_STATE = "codex/sandbox-state-meta"      # the capability, and the `_meta` key it brings (§5)
+# Codex's `SessionStart` sources that replace a thread's context, `startup` (a new thread) not among them (§1)
+CONTEXT_REPLACED = "resume|clear|compact|fork"
 
 
 def agent_directory(working_directory: Path) -> Path:
@@ -1382,8 +1384,9 @@ class Codex_Server(TAT_Server):
 
     def _compaction_of_hook(self, payload: dict[str, Any]) -> Compaction | None:
         """`PreCompact` and `PostCompact` name the thread by `agent_id`, the
-        main conversation when there is none; a `SessionStart` of any source
-        is the main conversation's (CLIENT_HOOKS.md §3)."""
+        main conversation when there is none; a `SessionStart` — configured
+        for the sources that replace the context — is the main
+        conversation's (CLIENT_HOOKS.md §1, §3)."""
         hook = payload.get("hook_event_name")
         if hook in ("PreCompact", "PostCompact"):
             return Compaction(self._known(self._identity(payload)),
@@ -1438,7 +1441,8 @@ class Codex_Server(TAT_Server):
         hooks = {"hooks": {
             "PreToolUse": [self._hook(working_directory, "hook.py", TOOL_PREFIX + ".*"),
                            self._hook(working_directory, "hook.py", self.interrupting_tool)],
-            "Stop": [hook], "SubagentStop": [hook], "SessionStart": [hook],
+            "Stop": [hook], "SubagentStop": [hook],
+            "SessionStart": [self._hook(working_directory, "hook.py", CONTEXT_REPLACED)],
             "PreCompact": [hook], "PostCompact": [hook]}}
         return {".codex/config.toml": "\n".join(config), ".codex/hooks.json": _json(hooks)}
 

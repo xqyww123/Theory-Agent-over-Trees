@@ -933,9 +933,9 @@ on both clients and for subagents as much as for the main conversation
   rendered against an empty set, and what it recorded is forgotten once
   the compaction is done (CLIENT_HOOKS.md §3). Nothing a compaction
   hook answers reaches the model there, so the hooks are answered with
-  nothing. A `SessionStart` — `startup`, `resume`, `clear`, `fork`,
-  `compact` — fires for the main conversation only and is its compaction
-  event too. A thread that is no spawned subagent — a `/review` thread —
+  nothing. A `SessionStart` — `resume`, `clear`, `fork`, `compact`; its
+  hook leaves out `startup`, a new thread's start — fires for the main
+  conversation only and is its compaction event too. A thread that is no spawned subagent — a `/review` thread —
   carries no `agent_id` either, so its compaction clears the main
   conversation's set, and its own set, should it call TAT, is not
   cleared; this is accepted.

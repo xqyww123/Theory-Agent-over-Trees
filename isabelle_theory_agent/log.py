@@ -8,6 +8,7 @@ and dropped (§5).
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import json
@@ -119,12 +120,18 @@ def _event(level: Level) -> Callable[[Callable[Concatenate[Any, P], None]],
     return declare
 
 
+# A cancellation's `message` (§4): it reaches the ending only from the RPC host.
+CANCELLED = "The RPC host cancelled TAT: its connection to the Isabelle process closed, or the host is stopping."
+
+
 def _exception_data(exception: BaseException) -> dict[str, str]:
     """An exception's `class`, `message` and `traceback` (§4).  `message`
     is Python's one-line form, class first, which the standard library
-    renders even when the exception's own `str` fails."""
-    return {"class": type(exception).__name__,
-            "message": "".join(traceback.format_exception_only(exception)).rstrip("\n"),
+    renders even when the exception's own `str` fails; a cancellation's is
+    `CANCELLED`."""
+    message = (CANCELLED if isinstance(exception, asyncio.CancelledError)
+               else "".join(traceback.format_exception_only(exception)).rstrip("\n"))
+    return {"class": type(exception).__name__, "message": message,
             "traceback": "".join(traceback.format_exception(exception))}
 
 

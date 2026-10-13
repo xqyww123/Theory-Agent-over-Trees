@@ -2274,15 +2274,64 @@ with `EnterWorktree` denied and the `Agent|Task` guard refusing first.
 LOGGING_IMPLEMENTATION_PLAN.md's first paragraph: all thirteen steps
 done.
 
+**Codex's `SessionStart` of source `startup` is no compaction event**
+(owner, 2026-10-13: 「建议还是在触发器/钩子那里改一改，以保持 compaction
+钩子的语义纯粹」). Codex's source (v0.156.1): `startup` comes only from a
+new thread (`core/src/session/session.rs:1867`, `InitialHistory::New`,
+`/new` included), whose seen set is empty; a `SessionStart` matcher is
+tested against the source (`hooks/src/events/session_start.rs:74`,
+`hooks/src/events/common.rs:137`, an exact `a|b` list). So `configure`
+writes Codex's `SessionStart` group with `"matcher":
+"resume|clear|compact|fork"` (`CONTEXT_REPLACED` in mcp_server.py), and
+CLIENT_HOOKS §1's row, §4's documented block and CONSTRUCT_INTERACTION's
+source list say so. Measured
+(`ai-artifacts/probes/session_start_matcher/check.py`, never committed):
+before the change a fresh `codex exec` and `codex exec resume --last`
+both reached TAT (`startup`, `resume`); after it only `resume` did. The
+configure test pins the matcher through the documented block. The jobs
+session was told before the edit.
+
+**A cancellation's `message`** (owner, 2026-10-13: 「这个请你跟 Opus agent
+team 讨论后自决」; workflow `wf_a832d23c-13f`, three Opus proposers —
+minimal, typed cause, the reader). All three: a rule on the cause's type
+in log.py's `_exception_data`, the one function behind both `ending` and
+`while_ending`, so none of the three doors that can hand `end` a
+cancellation (`serve`'s except clause, the server's exit, the ending
+object's exit) can miss it; `class` stays `CancelledError`, the traceback
+unchanged, the cancellation still raised to the RPC host, `stopped()` and
+the agent's "Isabelle is gone" line unchanged. A typed TAT cause at
+`serve`'s door was argued down by the typed-cause lens itself (three doors,
+`end`'s identity rule would record the re-raised original again, the host
+must receive the cancellation). Decided *(author)*: one sentence, `log.CANCELLED`
+— "The RPC host cancelled TAT: its connection to the Isabelle process
+closed, or the host is stopping." The reader lens proposed a second
+sentence for an interrupt, recognised by a `KeyboardInterrupt` as the
+cancellation's `__context__`; not taken: that chaining is a side effect of
+asyncio's runner, not a promise, and the traceback already shows it.
+LOGGING §4's `ending` row carries the sentence, the `while_ending` row
+reads "as for `ending`". Tests: the host's-cancellation test asserts the
+record's class and sentence, the `while_ending` unit test the cancelled
+cause's sentence.
+
+**`WorktreeCreate` and worktree advice** (owner, 2026-10-13: 「Run an Opus
+agent 追一下」; record `ai-artifacts/review/WORKTREE_ADVICE_PROBE.md`,
+untracked): in Claude Code 2.1.296 a configured `WorktreeCreate` hook
+changes nothing the model is shown. The bundle's one check of it (`Ine()`)
+feeds only a sentence of the Agent tool's description and a note in Agent
+results, both also gated by a server-side feature flag that is off on
+this account; inside a git repository the same text would appear without
+the hook. Live, through a proxy logging every request: with and without
+the hook the system prompt and tools were identical; the model chose
+`isolation: "worktree"` for parallel subagents 3/3 in git and 0/3 outside
+git, the same with or without the hook. The plan's open item (RULING_2
+D16) is closed; what stays possible is the flag turned on for an account,
+which TAT's other two barriers cover.
+
 **State at this session's close** (2026-10-13): all thirteen steps of the
 logging plan are done and committed — last `22614d9` (step 13), before it
-`b02e1ea` (`while_ending`). Nothing of this session is uncommitted or
-running. Open with the owner, nothing started: the `ending` of a
-cancellation carries no sentence for a person; Codex's `SessionStart
-{source: startup}` writes a `compaction` at the conversation's start;
-whether a configured `WorktreeCreate` hook makes Claude Code advise
-worktree isolation stays unobserved (a probe without the `EnterWorktree`
-deny and the `Agent|Task` guard would show it). Claude Code's internal
+`b02e1ea` (`while_ending`). The three items left open then were settled the same day (the three
+paragraphs above: a cancellation's sentence, Codex's `SessionStart`
+matcher, the `WorktreeCreate` probe). Claude Code's internal
 agents (live17 REPORT §4.1) were ruled by the owner and implemented by
 the jobs session (`fb5692f`). Optional cleanups noted earlier: `Recorder`
 and `cancelled_by_the_host` from test_toplevel.py into stand_ins. The
