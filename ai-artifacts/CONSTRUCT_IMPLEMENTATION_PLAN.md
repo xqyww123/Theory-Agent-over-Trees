@@ -890,9 +890,12 @@ bound's refusal among the `TAT_StartupError`s of EXCEPTIONS.md §1.
   interactive reading measured (the env probe `claude-code-env` had set
   `CLAUDECODE=1`; `claude-code-env2` set `CLAUDE_CODE_CHILD_SESSION=1`);
   CH §5 — the
-  enclosing repository's CLAUDE.md and memory, the user's own MCP
-  servers and MCP servers that write files, among the accepted gaps;
-  AGENT_CLIENTS_MEASURED — the measured items. The owner's ruling on
+  enclosing repository's CLAUDE.md and memory, and MCP servers that
+  write files, among the accepted gaps (the user's own MCP servers were
+  until the owner's ruling of the same day: Claude Code launched with
+  `--strict-mcp-config --mcp-config <agent directory>/.mcp.json`, CH §2,
+  CONSTRUCT_DECISIONS.md §10); AGENT_CLIENTS_MEASURED — the measured
+  items. The owner's ruling on
   `ai-artifacts/probes/live17/REPORT.md` §4.1 (2026-10-13, after two
   verifications): CI §1's transcript premise and §8, CH §1 and §2,
   MS §4.6, EXCEPTIONS §1 and LOGGING §4 say that an internal agent's
