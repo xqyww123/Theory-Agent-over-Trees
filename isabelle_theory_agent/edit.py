@@ -161,7 +161,9 @@ async def amend(old: Node, raws: list[RawAST],
     beginning_wrote = old._source_before(0) if isinstance(old, NonLeaf_Node) else None
     if beginning_wrote is not None:
         ev.release(beginning_wrote)
-    # The synchronous block.
+    # The synchronous block: first the carry, the class asked while the
+    # forest is untouched (CONSTRUCT_INTERACTION §3.1); then the pointer surgery.
+    replacement._copy_carried_job(old)
     index = old.index_of()
     location = Location(parent, index)
     replacement.state = old.state          # its identity is already old's (_construct_element)
@@ -177,7 +179,6 @@ async def amend(old: Node, raws: list[RawAST],
     for node in nodes[1:]:
         node.parent = parent
     parent.sub_nodes[index + 1:index + 1] = nodes[1:]
-    replacement._copy_carried_job(old)      # the old job's image, where `gen` asked for it
     # A replacement that inherited children invalidates from its first
     # child: the children come before its own ending in the walk
     # (ARCHITECTURE §3.5), and under a `Session` its own position marks

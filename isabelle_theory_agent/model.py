@@ -417,7 +417,6 @@ class Node(ABC):
         self._last_evaluation_statuses = [NOT_EVALUATED for _ in self._operation_names()]
         job_class = type(self).construction_job_class
         self._construction_job = job_class(self) if job_class is not None else None
-        self._carry_job_from: Node | None = None        # `carry_job_from`'s intent, for the commit
         self._evaluation_job: Evaluation_Job | None = None
         self._check_outcome: Stored_Check | None = None # the stored check (CONSTRUCT_INTERACTION §3.3)
 
@@ -591,19 +590,21 @@ class Node(ABC):
     def job(self) -> Construction_Job | None:
         return self._construction_job
 
-    @final
-    def carry_job_from(self, old: Node) -> None:
-        """For a `gen` that amends: have the commit copy the replaced node's
-        job image onto this node's job (CONSTRUCT_INTERACTION §3.1); the
-        copy is made then, so nothing that happens to the old job meanwhile
-        is lost."""
-        self._carry_job_from = old
+    def _carries_job_from(self, old: Self) -> bool:
+        """Whether `old`'s job outcome still holds for this node, its
+        replacement (CONSTRUCT_INTERACTION §3.1): asked by an amend's commit
+        first, with the forest untouched, only of a replacement of `old`'s
+        own class when the class names a construction job class.
+        Synchronous and free of side effects; false by default.  What it
+        raises is the class's bug (EXCEPTIONS.md §1)."""
+        return False
 
     def _copy_carried_job(self, old: Node) -> None:
-        """The commit's half of `carry_job_from`: nothing unless `gen` asked
-        it of `old`, and both nodes have a job."""
+        """The commit's half of `_carries_job_from`: the question asked
+        through `_completed`, the old job's image copied on true."""
         job, old_job = self.job(), old.job()
-        if self._carry_job_from is old and job is not None and old_job is not None:
+        if (type(self) is type(old) and job is not None and old_job is not None
+                and _completed(self._carries_job_from, old)):
             job._carry_from(old_job)
 
     def _store_alone(self) -> None:
@@ -1493,15 +1494,15 @@ class Namespace(NamedTuple):
     duplicate: Callable[[str, str], BadEdit]
 
 
-def _completed(hook, *args) -> None:
-    """Fire a completed hook: raising anything is the class's bug — in
-    particular a `TAT_Error` must not escape dressed as agent-actionable
-    (EXCEPTIONS.md §1)."""
+def _completed(hook, *args):
+    """Fire a completed hook, or ask `_carries_job_from`, and return what it
+    answers: raising anything is the class's bug — in particular a
+    `TAT_Error` must not escape dressed as agent-actionable (EXCEPTIONS.md
+    §1)."""
     try:
-        hook(*args)
+        return hook(*args)
     except TAT_Error as e:
-        raise TAT_InternalError(
-            f"completed hook {hook.__qualname__} raised") from e
+        raise TAT_InternalError(f"hook {hook.__qualname__} raised") from e
 
 
 @dataclass(frozen=True)

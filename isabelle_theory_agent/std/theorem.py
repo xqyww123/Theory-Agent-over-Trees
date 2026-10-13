@@ -220,11 +220,10 @@ class Theorem(Theory_Member, Leaf):
             raise InvalidName(name, "fact name")
         statement = _statement_of(raw["statement"])
         conversation = config.parent.forest().conversation
-        node = cls(config.parent, config.state, name, statement, Isar_State_Slot.assign(conversation))
-        old = config.replaces()
-        if isinstance(old, cls) and old.statement.structure() == statement.structure():
-            node.carry_job_from(old)             # the proof stands: its outcome is carried (§4)
-        return node
+        return cls(config.parent, config.state, name, statement, Isar_State_Slot.assign(conversation))
+
+    def _carries_job_from(self, old):
+        return old.statement.structure() == self.statement.structure()      # the proof stands when the goal does (§4)
 
     def to_store(self, rows):
         rows.put("name", self.name)

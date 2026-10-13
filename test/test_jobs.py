@@ -20,7 +20,8 @@ import invariants
 import stand_ins
 import test_model as tm
 from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M, plugin
-from isabelle_theory_agent.exceptions import BadAnswer, NoQuestionPending, TAT_InternalError, TAT_StartupError
+from isabelle_theory_agent.exceptions import (
+    BadAnswer, InvalidName, NoQuestionPending, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Answered, Failed, Message, Succeeded
 from isabelle_theory_agent.log import current_agent
 from isabelle_theory_agent.store import Forest_Store
@@ -165,11 +166,22 @@ class Carrying(Lemma):
     @classmethod
     async def gen(cls, config, raw):
         node = await super().gen(config, raw)
-        old = config.replaces()
-        if old is not None:
-            node.carry_job_from(old)
+        if config.replaces() is not None:
             await asyncio.sleep(0.02)
         return node
+
+    def _carries_job_from(self, old):
+        return True
+
+
+class Asked(Lemma):
+    """A class whose answer records the question and raises a `TAT_Error`:
+    what `_carries_job_from` raises is the class's bug (EXCEPTIONS.md §1)."""
+    questions = []
+
+    def _carries_job_from(self, old):
+        Asked.questions.append((self, old))
+        raise InvalidName("oops")
 
 
 class Verdict(jobs.Interactive_Question):
@@ -195,7 +207,7 @@ class Why(jobs.Interactive_Question):
         return Answered("Noted.")
 
 
-KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying, "checked": Checked}
+KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying, "checked": Checked, "asked": Asked}
 P, Q = "block_Theory.lemma_P", "block_Theory.lemma_Q"
 P_CHECKED, Q_CHECKED = "block_Theory.checked_P", "block_Theory.checked_Q"
 
@@ -649,7 +661,7 @@ def test_a_write_of_the_status_by_the_walk_tells_the_running_job():
             raise NoQuestionPending("x")
         q.job()._on_context_change = fussy                   # type: ignore[method-assign]
         q.job().start(owner)
-        with pytest.raises(TAT_InternalError, match="completed hook"):
+        with pytest.raises(TAT_InternalError, match="hook .* raised"):
             await locked(f, edit.delete(t1))                 # invalidates P and Q: the hook raises
     run(scenario())
 
@@ -677,10 +689,10 @@ def test_a_delete_or_an_amend_cancels_the_running_job_naming_the_node_it_belonge
     run(scenario())
 
 
-def test_an_amend_carries_the_old_jobs_image_where_gen_asked():
-    """`carry_job_from(old)` in `gen` has the commit copy the old job's image
-    — a settlement between `gen` and the commit is in it; a run still going
-    reads as `NOT_STARTED` — and nothing without the call."""
+def test_an_amend_carries_the_old_jobs_image_where_the_class_says_so():
+    """`_carries_job_from(old)` answered true has the commit copy the old
+    job's image — a settlement between `gen` and the commit is in it; a run
+    still going reads as `NOT_STARTED` — and nothing on the default answer."""
     async def scenario():
         f, thy, t1, p, q = build(Carrying)
         owner = stand_ins.agent(f.conversation)
@@ -698,9 +710,37 @@ def test_an_amend_carries_the_old_jobs_image_where_gen_asked():
         (p4,) = await locked(f, edit.amend(p3, [{"kind": "carrying", "name": "P4"}], KINDS))
         assert p4.job().outcome is NOT_STARTED
         assert records("construction_cancelled") == [{"node": "block_Theory.carrying_P3", "reason": "NODE_AMENDED"}]
-        q.job().outcome = Succeeded("by auto")
-        (q2,) = await locked(f, edit.amend(q, [{"kind": "lemma", "name": "Q2"}], KINDS))
-        assert q2.job().outcome is NOT_STARTED               # a plain class carries nothing
+        r = add(thy, Lemma(thy, slot(), "R"), "lemma")
+        r.job().outcome = Succeeded("by auto")
+        (r2,) = await locked(f, edit.amend(r, [{"kind": "lemma", "name": "R2"}], KINDS))
+        assert r2.job().outcome is NOT_STARTED               # the default answer carries nothing
+        invariants.assert_store_mirrors(f, KINDS)
+    run(scenario())
+
+
+def test_the_carry_is_asked_of_a_replacement_of_the_old_nodes_own_class_alone():
+    """The question goes to a replacement of the replaced node's own class,
+    never across classes (CONSTRUCT_INTERACTION §3.1); what it raises is the
+    class's bug, raised with the forest untouched (MODULE_STRUCTURE §4.2)."""
+    async def scenario():
+        f, thy, t1, p, q = build()
+        Asked.questions.clear()
+        p.job().outcome = Succeeded("by simp")
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "asked", "name": "P2"}], KINDS))        # Lemma → Asked
+        assert Asked.questions == [] and p2.job().outcome is NOT_STARTED
+        p2.job().outcome = Succeeded("by simp")
+        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}], KINDS))    # Asked → Carrying
+        assert Asked.questions == [] and p3.job().outcome is NOT_STARTED
+        (p4,) = await locked(f, edit.amend(p3, [{"kind": "asked", "name": "P4"}], KINDS))
+        p4.job().outcome = Succeeded("by simp")
+        p4._store_alone()                                    # stored, as a settlement is
+        with pytest.raises(TAT_InternalError) as e:                                             # Asked → Asked
+            await locked(f, edit.amend(p4, [{"kind": "asked", "name": "P5"}], KINDS))
+        assert isinstance(e.value.__cause__, InvalidName)
+        [(replacement, old)] = Asked.questions
+        assert old is p4 and isinstance(replacement, Asked) and replacement.name == "P5"
+        assert thy.sub_nodes == [t1, p4, q] and p4.parent is thy
+        assert p4.job().outcome == Succeeded("by simp") and records("construction_cancelled") == []
         invariants.assert_store_mirrors(f, KINDS)
     run(scenario())
 

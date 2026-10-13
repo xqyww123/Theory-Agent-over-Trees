@@ -154,19 +154,28 @@ def test_the_identifier_grammar():
     assert is_identifier(IsaTerm.from_agent("ε").ascii) and is_identifier(IsaTerm.from_agent("x⇩1").ascii)
 
 
-def test_an_amend_with_the_same_structure_asks_for_the_carry():
-    """§4: equal `for_any`, `premises` and `conclusion` — names included,
-    `english` aside — ask the framework to carry the replaced job's
-    outcome; a changed structure does not."""
+def test_an_amend_with_the_same_structure_carries_the_proof():
+    """§4: equal `for_any`, `premises` and `conclusion` — names included;
+    `english`, `kind` and `name` aside — carry the replaced job's outcome;
+    a changed structure does not."""
     f, x = forest(lemma("p"))
     (p,) = x.sub_nodes
+    p.job().outcome = PROVED
     (p2,) = run(locked(f, edit.amend(p, [lemma("p", english="Another wording")], KINDS)))
-    assert p2._carry_job_from is p and p2.statement.english == "Another wording"
-    (p3,) = run(locked(f, edit.amend(p2, [lemma("p", conclusion="rev (rev xs) = xs")], KINDS)))
-    assert p3._carry_job_from is None
-    (p4,) = run(locked(f, edit.amend(p3, [lemma("p", conclusion="rev (rev xs) = xs",
-                                                for_any=({"name": "ys", "type": "'a list"},))], KINDS)))
-    assert p4._carry_job_from is None
+    assert p2.job().outcome == PROVED and p2.statement.english == "Another wording"
+    (p3,) = run(locked(f, edit.amend(p2, [lemma("q", kind="theorem")], KINDS)))
+    assert p3.job().outcome == PROVED and (p3.kind, p3.name) == ("theorem", "q")
+    (p4,) = run(locked(f, edit.amend(p3, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs")], KINDS)))
+    assert p4.job().outcome is NOT_STARTED
+    p4.job().outcome = PROVED
+    (p5,) = run(locked(f, edit.amend(p4, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs",
+                                                premises=({"name": "nonempty", "term": "xs ≠ []"},))], KINDS)))
+    assert p5.job().outcome is NOT_STARTED                  # a premise renamed, its term unchanged
+    p5.job().outcome = PROVED
+    (p6,) = run(locked(f, edit.amend(p5, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs",
+                                                premises=({"name": "nonempty", "term": "xs ≠ []"},),
+                                                for_any=({"name": "xs", "type": "nat list"},))], KINDS)))
+    assert p6.job().outcome is NOT_STARTED                  # a variable's type changed
     inv(f)
 
 
