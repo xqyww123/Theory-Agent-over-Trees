@@ -2,11 +2,14 @@
 §3, §4): one RPC host in the test process, one `isabelle TAT_mcp` per run, a
 fresh conversation per case through `TAT.reset`.  `conftest.py` builds one
 `Harness` inside the session-scoped fixture and hands each case a `Handle`.
+Also `tool`, under which a case holds an Isabelle tool of its own — the
+launcher's cases in test_launcher.py, and `Harness.run_tool`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -15,13 +18,14 @@ import signal
 import socket
 import subprocess
 import tempfile
+import termios
 import traceback
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NamedTuple, NoReturn
 
 import anyio
 import httpx
@@ -37,7 +41,12 @@ PLUGIN = "Theory_Agent_over_Trees.Test_TAT_Framework"
 PACKAGES = ["tat_test_plugin"]          # what the plugin's registrations name, deduplicated
 DEADLINE = 120.0                        # a case's, in seconds; the marker may override it
 STARTUP = 900.0                         # the first run on a machine may build the base heap
-TERMINATION = 10.0                      # a child that outlived SIGINT: after SIGTERM, before SIGKILL
+# a group that outlived SIGINT: after SIGTERM, before SIGKILL.  Above tat.scala's
+# CLIENT_BOUND (10 s) plus Isabelle's own termination (about 2 s: up to 1 s for
+# Prover.terminate, then about 1.1 s for Bash.Process.terminate), so that a
+# tool ending its client on SIGTERM is never killed under it
+TERMINATION = 15.0
+JOIN = 5.0                              # the readers' join: after the group has exited, until its pipes are closed
 
 # The client the suite is: Claude Code, at the version the subclass requires,
 # its main conversation announcing every call (CONSTRUCT_INTERACTION §8).
@@ -102,12 +111,67 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-# A process the harness starts leads a process group of its own
-# (`start_new_session`), so that a signal reaches the JVM and its Isabelle
-# process together, and takes `SIGINT` as a terminal's foreground process
-# does: this is its `preexec_fn`.
+# -- the tools a case starts: processes, process groups, pipes --------------------
+#
+# A process the harness starts leads a session and a process group of its
+# own (`start_new_session`) and takes `SIGINT` as a terminal's foreground
+# process does (`default_sigint`, its `preexec_fn`).  A signal to the group
+# reaches the tool's bash — `lib/Tools/java` keeps one between the pid and
+# the JVM — the JVM, and under `isabelle TAT` the client; never the Isabelle
+# process, which Isabelle's `bash_process` starts under `setsid`, nor the
+# attached RPC host: the JVM ends those (MODULE_STRUCTURE §5).  So the group,
+# not the pid, is what has exited: the leader is that bash, which dies of a
+# signal first.  Everything here reads `/proc`.
+
 def default_sigint() -> None:
     signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
+class Proc(NamedTuple):
+    """A running process, as `/proc/<pid>/stat` shows it."""
+    pid: int
+    comm: str
+    ppid: int
+    pgrp: int
+
+
+def proc(pid: int) -> Proc | None:
+    """The running process with the pid: None for a pid without one, and for
+    a zombie, which has exited and only waits to be reaped."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    head, _, tail = stat.rpartition(")")          # the fields after the last `)`: state, ppid, pgrp, ...
+    state, ppid, pgrp = tail.split()[:3]
+    if state == "Z":
+        return None
+    return Proc(pid, head.partition("(")[2], int(ppid), int(pgrp))
+
+
+def running(pid: int) -> bool:
+    """Every "is running" check and every "is not running" assertion."""
+    return proc(pid) is not None
+
+
+def group(pgid: int) -> list[Proc]:
+    """The running processes of the group."""
+    found = (proc(int(entry)) for entry in os.listdir("/proc") if entry.isdigit())
+    return [p for p in found if p is not None and p.pgrp == pgid]
+
+
+def command_line(pid: int) -> str:
+    """The process's command line; empty once it is gone."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().rstrip(b"\0").replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return ""
+
+
+def named(processes: list[Proc]) -> str:
+    """How processes are named in a failure: the pid and the command line,
+    or the `comm` of one already gone."""
+    return ", ".join(f"{p.pid} ({command_line(p.pid) or p.comm})" for p in processes)
 
 
 def signal_group(process: subprocess.Popen[Any], sig: int) -> None:
@@ -117,25 +181,227 @@ def signal_group(process: subprocess.Popen[Any], sig: int) -> None:
         pass
 
 
-def group_alive(process: subprocess.Popen[Any]) -> bool:
-    try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+async def group_exited(pgid: int, bound: float) -> list[Proc]:
+    """The bounded wait on a group: `/proc` polled until no running process
+    carries the group's id; the survivors at the bound, none when the group
+    has exited."""
+    with anyio.move_on_after(bound):
+        while group(pgid):
+            await asyncio.sleep(0.05)
+    return group(pgid)
 
 
 async def end_group(process: subprocess.Popen[Any], exited: asyncio.Future[Any]) -> None:
-    """A group that outlived its wait after `SIGINT`: terminated — the
-    JVM's shutdown hook then running Isabelle's own termination of the ML
-    process's group — and killed if it outlives that too, so that the run
-    always ends."""
+    """A group that outlived its wait after `SIGINT`: terminated — the JVM's
+    shutdown hook ending the client and Isabelle's own termination of the
+    Isabelle process — and, when a process of it still runs at the bound,
+    killed as a group (not pid by pid: a reused pid cannot be hit, a late
+    fork cannot be missed), so that the run always ends."""
     signal_group(process, signal.SIGTERM)
-    with anyio.move_on_after(TERMINATION):
-        await asyncio.wait({exited})
-    if group_alive(process):
+    if await group_exited(process.pid, TERMINATION):
         signal_group(process, signal.SIGKILL)
     await asyncio.wait({exited})                # unbounded: the waiting thread must end
+
+
+class _Pipe:
+    """One pipe of a tool, read by one task from the start into `data`, so
+    that a full pipe never gates the exit; `more()` waits for the next
+    bytes or the end."""
+
+    def __init__(self, stream: Any):
+        self._stream = stream                   # Popen's file object
+        self.data = bytearray()
+        self.closed = False
+        self._changed = asyncio.get_running_loop().create_future()
+        self.transport: asyncio.ReadTransport | None = None
+        self.task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        self.transport, _ = await loop.connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), self._stream)
+        self.task = asyncio.ensure_future(self._fill(reader))
+
+    def _notify(self) -> None:
+        changed, self._changed = self._changed, asyncio.get_running_loop().create_future()
+        changed.set_result(None)
+
+    async def _fill(self, reader: asyncio.StreamReader) -> None:
+        try:
+            while chunk := await reader.read(65536):
+                self.data += chunk
+                self._notify()
+        finally:
+            self.closed = True
+            self._notify()
+
+    async def more(self) -> None:
+        await self._changed
+
+    def text(self) -> str:
+        return bytes(self.data).decode(errors="replace")
+
+    def lines(self) -> list[str]:
+        """The complete lines so far."""
+        return self.text().split("\n")[:-1]
+
+    def close(self) -> None:
+        assert self.task is not None and self.transport is not None
+        self.task.cancel()
+        self.transport.close()
+
+
+class Tool_Handle:
+    """What a case holds inside `tool`'s block: `pid`, the leader's, which
+    is the group's id; `exited`, the leader's exit code, shielded so that
+    awaiting it cannot cancel the task `end_group` waits on (the rule the
+    settlements follow); `signal_group`; and `line(stream, predicate)`, the
+    only read inside the block.  After the block `stdout` and `stderr` are
+    the complete texts; before it ends, reading either raises."""
+
+    def __init__(self, argv: list[str], process: subprocess.Popen[bytes],
+                 exited: asyncio.Task[int], pipes: dict[str, _Pipe]):
+        self.argv = argv
+        self.pid = process.pid
+        self._process = process
+        self._exited = exited
+        self._pipes = pipes
+        self._joined = False
+
+    @property
+    def exited(self) -> asyncio.Future[int]:
+        """A shield of the leader's task, fresh at each read: a cancelled
+        await leaves the task, and the next read, untouched."""
+        return asyncio.shield(self._exited)
+
+    def signal_group(self, sig: int) -> None:
+        signal_group(self._process, sig)
+
+    async def line(self, stream: str, predicate: Callable[[str], bool]) -> str:
+        """The first line of `stream` (`stdout` or `stderr`) that satisfies
+        `predicate`; the stream ending without one fails, with both texts."""
+        pipe = self._pipes[stream]
+        seen = 0
+        while True:
+            lines = pipe.lines()
+            for line in lines[seen:]:
+                if predicate(line):
+                    return line
+            seen = len(lines)
+            if pipe.closed:
+                raise AssertionError(f"{self.argv}'s {stream} ended without the line awaited\n{self.texts()}")
+            await pipe.more()
+
+    def texts(self) -> str:
+        """Both texts as they stand, for a failure's report."""
+        return "".join(f"--- {name} ---\n{pipe.text()}" for name, pipe in self._pipes.items())
+
+    def _text(self, stream: str) -> str:
+        if not self._joined:
+            raise RuntimeError(f"{stream} is complete only after the tool's block")
+        if stream not in self._pipes:
+            raise RuntimeError(f"{stream} was not a pipe")
+        return self._pipes[stream].text()
+
+    @property
+    def stdout(self) -> str:
+        return self._text("stdout")
+
+    @property
+    def stderr(self) -> str:
+        return self._text("stderr")
+
+
+@asynccontextmanager
+async def tool(argv: list[str], env: dict[str, str], stdin: Any = subprocess.DEVNULL,
+               stdout: Any = None, terminal: int | None = None) -> AsyncGenerator[Tool_Handle]:
+    """A tool started for the block, in a session and group of its own.
+    `terminal`, a pty's slave, becomes the controlling terminal through
+    `TIOCSCTTY` in the `preexec_fn`, which CPython runs after `setsid` — an
+    inherited descriptor gives a session no terminal on its own, so this is
+    what gives the tool one, whatever its stdin.  `stdout`, when given, is
+    the child's stdout in place of the pipe; stderr is always the pipe.
+    The block's exit, shielded on either path, is the contract: on the
+    exceptional path (the deadline's cancellation, a failed assertion)
+    `SIGINT` to the group first; the bounded group wait; `end_group` when a
+    process still runs; the readers' join, bounded by `JOIN`, whose expiry
+    fails naming the pipes still open (a process outside the group can
+    hold them).  Then, on the normal path, the failure naming the
+    survivors if there were any; on the exceptional path, both texts added
+    to the exception as a note, and the re-raise."""
+    def preexec() -> None:
+        default_sigint()
+        if terminal is not None:
+            fcntl.ioctl(terminal, termios.TIOCSCTTY, 0)
+
+    process = subprocess.Popen(argv, stdin=stdin, stdout=subprocess.PIPE if stdout is None else stdout,
+                               stderr=subprocess.PIPE, env=env, start_new_session=True, preexec_fn=preexec)
+    pipes = {name: _Pipe(stream) for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))
+             if stream is not None}
+    for pipe in pipes.values():
+        await pipe.start()
+    exited = asyncio.ensure_future(asyncio.to_thread(process.wait))
+    handle = Tool_Handle(argv, process, exited, pipes)
+
+    async def settled(failed: bool) -> str:
+        """The shielded part of the exit; the survivors' names, if any."""
+        with anyio.CancelScope(shield=True):
+            if failed:
+                signal_group(process, signal.SIGINT)
+            survivors = await group_exited(process.pid, TERMINATION)
+            names = named(survivors)
+            if survivors:
+                await end_group(process, exited)
+            else:
+                await asyncio.wait({exited})
+            # asyncio's wait, not a cancel scope: a bound reached leaves the readers as they are
+            _, pending = await asyncio.wait([pipe.task for pipe in pipes.values()], timeout=JOIN)
+            still_open = [name for name, pipe in pipes.items() if pipe.task in pending]
+            for pipe in pipes.values():
+                pipe.close()
+            handle._joined = True
+            if still_open:
+                raise AssertionError(f"{argv}'s {' and '.join(still_open)} still open {JOIN:g} s after its group "
+                                     f"exited: a process outside the group holds it\n{handle.texts()}")
+        return names
+
+    try:
+        yield handle
+    except BaseException as exc:
+        await settled(failed=True)
+        exc.add_note(f"the output of {argv}:\n{handle.texts()}")
+        raise
+    survivors = await settled(failed=False)
+    if survivors:
+        raise AssertionError(f"a process was left in the group of {argv}: {survivors}\n{handle.texts()}")
+
+
+async def run_tool(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """The tool run to its exit: its code and both texts; nothing may be
+    left in its group."""
+    async with tool(argv, env) as handle:
+        rc = await handle.exited
+    return subprocess.CompletedProcess(argv, rc, handle.stdout, handle.stderr)
+
+
+@contextmanager
+def deadline(seconds: float, what: str,
+             on_expiry: Callable[[TimeoutError], None] | None = None) -> Generator[None]:
+    """Every deadline: an expiry is one `TimeoutError` naming what expired,
+    raised while the cancellation is being handled, so that what the block
+    noted on the cancellation — a tool's texts — prints under it; `on_expiry`
+    sees the error first."""
+    with anyio.move_on_after(seconds) as scope:
+        try:
+            yield
+        except asyncio.CancelledError:
+            if not scope.cancel_called:
+                raise
+            expired = TimeoutError(f"{what} did not finish within {seconds:g} s")
+            if on_expiry is not None:
+                on_expiry(expired)
+            raise expired
 
 
 def hook_url(url: str) -> str:
@@ -382,14 +648,9 @@ class Harness:
 
     @contextmanager
     def deadline(self, seconds: float, what: str) -> Generator[None]:
-        """Every deadline: an expiry enters the record and is raised, one
-        `TimeoutError` naming what expired."""
-        with anyio.move_on_after(seconds) as scope:
+        """Every deadline of the harness: an expiry enters the record."""
+        with deadline(seconds, what, on_expiry=self.end_run):
             yield
-        if scope.cancelled_caught:
-            expired = TimeoutError(f"{what} did not finish within {seconds:g} s")
-            self.end_run(expired)
-            raise expired
 
     # -- the conversation the harness is serving -------------------------------
 
@@ -490,25 +751,10 @@ class Harness:
 
     async def run_tool(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         """An `isabelle` tool of a case's own, beside the child and on the
-        run's RPC host, in a process group of its own.  When the caller's
-        wait ends first — the case's deadline — the group is ended as the
-        child's is; nothing may be left in it either way."""
-        process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                   env={**os.environ, "RPC_Host": self.host_address},
-                                   start_new_session=True, preexec_fn=default_sigint)
-        exited = asyncio.ensure_future(asyncio.to_thread(process.communicate))
-        try:
-            output, errors = await asyncio.shield(exited)
-        except BaseException:
-            with anyio.CancelScope(shield=True):
-                signal_group(process, signal.SIGINT)
-                with anyio.move_on_after(TERMINATION):
-                    await asyncio.wait({exited})
-                if not exited.done():
-                    await end_group(process, exited)
-            raise
-        assert not group_alive(process), f"a process is left in the group of {argv}"
-        return subprocess.CompletedProcess(argv, process.returncode, output, errors)
+        run's RPC host (`tool`'s contract: when the caller's wait ends
+        first — the case's deadline — the group is ended as the child's is;
+        nothing may be left in it either way)."""
+        return await run_tool(argv, {**os.environ, "RPC_Host": self.host_address})
 
     async def await_launch(self) -> None:
         """Stage 3: the harness's `launch_TAT` called.  The child's exit and
@@ -565,4 +811,5 @@ class Harness:
             except TimeoutError as expired:
                 await end_group(self.child, self.child_exit)
                 raise expired
-        assert not group_alive(self.child), "a process is left in isabelle TAT_mcp's group"
+        survivors = group(self.child.pid)
+        assert not survivors, f"a process is left in isabelle TAT_mcp's group: {named(survivors)}"

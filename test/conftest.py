@@ -79,7 +79,7 @@ async def std_harness(anyio_backend, tmp_path_factory):
         patch.undo()
 
 
-HARNESSES = ("harness", "std_harness")
+HARNESSES = ("harness", "std_harness", "launcher")
 
 
 @pytest.fixture
