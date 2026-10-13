@@ -785,7 +785,7 @@ the port to serve on and the agent client's name (MODULE_STRUCTURE §2.6) and
 calls the Python procedure `launch_TAT` over `contrib/Isabelle_RPC`; Python
 drives Isabelle through that call's callbacks, and the call does not return:
 the conversation ends when either process stops, when the connection
-between them closes, or when a bug, a `TAT_DisasterError`, or a `TAT_StartupError` refusing the client's version or name, Codex's sandbox or an agent with no transcript ends it from
+between them closes, or when a bug, a `TAT_DisasterError`, or a `TAT_StartupError` refusing the client's version or name, Codex's sandbox or a main conversation with no transcript ends it from
 inside (MODULE_STRUCTURE §4.6), the call then returning only by raising —
 or when its host ends it, within the same call, to begin a fresh
 conversation on the same Isabelle process. AoA's entry has the same shape

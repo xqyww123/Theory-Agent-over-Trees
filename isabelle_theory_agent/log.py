@@ -199,7 +199,8 @@ class _Tool(_Category):
 
 
 # What a hook request was judged to be (§4, `hook.answer`).
-Judged = Literal["announcement", "interruption", "stop", "compaction", "session_start", "ignored"]
+Judged = Literal["announcement", "internal_announcement", "interruption", "stop", "compaction",
+                 "session_start", "ignored"]
 
 
 class _Hook(_Category):

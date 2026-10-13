@@ -63,8 +63,10 @@ a theory of that `Session` begins (MODULE_STRUCTURE §4.1) — a file
 (CLIENT_HOOKS.md), the port cannot be bound, the agent client that
 connects states, in its MCP
 `initialize`, a version lower than the one TAT's client facts were
-measured on, or none, or another client's name, or Claude Code saves no
-transcript for an agent that announces a call, or a Codex tool call
+measured on, or none, or another client's name, or, at an announcement,
+the payload names no transcript, the main conversation's transcript is
+not found, or an agent's transcript TAT has found can no longer be
+read, or a Codex tool call
 carries a sandbox policy that is not the profile TAT configured
 (CONSTRUCT_INTERACTION §8, CLIENT_HOOKS.md §5). It is raised out of
 `launch_TAT`, or out of `compile_TAT` during a compile, at start, at the
@@ -286,7 +288,7 @@ TAT_StartupError              outside both; TAT cannot run here (§1)
 │                             schema version                      [Forest_Store]
 ├─ ClientRefused              line — a refusal raised while serving: the
 │                             client's version or name, Codex's sandbox,
-│                             an agent with no transcript
+│                             the main conversation's transcript not found
 │                             (CONSTRUCT_INTERACTION §8); `line` is the
 │                             ending's line for it (RENDER_BASELINES §4),
 │                             which the constructor requires, so no

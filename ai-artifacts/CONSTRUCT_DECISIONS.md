@@ -730,7 +730,9 @@ verbatim, `X` standing for a full node id.
   any depth under `subagents/`, a workflow agent's lying one directory
   deeper. A transcript not found ends the conversation at whatever
   announcement it happens, with no exception (the owner, 2026-10-01:
-  「直接写"找不到 transcript 就结束整个会话"就行…这个延迟不要紧的」; the
+  「直接写"找不到 transcript 就结束整个会话"就行…这个延迟不要紧的」;
+  narrowed on 2026-10-13 to the main conversation's transcript — Claude
+  Code's internal agents, below); the
   author had proposed to exempt the announcement right after a `/clear`,
   where a running subagent's new file appeared 91 ms after its
   announcement in one of the two runs measured and 67 ms before it in
@@ -766,7 +768,10 @@ verbatim, `X` standing for a full node id.
   pursued, the held-back result being accepted.
 - Claude Code: `.claude/settings.json`'s `env`
   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0` and
-  `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`; per-server `timeout` 43200000 ms;
+  `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0` and
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` (2026-10-13, the owner:
+  the prompt suggestion is the most frequent internal agent, and its
+  `SubagentStop` follows every turn); per-server `timeout` 43200000 ms;
   the stall watchdog left alone. Codex: `default_tools_approval_mode =
   "approve"`, `tool_timeout_sec` 43200, `check_for_update_on_startup =
   false` (the layer it is read from is not determined; the 2026-10-13
@@ -826,6 +831,27 @@ verbatim, `X` standing for a full node id.
   created at the call (`agent.created` with `first="call"`), `main` when
   `threadId` equals `sessionId`; the announcement records the `callId`
   alone.
+
+- Claude Code's internal agents (2026-10-13, the owner, after the live
+  run's two ended conversations and the verification
+  `ai-artifacts/review/steps_16_17/option_b_code.md`, `option_b_empirical.md`).
+  A `PreToolUse` on a TAT tool whose payload carries `agent_id` and no
+  `agent_type` is an internal agent's announcement: answered the grant,
+  recorded as `hook.answer` judged `internal_announcement`, no agent
+  created, no transcript read, nothing recorded for `agent_of_call`;
+  decided in the Claude Code subclass, Codex unchanged. The refusal for
+  a transcript not found stays for the main conversation; a subagent
+  whose file has not yet been found at an announcement is served, and
+  its file is read from the first announcement at which it exists (a
+  subagent of type `fork` gets its file seconds after its first call) —
+  a compaction before that first reading unseen, accepted. Internal
+  agents' `SubagentStop`s are judged as the stop of an agent TAT has
+  not met: allowed, no agent created. Accepted: when the main
+  conversation runs as a
+  custom agent, an internal agent's payload carries that agent's type,
+  and TAT takes it for a subagent's. Written into CONSTRUCT_INTERACTION
+  §1, §8, CLIENT_HOOKS §1, §2, MODULE_STRUCTURE §4.6, EXCEPTIONS §1,
+  LOGGING §4.
 
 ## 11. `Theorem`
 
@@ -1431,7 +1457,8 @@ internal agent whose `agent_transcript_path` names no file; and twice a
 Claude Code's internal agents, whose calls its own permission function
 refuses after the hooks (`ai-artifacts/probes/live17/REPORT.md` §4.1;
 AGENT_CLIENTS_MEASURED.md); each time TAT ended the conversation by
-§10's rule, which waits for the owner's ruling. Measured
+§10's rule of 2026-10-01, narrowed by the owner on 2026-10-13 (§10,
+Claude Code's internal agents). Measured
 2026-09-30 (probes `codex_subagent_compaction`,
 `claude_code_subagent_compaction`, both REPORT.md): Codex runs
 `PreCompact`/`PostCompact` for every thread, `agent_id` naming a

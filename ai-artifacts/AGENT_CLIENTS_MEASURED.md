@@ -217,13 +217,32 @@ a decision.
   agent's own permission function, whatever the hook answered. A
   `SubagentStop` of an internal agent carries `agent_type` `""`; its
   `PreToolUse` carries no `agent_type` key; every real subagent, teammate
-  and workflow agent carries one. *measured* 2026-10-13 (2.1.296,
+  and workflow agent carries one. *source* (the 2.1.296 bundle,
+  `ai-artifacts/review/steps_16_17/option_b_code.md` §4) — the key is
+  `agent_type: s?.agentType ?? Kv()`, `Kv()` the main thread's agent
+  type: under `--agent`, the setting `agent` or a pane teammate's custom
+  type, an internal agent's `PreToolUse` and `SubagentStop` carry that
+  type; the progress-summary internal agent (`Forked agent
+  [agent_summary]`) fires no `SubagentStop` (*measured* 2026-10-13,
+  2.1.296, `ai-artifacts/probes/orphan_agent/B4_summary_repeat/`).
+  *measured* 2026-10-13 (2.1.296, interactive,
+  `ai-artifacts/probes/option_b/`): 107 of 107 `PreToolUse` payloads
+  with an `agent_id` and no `agent_type` were internal agents'
+  (`Forked agent [prompt_suggestion]` ×106, `[agent_summary]` ×1); a
+  background, a foreground, a custom (`probe-worker`) and a `fork`
+  subagent carried `agent_type` on every payload; after a hook's allow,
+  deny or empty answer the call never ran, a deny reason reaching only
+  the internal agent's own model; `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`
+  in the project settings' `env` left 0 internal agents and 0
+  `SubagentStop`s over 26 blocked `Stop`s; a `fork` subagent's
+  transcript file appeared 2.7 s after its first `PreToolUse`.
+  *measured* 2026-10-13 (2.1.296,
   interactive, `--debug`, `ai-artifacts/probes/orphan_agent/`): 25 such
   `PreToolUse` in 125 blocked `Stop`s, each inside `Forked agent
   [prompt_suggestion]` in the debug log and refused there ("Hook
   approved tool use …, but canUseTool is required"); 0 in 207 with
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`; 30 in 99 with
-  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1` (the advisor is not the source);
+  `CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`;
   one inside `Forked agent [agent_summary]` 20.5 s into a blocked
   background subagent's follow-up call.
 - *measured* 2026-10-13 (2.1.296, interactive, the agent directory inside

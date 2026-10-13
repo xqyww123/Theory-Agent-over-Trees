@@ -1340,8 +1340,8 @@ trip with (§4.3) — when a job's settlement, a `make` or `_start`, or the
 `_run` raises while its run is still its job's, when a tool call arrives
 that no `PreToolUse` announced (CONSTRUCT_INTERACTION §8), when the
 subclass refuses a session or an agent with a `TAT_StartupError` — the
-client's version or name, Codex's sandbox, an agent with no transcript
-(below) — when `launch_TAT` finds the connection gone, the connection
+client's version or name, Codex's sandbox, the main conversation with no
+transcript (below) — when `launch_TAT` finds the connection gone, the connection
 going ending its RPC call, at the server's exit, for whatever escapes the
 third layer, so that the server stops only after the ending's calls are
 answered, or at the context's exit, for whatever else escapes the start
@@ -1454,9 +1454,14 @@ announcement it reads the lines the agent's file has gained, and a
 boundary not yet recorded, a `transcript_path` other than the one kept,
 or the part of the file TAT had read no longer there, is the agent's
 compaction event; while a `PostCompact` waits for its boundary, a task
-of the ending's reads every transcript of its session. An agent whose
+of the ending's reads every transcript of its session. An internal
+agent's announcement (CONSTRUCT_INTERACTION §8) — the Claude Code
+subclass's `event_of_hook` makes it an `Internal_Announcement` — is
+answered the grant, and nothing else is done. A main conversation whose
 transcript is not found at an announcement ends the conversation with a
-`TAT_StartupError` (CLIENT_HOOKS.md §2, CONSTRUCT_INTERACTION §8).
+`TAT_StartupError`; a subagent whose transcript has not yet been found
+is served, and its transcript is read from the first announcement at
+which it exists (CLIENT_HOOKS.md §2, CONSTRUCT_INTERACTION §8).
 While the conversation is ending the path answers
 status 503 with an empty body, touching no forest. The request is counted
 among those in flight, so the conversation's ending waits for it. The

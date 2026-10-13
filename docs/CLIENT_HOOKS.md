@@ -44,7 +44,7 @@ documents:
 
 | hook | TAT's answer |
 | --- | --- |
-| `PreToolUse` on a TAT tool, `mcp__TAT__…` — the announcement | records the call for `agent_of_call` (CONSTRUCT_INTERACTION §8); Claude Code: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}`, which grants the call; Codex: an empty answer |
+| `PreToolUse` on a TAT tool, `mcp__TAT__…` — the announcement | records the call for `agent_of_call` (CONSTRUCT_INTERACTION §8), an internal agent's announcement on Claude Code excepted (§2); Claude Code: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}`, which grants the call; Codex: an empty answer |
 | `PreToolUse` on `TaskStop` (Claude Code) or `collaborationinterrupt_agent` (Codex) — an interruption | `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "<the two lines of CONSTRUCT_INTERACTION §7>"}}` when the interruption is refused, else an empty answer — `TaskStop` needs no grant, and Codex treats a bare `allow` as an unsupported decision and marks the hook failed |
 | `Stop`, `SubagentStop` — the agent is about to stop | `{"decision": "block", "reason": "<the reason of CONSTRUCT_INTERACTION §7>"}` when the stop is blocked, else an empty answer |
 | `SessionStart` (Codex) — the main conversation's context was replaced (`startup`, `resume`, `clear`, `fork`, `compact`) | an empty answer; the main conversation's seen set cleared (PRINT.md §4) |
@@ -129,8 +129,31 @@ removed, and can rewrite it under its name — is that agent's compaction
 event too. TAT reads the file again from its first line, and a boundary
 it has recorded counts no second time.
 
-An agent whose transcript TAT does not find at an announcement cannot
-be served, and the conversation ends (CONSTRUCT_INTERACTION §8).
+Claude Code also runs internal agents of its own, each on a copy of a
+conversation under a new `agent_id` and with no transcript: the prompt
+suggestion after each turn of the main conversation, the progress
+summary of a running background subagent, and others. An internal
+agent's `PreToolUse` carries an `agent_id` and no `agent_type`; a
+subagent's carries both. Claude Code refuses an internal agent's tool
+call itself after the hooks, whatever they answer. TAT answers an
+internal agent's announcement with the grant and does nothing else
+(CONSTRUCT_INTERACTION §8). When the main conversation runs as a custom
+agent — `--agent`, or the setting `agent` — an internal agent's
+`PreToolUse` carries that agent's type instead, and TAT takes it for a
+subagent's. `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` in the settings
+below removes the prompt suggestion, the most frequent internal agent,
+and the `SubagentStop` it fires after every turn.
+
+When TAT does not find the main conversation's transcript at an
+announcement, the main conversation cannot be served, and the
+conversation ends (CONSTRUCT_INTERACTION §8). A subagent whose transcript
+TAT has not yet found is served at its announcement, and its transcript
+is read from the first announcement at which it exists — a subagent of
+type `fork` (`subagent_type: fork`) gets its transcript seconds after its
+first call. What the transcript holds at that first reading is no
+compaction event, so a compaction it records before then goes unseen. A
+transcript TAT has found and can no longer read, and a payload naming no
+transcript, end the conversation for any agent.
 
 Two checks guard the premise, and a failed check ends the conversation
 with a `TAT_InternalError` carrying its message (CONSTRUCT_INTERACTION
@@ -146,8 +169,10 @@ Claude Code writes no transcript when it is started with
 `--no-session-persistence`, or through the SDK with
 `persistSession: false`. It also writes none when its environment
 carries `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1`, or when an interactive
-Claude Code is started from inside another one; the last two `env`
-entries below turn the transcript back on in those two cases.
+Claude Code is started from inside another one;
+`CLAUDE_CODE_SKIP_PROMPT_HISTORY=0` and
+`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` below turn the transcript back
+on in those two cases.
 
 ```json
 { "mcpServers": { "TAT": { "type": "http", "url": "http://127.0.0.1:<port>/mcp", "timeout": 43200000 } } }
@@ -155,7 +180,8 @@ entries below turn the transcript back on in those two cases.
 
 ```json
 { "env": { "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "0",
-           "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "0", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1" },
+           "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "0", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
+           "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false" },
   "permissions": { "allow": ["Bash"], "deny": ["EnterWorktree"], "blockReadsOutsideWorkingDirectories": true },
   "sandbox": { "enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false,
                "network": { "allowAllUnixSockets": true, "allowedDomains": ["*"] },

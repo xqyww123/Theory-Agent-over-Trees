@@ -61,9 +61,14 @@ what the agent sees, and how an agent is kept from leaving work behind.
   (AGENT_CLIENTS_MEASURED.md): it reads the version the client states in
   its MCP `initialize` and refuses the session when it is lower than
   the expected one, or cannot be read (§8).
-- Claude Code saves a transcript of every agent's conversation: TAT
-  reads it to learn of the agent's compactions, and ends the
-  conversation when an agent has none (§8).
+- Claude Code saves a transcript of the main conversation and of every
+  subagent: TAT reads an agent's transcript to learn of its compactions,
+  ends the conversation when the main conversation has none, and reads a
+  subagent's transcript from the first announcement at which that file
+  exists (§8). Claude
+  Code's internal agents — queries it runs on a copy of a conversation
+  for its own purposes, such as the prompt suggestion after a turn — are
+  not agents of the conversation (§8).
 - On Codex the model calls TAT's tools from a script it has Codex run,
   and the script decides when the model sees a result. A result the
   script prints only after its thread has compacted, or never, was
@@ -918,8 +923,8 @@ A **compaction event** is TAT learning that an agent's context was
 replaced; it clears that agent's seen set (§6), and nothing more: TAT
 pushes no briefing, the agent reads one itself with `recall` and no id
 (PRINT.md §5, RECALL.md), told to by a skill of its own after a
-compaction. Every compaction is detected, on both clients and for
-subagents as much as for the main conversation
+compaction. Every compaction is detected, but for one exception below,
+on both clients and for subagents as much as for the main conversation
 (AGENT_CLIENTS_MEASURED.md):
 - On Codex, `PreCompact` and `PostCompact` fire for every thread that
   compacts, and their `agent_id` names the subagent (a payload without
@@ -945,13 +950,20 @@ subagents as much as for the main conversation
   main conversation's context, and count as a compaction of every
   subagent running across them as well (CLIENT_HOOKS.md §2). So is a
   transcript whose part TAT had read is no longer there, which TAT
-  reads again from its first line (CLIENT_HOOKS.md §2). An agent
-  whose transcript TAT does not find at an announcement cannot be
-  served. TAT then ends the conversation with a `ClientRefused`, a
-  `TAT_StartupError` (EXCEPTIONS.md §3), `TAT cannot serve this client: Claude Code saves no transcript of the
-  conversation. Start it without --no-session-persistence.`, which the
-  launcher prints before exiting 2 (MODULE_STRUCTURE §5); every tool call is answered
-  the ending's line for it meanwhile (RENDER_BASELINES §4).
+  reads again from its first line (CLIENT_HOOKS.md §2). A main
+  conversation whose transcript TAT does not find at an announcement
+  cannot be served; a subagent whose transcript TAT has not yet found
+  is served, and its transcript is read from the first announcement at
+  which it exists — a compaction the subagent's transcript records
+  before that first reading is not detected (CLIENT_HOOKS.md §2). When
+  the main conversation's transcript is not found, the payload names
+  none, or a transcript TAT has found can no longer be read, TAT ends
+  the conversation with a `ClientRefused`, a `TAT_StartupError`
+  (EXCEPTIONS.md §3), `TAT cannot serve this client: Claude Code saves
+  no transcript of the conversation. Start it without
+  --no-session-persistence.`, which the launcher prints before exiting
+  2 (MODULE_STRUCTURE §5); every tool call is answered the ending's
+  line for it meanwhile (RENDER_BASELINES §4).
 
   Two checks guard the premise that the transcript shows every
   compaction before the agent's next call (CLIENT_HOOKS.md §2). Each
@@ -980,8 +992,17 @@ it, and the call must have been announced: on Claude Code the
 announcement's `tool_use_id` is the call's `_meta["claudecode/toolUseId"]`
 and its `agent_id` (empty for the main conversation) the identity; on
 Codex the announcement's `tool_use_id` is the call's `_meta.callId` and
-the identity is the call's `_meta.threadId`, the thread's own. On
-Claude Code the announcement's answer also grants the call:
+the identity is the call's `_meta.threadId`, the thread's own. A Claude
+Code announcement whose payload carries an `agent_id` and no
+`agent_type` is an internal agent's: Claude Code runs it on a copy of a
+conversation for a purpose of its own — the prompt suggestion after a
+turn, the progress summary of a background subagent — saves no
+transcript for it, and refuses its tool call itself after the hooks,
+whatever they answer. TAT answers it the grant below and does nothing
+else: it creates no agent, reads no transcript, and records the call
+for nobody, so a call under its `tool_use_id`, should one arrive, is
+unannounced. On Claude Code the announcement's answer also grants the
+call:
 `{"hookSpecificOutput": {"hookEventName": "PreToolUse",
 "permissionDecision": "allow"}}`, without which Claude Code refuses
 TAT's tools under `-p` and prompts for a background subagent's call. A
@@ -1004,7 +1025,9 @@ never reads a hook payload's `cwd` as the working directory.
   moved to the background), `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0` (no
   ceiling on consecutive blocks), `CLAUDE_CODE_SKIP_PROMPT_HISTORY=0` and
   `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` (transcripts on,
-  CLIENT_HOOKS.md §2). The server entry's `timeout` is the
+  CLIENT_HOOKS.md §2), and `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`
+  (no prompt-suggestion internal agent, CLIENT_HOOKS.md §2). The server
+  entry's `timeout` is the
   most a tool call may take, and Claude Code waits at least that long
   for its next byte; the subagent stall watchdog is not configured. The
   project settings load only when the client starts in the agent

@@ -688,27 +688,35 @@ def test_a_transcript_whose_read_part_is_gone_is_a_compaction_and_is_read_again(
     run(scenario)
 
 
-@pytest.mark.parametrize("case", ["the main conversation's file is not there", "a subagent's file is not there",
-                                  "the payload names no transcript", "the file is gone after it was read"])
+@pytest.mark.parametrize("case", ["the main conversation's file is not there",
+                                  "the main conversation's file is not there, after an internal announcement",
+                                  "the payload names no transcript", "the file is gone after it was read",
+                                  "a subagent's file is gone after it was read"])
 def test_an_agent_without_a_transcript_cannot_be_served(transcript_path, case):
-    """CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2: an agent whose transcript
-    TAT does not find at an announcement — the main conversation's file,
-    a subagent's under the session directory, a payload naming none, a
-    file that was there and is gone — ends the conversation with the
-    `ClientRefused` the launcher prints and `client_refused`; every call
-    is answered the fourth line of RENDER_BASELINES §4."""
+    """CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2: a main conversation
+    whose transcript TAT does not find at an announcement — its file not
+    there, an internal agent's announcement before or not, a payload
+    naming none — and an agent, main or subagent, whose file was there and
+    is gone, end the conversation with the `ClientRefused` the launcher
+    prints and `client_refused`; every call is answered the fourth line of
+    RENDER_BASELINES §4."""
     async def scenario():
         bodies = Bodies()
         async with serving(free_port(), bodies.tools()) as (server, serve):
             accepting = hold_accepting(server)
             url = hook_url(server.url)
             payload = claude_code("echo", "toolu_1", transcript_path=transcript_path)
-            if case == "the main conversation's file is not there":
+            if case.startswith("the main conversation's file is not there"):
+                if case.endswith("announcement"):
+                    await post_hook(url, internal("toolu_i", transcript_path))
                 payload["transcript_path"] = "/nowhere/" + Path(transcript_path).name
-            elif case == "a subagent's file is not there":
-                payload = claude_code("echo", "toolu_1", CC_SUBAGENT, transcript_path=transcript_path)
             elif case == "the payload names no transcript":
                 del payload["transcript_path"]
+            elif case == "a subagent's file is gone after it was read":
+                file = subagent_file(transcript_path, CC_SUBAGENT)
+                await announce(url, "toolu_0", transcript_path, CC_SUBAGENT)
+                os.unlink(file)
+                payload = claude_code("echo", "toolu_1", CC_SUBAGENT, transcript_path=transcript_path)
             else:
                 await announce(url, "toolu_0", transcript_path)
                 os.unlink(transcript_path)
@@ -726,6 +734,37 @@ def test_an_agent_without_a_transcript_cannot_be_served(transcript_path, case):
                 assert refused["data"] == {"name": CLIENT_INFO.name, "version": CLIENT_INFO.version,
                                            "message": SAVES_NO_TRANSCRIPT}
                 assert compactions() == []
+    run(scenario)
+
+
+def test_a_subagents_file_not_found_yet_is_read_from_the_first_announcement_at_which_it_exists(transcript_path):
+    """CLIENT_HOOKS.md §2: a subagent whose file TAT does not find at an
+    announcement is served, its transcript not read; the file is read from
+    the first announcement at which it exists, from its first line — what
+    it holds then is no event — and a boundary written after that is the
+    subagent's compaction event."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools()) as (server, serve), plain_client(server.url) as session:
+            url = hook_url(server.url)
+            await announce(url, "toolu_s1", transcript_path, CC_SUBAGENT)          # no file yet
+            served = await session.call_tool("echo", {"text": "a"}, meta={"claudecode/toolUseId": "toolu_s1"})
+            assert text_of(served) == "echo a" and list(server.agents) == [CC_SUBAGENT] and not serve.done()
+            assert [r for r in stand_ins.records("agent") if r["event"] == "transcript_read"] == []
+            file = subagent_file(transcript_path, CC_SUBAGENT)
+            earlier = compact_boundary()
+            append(file, earlier)
+            sub = server.agents[CC_SUBAGENT]
+            sub.seen.add((1, None))
+            await announce(url, "toolu_s2", transcript_path, CC_SUBAGENT)          # read from its first line
+            assert [(r["offset"], r["lines"], r["boundaries"]) for r in reads(file)] == [(0, 2, [uuid_of(earlier)])]
+            assert sub.seen == {(1, None)} and compactions() == []               # what the file first held
+            later = compact_boundary()
+            append(file, later)
+            await announce(url, "toolu_s3", transcript_path, CC_SUBAGENT)
+            assert sub.seen == set() and not serve.done()
+            assert compactions() == [(CC_SUBAGENT, {"learned_from": "compact_boundary", "seen_cleared": 1,
+                                                    "uuid": uuid_of(later)})]
     run(scenario)
 
 
@@ -1220,24 +1259,101 @@ def test_codex_s_stop_and_interruption_are_judged_end_to_end(tmp_path):
     run(scenario)
 
 
+# --- Claude Code's internal agents (CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2) ---
+
+INTERNAL_ID = "a934e02378021a2c5"            # the measured shape, `a` + 16 hex
+
+
+def internal(tool_use_id: str, transcript_path: str) -> dict:
+    """An internal agent's `PreToolUse`: a subagent's payload without the
+    `agent_type` key."""
+    return {k: v for k, v in claude_code("echo", tool_use_id, INTERNAL_ID, transcript_path=transcript_path).items()
+            if k != "agent_type"}
+
+
+def test_an_internal_agents_announcement_is_granted_and_nothing_else_is_done(transcript_path):
+    """CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2: an announcement with an
+    `agent_id` and no `agent_type` is an internal agent's — granted,
+    judged `internal_announcement`, no agent created, no transcript read,
+    the conversation going on; a second one under the same id is no bug of
+    the path; the internal agent's `SubagentStop` is allowed and creates
+    no agent either; an interruption does not see it."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools()) as (server, serve), plain_client(server.url) as session:
+            url = hook_url(server.url)
+            for _ in range(2):
+                r = await post_hook(url, internal("toolu_i", transcript_path))
+                assert r.status_code == 200 and r.json() == Claude_Code_Server.announcement_answer
+            assert server.agents == {} and not serve.done()
+            assert answers()[-2:] == [("internal_announcement", 200)] * 2
+            assert stand_ins.records("agent") == []
+            assert [r for r in stand_ins.records("conversation") if r["event"] == "client_refused"] == []
+            await announce(url, "toolu_m", transcript_path)
+            served = await session.call_tool("echo", {"text": "hi"}, meta={"claudecode/toolUseId": "toolu_m"})
+            assert text_of(served) == "echo hi" and list(server.agents) == ["main"]
+            r = await post_hook(url, {**stop(INTERNAL_ID), "agent_type": ""})
+            assert r.status_code == 200 and r.content == b""
+            assert judgements("stop_judged") == [(INTERNAL_ID, {"allowed": True})] and list(server.agents) == ["main"]
+            subagent_file(transcript_path, CC_SUBAGENT)
+            await announce(url, "toolu_s", transcript_path, CC_SUBAGENT)
+            assert server.event_of_hook(task_stop()) == Interruption(frozenset({server.agents[CC_SUBAGENT]}))
+    run(scenario)
+
+
+def test_a_call_under_an_internal_announcements_id_is_unannounced(transcript_path):
+    """CONSTRUCT_INTERACTION §8: an internal agent's announcement records
+    the call for nobody, so a call under its id — which Claude Code never
+    sends — would be unannounced and end the conversation."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools()) as (server, serve), plain_client(server.url) as session:
+            await post_hook(hook_url(server.url), internal("toolu_i", transcript_path))
+            result = await session.call_tool("echo", {"text": "hi"}, meta={"claudecode/toolUseId": "toolu_i"})
+            assert (text_of(result), result.isError) == (INTERNAL, True)
+            exn = await ended(serve)
+            assert isinstance(exn, TAT_InternalError) and str(exn) == UNANNOUNCED
+            assert tool_records()[-3:] == [("call", None, "toolu_i"), ("unannounced", None, "toolu_i"),
+                                           ("while_ending", None, "toolu_i")]
+            assert server.agents == {}
+    run(scenario)
+
+
+def test_a_codex_announcement_without_agent_type_is_an_announcement(tmp_path):
+    """The internal agents are Claude Code's: on Codex a `PreToolUse` with
+    an `agent_id` and no `agent_type` is an announcement like any, the
+    thread's agent created at its call."""
+    async def scenario():
+        bodies = Bodies()
+        async with serving(free_port(), bodies.tools(), server_class=Codex_Server) as (server, serve), \
+                plain_client(server.url, info(Codex_Server)) as session:
+            server.configure(tmp_path)
+            payload = {k: v for k, v in codex("echo", "c1", CX_SUBAGENT).items() if k != "agent_type"}
+            r = await post_hook(hook_url(server.url), payload)
+            assert r.status_code == 200 and answers()[-1] == ("announcement", 200)
+            served = await session.call_tool("echo", {"text": "a"}, meta=codex_meta("c1", CX_SUBAGENT, tmp_path))
+            assert text_of(served) == "echo a" and list(server.agents) == [CX_SUBAGENT] and not serve.done()
+    run(scenario)
+
+
 # --- the branches the live run did not reach (step 17's review) -----------
 
 def test_a_stop_and_an_interruption_are_answered_503_while_ending_and_judged_nothing():
     """CONSTRUCT_INTERACTION §8: once the ending is entered every hook is
-    answered 503 before it is judged — a `Stop`, a `SubagentStop` and a
-    `TaskStop` alike — so no `stop_judged` or `interruption_judged`
-    record is written for them."""
+    answered 503 before it is judged — a `Stop`, a `SubagentStop`, a
+    `TaskStop` and an internal agent's announcement alike — so no
+    `stop_judged` or `interruption_judged` record is written for them."""
     async def scenario():
         async with serving(free_port(), []) as (server, serve):
             url = hook_url(server.url)
             accepting = hold_accepting(server)
             server.ending.end(RuntimeError("ended"))
-            for payload in (stop(), stop(CC_SUBAGENT), task_stop()):
+            for payload in (stop(), stop(CC_SUBAGENT), task_stop(), internal("toolu_i", "/work/none.jsonl")):
                 r = await post_hook(url, payload)
                 assert r.status_code == 503 and r.content == b"", payload
             accepting.set()
             assert isinstance(await ended(serve), RuntimeError)
-        assert answers()[-3:] == [(None, 503)] * 3
+        assert answers()[-4:] == [(None, 503)] * 4
         assert judgements("stop_judged") == [] and judgements("interruption_judged") == []
         assert server.agents == {}
     run(scenario)

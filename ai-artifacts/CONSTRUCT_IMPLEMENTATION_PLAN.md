@@ -892,9 +892,15 @@ bound's refusal among the `TAT_StartupError`s of EXCEPTIONS.md §1.
   CH §5 — the
   enclosing repository's CLAUDE.md and memory, the user's own MCP
   servers and MCP servers that write files, among the accepted gaps;
-  AGENT_CLIENTS_MEASURED — the measured items. CI §1's transcript
-  premise and the rule of CH §2 / CI §8 wait for the owner's ruling on
-  `ai-artifacts/probes/live17/REPORT.md` §4.1.
+  AGENT_CLIENTS_MEASURED — the measured items. The owner's ruling on
+  `ai-artifacts/probes/live17/REPORT.md` §4.1 (2026-10-13, after two
+  verifications): CI §1's transcript premise and §8, CH §1 and §2,
+  MS §4.6, EXCEPTIONS §1 and LOGGING §4 say that an internal agent's
+  announcement is answered the grant and nothing else is done, that only
+  the main conversation's missing transcript ends the conversation, and
+  that a subagent's file not found yet is read later; the settings TAT
+  writes gain `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`
+  (CONSTRUCT_DECISIONS.md §10).
 
 ## 6. Not in this plan
 

@@ -268,6 +268,15 @@ class Announcement:
 
 
 @dataclass(frozen=True)
+class Internal_Announcement:
+    """A `PreToolUse` on a TAT tool by one of Claude Code's internal agents
+    (CONSTRUCT_INTERACTION §8; CLIENT_HOOKS.md §2): an `agent_id` with no
+    `agent_type`.  Answered the grant and nothing else — Claude Code
+    refuses the call itself after the hooks."""
+    tool_use_id: str
+
+
+@dataclass(frozen=True)
 class Compaction:
     """A compaction hook that names its agent (CLIENT_HOOKS.md §1's Codex
     rows): the agent, looked up and never created — None for one TAT has
@@ -604,14 +613,15 @@ class TAT_Server:
         agent_id = payload.get("agent_id")
         return str(agent_id) if agent_id else self._main_identity(payload)
 
-    def event_of_hook(self, payload: dict[str, Any]
-                      ) -> Announcement | Interruption | Stop | Compaction | Post_Compact | None:
+    def event_of_hook(self, payload: dict[str, Any]) -> (
+            Announcement | Internal_Announcement | Interruption | Stop | Compaction | Post_Compact | None):
         """The client's JSON as an event (CONSTRUCT_INTERACTION §7, §8): a
-        `PreToolUse` on a TAT tool is the announcement of a call, one on
-        the client's tool that stops a subagent an interruption, a `Stop`
-        or `SubagentStop` the stop of its agent, a compaction hook what the
-        subclass makes of it; every other hook is consumed — None.  Reads
-        the payload and changes nothing; `_judge` acts on the event."""
+        `PreToolUse` on a TAT tool is the announcement of a call — on
+        Claude Code an internal agent's when it names an agent of no type —
+        one on the client's tool that stops a subagent an interruption, a
+        `Stop` or `SubagentStop` the stop of its agent, a compaction hook
+        what the subclass makes of it; every other hook is consumed — None.
+        Reads the payload and changes nothing; `_judge` acts on the event."""
         hook = payload.get("hook_event_name")
         if hook in ("Stop", "SubagentStop"):
             return Stop(self._known(self._identity(payload)))
@@ -923,9 +933,10 @@ class TAT_Server:
     def _judge(self, payload: dict[str, Any]) -> tuple[Judged, Any]:
         """What the hook is and what it is answered (CLIENT_HOOKS.md §1's
         table): an announcement records the call for `agent_of_call` — one
-        of a call still announced and not arrived is a bug of the path; a
-        compaction hook is the compaction event of the agent it names, or,
-        naming none, the subclass's check, and is answered nothing."""
+        of a call still announced and not arrived is a bug of the path — an
+        internal agent's is granted and records nothing; a compaction hook
+        is the compaction event of the agent it names, or, naming none, the
+        subclass's check, and is answered nothing."""
         event = self.event_of_hook(payload)
         if event is None:
             return "ignored", None
@@ -939,6 +950,8 @@ class TAT_Server:
         if isinstance(event, Post_Compact):
             self._post_compact(event)
             return "compaction", None
+        if isinstance(event, Internal_Announcement):   # no agent, no reading, no entry: a call under
+            return "internal_announcement", self.announcement_answer      # its id would be unannounced
         if event.tool_use_id in self._announced:
             raise TAT_InternalError(second_announcement(event.tool_use_id))
         self._announced[event.tool_use_id] = self._announcing_agent(event)
@@ -1088,6 +1101,16 @@ class Claude_Code_Server(TAT_Server):
         says which agent compacted (CLIENT_HOOKS.md §2)."""
         return None if payload.get("hook_event_name") == "PostCompact" else super()._identity(payload)
 
+    def event_of_hook(self, payload: dict[str, Any]) -> (
+            Announcement | Internal_Announcement | Interruption | Stop | Compaction | Post_Compact | None):
+        """An announcement naming an agent of no type — `agent_id` without
+        `agent_type` — is an internal agent's (CLIENT_HOOKS.md §2): every
+        subagent, teammate and custom agent carries its type."""
+        event = super().event_of_hook(payload)
+        if isinstance(event, Announcement) and not event.main and "agent_type" not in payload:
+            return Internal_Announcement(event.tool_use_id)
+        return event
+
     def _announcing_agent(self, event: Announcement) -> Agent:
         """The announcement names the agent: `agent_id`, or the main
         conversation (CLIENT_HOOKS.md §2); its transcript is read here."""
@@ -1171,19 +1194,27 @@ class Claude_Code_Server(TAT_Server):
         other than the previous announcement's is a compaction event, and
         the agent's file is found anew under it; the lines the file gained
         are read, and what the file holds for the agent is handed to it.
-        An agent whose file is not found, or cannot be read, cannot be
-        served."""
+        When the main conversation's file is not found it cannot be
+        served; a subagent whose file TAT has not yet found is served, its
+        file read from the first announcement at which it exists
+        (CLIENT_HOOKS.md §2); a file that can no longer be read, or a
+        payload naming no transcript, refuses either."""
         reading = self._readings.get(agent.identity)
         try:
             if reading is None or reading.session != event.transcript_path:
-                file = (None if event.transcript_path is None
-                        else self._agent_file(Path(event.transcript_path), agent))
-                if file is None or event.transcript_path is None:
+                if event.transcript_path is None:
                     self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
                     return
-                if reading is not None:
+                file = self._agent_file(Path(event.transcript_path), agent)
+                if file is None and agent.main:
+                    self._refuse(SAVES_NO_TRANSCRIPT, SAVES_NO_TRANSCRIPT_REASON)
+                    return
+                if reading is not None:     # the event at the path change, the file found anew under it
                     self._compaction(agent, "transcript_path_changed", previous=reading.session,
                                      current=event.transcript_path)
+                    del self._readings[agent.identity]
+                if file is None:
+                    return                  # a subagent's file not written yet
                 reading = self._readings[agent.identity] = _Reading(event.transcript_path,
                                                                     self._transcript(file))
             self._read(reading.file, self._session(reading.session))
@@ -1299,7 +1330,8 @@ class Claude_Code_Server(TAT_Server):
             return self._hook(working_directory, script, matcher)
         settings = {
             "env": {"CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0", "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "0",
-                    "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "0", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1"},
+                    "CLAUDE_CODE_SKIP_PROMPT_HISTORY": "0", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
+                    "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false"},
             "permissions": {"allow": ["Bash"], "deny": ["EnterWorktree"],
                             "blockReadsOutsideWorkingDirectories": True},
             "sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,

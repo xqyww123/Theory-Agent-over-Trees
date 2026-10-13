@@ -126,7 +126,7 @@ stood.
 | event | level | data |
 | --- | --- | --- |
 | `request` | info | the payload as received |
-| `answer` | info | what the request was judged to be — `announcement`, `interruption`, `stop`, `compaction`, `session_start`, `ignored` — absent when it was not judged, answered 503 while the conversation is ending or 500 on a bug of the path; the status, the body answered — absent when empty — the duration |
+| `answer` | info | what the request was judged to be — `announcement`, `internal_announcement` (an internal agent's, CONSTRUCT_INTERACTION §8), `interruption`, `stop`, `compaction`, `session_start`, `ignored` — absent when it was not judged, answered 503 while the conversation is ending or 500 on a bug of the path; the status, the body answered — absent when empty — the duration |
 
 ### `agent`
 
