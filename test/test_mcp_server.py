@@ -32,7 +32,6 @@ from isabelle_theory_agent.mcp_server import (
     AGENTS, DOT_TAT, HOST, Claude_Code_Server, Codex_Server, TAT_Server, Tool, With_Trailer, _bind,
     agent_directory, resolver_entry, stopped, stopped_for, toml_string)
 from isabelle_theory_agent.model import CannotUseWorkingDirectory
-from test_toplevel import Recorder, cancelled_by_the_host
 
 # The seven server lines, in document order; an eighth, a missing one or a
 # reordering fails here, an edited one fails the assertions below.
@@ -610,11 +609,11 @@ def test_a_task_unwinding_after_the_ending_still_reads_the_store(tmp_path):
 
     async def scenario():
         async with toplevel.served([], str(tmp_path), free_port(), "claude-code", "",
-                                   cast(Any, Recorder())) as (forest, _, server):
+                                   cast(Any, stand_ins.Recorder())) as (forest, _, server):
             forest.conversation.ending.spawn(reader(forest))
             serve = asyncio.create_task(server.serve())
             await asyncio.sleep(0)                    # the reader and `serve` waiting
-            await cancelled_by_the_host(serve)
+            await stand_ins.cancelled_by_the_host(serve)
     run(scenario)
     assert read == [[]]
 

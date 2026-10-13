@@ -10,12 +10,10 @@ Run: python -m pytest test/test_toplevel.py
 
 import asyncio
 import importlib
-import logging
 import os
 import re
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -30,25 +28,6 @@ from isabelle_theory_agent.mcp_server import HOST, Claude_Code_Server, Codex_Ser
 DIRECTORY_NAME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{6}Z$")
 
 
-class Recorder:
-    """What `launch_TAT` says to the Isabelle side — the round trips,
-    answered with nothing; `served` once `TAT.serving` arrives, and the
-    lock's text at that moment, when the launcher may start the client;
-    the RPC host's logger, which the `Log` reports to."""
-    def __init__(self):
-        self.calls: list[tuple[str, Any]] = []
-        self.served = asyncio.Event()
-        self.lock: str | None = None
-        self.server = SimpleNamespace(logger=logging.getLogger("tat.test.toplevel"))
-
-    async def callback(self, name: str, args: Any) -> None:
-        self.calls.append((name, args))
-        if name == "TAT.serving":
-            _, agent_directory, _ = args          # the lock lies beside the agent directory
-            self.lock = (Path(agent_directory).parent / "tat.lock").read_text()
-            self.served.set()
-
-
 def run(scenario):
     asyncio.run(asyncio.wait_for(scenario(), 30))
 
@@ -56,7 +35,7 @@ def run(scenario):
 async def launch(directory, port, client="claude-code", max_concurrent_construction_jobs=""):
     """A conversation started and serving: its task and recorder — or what
     refused it, raised."""
-    connection = Recorder()
+    connection = stand_ins.Recorder()
     task = asyncio.create_task(cast(Any, toplevel.launch_TAT(
         ([], str(directory), port, client, max_concurrent_construction_jobs), cast(Any, connection))))
     served = asyncio.create_task(connection.served.wait())
@@ -65,12 +44,6 @@ async def launch(directory, port, client="claude-code", max_concurrent_construct
         served.cancel()
         task.result()
     return task, connection
-
-
-async def cancelled_by_the_host(task):
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
 
 
 def log_directories(working_directory) -> list[Path]:
@@ -123,7 +96,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
             await launch(tmp_path, free_port())
         assert str(refused.value) == held
         with pytest.raises(TAT_StartupError) as refused:
-            await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, Recorder()))
+            await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, stand_ins.Recorder()))
         assert str(refused.value) == held
         assert log_directories(tmp_path) == [log_directory]
         assert not (tmp_path / "ROOT").exists()
@@ -131,7 +104,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # the connection gone: the RPC host cancels the call, which ends by
         # raising the cancellation; the pid goes with the lock; `ending`,
         # then `ended` once the unwinding is over
-        await cancelled_by_the_host(first)
+        await stand_ins.cancelled_by_the_host(first)
         assert (tmp_path / "tat.lock").read_bytes() == b""
         ending, ended = stand_ins.records("conversation", log_directory)[5:]
         assert (ending["event"], ending["level"]) == ("ending", "error")
@@ -142,7 +115,7 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         # starts, with a log directory of its own
         again, _ = await launch(tmp_path, port)
         assert len(log_directories(tmp_path)) == 2
-        await cancelled_by_the_host(again)
+        await stand_ins.cancelled_by_the_host(again)
     run(scenario)
 
 
@@ -156,7 +129,7 @@ def test_the_client_selects_the_server_and_the_bound_is_read(tmp_path):
                                                   ("codex", Codex_Server, "3", 3)):
             directory = tmp_path / client
             directory.mkdir()
-            connection = Recorder()
+            connection = stand_ins.Recorder()
             async with toplevel.served([], str(directory), free_port(), client, text,
                                        cast(Any, connection)) as (forest, _, server):
                 assert type(server) is server_class
@@ -183,7 +156,7 @@ def test_port_0_serves_on_a_port_the_system_assigns(tmp_path):
     server's `port` and URL, the lock's second line, the `serving` record
     and what the Isabelle side is told all carry the one bound."""
     async def scenario():
-        connection = Recorder()
+        connection = stand_ins.Recorder()
         async with toplevel.served([], str(tmp_path), 0, "claude-code", "", cast(Any, connection)
                                    ) as (_, _, server):
             assert server.port != 0 and server.url == f"http://{HOST}:{server.port}/mcp"
@@ -222,10 +195,10 @@ def test_a_port_in_use_is_refused_and_leaves_no_lock_behind(tmp_path):
         holder, _ = await launch(tmp_path / "one", port)
         with pytest.raises(TAT_StartupError, match=f"TAT cannot serve on {HOST}:{port}: "):
             await launch(tmp_path / "two", port)
-        await cancelled_by_the_host(holder)
+        await stand_ins.cancelled_by_the_host(holder)
         # `two`'s lock was released on the way out
         second, _ = await launch(tmp_path / "two", port)
-        await cancelled_by_the_host(second)
+        await stand_ins.cancelled_by_the_host(second)
     run(scenario)
 
 
@@ -283,7 +256,7 @@ def test_a_log_directory_that_cannot_be_made_is_a_startup_error(tmp_path, monkey
 BROKEN = "Type unification failed"
 
 
-class Wire(Recorder):
+class Wire(stand_ins.Recorder):
     """The Isabelle side of the conversation that leaves a forest behind:
     creation's checks pass, and so does every operation of a `Theory` but
     the header of one named `Broken`."""
@@ -322,7 +295,7 @@ def test_a_compile_writes_the_stored_forest_and_returns_its_report(tmp_path):
     async def scenario():
         await leave(tmp_path, "A", "Broken")
         database = (tmp_path / "TAT.sqlite").read_bytes()
-        connection = Recorder()
+        connection = stand_ins.Recorder()
         answer = await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, connection))
         assert answer == (False, ["S/A.thy written",
                                   "S/Broken.thy not written: theory_Broken failed",
@@ -345,7 +318,7 @@ def test_a_compile_writes_the_stored_forest_and_returns_its_report(tmp_path):
 def test_a_compile_of_a_forest_written_whole_answers_true(tmp_path):
     async def scenario():
         await leave(tmp_path, "A", "B")
-        answer = await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, Recorder()))
+        answer = await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, stand_ins.Recorder()))
         assert answer == (True, ["S/A.thy written", "S/B.thy written", "ROOT written"])
     run(scenario)
 
@@ -362,7 +335,7 @@ def test_a_compile_cannot_write_the_database(tmp_path):
     fresh.close()
     database = (tmp_path / "TAT.sqlite").read_bytes()
     async def scenario():
-        assert await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, Recorder())) == \
+        assert await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, stand_ins.Recorder())) == \
             (True, ["ROOT written"])
         assert (tmp_path / "TAT.sqlite").read_bytes() == database
         await leave(tmp_path, "A")
@@ -393,7 +366,7 @@ def test_a_compile_runs_the_hooks_of_the_packages_it_is_given(tmp_path, monkeypa
     directory.mkdir()
     async def scenario():
         await leave(directory, "A")
-        await toplevel.compile_TAT((["listed_hook_pkg"], str(directory)), cast(Any, Recorder()))
+        await toplevel.compile_TAT((["listed_hook_pkg"], str(directory)), cast(Any, stand_ins.Recorder()))
     run(scenario)
     assert (directory / "listed_hook_pkg.ran").exists()
     assert not (directory / "held_hook_pkg.ran").exists()
@@ -409,7 +382,7 @@ def test_what_escapes_a_compile_enters_its_ending(tmp_path):
         (tmp_path / "S").rmdir()
         (tmp_path / "S").write_text("not a directory")
         with pytest.raises(TAT_StartupError) as refused:
-            await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, Recorder()))
+            await toplevel.compile_TAT(([], str(tmp_path)), cast(Any, stand_ins.Recorder()))
         assert str(refused.value) == (not_a_directory.replace("<working directory>", str(tmp_path))
                                       .replace("<Session name>", "S"))
     run(scenario)

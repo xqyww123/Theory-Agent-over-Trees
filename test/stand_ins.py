@@ -1,12 +1,18 @@
 """What a case that runs without Isabelle builds in place of the product's
 start: a `Log` and an `Ending` on the case's temporary directory, and a
-`Conversation` on them.  `conftest.py`'s autouse fixture sets `directory`
-for every case, so no `Log` ever writes into the repository.  `records`
-reads a log back, the case's or a conversation's."""
+`Conversation` on them; a `Recorder` in place of the RPC connection, and
+the RPC host's cancellation of a task.  `conftest.py`'s autouse fixture
+sets `directory` for every case, so no `Log` ever writes into the
+repository.  `records` reads a log back, the case's or a conversation's."""
 
+import asyncio
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
 
 from isabelle_theory_agent.jobs import Agent
 from isabelle_theory_agent.log import Log
@@ -26,6 +32,32 @@ def log() -> Log:
 
 def ending() -> Ending:
     return Ending(log())
+
+
+class Recorder:
+    """What `launch_TAT` says to the Isabelle side — the round trips,
+    answered with nothing; `served` once `TAT.serving` arrives, and the
+    lock's text at that moment, when the launcher may start the client;
+    the RPC host's logger, which the `Log` reports to."""
+    def __init__(self):
+        self.calls: list[tuple[str, Any]] = []
+        self.served = asyncio.Event()
+        self.lock: str | None = None
+        self.server = SimpleNamespace(logger=logging.getLogger(LOGGER))
+
+    async def callback(self, name: str, args: Any) -> None:
+        self.calls.append((name, args))
+        if name == "TAT.serving":
+            _, agent_directory, _ = args          # the lock lies beside the agent directory
+            self.lock = (Path(agent_directory).parent / "tat.lock").read_text()
+            self.served.set()
+
+
+async def cancelled_by_the_host(task: asyncio.Task) -> None:
+    """The RPC host cancelling the task, as when its connection closes."""
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 def working_directory() -> Path:
