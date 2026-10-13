@@ -826,8 +826,11 @@ Claude Code, when no transcript is written:
   `CLAUDE_CODE_CHILD_SESSION=1` (started from inside another Claude
   Code) writes none ("Transcript saving is off — inherited
   CLAUDE_CODE_CHILD_SESSION marker"); `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`
-  turns them back on (*docs* env-vars.md says the same; interactively
-  from a project settings file: not measured), and does not
+  turns them back on (*docs* env-vars.md says the same; *measured*
+  2026-10-13 (2.1.296) interactively from a trusted project's settings
+  file: the transcript written and read under an inherited
+  `CLAUDE_CODE_CHILD_SESSION=1` and `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1`,
+  `ai-artifacts/probes/live17/claude-code-env2/`), and does not
   undo SKIP or the flag; under `-p` the marker suppresses nothing.
 
 Claude Code, context removed without a compaction:

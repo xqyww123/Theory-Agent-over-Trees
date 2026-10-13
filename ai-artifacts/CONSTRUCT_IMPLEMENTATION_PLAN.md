@@ -805,8 +805,9 @@ ten pinned already, and three tests added to test_hooks.py for the rest
 call on Codex; a `SubagentStop` blocked then allowed on Claude Code), so
 the gap is closed by the suite, by the owner's word.
 Measurements: the project-level file names; an interactive session reads
-the project settings' transcript `env` entries (the control without
-them is inconclusive); `tools/list` is the first request after
+the project settings' two transcript `env` entries (the probe rerun with
+`CLAUDE_CODE_CHILD_SESSION=1`, under which a plain session writes none,
+wrote and TAT read the transcript); `tools/list` is the first request after
 `initialize`, no `server/discover` seen; Codex's `clientInfo`
 `codex-mcp-client 0.156.1` and one MCP session per thread;
 `multi_agent_v2`'s tool name; `check_for_update_on_startup`'s layer not
@@ -885,9 +886,10 @@ bound's refusal among the `TAT_StartupError`s of EXCEPTIONS.md §1.
   "exits 2", the `multi_agent_v2` tool name,
   `check_for_update_on_startup`'s layer not determined; §12 — the
   interactive measurements and the source reading of the two unknown
-  agent ids; CH §4 — the `FORCE_SESSION_PERSISTENCE` entry's
-  interactive reading not measured (the env probe `claude-code-env` set
-  `CLAUDECODE=1`, not `CLAUDE_CODE_CHILD_SESSION=1`); CH §5 — the
+  agent ids; CH §4 — its last sentence gone, both transcript entries'
+  interactive reading measured (the env probe `claude-code-env` had set
+  `CLAUDECODE=1`; `claude-code-env2` set `CLAUDE_CODE_CHILD_SESSION=1`);
+  CH §5 — the
   enclosing repository's CLAUDE.md and memory, the user's own MCP
   servers and MCP servers that write files, among the accepted gaps;
   AGENT_CLIENTS_MEASURED — the measured items. CI §1's transcript

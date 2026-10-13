@@ -283,10 +283,6 @@ conversation — Claude Code's rewind menu restoring the conversation to
 an earlier prompt, or Esc Esc to edit an earlier prompt and send it
 again — removes context, fires no hook and writes no compaction
 boundary; TAT assumes it does not happen (CONSTRUCT_INTERACTION §1).
-Whether an interactive Claude Code started from inside another one reads
-`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` from the project settings is not
-measured; if it does not, TAT finds no transcript at the first
-announcement and ends the conversation (§2).
 
 ## 5. The agents stay in the agent directory
 

@@ -1413,15 +1413,15 @@ or at its next code-mode yield, within 31 s (Codex); every
 deterministic path-to-thread mapping needs Codex's rollout file
 (`ai-artifacts/review/CODEX_PATH_MAPPING_RULING.md`).
 Pending at implementation: M6 (the suite with the inverted test),
-`check_for_update_on_startup`'s layer, an interactive session reading
-`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` from the project settings, the
-slot-release order. Measured 2026-10-13 in interactive sessions
-(`ai-artifacts/probes/live17/`, Claude Code 2.1.296, Codex 0.156.1):
-the project-level files of CLIENT_HOOKS §2 and §3 are read;
-`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0` from the project settings honoured
-164 consecutive text-only `Stop` blocks;
-`CLAUDE_CODE_SKIP_PROMPT_HISTORY=0` there turns the transcript back on
-under an inherited `=1`; the first request after `initialize` is
+`check_for_update_on_startup`'s layer, the slot-release order. Measured
+2026-10-13 in interactive sessions (`ai-artifacts/probes/live17/`,
+Claude Code 2.1.296, Codex 0.156.1): the project-level files of
+CLIENT_HOOKS §2 and §3 are read; `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`
+from the project settings honoured 164 consecutive text-only `Stop`
+blocks; `CLAUDE_CODE_SKIP_PROMPT_HISTORY=0` and
+`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` there turn the transcript
+back on under an inherited `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1` and
+`CLAUDE_CODE_CHILD_SESSION=1`; the first request after `initialize` is
 `tools/list`; Codex opens one MCP session per thread; after every
 main-conversation turn Claude Code fires a `SubagentStop` for an
 internal agent whose `agent_transcript_path` names no file; and twice a
