@@ -2238,6 +2238,42 @@ alternative, `Task.cancelling()`, was refuted in round one) — the
 docstring says so; and the optional end-to-end `call_soon` test, since
 the unit test kills the same mutants.
 
+**Step 13, the live run** (owner, 2026-10-13, 「A、B 都做」; record
+`ai-artifacts/review/LOGGING_STEP13_LIVE_RUN.md`, untracked). Part A read
+the jobs session's step-17 runs (`ai-artifacts/probes/live17/`,
+`claude-code-5` and `codex-3`): the files `configure` wrote are REPORT5's
+final files with step 9's commands, `hook.py`/`guard.py` byte-identical
+to the package's; every `conversation`, `tool`, `hook` and `agent` record
+of the checklist present with its §4 fields; all 406 hook answers 200; no
+`while_ending`. Two observations put to the owner, nothing changed: the
+`ending` of a cancellation carries `message "asyncio.exceptions.CancelledError"`,
+no sentence for a person (a §4 clause would need his word); Codex's
+`SessionStart {source: startup}` writes a `compaction` at the
+conversation's start (the compaction design's "any source"). Three
+documentation precisions from the jobs session's evidence reader, judged
+and made here: the `hook.answer` row says the body is absent when empty;
+§3's example record gained `seen_cleared`; the `ending` row says
+`message` is Python's one-line form, class first, and the traceback one
+line for a cause never raised. Part B repeated REPORT5 §D.4 with the
+shipped files against a real `isabelle TAT_mcp` (runner
+`ai-artifacts/probes/step13/run13.py`, never committed; `TAT_new -P` the
+test plugin, `TAT_mcp -c`, the client started in the agent directory with
+REPORT5's prompts, B6 the real `recall`): Claude Code in the untrusted
+scratch repository (default mode; the main conversation's 35 steps, WT1
+and WT3; the subagent launch denied by Claude Code's auto-mode
+classifier) and under the trusted MLML root (`--permission-mode
+dontAsk`; main and subagent), Codex `exec` under the same root (main and
+the spawned thread): every step as REPORT5's table, the real TAT's
+announcements, transcript reading, stop judgements and Codex's
+sandbox-policy check working under the shipped hooks; no file landed
+outside; no worktree made. `--dangerously-skip-permissions` could not be
+started from this session (its own permission classifier refused), so
+the subagent half came from the trusted-folder run. The plan's open item
+on `WorktreeCreate` advice stays unobserved: the hook is never reached
+with `EnterWorktree` denied and the `Agent|Task` guard refusing first.
+LOGGING_IMPLEMENTATION_PLAN.md's first paragraph: all thirteen steps
+done.
+
 **State for a resumption of this session** (2026-10-05, context near its
 limit): everything of the logging plan that this session can do is
 committed — last `94e721b`; the working tree holds only this record's

@@ -48,7 +48,7 @@ the compile fails; on the Isabelle side the records of its start (§5).
 
 ```json
 {"ts":"2026-10-01T07:24:05.039123Z","category":"agent","event":"compaction",
- "level":"info","agent":"a3f9c1","call":"toolu_01Hx…","data":{"learned_from":"compact_boundary","uuid":"…"}}
+ "level":"info","agent":"a3f9c1","call":"toolu_01Hx…","data":{"learned_from":"compact_boundary","uuid":"…","seen_cleared":4}}
 ```
 
 | field | |
@@ -100,7 +100,7 @@ Arguments, results and payloads are recorded whole, never cut.
 | `serving` | info | the URL, with the port bound |
 | `client_connected` | info | the `clientInfo` of the MCP `initialize`: name, version |
 | `client_refused` | error | the same, and `message`: what refused it (CONSTRUCT_INTERACTION §8); the call's `_meta` when a call's sandbox policy did |
-| `ending` | error | what ended the conversation: its class, `message`, the traceback |
+| `ending` | error | what ended the conversation: its class, `message` — Python's one-line form, class first — the traceback, one line when the cause was never raised |
 | `while_ending` | error | a further cause reaching the ending object's `end` (MODULE_STRUCTURE §4.6), each once: its class, `message`, the traceback; the end stays the first cause's |
 | `ended` | info | written by the ending object's exit once the unwinding is over (MODULE_STRUCTURE §4.6): how long the unwinding took; each call's and each job's fate is in its own record; a compile that returns normally writes neither `ending` nor `ended` |
 
@@ -126,7 +126,7 @@ stood.
 | event | level | data |
 | --- | --- | --- |
 | `request` | info | the payload as received |
-| `answer` | info | what the request was judged to be — `announcement`, `interruption`, `stop`, `compaction`, `session_start`, `ignored` — absent when it was not judged, answered 503 while the conversation is ending or 500 on a bug of the path; the status, the body answered, the duration |
+| `answer` | info | what the request was judged to be — `announcement`, `interruption`, `stop`, `compaction`, `session_start`, `ignored` — absent when it was not judged, answered 503 while the conversation is ending or 500 on a bug of the path; the status, the body answered — absent when empty — the duration |
 
 ### `agent`
 
