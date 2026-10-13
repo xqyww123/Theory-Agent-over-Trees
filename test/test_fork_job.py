@@ -243,10 +243,10 @@ async def test_the_notes_jobs_over_the_wire(conversation):
     job = p.job()
     assert job.can_start()
     job.start(agent)
-    await until(lambda: job.pending_question is not None)
+    await until(lambda: job.pending_question is not None, "the construction's question", 30.0)
     assert jobs.deliver(conv.log, agent)[0].startswith(f"The note construction on `{forest.id_of(p)}` asks:\nAccept the note?")
     assert job.receive_answer({"verdict": "accept"}) == (
         f"Answered the note construction on `{forest.id_of(p)}`; call `check_construct` before you exit.")
-    await until(lambda: job.outcome is not jobs.RUNNING)
+    await until(lambda: job.outcome is not jobs.RUNNING, "the construction's outcome", 30.0)
     assert job.outcome == jobs.Succeeded("accept") and p.is_finished() is False   # its check was dropped by the start
     assert p.check_outcome() is None
