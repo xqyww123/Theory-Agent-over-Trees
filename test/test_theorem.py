@@ -8,7 +8,6 @@ constructed again (§7).
 Run: python -m pytest test/test_theorem.py
 """
 
-import asyncio
 import io
 import re
 
@@ -21,7 +20,7 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
-from harness import text_of
+from harness import text_of, until
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
@@ -545,12 +544,6 @@ async def test_an_undeclared_variable_is_refused(std_conversation):
         assert isinstance(unused._status, M.Ready) and unused._status.messages == ()
 
 
-async def until(condition, seconds: float = 240.0) -> None:
-    async with asyncio.timeout(seconds):
-        while not condition():
-            await asyncio.sleep(0.05)
-
-
 @pytest.mark.isabelle(deadline=300)
 async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_again(std_conversation):
     """§7 through the two callbacks, on a goal Sledgehammer's automation
@@ -578,7 +571,7 @@ async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_agai
         assert not result.isError and "Started the proof construction on `lemma_rev_rev`" in text_of(result)
         job = p.job()
         assert job.outcome is RUNNING and p.mark(M.BRIEFING, 0) == "valid statement, proving"
-        await until(lambda: job.outcome is not RUNNING)
+        await until(lambda: job.outcome is not RUNNING, "the proof construction's outcome", 240.0)
         assert isinstance(job.outcome, Succeeded), job.outcome
         product = job.outcome.product
         assert set(product) == {"text", "thread_cpu", "wall"} and product["text"]
@@ -608,7 +601,7 @@ async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_agai
         assert job.can_start()
         result = await session.call_tool("construct", {"node_ids": ["lemma_rev_rev"]})
         assert not result.isError, text_of(result)
-        await until(lambda: job.outcome is not RUNNING)
+        await until(lambda: job.outcome is not RUNNING, "the proof construction's outcome", 240.0)
         assert isinstance(job.outcome, Succeeded) and p.check_outcome() is PASSED
         assert p.mark(M.BRIEFING, 0) == "valid statement, proven"
         out = io.StringIO()
@@ -622,7 +615,7 @@ async def test_a_theorem_is_constructed_checked_invalidated_and_constructed_agai
         assert ("The proof of `lemma_rev_rev` no longer holds, so its proof construction was started"
                 " automatically; call `check_construct` before you exit.") in text, text
         assert job.outcome is RUNNING and p.check_outcome() is None
-        await until(lambda: job.outcome is not RUNNING)
+        await until(lambda: job.outcome is not RUNNING, "the proof construction's outcome", 240.0)
         assert isinstance(job.outcome, Succeeded) and p.check_outcome() is PASSED
 
 
