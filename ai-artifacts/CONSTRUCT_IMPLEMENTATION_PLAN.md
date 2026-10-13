@@ -748,12 +748,12 @@ arms call `MiniLang_Agent_AoA.method_error` (Isa-Mini ca26050, the
 review's shared give-up renderer) since the same run. Isa-Mini's two
 changes for step 15 are committed by the AoA session (contrib/Isa-Mini
 62f6b89).
-Open with the owner: the end-to-end case can call a language model only
-where `~/.isabelle/Isabelle2025-2/etc/settings` opens AoA's gate
-unconditionally (lines 19 and 24 on the owner's machine); the owner
-decides whether to make those lines `${VAR-default}`, after which the
-harness sets `AOA_ALLOW_NONINTERACTIVE=no` for the child
-(test/harness.py, the child's `env` near line 485).
+Closed 2026-10-13 (the owner, 「赞同，请做」): the two lines of
+`~/.isabelle/Isabelle2025-2/etc/settings` that opened AoA's gate and
+chose its driver unconditionally are `${VAR-default}` assignments now,
+and the harness sets `AOA_ALLOW_NONINTERACTIVE=no` in the environment of
+its child and of the tools it runs (test/harness.py), so no Isabelle-backed
+case can call a language model.
 
 ### Step 17. The live run
 

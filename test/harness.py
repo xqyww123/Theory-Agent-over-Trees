@@ -744,7 +744,8 @@ class Harness:
                 ["isabelle", "TAT_mcp", *options, str(self.launcher_directory)],
                 stdout=log, stderr=subprocess.STDOUT,
                 env={**os.environ, "RPC_Host": self.host_address,
-                     "TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS": MAX_CONCURRENT_CONSTRUCTION_JOBS},
+                     "TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS": MAX_CONCURRENT_CONSTRUCTION_JOBS,
+                     "AOA_ALLOW_NONINTERACTIVE": "no"},   # no language model: AoA's gate shut for the child
                 start_new_session=True, preexec_fn=default_sigint)
         self.child_exit = asyncio.ensure_future(asyncio.to_thread(self.child.wait))
         self.child_exit.add_done_callback(self._child_done)
@@ -754,7 +755,7 @@ class Harness:
         run's RPC host (`tool`'s contract: when the caller's wait ends
         first — the case's deadline — the group is ended as the child's is;
         nothing may be left in it either way)."""
-        return await run_tool(argv, {**os.environ, "RPC_Host": self.host_address})
+        return await run_tool(argv, {**os.environ, "RPC_Host": self.host_address, "AOA_ALLOW_NONINTERACTIVE": "no"})
 
     async def await_launch(self) -> None:
         """Stage 3: the harness's `launch_TAT` called.  The child's exit and

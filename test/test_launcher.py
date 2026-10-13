@@ -538,10 +538,12 @@ while True:
 def environment(path_first: Path | None = None) -> dict[str, str]:
     """A tool's environment: the test's without `RPC_Host`, so the tool's
     Isabelle process starts the attached RPC host, under this interpreter
-    (`ISABELLE_RPC_PYTHON`), which has the package; `path_first` before
-    everything on `PATH`."""
+    (`ISABELLE_RPC_PYTHON`), which has the package; AoA's gate shut
+    (`AOA_ALLOW_NONINTERACTIVE=no`), so no case calls a language model;
+    `path_first` before everything on `PATH`."""
     env = {name: value for name, value in os.environ.items() if name != "RPC_Host"}
     env["ISABELLE_RPC_PYTHON"] = sys.executable
+    env["AOA_ALLOW_NONINTERACTIVE"] = "no"
     if path_first is not None:
         env["PATH"] = f"{path_first}{os.pathsep}{env['PATH']}"
     return env
