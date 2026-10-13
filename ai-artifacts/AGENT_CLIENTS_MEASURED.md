@@ -959,9 +959,14 @@ not found by the agent's shell.
   claude.ai connectors (docs, Gmail), claude-in-chrome, debugmcp and
   isabelle-mcp (the last one launched in the agent's session,
   `~/.cache/claude-cli-nodejs/<project>/mcp-logs-isabelle-mcp/`); Codex
-  `codex_apps`, `isabelle-lsp`, `isabelle-mcp`. Claude Code's
-  `--strict-mcp-config` limits it to the project's `.mcp.json`; not
-  measured under `isabelle TAT`.
+  `codex_apps`, `isabelle-lsp`, `isabelle-mcp`. *measured* 2026-10-13
+  (2.1.296, `ai-artifacts/probes/live17/claude-code-strict*/`):
+  `--strict-mcp-config` alone ignores the project's `.mcp.json` as well
+  — the session had no TAT tool, and only the browser extension's server
+  (`claude-in-chrome`) started; with `--mcp-config <agent
+  directory>/.mcp.json` beside it the session started TAT and
+  `claude-in-chrome` alone, none of the user's configured servers and no
+  claude.ai connector.
 
 **Claude Code.**
 

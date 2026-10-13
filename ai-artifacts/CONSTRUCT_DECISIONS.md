@@ -772,7 +772,12 @@ verbatim, `X` standing for a full node id.
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` (2026-10-13, the owner:
   the prompt suggestion is the most frequent internal agent, and its
   `SubagentStop` follows every turn); per-server `timeout` 43200000 ms;
-  the stall watchdog left alone. Codex: `default_tools_approval_mode =
+  the stall watchdog left alone; `--strict-mcp-config --mcp-config
+  <agent directory>/.mcp.json` at launch (2026-10-13, the owner,
+  「赞同，请加」: the live run showed the client starting the user's own
+  MCP servers, isabelle-mcp among them, in the agent's session; the
+  strict flag alone ignores the project's `.mcp.json` too, measured — the
+  agent then had no TAT tool). Codex: `default_tools_approval_mode =
   "approve"`, `tool_timeout_sec` 43200, `check_for_update_on_startup =
   false` (the layer it is read from is not determined; the 2026-10-13
   run showed no update banner, and its one TUI warning, whose text was

@@ -91,10 +91,12 @@ def test_a_conversation_serves_until_the_host_cancels_it_and_releases_the_lock(t
         assert DIRECTORY_NAME.match(log_directory.name)
         # the Isabelle side told the directory, absolute, right after `start`;
         # then, the lock holding the port, `TAT.serving`: the URL, the agent
-        # directory's canonical path, Claude Code's launch arguments — none
+        # directory's canonical path, Claude Code's launch arguments
         assert connection.calls == [
             ("TAT.log_directory", str(log_directory.absolute())),
-            ("TAT.serving", (f"http://{HOST}:{port}/mcp", str((tmp_path / "TAT.agents").resolve()), []))]
+            ("TAT.serving", (f"http://{HOST}:{port}/mcp", str((tmp_path / "TAT.agents").resolve()),
+                             ["--strict-mcp-config", "--mcp-config",
+                              str((tmp_path / "TAT.agents").resolve() / ".mcp.json")]))]
         assert connection.lock == f"{os.getpid()}\n{port}\n"
         records = stand_ins.records("conversation", log_directory)
         assert [r["event"] for r in records] == [

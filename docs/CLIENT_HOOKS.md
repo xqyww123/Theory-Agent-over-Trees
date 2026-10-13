@@ -89,7 +89,12 @@ and no agent can reach (§5).
 
 `.mcp.json` carries the server entry, `TAT`, with TAT's URL and the
 twelve-hour tool limit; `.claude/settings.json` the environment, the
-hooks, and the permissions and sandbox settings of §5.
+hooks, and the permissions and sandbox settings of §5. Claude Code is
+started with `--strict-mcp-config --mcp-config <agent
+directory>/.mcp.json`, the arguments it is given at its launch before
+the user's own (MODULE_STRUCTURE §4.6): it starts the MCP servers of that
+file alone — TAT — and none of the user's own configuration, which the
+strict flag ignores along with the project's own `.mcp.json`.
 `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0` keeps a long
 `check_construct` from being moved to the background;
 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0` switches off Claude Code's ceiling on
@@ -455,14 +460,14 @@ Accepted as they are:
 - An MCP server the client has runs outside the sandbox and shows the
   agents whatever it reaches; one that reads files by their paths shows
   them the working directory, and one that writes files writes where
-  the agents direct it. Besides TAT, each client starts the MCP servers
-  of the user's own configuration and of the user's account — Claude
-  Code its claude.ai connectors, Codex `codex_apps` (measured
-  2026-10-13, Claude Code 2.1.296 and Codex 0.156.1,
-  AGENT_CLIENTS_MEASURED.md). A user who wants the working directory
-  neither read nor written by the agents removes every such server from
-  the client's configuration; the account's connectors, which that
-  configuration does not list, stay.
+  the agents direct it. Claude Code, started with `--strict-mcp-config`
+  (§2), starts TAT and its browser extension's server alone; Codex starts
+  besides TAT the MCP servers of the user's own configuration and
+  account, `codex_apps` among them (measured 2026-10-13, Claude Code
+  2.1.296 and Codex 0.156.1, AGENT_CLIENTS_MEASURED.md). A user who
+  wants the working directory neither read nor written by the agents on
+  Codex removes every such server from Codex's configuration; the
+  account's `codex_apps`, which that configuration does not list, stays.
 - A service of the machine that an agent's shell can reach is the
   agent's to use: over the network, TAT's own port included, and on
   Claude Code through a Unix socket outside `/run` — a tmux server's or

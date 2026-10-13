@@ -1091,7 +1091,10 @@ class Claude_Code_Server(TAT_Server):
 
     @staticmethod
     def launch_arguments(agent_directory: Path) -> list[str]:
-        return []
+        """CLIENT_HOOKS.md §2: the MCP servers of the agent directory's
+        `.mcp.json` alone — TAT — and none of the user's own; the strict
+        flag ignores every configuration but `--mcp-config`'s."""
+        return ["--strict-mcp-config", "--mcp-config", str(agent_directory / ".mcp.json")]
 
     def _main_identity(self, payload: dict[str, Any]) -> str:
         return self.main_identity

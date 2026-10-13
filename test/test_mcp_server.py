@@ -958,7 +958,8 @@ def test_the_launch_arguments_are_the_documented_ones(working_directory):
     """CLIENT_HOOKS §3's third block, one argument per line, the agent
     directory's canonical path filled in — Codex's flag and the project
     trust, whose TOML names that path, which `agent_directory` gives with
-    symbolic links resolved; Claude Code takes none."""
+    symbolic links resolved; Claude Code takes `--strict-mcp-config` with
+    the agent directory's `.mcp.json` as its `--mcp-config` (§2)."""
     directory = agent_directory(working_directory)
     link = working_directory.parent / "link"
     link.symlink_to(working_directory)
@@ -969,7 +970,8 @@ def test_the_launch_arguments_are_the_documented_ones(working_directory):
     assert (given_flag, given_option) == (flag, option)
     assert tomllib.loads(given_trust) == documented([trust], {"<agent directory>": str(directory)}, tomllib.loads) \
         == {"projects": {str(directory): {"trust_level": "trusted"}}}
-    assert Claude_Code_Server.launch_arguments(directory) == []
+    assert Claude_Code_Server.launch_arguments(directory) == [
+        "--strict-mcp-config", "--mcp-config", str(directory / ".mcp.json")]
 
 
 def test_the_resolvers_entry_is_its_real_path_outside_minimal(tmp_path):
