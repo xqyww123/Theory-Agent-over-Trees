@@ -2468,6 +2468,10 @@ class Theory(StdBlock):
     import_sessions: list[str]          # recorded when the header runs: the session of each
                                         # import, which the ROOT's `sessions` clause is written
                                         # from (COMPILATION.md §2); stored
+    keywords: frozenset[str] | None     # recorded when the header runs: the words of the theory's
+                                        # keyword table that are identifiers, in the `\<name>`
+                                        # spelling, which `print_name` quotes (SESSION_AND_THEORY
+                                        # §2); None until a run records it; stored
     _state_after_ending: Isar_State_Slot    # the resulting slot: owned, since no successor's
                                             # input is (`Unchained_Node`); nothing reads it
 
@@ -2479,6 +2483,7 @@ class Theory(StdBlock):
         self.imports = imports
         self.description = description
         self.import_sessions = []
+        self.keywords = None
         self._state_after_ending = state_after_ending
 
     @classmethod
@@ -2521,15 +2526,19 @@ class Theory(StdBlock):
         rows.put("imports", self.imports)
         rows.put("description", self.description)
         rows.put("import_sessions", self.import_sessions)
+        if self.keywords is not None:              # not yet recorded: no row (COMPILATION.md §4)
+            rows.put("keywords", sorted(self.keywords))
 
     @classmethod
     def from_store(cls, config, rows):
         conversation = config.parent.forest().conversation
-        # a missing row reads as empty (COMPILATION.md §4, "Storage")
+        # a missing row reads as empty, `keywords` as None (COMPILATION.md §4, "Storage")
         node = cls(config.parent, config.state, rows.get("name"), rows.get("imports"),
                    Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation),
                    rows.fields().get("description", ""))
         node.import_sessions = rows.fields().get("import_sessions", [])
+        keywords = rows.fields().get("keywords")
+        node.keywords = frozenset(keywords) if keywords is not None else None
         return node
 
     def resulting_state(self):
@@ -2581,6 +2590,20 @@ class Theory(StdBlock):
         emit_lines(indent, out, "end")
         return indent
 
+    def can_emit(self):
+        """The framework's default and `keywords` known: a tree whose keyword
+        table was never recorded is not written (SESSION_AND_THEORY §2;
+        COMPILATION.md §4)."""
+        return super().can_emit() and self.keywords is not None
+
+    def print_name(self, name: str) -> str:
+        """A name of the tree as its file writes it (SESSION_AND_THEORY §2):
+        in double quotes when its `ascii` spelling is a keyword of the
+        theory, bare otherwise — `Token.print_name`'s rule for an
+        identifier.  Emission's alone, after `can_emit`."""
+        assert self.keywords is not None, "print_name before a header run recorded the keywords"
+        return f'"{name}"' if name in self.keywords else name
+
     def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever
         a stored `Ready` ending is replaced by a value that is not a `Ready`,
@@ -2607,8 +2630,9 @@ class Theory(StdBlock):
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
     # operation's errors, empty when it passed (ARCHITECTURE §6.2) — the
-    # beginning's also the session of each import, recorded when it passed
-    # — and whatever it lets escape is a bug (`isabelle_driver.call`).  The
+    # beginning's also the session of each import and the theory's
+    # keywords, recorded when it passed — and whatever it lets escape is a
+    # bug (`isabelle_driver.call`).  The
     # status the run leaves carries the errors (COMPILATION.md §4); a
     # rendering inside the call — a `recall` takes no lock — reads the
     # previous run's.
@@ -2623,14 +2647,15 @@ class Theory(StdBlock):
             raise CannotUseWorkingDirectory(
                 f"TAT cannot use {conversation.working_directory} as its working directory:"
                 f" {reason}")
-        errors, import_sessions = await isabelle_driver.call(
+        errors, import_sessions, keywords = await isabelle_driver.call(
             conversation, "TAT.Theory.begin",
             (self._state_after_beginning().to_msgpack(),
              (session.name,
               str(conversation.working_directory / self.file_path().parent),   # the `master_dir`
               self.header())))
-        if not errors:
-            self.import_sessions = import_sessions          # stored with the status this run leaves
+        if not errors:                                      # stored with the status this run leaves
+            self.import_sessions = import_sessions
+            self.keywords = frozenset(keywords)
         return _status_of_errors(errors)
 
     async def _eval_ending_opr(self):

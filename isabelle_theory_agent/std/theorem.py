@@ -199,18 +199,14 @@ class Theorem(Theory_Member, Leaf):
 
     name: str
     statement: Statement
-    reserved_names: frozenset[str]      # the statement's names the last evaluation found reserved,
-                                        # in their `ascii` spelling, quoted at emission (§1, §5); stored
     goal_state: Isar_State_Slot         # the state with the goal open and no step taken, held
                                         # exactly while the node is `ready` (§1, §6); never stored
 
-    def __init__(self, parent, state, name: str, statement: Statement, goal_state: Isar_State_Slot,
-                 reserved_names: frozenset[str] = frozenset()):
+    def __init__(self, parent, state, name: str, statement: Statement, goal_state: Isar_State_Slot):
         super().__init__(parent, state)
         self.name = name
         self.statement = statement
         self.goal_state = goal_state
-        self.reserved_names = reserved_names
 
     @classmethod
     async def gen(cls, config, raw: Theorem_RawAST):
@@ -228,13 +224,12 @@ class Theorem(Theory_Member, Leaf):
     def to_store(self, rows):
         rows.put("name", self.name)
         rows.put("statement", self.statement.image())
-        rows.put("reserved_names", sorted(self.reserved_names))
 
     @classmethod
     def from_store(cls, config, rows):
         conversation = config.parent.forest().conversation
         return cls(config.parent, config.state, rows.get("name"), Statement.of_image(rows.get("statement")),
-                   Isar_State_Slot.assign(conversation), frozenset(rows.fields().get("reserved_names", [])))
+                   Isar_State_Slot.assign(conversation))
 
     def _states_inside(self, out=None):
         out = super()._states_inside(out)
@@ -248,18 +243,14 @@ class Theorem(Theory_Member, Leaf):
         """`TAT.Theorem.evaluate` (§6): the statement opened and admitted in
         two transitions, the goal into `goal_state`, the admitted fact into
         the resulting slot; failed, the node is an obstacle with the
-        messages; passed, `Ready` with what Isabelle said, the names it
-        would quote recorded."""
+        messages; passed, `Ready` with what Isabelle said."""
         conversation = self.forest().conversation
-        passed, messages, reserved = await isabelle_driver.call(
+        passed, messages = await isabelle_driver.call(
             conversation, "TAT.Theorem.evaluate",
             (self.state.to_msgpack(), self.goal_state.to_msgpack(), self.resulting_state().to_msgpack(),
              (self.kind, self.name, *self.statement.structure())))
         texts = tuple(IsaTerm.from_isabelle(m) for m in messages)
-        if not passed:
-            return CannotEvaluate(texts)
-        self.reserved_names = frozenset(reserved)
-        return Ready(texts)
+        return CannotEvaluate(texts) if not passed else Ready(texts)
 
     # --- what it prints (§7, §8)
 
@@ -305,25 +296,21 @@ class Theorem(Theory_Member, Leaf):
         if english and english[-1] not in ".!?":
             english += "."
         emit_lines(indent, out, f"text {cartouche(f'{self.kind.capitalize()} {self.name}. {english}')}")
-        lines = [f"{self.kind} {self._quoted(self.name)}:"]
+        print_name = self.theory().print_name               # every name through it (§5)
+        lines = [f"{self.kind} {print_name(self.name)}:"]
         if self.statement.for_any:
             lines.append("  fixes " + " and ".join(
-                self._quoted(v.name.ascii) + (f' :: "{v.type.ascii}"' if v.type is not None else "")
+                print_name(v.name.ascii) + (f' :: "{v.type.ascii}"' if v.type is not None else "")
                 for v in self.statement.for_any))
         if self.statement.premises:
             lines.append("  assumes " + " and ".join(
-                f'{self._quoted(p.name.ascii)}: "{p.term.ascii}"' for p in self.statement.premises))
+                f'{print_name(p.name.ascii)}: "{p.term.ascii}"' for p in self.statement.premises))
         lines.append(f'  shows "{self.statement.conclusion.ascii}"')
         job = self.job()
         proven = job is not None and isinstance(job.outcome, Succeeded) and self.check_outcome() is PASSED
         lines.append("  by aoa" if proven else "  sorry")
         emit_lines(indent, out, "\n".join(lines))
         return indent
-
-    def _quoted(self, name: str) -> str:
-        """A reserved name in double quotes, as `Token.print_name` would
-        write it (§5); every other bare."""
-        return f'"{name}"' if name in self.reserved_names else name
 
 
 def _statement_of(raw: LongStatement_RawAST) -> Statement:

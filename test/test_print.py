@@ -597,10 +597,10 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     assert (x.identity, "beginning") in agent(f).seen
 
     async def fails_the_same_way(conversation, name, arg):
-        return (["header broke"], [])                 # `TAT.Theory.begin`: the messages, no session
+        return (["header broke"], [], [])             # `TAT.Theory.begin`: the messages, nothing recorded
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "beginning")
-    assert (x.identity, "beginning") not in agent(f).seen
+    assert (x.identity, "beginning") not in agent(f).seen and x.keywords is None   # recorded on a pass alone
     assert render(f, f, focus(x))[-2:] == ["  Error:", "    header broke"]
 
 
@@ -615,7 +615,7 @@ def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypa
 
     async def fails_anew(conversation, name, arg):
         inside.append(render(f, x, RECALL))
-        return (["header broke anew"], [])            # `TAT.Theory.begin`: the messages, no session
+        return (["header broke anew"], [], [])        # `TAT.Theory.begin`: the messages, nothing recorded
     monkeypatch.setattr(isabelle_driver, "call", fails_anew)
     rerun(x, "beginning")
     assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke"]]   # a recall: depth 0

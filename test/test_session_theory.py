@@ -46,6 +46,7 @@ class Fake_Theory(Theory):
     table, as the real one does through `end_theory`."""
     async def _eval_beginning_opr(self):
         tm.TABLE.values[self._state_after_beginning().name] = f"begin {self.name}"
+        self.keywords = frozenset()                          # recorded as the real run records them
         return READY
     async def _eval_ending_opr(self):
         tm.TABLE.values[self._state_after_ending.name] = f"end {self.name}"
@@ -219,24 +220,35 @@ def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(t
     inv(f2)
 
 
-def test_import_sessions_is_stored_and_a_missing_row_reads_as_the_empty_list(tmp_path):
-    """COMPILATION.md §4, "Storage": the recorded field rides with the
-    node's rows; a database that predates the row loads it empty."""
+def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empty_or_none(tmp_path):
+    """COMPILATION.md §4, "Storage": the recorded fields ride with the
+    node's rows; a database that predates the rows loads `import_sessions`
+    empty and `keywords` None, under which `can_emit` refuses whatever the
+    stored statuses; `print_name` quotes a keyword and nothing else
+    (SESSION_AND_THEORY §2)."""
     store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session("S", theory("A", kind="fake_theory"),
                             theory("B", kind="fake_theory"))])
     a, b = s.sub_nodes
-    assert a.import_sessions == [] and (a.file_path(), b.file_path()) == (Path("S/A.thy"), Path("S/B.thy"))
+    assert a.import_sessions == [] and a.keywords is None
+    assert (a.file_path(), b.file_path()) == (Path("S/A.thy"), Path("S/B.thy"))
     a.import_sessions = ["HOL", "HOL-Library"]              # what a header's run records
+    a.keywords = frozenset({"and", "lemma"})
+    assert (a.print_name("and"), a.print_name("lemma"), a.print_name("xs")) == ('"and"', '"lemma"', "xs")
     with store.transaction():
         f._store_node(a)
     store._conn.execute("DELETE FROM fields WHERE node = ? AND field = 'import_sessions'",
-                        (b.identity,))
+                        (b.identity,))                      # `keywords`: a theory never run has no row
     store.close()
     f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log()))
     a2, b2 = f2.sub_nodes[0].sub_nodes
-    assert a2.import_sessions == ["HOL", "HOL-Library"] and b2.import_sessions == []
+    assert a2.import_sessions == ["HOL", "HOL-Library"] and a2.keywords == frozenset({"and", "lemma"})
+    assert b2.import_sessions == [] and b2.keywords is None
+    b2._last_evaluation_statuses = [READY, READY]           # a `Ready` header whose keywords are unrecorded
+    assert not b2.can_emit()
+    b2.keywords = frozenset()
+    assert b2.can_emit()
 
 
 class Real_Theories:
@@ -247,7 +259,7 @@ class Real_Theories:
         self.calls = []
         async def call(conversation, name, args):
             self.calls.append((name, args))
-            return ([], ["HOL"]) if name == "TAT.Theory.begin" else []
+            return ([], ["HOL"], ["and", "lemma"]) if name == "TAT.Theory.begin" else []
         monkeypatch.setattr(isabelle_driver, "call", call)
         self.directory = tmp_path / "work"
         self.directory.mkdir()
@@ -286,7 +298,7 @@ def test_a_theorys_beginning_makes_its_sessions_folder_or_ends_the_conversation(
     assert (case.directory / "Arith").is_dir() and tm.st(x) == (READY, READY)
     name, (_, (_, master_dir, _)) = case.calls[0]
     assert (name, master_dir) == ("TAT.Theory.begin", str(case.directory / "Arith"))
-    assert x.import_sessions == ["HOL"]                       # what the header's run answered
+    assert x.import_sessions == ["HOL"] and x.keywords == frozenset({"and", "lemma"})   # what the run answered
 
     _, _, (a_link, not_a_directory, _) = fenced_blocks(DOCS / "COMPILATION.md", "7.")
     (case.directory / "Taken").write_text("a file")

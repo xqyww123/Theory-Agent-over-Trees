@@ -179,12 +179,19 @@ def test_the_store_mirror_catches_what_a_compile_could_not_read(tmp_path):
         def to_store(self, rows):
             rows.put("name", self.name)
             rows.put("imports", self.imports)
+            rows.put("keywords", [])
+    class Stores_No_Keywords(Fake_Theory):
+        def to_store(self, rows):
+            rows.put("name", self.name)
+            rows.put("imports", self.imports)
+            rows.put("import_sessions", self.import_sessions)
     class Stores_Another_Name(Lemma):
         def to_store(self, rows):
             super().to_store(rows)
             rows.put("name", self.name + "_stored")
     kinds = KINDS | {"refusing": Refuses_By_An_Instant_Status, "emitting": Emits_An_Instant_Status,
-                     "forgetful": Stores_No_Import_Sessions, "renamed": Stores_Another_Name}
+                     "forgetful": Stores_No_Import_Sessions, "unkeyed": Stores_No_Keywords,
+                     "renamed": Stores_Another_Name}
 
     sound = sorting(tmp_path / "sound")
     invariants.assert_store_mirrors(sound, KINDS)
@@ -203,6 +210,7 @@ def test_the_store_mirror_catches_what_a_compile_could_not_read(tmp_path):
              "S/A.thy: the loaded forest writes another text")
     mirrored("forgetful", theory("A", "HOL-Library.Multiset", kind="forgetful"),
              "ROOT: the loaded forest writes another text")
+    mirrored("unkeyed", theory("A", kind="unkeyed"), "can_emit is True, and False once loaded")
     mirrored("renamed", theory("A") | {"children": [{"kind": "renamed", "name": "x", "fail": True}]},
              "the report: ", ignore_error=True)
 

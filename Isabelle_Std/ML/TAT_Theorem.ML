@@ -38,11 +38,6 @@ fun statement_transition ((kind, name, for_any, premises, conclusion) : statemen
 val admit_transition =
   Toplevel.make "sorry" Position.none |> Toplevel.end_proof Proof.global_skip_proof
 
-(*the statement's names Isabelle would quote in this theory
-  (Thy_Header.print_name): the fact's, each variable's, each premise's*)
-fun reserved thy ((_, name, for_any, premises, _) : statement) =
-  filter (fn n => Thy_Header.print_name thy n <> n) (name :: map #1 for_any @ map #1 premises)
-
 (*§6's check once the goal is open: the statement's free variables -- in the
   goal and in the premises assumed beside it -- that `for_any` does not
   declare, which Isabelle fixed by itself; sorted*)
@@ -74,7 +69,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["isabe
     on_interrupt = Remote_Procedure_Calling.Reraise,
     arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env,
                                unpack_statement),
-    ret_schema = packTuple3 (packBool, packList packString, packList packString),
+    ret_schema = packPair (packBool, packList packString),
     function = fn (input, goal, result, statement) =>
       let
         val st = #get input ()
@@ -91,9 +86,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["isabe
                  TAT_Framework.apply_transition admit_transition (#get goal ()))
           else errors
       in
-        if null errors
-        then (true, [], reserved (Toplevel.theory_of (#get result ())) statement)
-        else (#put goal NONE; (false, errors, []))
+        if null errors then (true, []) else (#put goal NONE; (false, errors))
       end,
     timeout = NONE}))
 

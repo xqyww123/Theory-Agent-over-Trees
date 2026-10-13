@@ -595,6 +595,8 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     assert (forest.conversation.working_directory / "TAT_E2E").is_dir()
     assert ta.file_path() == Path("TAT_E2E/TAT_E2E_A.thy")
     assert ta.import_sessions == ["HOL", "HOL", "HOL-Library"]
+    # and the keyword table's identifier-shaped words, minor and major
+    assert ta.keywords is not None and {"and", "where", "lemma"} <= ta.keywords and "::" not in ta.keywords
 
     # a second tree importing the first by its bare name: resolved through
     # the conversation's theory table, under the session's name
@@ -618,7 +620,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
     assert any(not_found("TAT_E2E.TAT_E2E_Nowhere") in m.unicode for m in beginning.messages), \
         beginning.messages
     assert tc.evaluation_status_ending is READY and not tc.is_finished()
-    assert tc.import_sessions == []                            # recorded only when the header passes
+    assert tc.import_sessions == [] and tc.keywords is None    # recorded only when the header passes
     for sl in (tc.state, tc._state_before_ending, tc._state_after_ending):
         assert not await sl.is_initialized()
     assert theory_deletes == [], theory_deletes                # nothing has vanished so far
@@ -716,6 +718,7 @@ async def test_the_tools_evaluate_a_tree_and_the_next_conversation_restores_it(c
     # what the run before the restart stored: the statuses, and the session of each import
     assert ta.last_evaluation_statuses() == (READY, READY)
     assert ta.import_sessions == ["HOL", "HOL-Library"]
+    assert ta.keywords is not None and "lemma" in ta.keywords
     r = await ta.evaluate_to(None, False)
     assert r.stopped_at is None, r
     assert (ta.evaluation_status_beginning, ta.evaluation_status_ending) == (READY, READY)

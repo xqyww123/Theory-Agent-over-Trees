@@ -99,7 +99,7 @@ def test_gen_keeps_the_statement_normalised_as_isaterms():
     assert (v.name.unicode, v.type.unicode) == ("xs", "'a list")
     [ne] = p.statement.premises
     assert (ne.name.unicode, ne.term.unicode, ne.term.ascii) == ("ne", "xs ≠ []", "xs \\<noteq> []")
-    assert p.reserved_names == frozenset() and p.goal_state is not p.state
+    assert p.goal_state is not p.state
     assert p.goal_state in p._states_inside() and p._slots_written_by(None) == (p.goal_state,)
     assert f.id_of(p) == "lemma_rev_length" and p.statement.structure() == (
         [("xs", "'a list")], [("ne", "xs \\<noteq> []")], "length (rev xs) = length xs")
@@ -181,19 +181,18 @@ def test_an_amend_with_the_same_structure_carries_the_proof():
 
 # --- the store (§1) ------------------------------------------------------------
 
-def test_the_statement_and_the_reserved_names_are_stored_the_goal_slot_fresh(tmp_path):
+def test_the_statement_is_stored_the_goal_slot_fresh(tmp_path):
     store = Forest_Store(tmp_path / "TAT.sqlite", ts.stand_ins.log())
     f, x = forest(lemma("p"), store=store)
     (p,) = x.sub_nodes
-    p.reserved_names = frozenset({"for", "p"})
     with f.store.transaction():
         f._store_node(p)
-    before = (p.statement, p.reserved_names, p.goal_state.name)
+    before = (p.statement, p.goal_state.name)
     store.close()
     f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite", ts.stand_ins.log()), kinds=KINDS)
     (p2,) = f2.sub_nodes[0].sub_nodes[0].sub_nodes
-    assert isinstance(p2, Theorem) and p2.statement == before[0] and p2.reserved_names == before[1]
-    assert p2.goal_state.name != before[2] and p2.goal_state in p2._states_inside()
+    assert isinstance(p2, Theorem) and p2.statement == before[0]
+    assert p2.goal_state.name != before[1] and p2.goal_state in p2._states_inside()
 
 
 # --- what it prints (§7, §8) --------------------------------------------------
@@ -339,6 +338,7 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
     [lines] = fenced_blocks(TH, "5.")
     f, x = forest(lemma("rev_length"))
     (p,) = x.sub_nodes
+    x.keywords = frozenset()                                 # recorded by a header run, which emission presupposes
 
     def emitted(node) -> list[str]:
         """In the `\\<name>` form the file takes (§5), as the expected lines are read."""
@@ -356,7 +356,7 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
         with_proof(p, M.READY_CLEAN, outcome, check)                                     # not proven: `sorry`
         assert emitted(p)[-1] == "    sorry", (outcome, check)
     with_proof(p, M.NOT_EVALUATED, NOT_STARTED)
-    p.reserved_names = frozenset({"rev_length", "xs", "ne"})
+    x.keywords = frozenset({"rev_length", "xs", "ne"})       # keywords of the theory: quoted (§5)
     assert emitted(p)[1:5] == expected('  lemma "rev_length":', '    fixes "xs" :: "\'a list"',
                                        '    assumes "ne": "xs ≠ []"', '    shows "length (rev xs) = length xs"')
     (q,) = insert(f, x, 1, [lemma("q", english="Ends with a question? ‹Quoted› \\<open>here\\<close>",
@@ -386,7 +386,7 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
 
     async def evaluate(conversation, name, args):
         assert name == "TAT.Theorem.evaluate"
-        return True, [], []
+        return True, []
     monkeypatch.setattr(isabelle_driver, "call", evaluate)
     run(x.evaluate_to(None, False))                                          # `Y` stays unevaluated: not written
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
@@ -435,8 +435,9 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
     `edit` and evaluated, each statement admitted — the `goal_state` slot
     holding the open goal and the resulting slot the admitted fact; a
     statement Isabelle refuses makes its node an obstacle with Isabelle's
-    message, `goal_state` empty; a reserved name recorded; the rows of §8
-    under `recall`; the plugin's declared import in the theory's header.
+    message, `goal_state` empty; the theory's keywords recorded, a name
+    among them quoted at emission; the rows of §8 under `recall`; the
+    plugin's declared import in the theory's header.
     Last, the callback alone: a failure empties a `goal_state` an earlier
     run had written."""
     forest, kinds = std_conversation.forest, std_conversation.kinds
@@ -459,7 +460,10 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
         for node in (p, q):
             assert isinstance(node._status, M.Ready) and node._status.messages == ()
             assert await node.goal_state.is_initialized() and await node.resulting_state().is_initialized()
-        assert (p.reserved_names, q.reserved_names) == (frozenset(), frozenset({"shows"}))
+        assert x.keywords is not None and {"shows", "lemma", "and"} <= x.keywords and "rev_length" not in x.keywords
+        out = io.StringIO()
+        q.emit(0, out)
+        assert '  fixes "shows" :: "\'a list"' in out.getvalue().splitlines()   # a keyword as a name (§5)
         assert isinstance(r._status, M.CannotEvaluate) and not await r.goal_state.is_initialized()
         assert r._status.messages[0].unicode.startswith("Type unification failed"), r._status.messages
         recalled = await session.call_tool("recall", {"node_id": "theory_TAT_Std_A"})
@@ -478,11 +482,11 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
             "    Refused",
             "    Error:"], lines
         assert lines[12].startswith("      Type unification failed"), lines
-    passed, messages, reserved = await isabelle_driver.call(
+    passed, messages = await isabelle_driver.call(
         forest.conversation, "TAT.Theorem.evaluate",
         (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(),
          ("lemma", "again", [["xs", "'a list"]], [], "xs = (0::nat)")))
-    assert (passed, reserved) == (False, []) and messages
+    assert not passed and messages
     assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()
 
 

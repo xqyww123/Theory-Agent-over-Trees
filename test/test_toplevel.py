@@ -269,7 +269,7 @@ class Wire(stand_ins.Recorder):
                 return ["free"]
             case "TAT.Theory.begin":
                 _slot, (_session, _master_dir, header) = args
-                return ([BROKEN], []) if header.startswith("theory Broken") else ([], ["HOL"])
+                return ([BROKEN], [], []) if header.startswith("theory Broken") else ([], ["HOL"], [])
             case "TAT.Theory.end":
                 return []
 
