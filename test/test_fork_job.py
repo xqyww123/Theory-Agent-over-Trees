@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import stand_ins
+from harness import until
 from isabelle_theory_agent import edit, isabelle_driver, jobs, model as M
 from isabelle_theory_agent.exceptions import TAT_InternalError
 from isabelle_theory_agent.isabelle_driver import call
@@ -74,12 +75,6 @@ def records(log_directory, event: str, id: int | None = None) -> list[dict]:
             if r["event"] == event and (id is None or id in (r["data"].get("id"), r["data"].get("job")))]
 
 
-async def until(condition, seconds: float = 30.0) -> None:
-    async with asyncio.timeout(seconds):
-        while not condition():
-            await asyncio.sleep(0.05)
-
-
 async def test_a_work_that_passes_and_one_that_fails_are_reported_to_their_jobs(conversation):
     """`fork_job` reports the work's end through `job_finished`: no error
     when it passed, the exception's messages when it failed; the report
@@ -130,7 +125,7 @@ async def test_a_cancelled_work_ends_without_a_report(conversation, tmp_path):
     job = Job()
     await fork(conv, job, "wait", tmp_path / "never")
     await isabelle_driver.job_cancel(conv, [job.id, 10 ** 9])
-    await until(lambda: records(log, "job_ended", job.id))
+    await until(lambda: records(log, "job_ended", job.id), "the cancelled job's end", 30.0)
     [ended] = records(log, "job_ended", job.id)
     assert set(ended) == {"id", "cancelled", "duration"} and (ended["id"], ended["cancelled"]) == (job.id, True)
     await asyncio.sleep(0.5)
@@ -153,7 +148,7 @@ async def test_a_reset_cancels_the_jobs_and_their_records_stay_in_their_conversa
     renewed = await conversation.restart()
     new = renewed.log.directory
     assert new != old
-    await until(lambda: records(old, "job_ended", job.id))
+    await until(lambda: records(old, "job_ended", job.id), "the job's end in the old log", 30.0)
     [reset] = records(old, "reset")
     assert reset["futures_cancelled"] == 1
     assert [e["cancelled"] for e in records(old, "job_ended", job.id)] == [True]
@@ -231,16 +226,16 @@ async def test_the_notes_jobs_over_the_wire(conversation):
     for n in (p, q, r):
         await n.start_evaluation_job(agent)
     checks = [n.evaluation_job() for n in (p, q, r)]
-    await until(lambda: checks[0].ended and checks[1].ended)
+    await until(lambda: checks[0].ended and checks[1].ended, "the two checks' end", 30.0)
     assert p.check_outcome() is jobs.PASSED and q.check_outcome() == jobs.Failed("tat-job-error")
     assert jobs.deliver(conv.log, agent) == [f"The note check on `{forest.id_of(q)}` failed."]
     assert records(log, "job_ended", checks[0].id)[0]["failure"] == ["ok"]
     # the waiting work: dropped by the edit that deletes its node, cancelled on the Isabelle side
-    await until(lambda: records(log, "job_forked", checks[2].id))
+    await until(lambda: records(log, "job_forked", checks[2].id), "the waiting check's fork", 30.0)
     async with forest.lock:
         await edit.delete(r)
     assert checks[2].ended and r.evaluation_job() is None
-    await until(lambda: records(log, "job_ended", checks[2].id))
+    await until(lambda: records(log, "job_ended", checks[2].id), "the dropped check's end", 30.0)
     [ended] = records(log, "job_ended", checks[2].id)
     assert ended["cancelled"] is True
     assert checks[2].id not in jobs._forked_jobs             # the drop discarded it (§3.3, R9); a late report is nobody's
