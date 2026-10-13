@@ -730,10 +730,14 @@ Status 2026-10-10 (the jobs/construct session): done. `Theorem.emit`
 since step 14; the hook `remove_proof_stores_of_no_tree` in
 `isabelle_theory_agent/std/theorem.py`, over `compile.paths`, removing
 `<T>.proof-store` and `<T>.proof-store.*` entries that are not folders
-when `<folder>/<T>.thy` is no tree's `file_path()`. Tests in
+when their folder (by `compile.identity`, as the compile knows its
+session folders: the spelling on disk may differ from the session's)
+and `T` are no tree's — the pair review's one defect, 2026-10-13, had it
+compare path spellings. Tests in
 test_theorem.py: the in-process compile of a proven, an unchecked and an
 unproven theorem (`by aoa` / `sorry` / `sorry`) with the hook's keeps
-and removals; and `isabelle TAT_compile` on a directory made with
+and removals (a link removed, its target and `Gone.proof-stored` kept,
+after the review's mutation check); and `isabelle TAT_compile` on a directory made with
 `TAT_new -P` (the tool reads the plugin from the database; a harness
 case's directory alone carries none) that a conversation of the
 plugin's run left — the hook runs in the tool's process, and the tool's
@@ -778,28 +782,37 @@ credential is copied into them.
 Done when: the conversation's log shows every rule of CI §7 and §8
 firing as specified, on both clients.
 
-Status 2026-10-13 (the jobs/construct session): done — every rule of CI
-§7 and §8 seen in the log on both clients, Claude Code 2.1.296 (five
+Status 2026-10-13 (the jobs/construct session): done for the rules the
+runs reach — seen in the log on both clients, Claude Code 2.1.296 (five
 runs and an env probe) and Codex 0.156.1 (three runs), with the test
 plugin's notes: the stop allowed and blocked (a running check; a pending
 question; the second Stop with `stop_hook_active`), `SubagentStop`
-blocked and then allowed, the interruption denied with `holding_work`
-(`TaskStop`; Codex's `collaborationinterrupt_agent`) and allowed when
-nothing was held, the compaction detected on both. Measurements: the
-project-level file names; an interactive session reads the project
-settings' transcript `env` entries (the control without them wrote no
-transcript); `tools/list` is the first request after `initialize`, no
-`server/discover` seen; Codex's `clientInfo` `codex-mcp-client 0.156.1`
-and one MCP session per thread; `multi_agent_v2`'s tool name;
-`check_for_update_on_startup`'s layer not determined. The record, the
-driver, the step files and every run's directory:
-`ai-artifacts/probes/live17/` (REPORT.md), uncommitted. For the owner's
-decision (REPORT.md §4): twice an announcement came under an agent id
-Claude Code writes no transcript for (at stuck moments; `advisorModel`
-suspected) and TAT ended the conversation by CLIENT_HOOKS §2's rule; a
-model that will not act loops without bound under
-`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`; both clients load the user's own
-MCP servers (`--strict-mcp-config` exists on Claude Code).
+blocked and then allowed (the latter on Codex; on Claude Code the
+blocked subagent's conversation was ended first, below), the
+interruption denied with `holding_work` (`TaskStop`; Codex's
+`collaborationinterrupt_agent`) and allowed when nothing was held
+(Claude Code only), the compaction detected on both; the three reason
+texts byte-for-byte CI §7's; all 423 stop verdicts consistent with the
+agents' jobs. Not reached by a run, covered by the in-process suite
+where it is: CI §7's rows "a question, and jobs running" and "messages
+only", a running construction job holding a stop, the plural state
+lines, the 503 while ending, the client refusals, an unannounced call, a
+subagent's compaction, the transcript-change events, the
+compaction-check failures, a seen set cleared non-empty (REPORT.md §2).
+Measurements: the project-level file names; an interactive session reads
+the project settings' transcript `env` entries (the control without
+them is inconclusive); `tools/list` is the first request after
+`initialize`, no `server/discover` seen; Codex's `clientInfo`
+`codex-mcp-client 0.156.1` and one MCP session per thread;
+`multi_agent_v2`'s tool name; `check_for_update_on_startup`'s layer not
+determined. The record, the driver, the step files and every run's
+directory: `ai-artifacts/probes/live17/` (REPORT.md), uncommitted. For
+the owner's decision (REPORT.md §4): twice an announcement came under an
+agent id Claude Code writes no transcript for (at stuck moments;
+`advisorModel` suspected) and TAT ended the conversation by
+CLIENT_HOOKS §2's rule; a model that will not act loops without bound
+under `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`; both clients load the user's
+own MCP servers (`--strict-mcp-config` exists on Claude Code).
 
 ## 4. For the owner
 

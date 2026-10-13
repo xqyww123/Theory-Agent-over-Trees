@@ -14,7 +14,7 @@ import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served b
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver, jobs
-from ..compile import paths
+from ..compile import identity, paths
 from ..exceptions import GRAMMARS, BadTheoremNodeParent, InvalidField, InvalidName
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
@@ -329,18 +329,22 @@ class Theorem(Leaf):
         return f'"{name}"' if name in self.reserved_names else name
 
 
+_PROOF_STORE = re.compile(r"(.+?)\.proof-store(?:\..*)?", re.DOTALL)   # `<T>.proof-store`, `<T>.proof-store.*`
+
+
 @TAT_compile_hook
 def remove_proof_stores_of_no_tree(forest: Forest) -> None:
     """The package's compile hook (COMPILATION.md §5): AoA keeps a theory's
-    proofs in `<T>.proof-store` beside its file, with `<T>.proof-store.*`
-    for its lock and a temporary file.  Each the path listing yields whose
-    `<folder>/<T>.thy` is no tree's file path goes, and nothing else."""
+    proofs in `<T>.proof-store` beside its file, with `<T>.proof-store.*` —
+    its lock and temporary files among them.  Each such entry the path
+    listing yields, not a folder, whose folder and `T` are no tree's is
+    removed, and nothing else; the folder by its identity, as the compile
+    knows its own, since its spelling on disk may differ from the session's."""
     directory = forest.conversation.working_directory
-    files = {tree.file_path() for tree in forest._trees()}
+    trees = {(identity(directory / tree.session().folder()), tree.name) for tree in forest._trees()}
     for entry in list(paths(directory)):
-        name, found, rest = entry.path.name.partition(".proof-store")
-        if (entry.kind != "folder" and name and found and (not rest or rest.startswith("."))
-                and entry.path.parent / f"{name}.thy" not in files):
+        if (entry.kind != "folder" and (found := _PROOF_STORE.fullmatch(entry.path.name))
+                and (identity(directory / entry.path.parent), found[1]) not in trees):
             (directory / entry.path).unlink()
 
 

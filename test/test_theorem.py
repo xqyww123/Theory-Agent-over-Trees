@@ -360,10 +360,11 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
     """A compile with the package's hook (COMPILATION.md §5): a theory of a
     proven, an unchecked and an unproven theorem is written with `by aoa`,
     `sorry`, `sorry`; each `<T>.proof-store` and `<T>.proof-store.*` the
-    path listing yields whose `<folder>/<T>.thy` is no tree's file path
-    goes — a lock, a temporary file, a store in the wrong folder —, a
-    tree's stay, an unwritten tree's included, and nothing else is touched:
-    not a `.thy`, not a folder of that name, not a `.proof-cache`."""
+    path listing yields whose folder and `T` are no tree's goes — a lock, a
+    temporary file, a link, a store in the wrong folder —, a tree's stay, an
+    unwritten tree's included, and nothing else is touched: not a `.thy`,
+    not a folder of that name, not a `.proof-cache`, not a name that
+    continues `.proof-store` without a dot, not a link's target."""
     assert theorem.remove_proof_stores_of_no_tree in plugin.compile_hooks        # registered at import
     [lines] = fenced_blocks(TH, "5.")
     f = Forest_Under_Test(kinds=KINDS)
@@ -382,23 +383,28 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
 
     directory = f.conversation.working_directory
     (directory / "Arith" / "Dir.proof-store").mkdir(parents=True)
-    for file in ("Arith/.proof-store", "Arith/Dir.proof-store/keep", "Arith/X.proof-cache", "Arith/X.proof-store",
-                 "Arith/X.proof-store.lock", "Arith/Y.proof-store"):
+    for file in ("Arith/.proof-store", "Arith/Dir.proof-store/keep", "Arith/Gone.proof-cache",
+                 "Arith/Gone.proof-stored", "Arith/X.proof-cache", "Arith/X.proof-store",
+                 "Arith/X.proof-store.lock", "Arith/Y.proof-store", "elsewhere"):
         (directory / file).write_text("kept")
     for file in ("Arith/Gone.proof-store", "Arith/Gone.proof-store.lock", "Arith/Gone.proof-store.tmp.123",
                  "Arith/notes.proof-store.txt", "X.proof-store"):
         (directory / file).write_text("of no tree")
+    (directory / "Arith" / "Gone.proof-store.tmp.7").symlink_to("../elsewhere")     # the link goes, its target stays
     report = C.compile(f, [theorem.remove_proof_stores_of_no_tree])
     assert listing(directory) == [
         ("Arith/.proof-store", "file"),
         ("Arith/Dir.proof-store/keep", "file"), ("Arith/Dir.proof-store", "folder"),
+        ("Arith/Gone.proof-cache", "file"), ("Arith/Gone.proof-stored", "file"),
         ("Arith/X.proof-cache", "file"), ("Arith/X.proof-store", "file"), ("Arith/X.proof-store.lock", "file"),
-        ("Arith/X.thy", "file"), ("Arith/Y.proof-store", "file"), ("Arith", "folder"), ("ROOT", "file")]
+        ("Arith/X.thy", "file"), ("Arith/Y.proof-store", "file"), ("Arith", "folder"), ("ROOT", "file"),
+        ("elsewhere", "file")]
     assert all((directory / path).read_text() == "kept" for path, kind in listing(directory)
                if kind == "file" and path not in ("Arith/X.thy", "ROOT"))
-    assert [str(e.path) for e in report.removed] == [
-        "Arith/Gone.proof-store", "Arith/Gone.proof-store.lock", "Arith/Gone.proof-store.tmp.123",
-        "Arith/notes.proof-store.txt", "X.proof-store"]
+    assert [(str(e.path), e.kind) for e in report.removed] == [
+        ("Arith/Gone.proof-store", "file"), ("Arith/Gone.proof-store.lock", "file"),
+        ("Arith/Gone.proof-store.tmp.123", "file"), ("Arith/Gone.proof-store.tmp.7", "link"),
+        ("Arith/notes.proof-store.txt", "file"), ("X.proof-store", "file")]
     assert report.trees == ((x, None), (y, C.Does_Not_Emit(y)))
     text = (directory / "Arith" / "X.thy").read_text()
     assert text == C.render(f).files[C.Path("Arith/X.thy")]                  # the hook left the file whole

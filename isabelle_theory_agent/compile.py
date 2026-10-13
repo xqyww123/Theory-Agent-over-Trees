@@ -232,9 +232,10 @@ def _create(path: Path, text: str) -> None:
         file.write(text)
 
 
-def _identity(path: Path) -> tuple[int, int]:
+def identity(path: Path) -> tuple[int, int]:
     """What the file system says a path is, so that a folder is known for
-    a `Session`'s whatever spelling its name has on disk."""
+    a `Session`'s whatever spelling its name has on disk; a compile hook
+    knows a tree's folder the same way."""
     status = os.lstat(path)
     return status.st_dev, status.st_ino
 
@@ -276,13 +277,13 @@ def compile(forest: Forest, hooks: Sequence[Callable[[Forest], None]]) -> Compil
         reason = make_session_folder(directory, folder)
         if reason is not None:                            # the system's refusal: a bug midway
             raise OSError(f"TAT cannot compile into {directory}: {reason}")
-    made = {_identity(directory / folder) for folder in folders}
+    made = {identity(directory / folder) for folder in folders}
     for path, text in rendering.files.items():
         _create(directory / path, text)
     for hook in hooks:
         hook(forest)
     for entry in list(paths(directory)):                  # each folder after what it holds
-        if (entry.kind == "folder" and _identity(directory / entry.path) not in made
+        if (entry.kind == "folder" and identity(directory / entry.path) not in made
                 and not os.listdir(directory / entry.path)):
             (directory / entry.path).rmdir()
     # The ROOT last, through its sibling: Isabelle accepts a ROOT cut off
