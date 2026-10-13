@@ -778,6 +778,29 @@ credential is copied into them.
 Done when: the conversation's log shows every rule of CI §7 and §8
 firing as specified, on both clients.
 
+Status 2026-10-13 (the jobs/construct session): done — every rule of CI
+§7 and §8 seen in the log on both clients, Claude Code 2.1.296 (five
+runs and an env probe) and Codex 0.156.1 (three runs), with the test
+plugin's notes: the stop allowed and blocked (a running check; a pending
+question; the second Stop with `stop_hook_active`), `SubagentStop`
+blocked and then allowed, the interruption denied with `holding_work`
+(`TaskStop`; Codex's `collaborationinterrupt_agent`) and allowed when
+nothing was held, the compaction detected on both. Measurements: the
+project-level file names; an interactive session reads the project
+settings' transcript `env` entries (the control without them wrote no
+transcript); `tools/list` is the first request after `initialize`, no
+`server/discover` seen; Codex's `clientInfo` `codex-mcp-client 0.156.1`
+and one MCP session per thread; `multi_agent_v2`'s tool name;
+`check_for_update_on_startup`'s layer not determined. The record, the
+driver, the step files and every run's directory:
+`ai-artifacts/probes/live17/` (REPORT.md), uncommitted. For the owner's
+decision (REPORT.md §4): twice an announcement came under an agent id
+Claude Code writes no transcript for (at stuck moments; `advisorModel`
+suspected) and TAT ended the conversation by CLIENT_HOOKS §2's rule; a
+model that will not act loops without bound under
+`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`; both clients load the user's own
+MCP servers (`--strict-mcp-config` exists on Claude Code).
+
 ## 4. For the owner
 
 1. **The word to start** was given on 2026-10-05 (「开工」), after Phase
