@@ -21,8 +21,8 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import (TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, NotRequired, Self, TextIO,
-                    TypeAlias, TypedDict, TypeVar, final)
+from typing import (TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple, NotRequired, Self,
+                    TextIO, TypeAlias, TypedDict, TypeVar, final)
 
 from Isabelle_RPC_Host import Connection
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -1435,6 +1435,17 @@ class Unchained_Node(NonLeaf_Node):
 RawAST = Mapping[str, Any]
 
 
+class _Non_Empty:
+    """The marker of a non-empty list in an argument schema,
+    `Annotated[list[X], NON_EMPTY]` — the construct schema's `minItems: 1`
+    (MODULE_STRUCTURE §4.4)."""
+    def __repr__(self) -> str:
+        return "NON_EMPTY"
+
+
+NON_EMPTY = _Non_Empty()
+
+
 @dataclass(frozen=True)
 class Insertion:
     """The batch joins `parent`'s children and none of them leaves:
@@ -2433,7 +2444,7 @@ class Session(Unchained_Node):
 class Theory_RawAST(TypedDict):
     kind: Literal["theory"]
     name: str
-    imports: list[str]
+    imports: Annotated[list[str], NON_EMPTY]
     description: NotRequired[str]
 
 
@@ -2508,8 +2519,6 @@ class Theory(StdBlock):
                 pass
         # The item's shape only; whether it names anything is
         # `begin_theory`'s report at evaluation (SESSION_AND_THEORY §2).
-        if not raw["imports"]:
-            raise InvalidField("imports", "must not be empty")
         for i, item in enumerate(raw["imports"]):
             if not item:
                 raise InvalidField(f"imports[{i}]", "must not be empty")

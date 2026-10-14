@@ -5,7 +5,7 @@ Run: python -m pytest test/test_plugin.py
 """
 
 import sys
-from typing import Any, Literal, NotRequired, Required, TypedDict
+from typing import Annotated, Literal, NotRequired, Required, TypedDict, get_args, get_type_hints
 
 import jsonschema
 import pytest
@@ -13,6 +13,7 @@ import pytest
 from isabelle_theory_agent import jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import (
     InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
+from isabelle_theory_agent.model import NON_EMPTY
 from isabelle_theory_agent.plugin import CannotLoadPlugin
 
 # The classes TAT ships, captured before the fixture below empties the list
@@ -98,6 +99,33 @@ class Sec(Persisted, M.StdBlock):
 
 class Empty(TypedDict):
     pass
+
+
+class S_RawAST(TypedDict):
+    s: str
+
+
+class Tree_RawAST(TypedDict):                 # nests itself, at module level where Python resolves the name
+    sub: NotRequired[list["Tree_RawAST"]]
+
+
+class Leak_First(TypedDict):                  # declared first: typing caches its union …
+    v: NotRequired[Thm_Statement | str]
+
+
+class Leak_Second(TypedDict):                 # … and hands it back for the same union written the other way
+    v: NotRequired[str | Thm_Statement]
+
+
+class Infix_RawAST(TypedDict):
+    form: Literal["infix", "infixl"]
+    symbol: str
+
+
+class Binder_RawAST(TypedDict):
+    form: Literal["binder"]
+    symbol: str
+    priority: NotRequired[int]
 
 
 def leaf(name, kinds, **overrides):
@@ -199,11 +227,19 @@ def test_children_must_point_at_construct_or_a_node_class():
                              " node classes, not to `#/\\$defs/Statement`")
 
 
-def test_children_target_is_checked_wherever_a_ref_appears():
-    aside = plugin.TAT_node(block(
-        "Aside", {"type": "array", "prefixItems": [{"$ref": "#/$defs/Statement"}],
-                  "items": {"$ref": "#/$defs/Construct"}}, defs=STATEMENT))
-    refused_at_assembly(aside, "not to `#/\\$defs/Statement`")
+def test_children_is_an_array_of_refs_and_nothing_more_and_never_required():
+    """PLUGIN_SYSTEM §5: `children` is `{"type": "array", "items": X}` and
+    nothing else but a `description`; and it is never required — no
+    construct must carry it, and an amend's may not."""
+    refused(block("Aside", {"type": "array", "prefixItems": [{"$ref": "#/$defs/Statement"}],
+                            "items": {"$ref": "#/$defs/Construct"}}, defs=STATEMENT),
+            "`children` carries a keyword besides")
+    described = block("Described", {"type": "array", "items": {"$ref": "#/$defs/Construct"},
+                                    "description": "the contents"})
+    plugin.TAT_node(described)
+    needy = block("Needy", {"type": "array", "items": {"$ref": "#/$defs/Construct"}})
+    needy.construct_schema["required"] = ["kind", "title", "children"]
+    refused(needy, "`children` is never required")
 
 
 def test_output_omissible_but_input_compulsory_is_refused():
@@ -325,15 +361,19 @@ def test_the_argument_schema_is_compulsory_and_within_the_grammar():
 def test_the_two_schemas_must_agree():
     class Named(TypedDict):
         name: str
-    refused(leaf("M1", ["m1"], argument_schema=Named), r"declares the fields \[\].*\['name'\]")
+    refused(leaf("M1", ["m1"], argument_schema=Named),
+            r"disagree at `construct_schema`: the fields \[\] against \['name'\]")
     named = leaf_schema(["m2"], {"name": {"type": "string"}})     # not required in the schema
     refused(leaf("M2", ["m2"], construct_schema=named, argument_schema=Named),
-            r"requires \[\], argument_schema requires \['name'\]")
+            r"the required fields \[\] against \['name'\]")
     class Optional_(TypedDict):
         name: NotRequired[str]
     plugin.TAT_node(leaf("M3", ["m3"],
                          construct_schema=leaf_schema(["m3"], {"name": {"type": "string"}}),
                          argument_schema=Optional_))
+    refused(leaf("M6", ["m6"], argument_schema=Optional_,       # required in the schema alone
+                 construct_schema=leaf_schema(["m6"], {"name": {"type": "string"}}, required=["name"])),
+            r"the required fields \['name'\] against \[\]")
     # `Required` inside a `total=False` declaration is read off the annotation too
     class Mostly_Optional(TypedDict, total=False):
         name: Required[str]
@@ -343,7 +383,222 @@ def test_the_two_schemas_must_agree():
                          construct_schema=leaf_schema(["m4"], fields, required=["name"])))
     refused(leaf("M5", ["m5"], argument_schema=Mostly_Optional,
                  construct_schema=leaf_schema(["m5"], fields)),
-            r"requires \[\], argument_schema requires \['name'\]")
+            r"the required fields \[\] against \['name'\]")
+
+
+def declaring(name, fields, td, required=(), defs=None):
+    """A leaf class of kind `<name>` declaring `fields` and typed by `td`."""
+    return leaf(name, [name.lower()], argument_schema=td,
+                construct_schema=leaf_schema([name.lower()], fields, required=required, defs=defs))
+
+
+def test_the_agreement_holds_at_every_depth():
+    """PLUGIN_SYSTEM §5: a `$ref` is followed into `$defs`; a string with
+    an `enum` is a `Literal` of those values, as sets; `minItems: 1` is
+    the non-empty list and only that; an `anyOf` pairs with a union by
+    JSON type, objects by the choosing field's values; the field at fault
+    is named by its path."""
+    class Wrong_Statement(TypedDict):
+        text: int
+    class Holds(TypedDict):
+        statement: Wrong_Statement
+    refused(declaring("D1", {"statement": {"$ref": "#/$defs/Statement"}}, Holds,
+                      required=["statement"], defs=STATEMENT),
+            r"disagree at `construct_schema.statement.text`: a string against <class 'int'>")
+    class Lit(TypedDict):
+        level: Literal["high", "low"]                 # the other way round
+    class Plain(TypedDict):
+        level: str
+    class Other_Lit(TypedDict):
+        level: Literal["low", "mid"]
+    level = {"level": {"type": "string", "enum": ["low", "high"]}}
+    plugin.TAT_node(declaring("D2", level, Lit, required=["level"]))
+    refused(declaring("D3", level, Plain, required=["level"]), "an `enum` of")
+    refused(declaring("D4", level, Other_Lit, required=["level"]), "an `enum` of")
+    class Some(TypedDict):
+        xs: Annotated[list[str], NON_EMPTY]
+    class Maybe(TypedDict):
+        xs: list[str]
+    class Ints(TypedDict):
+        xs: list[int]
+    non_empty = {"xs": {"type": "array", "items": {"type": "string"}, "minItems": 1}}
+    maybe = {"xs": {"type": "array", "items": {"type": "string"}}}
+    plugin.TAT_node(declaring("D5", non_empty, Some, required=["xs"]))
+    plugin.TAT_node(declaring("D6", maybe, Maybe, required=["xs"]))
+    refused(declaring("D7", non_empty, Maybe, required=["xs"]), "`minItems: 1` is `Annotated")
+    refused(declaring("D8", maybe, Some, required=["xs"]), "`minItems: 1` is `Annotated")
+    refused(declaring("D9", maybe, Ints, required=["xs"]),
+            r"disagree at `construct_schema.xs\[\]`: a string against <class 'int'>")
+    # a flat mixed union, its arms in another order than the `anyOf`'s
+    class Mixed(TypedDict):
+        v: str | int | list[str] | Thm_Statement
+    class Fewer(TypedDict):
+        v: str | int
+    class Not_A_Union(TypedDict):
+        v: str
+    mixed = {"v": {"anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "string"}},
+                             {"$ref": "#/$defs/Statement"}, {"type": "string"}]}}
+    plugin.TAT_node(declaring("D10", mixed, Mixed, required=["v"], defs=STATEMENT))
+    refused(declaring("D11", mixed, Fewer, required=["v"], defs=STATEMENT), "JSON types")
+    refused(declaring("D12", mixed, Not_A_Union, required=["v"], defs=STATEMENT), "an `anyOf` against")
+    # objects told apart by `form`, paired by its values, whatever the order
+    syntax = {"syntax": {"anyOf": [
+        {"type": "object", "required": ["form", "symbol"], "additionalProperties": False,
+         "properties": {"form": {"type": "string", "enum": ["infix", "infixl"]}, "symbol": {"type": "string"}}},
+        {"type": "object", "required": ["form", "symbol"], "additionalProperties": False,
+         "properties": {"form": {"type": "string", "enum": ["binder"]}, "symbol": {"type": "string"},
+                        "priority": {"type": "integer"}}}]}}
+    class Syntax(TypedDict):
+        syntax: Binder_RawAST | Infix_RawAST
+    class Postfix_RawAST(TypedDict):
+        form: Literal["postfix"]
+        symbol: str
+    class Other_Syntax(TypedDict):
+        syntax: Infix_RawAST | Postfix_RawAST
+    class Binder_Priority_Str(TypedDict):
+        form: Literal["binder"]
+        symbol: str
+        priority: NotRequired[str]
+    class Syntax_2(TypedDict):
+        syntax: Infix_RawAST | Binder_Priority_Str
+    plugin.TAT_node(declaring("D13", syntax, Syntax, required=["syntax"]))
+    refused(declaring("D14", syntax, Other_Syntax, required=["syntax"]),
+            r"no TypedDict arm has `form` of \['binder'\]")
+    refused(declaring("D15", syntax, Syntax_2, required=["syntax"]),
+            r"disagree at `construct_schema.syntax<form=binder>.priority`: an integer against <class 'str'>")
+    # the `anyOf`'s objects are told apart by the very field the TypedDicts are, and that one alone
+    two_fields = {"syntax": {"anyOf": [
+        {**arm, "properties": {**arm["properties"],
+                               "mode": {"type": "string", "enum": [arm["properties"]["form"]["enum"][0]]}}}
+        for arm in syntax["syntax"]["anyOf"]]}}
+    class Infix_Mode(TypedDict):
+        form: Literal["infix", "infixl"]
+        symbol: str
+        mode: str
+    class Binder_Mode(TypedDict):
+        form: Literal["binder"]
+        symbol: str
+        priority: NotRequired[int]
+        mode: str
+    class Two(TypedDict):
+        syntax: Infix_Mode | Binder_Mode
+    refused(declaring("D16", two_fields, Two, required=["syntax"]),
+            r"told apart by \['form', 'mode'\], the union's TypedDicts by `form`")
+    # a `$ref` met again with another annotation is followed again
+    class Twice(TypedDict):
+        a: Thm_Statement
+        b: Wrong_Statement
+    refused(declaring("D17", {"a": {"$ref": "#/$defs/Statement"}, "b": {"$ref": "#/$defs/Statement"}},
+                      Twice, required=["a", "b"], defs=STATEMENT),
+            r"disagree at `construct_schema.b.text`")
+    # `kind` and `children` are set aside at the top alone
+    class Inner_Kind(TypedDict):
+        kind: str
+    class Nested_Kind(TypedDict):
+        inner: Inner_Kind
+    inner = {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"],
+             "additionalProperties": False}
+    plugin.TAT_node(declaring("D18", {"inner": inner}, Nested_Kind, required=["inner"]))
+    class Inner_Plain(TypedDict):
+        pass
+    class Nested_Plain(TypedDict):
+        inner: Inner_Plain
+    refused(declaring("D19", {"inner": inner}, Nested_Plain, required=["inner"]),
+            r"disagree at `construct_schema.inner`: the fields \['kind'\] against \[\]")
+
+
+def test_arms_are_paired_as_sets_since_typing_hands_a_union_back_in_another_order():
+    """MODULE_STRUCTURE §4.4: `NotRequired[str | Thm_Statement]`, written
+    after `NotRequired[Thm_Statement | str]`, comes back from typing's
+    cache with the first's arms; the agreement pairs arms by JSON type,
+    never by position, so the class loads."""
+    (union,) = get_args(get_type_hints(Leak_Second, include_extras=True)["v"])
+    assert get_args(union) == (Thm_Statement, str), "typing no longer leaks the order; revisit this case"
+    schema = leaf_schema(["leak"], {"v": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/Statement"}]}},
+                         defs=STATEMENT)
+    plugin.TAT_node(leaf("Leak", ["leak"], construct_schema=schema, argument_schema=Leak_Second))
+
+
+def test_the_construct_schema_keeps_to_its_grammar():
+    """PLUGIN_SYSTEM §5: `$defs` keys are identifiers; no keyword besides
+    the grammar's, `description`, and `$defs` at the top alone; an `enum`
+    is a string's; only `minItems: 1`; no `anyOf` arm an `anyOf`; `kind`
+    an `enum` or a `const`, not both, with nothing else but a `type` of
+    `string` and a `description`."""
+    def refused_schema(fields, match, defs=None, **top):
+        refused(leaf("G", ["g"], construct_schema=leaf_schema(["g"], fields, defs=defs) | top), match)
+    refused_schema({}, "not a Python identifier", defs={"not-an-identifier": {"type": "string"}})
+    refused_schema({"s": {"type": "string", "pattern": "x"}}, r"\['pattern'\] is outside")
+    refused_schema({"s": {"type": "string", "$defs": {}}}, r"\['\$defs'\] is outside")
+    refused_schema({}, r"\['title'\] is outside", title="t")
+    refused_schema({"n": {"type": "integer", "enum": [1]}}, r"\['enum'\] is outside")
+    refused_schema({"s": {"type": "string", "enum": []}}, "an `enum` is of one or more strings")
+    refused_schema({"xs": {"type": "array", "items": {"type": "string"}, "minItems": 2}}, "only `minItems: 1`")
+    refused_schema({"xs": {"type": "array"}}, r"construct_schema.xs\[\]: not a schema")
+    refused_schema({"o": {"type": "object"}}, "an object schema needs")
+    refused_schema({"v": {"anyOf": [{"anyOf": [{"type": "string"}]}, {"type": "integer"}]}},
+                   "an `anyOf` arm is itself an `anyOf`")
+    refused_schema({"s": {"$ref": "#/$defs/Statement", "pattern": "x"}}, r"\['pattern'\] is outside",
+                   defs=STATEMENT)
+    for kind, match in [({"enum": ["g"], "const": "g"}, "both `enum` and `const`"),
+                        ({"const": "g", "type": "integer"}, "a `type` other than `string`"),
+                        ({"const": "g", "pattern": "g"}, "`properties.kind` carries")]:
+        schema = leaf_schema(["g"]); schema["properties"]["kind"] = kind
+        refused(leaf("G", ["g"], construct_schema=schema), match)
+    fine = leaf_schema(["g"]); fine["properties"]["kind"] = {"const": "g", "type": "string", "description": "the kind"}
+    plugin.TAT_node(leaf("G", ["g"], construct_schema=fine))
+
+
+def test_a_ref_names_an_own_def_in_the_one_form_judged_at_registration():
+    """PLUGIN_SYSTEM §5: every `$ref` outside the top-level `children` has
+    the form `#/$defs/<Name>` and names a key of the class's own `$defs`
+    — inside an own entry too; a `$ref` to another class lives under
+    `children` alone."""
+    refused(declaring("P", {"s": {"$ref": "#/$defs/Nowhere"}}, S_RawAST, required=["s"]),
+            r"names no `\$defs` entry")
+    wrap = {"Wrap": {"type": "array", "items": {"$ref": "#/$defs/Nowhere"}}}
+    refused(declaring("P2", {"s": {"$ref": "#/$defs/Wrap"}}, S_RawAST, required=["s"], defs=wrap),
+            r"names no `\$defs` entry")
+    refused(declaring("Q", {"s": {"$ref": "https://example.org/s"}}, S_RawAST, required=["s"]),
+            "not of the form")
+    plugin.TAT_node(Thm)
+    class Holds_Thm(TypedDict):
+        inner: Thm_Statement
+    refused(declaring("U", {"inner": {"$ref": "#/$defs/Thm"}}, Holds_Thm, required=["inner"]),
+            r"names no `\$defs` entry")
+
+
+def test_a_definition_may_refer_to_itself_through_an_object():
+    """PLUGIN_SYSTEM §5: a `$defs` entry referring to itself, every cycle
+    through an object, meets a TypedDict that nests itself, defined at
+    module level where Python resolves the name; a cycle through no
+    object, a bare `$ref` entry, and a self-nesting TypedDict inside a
+    function are refused."""
+    tree = {"Tree": {"type": "object", "additionalProperties": False,
+                     "properties": {"sub": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}}}}
+    class Forest_RawAST(TypedDict):
+        more: NotRequired[list[Tree_RawAST]]
+    plugin.TAT_node(declaring("U", {"more": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}},
+                              Forest_RawAST, defs=tree))
+    assert "Tree" in plugin.assemble(registered())
+    class Strings(TypedDict):
+        more: list[str]
+    loop = {"Loop": {"type": "array", "items": {"$ref": "#/$defs/Loop"}}}
+    refused(declaring("V", {"more": {"$ref": "#/$defs/Loop"}}, Strings, required=["more"], defs=loop),
+            "cycle back to it through no object")
+    two_step = {"A": {"type": "array", "items": {"$ref": "#/$defs/B"}},
+                "B": {"anyOf": [{"$ref": "#/$defs/A"}, {"type": "string"}]}}
+    refused(declaring("V2", {"more": {"$ref": "#/$defs/A"}}, Strings, required=["more"], defs=two_step),
+            "cycle back to it through no object")
+    bare = {"Alias": {"$ref": "#/$defs/Statement"}, **STATEMENT}
+    refused(declaring("V3", {"more": {"$ref": "#/$defs/Alias"}}, Strings, required=["more"], defs=bare),
+            r"`\$defs` entry `Alias` is a bare `\$ref`")
+    class Local_Tree(TypedDict):
+        sub: NotRequired[list["Local_Tree"]]
+    class Local_Forest(TypedDict):
+        more: NotRequired[list[Local_Tree]]
+    refused(declaring("W", {"more": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}},
+                      Local_Forest, defs=tree), "unresolvable annotation")
 
 
 def test_a_field_may_not_take_the_name_of_a_row_the_framework_stores():
@@ -509,29 +764,6 @@ def test_shared_defs_must_be_equal():
     refused_at_assembly(other, "defines `\\$defs` `Statement` differently from Thm")
 
 
-class S_RawAST(TypedDict):
-    s: str
-
-
-def test_a_ref_must_name_an_own_def_construct_or_a_class():
-    dangling = leaf_schema(["p"], {"s": {"$ref": "#/$defs/Nowhere"}}, required=["s"])
-    p = plugin.TAT_node(leaf("P", ["p"], construct_schema=dangling, argument_schema=S_RawAST))
-    refused_at_assembly(p, "names neither")
-
-
-def test_a_ref_inside_an_own_def_is_checked_too():
-    wrapped = leaf_schema(["p2"], {"s": {"$ref": "#/$defs/Wrap"}}, required=["s"],
-                          defs={"Wrap": {"type": "array", "items": {"$ref": "#/$defs/Nowhere"}}})
-    p2 = plugin.TAT_node(leaf("P2", ["p2"], construct_schema=wrapped, argument_schema=S_RawAST))
-    refused_at_assembly(p2, "names neither")
-
-
-def test_a_ref_must_have_the_defs_form():
-    external = leaf_schema(["q"], {"s": {"$ref": "https://example.org/s"}}, required=["s"])
-    q = plugin.TAT_node(leaf("Q", ["q"], construct_schema=external, argument_schema=S_RawAST))
-    refused_at_assembly(q, "not of the form")
-
-
 def test_own_defs_may_not_take_construct_or_a_class_name():
     r = plugin.TAT_node(leaf("R", ["r"], construct_schema=leaf_schema(
         ["r"], defs={"Construct": {"type": "string"}})))
@@ -543,23 +775,6 @@ def test_own_defs_may_not_take_another_class_name():
     s = plugin.TAT_node(leaf("S", ["s"], construct_schema=leaf_schema(
         ["s"], defs={"Thm": {"type": "string"}})))
     refused_at_assembly(s, "reserved name `Thm`")
-
-
-def test_a_class_may_refer_to_another_class_and_to_itself():
-    nested = leaf_schema(["u"], {"inner": {"$ref": "#/$defs/Thm"},
-                                 "more": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}},
-                         required=["inner"],
-                         defs={"Tree": {"type": "object",
-                                        "properties": {"sub": {"type": "array",
-                                                               "items": {"$ref": "#/$defs/Tree"}}},
-                                        "additionalProperties": False}})
-    class U_RawAST(TypedDict):
-        inner: Thm_Statement
-        more: NotRequired[list[Any]]     # the grammar has no recursion; `Any` stands for the tree
-    plugin.TAT_node(Thm)
-    plugin.TAT_node(leaf("U", ["u"], construct_schema=nested, argument_schema=U_RawAST))
-    defs = plugin.assemble(registered())
-    assert "Tree" in defs and defs["U"]["properties"]["inner"] == {"$ref": "#/$defs/Thm"}
 
 
 # --- the edit schema, loading and the conversation's table -----------------

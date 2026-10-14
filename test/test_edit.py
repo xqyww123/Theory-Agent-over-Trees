@@ -4,7 +4,7 @@ paths, amend inheritance, move.  Run: python -m pytest test/test_edit.py
 """
 
 import random
-from typing import NotRequired, TypedDict
+from typing import Annotated, NotRequired, TypedDict
 
 import pytest
 
@@ -20,7 +20,7 @@ from isabelle_theory_agent.exceptions import (
     InvalidField, InvalidName, MalformedRawAST, MissingField,
     MoveIntoOwnSubtree, TAT_DisasterError, TAT_InternalError, UnexpectedChildren,
     UnexpectedField, UnknownKind)
-from isabelle_theory_agent.model import NOT_EVALUATED, Location
+from isabelle_theory_agent.model import NON_EMPTY, NOT_EVALUATED, Location
 from test_model import CANNOT_EVALUATE, READY
 
 
@@ -347,6 +347,10 @@ def test_a_union_of_objects_is_told_apart_by_its_choosing_field_in_the_documents
 
 
 def test_schema_grammar_is_closed_at_registration():
+    """MODULE_STRUCTURE §4.4's argument schema grammar: what it admits,
+    what it refuses, and the union rules — arms of distinct JSON types,
+    TypedDicts told apart by one required `Literal` field with disjoint
+    values, a `Literal` and a non-empty list never arms."""
     from typing import Any, Literal, NotRequired, TypedDict
 
     class Fact(TypedDict):
@@ -357,13 +361,16 @@ def test_schema_grammar_is_closed_at_registration():
         a: str
         b: NotRequired[bool]
         n: NotRequired[float]
-        anything: NotRequired[Any]
+        level: NotRequired[Literal["x", "y"]]
         facts: NotRequired[list[Fact]]
+        some: NotRequired[Annotated[list[str], NON_EMPTY]]
         either: NotRequired[Fact | str]
+        mixed: NotRequired[str | int | list[str] | Fact]
     plugin.validate_argument_schema(Fine)
+    plugin.validate_argument_schema(Nesting_RawAST)     # nests itself, at module level
 
-    def refused(td):
-        with pytest.raises(TAT_InternalError):
+    def refused(td, match=""):
+        with pytest.raises(TAT_InternalError, match=match):
             plugin.validate_argument_schema(td)
     class HasChildren(TypedDict):
         children: list
@@ -371,31 +378,68 @@ def test_schema_grammar_is_closed_at_registration():
         a: str | None                        # no JSON word for null
     class Dicty(TypedDict):
         a: dict
-    class Lit(TypedDict):
-        a: Literal["x", "y"]
+    class Anything(TypedDict):
+        a: Any                               # no field is left opaque
+    class LitInt(TypedDict):
+        a: Literal[1]
     class TwoObjects(TypedDict):
-        a: Fact | Fine
+        a: Fact | Fine                       # no `Literal` tells them apart
     class TwoObjectsInLists(TypedDict):
-        a: list[Fact] | list[Fine]           # indistinguishable arms
+        a: list[Fact] | list[Fine]           # two arrays
     class TwoObjectsThroughAUnionInAList(TypedDict):
         a: list[str | Fact] | list[Fine]
     class AnyArm(TypedDict):
-        a: Any | Fact                        # Any would make the object moot
+        a: Any | Fact
     class Nums(TypedDict):
-        n: int | float                       # float makes int moot
+        n: int | float                       # both numbers
     class Dangling(TypedDict):
         a: "NoSuchType"                      # a forward reference nothing resolves
-    for td in (HasChildren, Optional, Dicty, Lit, TwoObjects,
-               TwoObjectsInLists, TwoObjectsThroughAUnionInAList, AnyArm,
-               Nums, Dangling, Nesting_RawAST):
-        refused(td)
-    refused(dict)                            # not a TypedDict at all
+    class LitArm(TypedDict):
+        a: Literal["x"] | str
+    class NonEmptyArm(TypedDict):
+        a: Annotated[list[str], NON_EMPTY] | int
+    for td, match in [(HasChildren, "children"), (Optional, "outside"), (Dicty, "outside"),
+                      (Anything, "outside"), (LitInt, "one or more strings"),
+                      (TwoObjects, "one and the same"), (TwoObjectsInLists, "one JSON type"),
+                      (TwoObjectsThroughAUnionInAList, "one JSON type"), (AnyArm, "outside"),
+                      (Nums, "one JSON type"), (Dangling, "unresolvable"),
+                      (LitArm, "never an arm"), (NonEmptyArm, "never an arm")]:
+        refused(td, match)
+    refused(dict, "not a TypedDict")         # not a TypedDict at all
     # a declaration is compulsory (PLUGIN_SYSTEM §5); an empty one declares no field
-    with pytest.raises(TAT_InternalError, match="not a TypedDict"):
-        plugin.validate_argument_schema(None)
+    refused(None, "not a TypedDict")
     class Empty(TypedDict):
         pass
     plugin.validate_argument_schema(Empty)
+
+    # TypedDict arms told apart by one required `Literal` field of disjoint values
+    class Infix(TypedDict):
+        form: Literal["infix", "infixl"]
+        symbol: str
+    class Binder(TypedDict):
+        form: Literal["binder"]
+    class Told(TypedDict):
+        s: Infix | Binder
+    plugin.validate_argument_schema(Told)
+    class Overlapping(TypedDict):
+        form: Literal["binder", "infix"]
+    class Overlap(TypedDict):
+        s: Infix | Overlapping
+    class Unrequired(TypedDict):
+        form: NotRequired[Literal["binder"]]
+    class Hole(TypedDict):
+        s: Infix | Unrequired
+    class Infix_Mode(TypedDict):
+        form: Literal["infix"]
+        mode: Literal["a"]
+    class Binder_Mode(TypedDict):
+        form: Literal["binder"]
+        mode: Literal["b"]
+    class Two_Fields(TypedDict):
+        s: Infix_Mode | Binder_Mode
+    refused(Overlap, "not disjoint")
+    refused(Hole, "one and the same")
+    refused(Two_Fields, "one and the same")
 
 
 def test_children_field_must_be_a_list():

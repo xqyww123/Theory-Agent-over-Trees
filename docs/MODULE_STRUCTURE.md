@@ -1171,7 +1171,8 @@ this grammar — takes its place at call time (CONSTRUCT_INTERACTION §5).
 The argument schema grammar lives here too. A declaration's annotations
 come from a closed grammar — `str`, `bool`, `int`, `float`,
 `Literal[...]` of strings, `list[X]`, a non-empty list
-`Annotated[list[X], NON_EMPTY]`, a TypedDict, and unions — each field
+`Annotated[list[X], NON_EMPTY]` (the marker is `model.py`'s), a
+TypedDict, and unions — each field
 optionally wrapped in `NotRequired[X]` or `Required[X]`, which the
 loader reads off the annotation itself — which, through the agreement
 check (PLUGIN_SYSTEM §5), keeps every construct schema within what

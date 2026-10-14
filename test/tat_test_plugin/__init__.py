@@ -74,7 +74,7 @@ class Note_RawAST(TypedDict):
     kind: Literal["note"]
     name: str
     text: str
-    work: str
+    work: Literal["pass", "fail", "wait"]
 
 
 @TAT_node
