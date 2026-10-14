@@ -131,10 +131,11 @@ No `evaluate`: there is nothing new to see (MCP_SPECIFICATION §3.2).
 A **malformed call** — an argument missing, one the tool does not take,
 of the wrong type, outside its allowed set, an empty `constructs`, or
 nested deeper than 100 levels —
-is refused against the schema the tool advertises, before any operation
-is named and as a construct's fields are checked (EXCEPTIONS.md §3's
+is refused before any operation is named — one nested deeper than 100
+levels before any other check, the rest against the schema the tool
+advertises, as a construct's fields are checked (EXCEPTIONS.md §3's
 `MissingField`, `UnexpectedField` and `InvalidField`, in their forms for
-a tool call; RENDER_BASELINES §2), and renders the cause alone:
+a tool call; RENDER_BASELINES §2) — and renders the cause alone:
 
 ```
 The `edit` tool needs the argument `evaluate`.

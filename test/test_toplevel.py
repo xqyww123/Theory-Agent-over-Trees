@@ -269,7 +269,7 @@ class Wire(stand_ins.Recorder):
                 return ["free"]
             case "TAT.Theory.begin":
                 _slot, (_session, _master_dir, header) = args
-                return ([BROKEN], [], []) if header.startswith("theory Broken") else ([], ["HOL"], [])
+                return ([BROKEN], [], []) if header.startswith('theory "Broken"') else ([], ["HOL"], [])
             case "TAT.Theory.end":
                 return []
 
@@ -301,7 +301,7 @@ def test_a_compile_writes_the_stored_forest_and_returns_its_report(tmp_path):
                                   "S/Broken.thy not written: theory_Broken failed",
                                   f"  {BROKEN}",
                                   "ROOT written"])
-        assert (tmp_path / "S" / "A.thy").read_text() == 'theory A\n  imports "Main"\nbegin\nend\n'
+        assert (tmp_path / "S" / "A.thy").read_text() == 'theory "A"\n  imports "Main"\nbegin\nend\n'
         assert not (tmp_path / "S" / "Broken.thy").exists()
         assert (tmp_path / "ROOT").read_text() == \
             'session "S" in "S" = "HOL" +\n  theories\n    "A"\n'

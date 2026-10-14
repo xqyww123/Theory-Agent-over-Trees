@@ -116,7 +116,7 @@ def test_an_importer_runs_its_imports_first():
         ([], [a], [b])
     assert (f._importers(a), f._importers(b), f._importers(c)) == ([b], [c], [])
     assert f._closure([c]) == [a, b, c]
-    assert c.header() == 'theory C\n  imports "S.B" "Main"\nbegin'          # every item quoted
+    assert c.header() == 'theory "C"\n  imports "S.B" "Main"\nbegin'          # every item quoted
     r = run(c.evaluate_to(None, False))
     assert r == EvaluationResult(None, None)
     assert RUNS == ["begin A", "end A", "begin B", "end B", "begin C", "end C"]

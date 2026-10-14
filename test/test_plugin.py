@@ -218,6 +218,14 @@ def test_children_only_on_a_nesting_class_and_only_as_refs():
         {"$ref": "#/$defs/Construct"}, {"type": "string"}]}}), "`children` must be")
     plugin.TAT_node(block("L", {"type": "array", "items": {
         "anyOf": [{"$ref": "#/$defs/Thm"}, {"$ref": "#/$defs/Construct"}]}}))
+    # a `$ref`, or an `anyOf` of `$ref`s, and at most a `description` beside it
+    refused(block("K3", {"type": "array", "items": {"$ref": "#/$defs/Construct", "type": "object",
+                                                    "required": ["foo"]}}), "`children` must be")
+    refused(block("K4", {"type": "array", "items": {"anyOf": [{"$ref": "#/$defs/Construct"}], "type": "object"}}),
+            "`children` must be")
+    refused(block("K5", {"type": "array", "items": {"anyOf": [{"$ref": "#/$defs/Construct", "const": "x"}]}}),
+            "`children` must be")
+    plugin.TAT_node(block("M", {"type": "array", "items": {"$ref": "#/$defs/Construct", "description": "the contents"}}))
 
 
 def test_children_must_point_at_construct_or_a_node_class():
@@ -463,13 +471,25 @@ def test_the_agreement_holds_at_every_depth():
         syntax: Infix_RawAST | Binder_Priority_Str
     plugin.TAT_node(declaring("D13", syntax, Syntax, required=["syntax"]))
     refused(declaring("D14", syntax, Other_Syntax, required=["syntax"]),
-            r"no TypedDict arm has `form` of \['binder'\]")
+            r"the `anyOf` arms' `form` values \[\['binder'\], \['infix', 'infixl'\]\] against the union's"
+            r" \[\['infix', 'infixl'\], \['postfix'\]\]")
+    # one for one: two arms of one value set, and as many arms of a type as the union has
+    doubled = {"syntax": {"anyOf": [syntax["syntax"]["anyOf"][0], syntax["syntax"]["anyOf"][0]]}}
+    refused(declaring("D14b", doubled, Syntax, required=["syntax"]), r"the `anyOf` arms' `form` values")
+    class No_Literal(TypedDict):
+        x: str
+    class One_Object(TypedDict):
+        syntax: str | No_Literal
+    refused(declaring("D14c", {"syntax": {"anyOf": [*syntax["syntax"]["anyOf"], {"type": "string"}]}},
+                      One_Object, required=["syntax"]),
+            "2 `anyOf` arms of JSON type object against 1 of the union's")
     refused(declaring("D15", syntax, Syntax_2, required=["syntax"]),
             r"disagree at `construct_schema.syntax<form=binder>.priority`: an integer against <class 'str'>")
     # the `anyOf`'s objects are told apart by the very field the TypedDicts are, and that one alone
     two_fields = {"syntax": {"anyOf": [
-        {**arm, "properties": {**arm["properties"],
-                               "mode": {"type": "string", "enum": [arm["properties"]["form"]["enum"][0]]}}}
+        {**arm, "required": [*arm["required"], "mode"],
+         "properties": {**arm["properties"],
+                        "mode": {"type": "string", "enum": [arm["properties"]["form"]["enum"][0]]}}}
         for arm in syntax["syntax"]["anyOf"]]}}
     class Infix_Mode(TypedDict):
         form: Literal["infix", "infixl"]
@@ -484,6 +504,21 @@ def test_the_agreement_holds_at_every_depth():
         syntax: Infix_Mode | Binder_Mode
     refused(declaring("D16", two_fields, Two, required=["syntax"]),
             r"told apart by \['form', 'mode'\], the union's TypedDicts by `form`")
+    # an optional `enum` field the arms share chooses nothing: the class registers
+    class Styled_A(TypedDict):
+        form: Literal["a"]
+        style: NotRequired[Literal["x", "y"]]
+    class Styled_B(TypedDict):
+        form: Literal["b"]
+        style: NotRequired[Literal["x", "y"]]
+    class Styled(TypedDict):
+        s: Styled_A | Styled_B
+    style = {"type": "string", "enum": ["x", "y"]}
+    plugin.TAT_node(declaring("D16b", {"s": {"anyOf": [
+        {"type": "object", "required": ["form"], "additionalProperties": False,
+         "properties": {"form": {"type": "string", "enum": ["a"]}, "style": style}},
+        {"type": "object", "required": ["form"], "additionalProperties": False,
+         "properties": {"form": {"type": "string", "enum": ["b"]}, "style": style}}]}}, Styled, required=["s"]))
     # a `$ref` met again with another annotation is followed again
     class Twice(TypedDict):
         a: Thm_Statement
@@ -505,6 +540,26 @@ def test_the_agreement_holds_at_every_depth():
         inner: Inner_Plain
     refused(declaring("D19", {"inner": inner}, Nested_Plain, required=["inner"]),
             r"disagree at `construct_schema.inner`: the fields \['kind'\] against \[\]")
+    # the memo is by definition and annotation: another definition met with the same annotation is followed
+    other = {"type": "object", "properties": {"text": {"type": "integer"}}, "required": ["text"],
+             "additionalProperties": False}
+    class Twice_Same(TypedDict):
+        a: Thm_Statement
+        b: Thm_Statement
+    refused(declaring("D20", {"a": {"$ref": "#/$defs/Statement"}, "b": {"$ref": "#/$defs/Other"}},
+                      Twice_Same, required=["a", "b"], defs={**STATEMENT, "Other": other}),
+            r"disagree at `construct_schema.b.text`: an integer against <class 'str'>")
+    # an integer is not a float, a number not an int
+    class Float_N(TypedDict):
+        n: float
+    class Int_N(TypedDict):
+        n: int
+    refused(declaring("D21", {"n": {"type": "integer"}}, Float_N, required=["n"]), "an integer against <class 'float'>")
+    refused(declaring("D22", {"n": {"type": "number"}}, Int_N, required=["n"]), "a number against <class 'int'>")
+    class Int_Or_Str(TypedDict):
+        v: int | str
+    refused(declaring("D23", {"v": {"anyOf": [{"type": "integer"}, {"type": "number"}, {"type": "string"}]}},
+                      Int_Or_Str, required=["v"]), "2 `anyOf` arms of JSON type number against 1 of the union's")
 
 
 def test_arms_are_paired_as_sets_since_typing_hands_a_union_back_in_another_order():
@@ -531,13 +586,23 @@ def test_the_construct_schema_keeps_to_its_grammar():
     refused_schema({"s": {"type": "string", "pattern": "x"}}, r"\['pattern'\] is outside")
     refused_schema({"s": {"type": "string", "$defs": {}}}, r"\['\$defs'\] is outside")
     refused_schema({}, r"\['title'\] is outside", title="t")
-    refused_schema({"n": {"type": "integer", "enum": [1]}}, r"\['enum'\] is outside")
-    refused_schema({"s": {"type": "string", "enum": []}}, "an `enum` is of one or more strings")
+    refused_schema({"s": {"type": "string", "enum": []}}, "an `enum` needs one or more values of its own type")
     refused_schema({"xs": {"type": "array", "items": {"type": "string"}, "minItems": 2}}, "only `minItems: 1`")
-    refused_schema({"xs": {"type": "array"}}, r"construct_schema.xs\[\]: not a schema")
+    refused_schema({"xs": {"type": "array"}}, r"construct_schema.xs\[\]: not of one JSON type")
     refused_schema({"o": {"type": "object"}}, "an object schema needs")
+    refused_schema({"o": {"type": "object", "properties": {}}}, "an object schema needs")
     refused_schema({"v": {"anyOf": [{"anyOf": [{"type": "string"}]}, {"type": "integer"}]}},
                    "an `anyOf` arm is itself an `anyOf`")
+    refused_schema({"v": {"anyOf": [{"$ref": "#/$defs/U"}, {"type": "integer"}]}},
+                   "an `anyOf` arm is itself an `anyOf`", defs={"U": {"anyOf": [{"type": "string"}]}})
+    refused_schema({"v": {"anyOf": [{"$ref": "#/$defs/B"}, {"type": "integer"}]}},
+                   r"\$defs\.B: not a schema", defs={"B": True})
+    refused_schema({"v": {"anyOf": [{"$ref": "#/$defs/Nope"}, {"type": "integer"}]}},   # the arm walked first
+                   r"names no `\$defs` entry")
+    class Ints(TypedDict):
+        n: int
+    refused(declaring("G", {"n": {"type": "integer", "enum": [1]}}, Ints, required=["n"]),    # an `enum` is a `Literal`'s
+            r"an `enum` of \[1\] against <class 'int'>")
     refused_schema({"s": {"$ref": "#/$defs/Statement", "pattern": "x"}}, r"\['pattern'\] is outside",
                    defs=STATEMENT)
     for kind, match in [({"enum": ["g"], "const": "g"}, "both `enum` and `const`"),
@@ -569,11 +634,11 @@ def test_a_ref_names_an_own_def_in_the_one_form_judged_at_registration():
 
 
 def test_a_definition_may_refer_to_itself_through_an_object():
-    """PLUGIN_SYSTEM §5: a `$defs` entry referring to itself, every cycle
-    through an object, meets a TypedDict that nests itself, defined at
-    module level where Python resolves the name; a cycle through no
-    object, a bare `$ref` entry, and a self-nesting TypedDict inside a
-    function are refused."""
+    """PLUGIN_SYSTEM §3, §5: a `$defs` entry referring to itself through an
+    object meets a TypedDict that nests itself, defined at module level
+    where Python resolves the name; a cycle through no object meets no
+    TypedDict again and the agreement refuses it; a bare `$ref` entry and
+    a self-nesting TypedDict inside a function are refused."""
     tree = {"Tree": {"type": "object", "additionalProperties": False,
                      "properties": {"sub": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}}}}
     class Forest_RawAST(TypedDict):
@@ -585,11 +650,11 @@ def test_a_definition_may_refer_to_itself_through_an_object():
         more: list[str]
     loop = {"Loop": {"type": "array", "items": {"$ref": "#/$defs/Loop"}}}
     refused(declaring("V", {"more": {"$ref": "#/$defs/Loop"}}, Strings, required=["more"], defs=loop),
-            "cycle back to it through no object")
+            r"disagree at `construct_schema.more\[\]`: an array against <class 'str'>")
     two_step = {"A": {"type": "array", "items": {"$ref": "#/$defs/B"}},
                 "B": {"anyOf": [{"$ref": "#/$defs/A"}, {"type": "string"}]}}
     refused(declaring("V2", {"more": {"$ref": "#/$defs/A"}}, Strings, required=["more"], defs=two_step),
-            "cycle back to it through no object")
+            r"disagree at `construct_schema.more\[\]`: an `anyOf` against <class 'str'>")
     bare = {"Alias": {"$ref": "#/$defs/Statement"}, **STATEMENT}
     refused(declaring("V3", {"more": {"$ref": "#/$defs/Alias"}}, Strings, required=["more"], defs=bare),
             r"`\$defs` entry `Alias` is a bare `\$ref`")

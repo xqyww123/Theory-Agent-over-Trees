@@ -256,9 +256,8 @@ registration, per class:
   the loader reads off the annotation itself;
 - every `$defs` key is a Python identifier, and no `$defs` entry is a
   bare `$ref`; every `$ref` outside the top-level `children` has the
-  form `#/$defs/<Name>` and names a key of the class's own `$defs`, and
-  every cycle of such `$ref`s passes through an object — judgeable now,
-  since a class carries what it refers to;
+  form `#/$defs/<Name>` and names a key of the class's own `$defs` —
+  judgeable now, since a class carries what it refers to;
 - the two schemas agree, at every depth, a `$ref` followed into
   `$defs`: an object carries `additionalProperties: false`, its
   `properties` are exactly the TypedDict's keys and its `required`

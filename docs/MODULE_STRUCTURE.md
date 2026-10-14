@@ -1132,7 +1132,7 @@ fields by their names and a typed `items`' elements by their index, a
 value of no arm's JSON type, `must be` the arms' distinct JSON types,
 each once, in the order the schema first names them, joined by `or`; a
 value of one arm's type, against that arm; an object among objects told
-apart by an `enum` field, a field none of them declares,
+apart by a required `enum` field, a field none of them declares,
 `UnexpectedField`, whose `it takes` lists their fields in the order
 they first appear, then the choosing field missing, `MissingField`,
 then its value not a string or outside every arm, `must be one of …`,
@@ -1159,9 +1159,8 @@ grammar of its own: a well-formed JSON schema that is an object carrying
 `properties`, `additionalProperties: false` and a `required` within
 them; a `string`, an `integer` or a `number`, each optionally with an
 `enum` of one or more values of its type; a `boolean`; an `array` with
-`items`, either a schema of this
-grammar or a `$ref` to `Construct` or a node class, whose elements the
-check leaves to `edit.py` (above), and
+`items`, either a schema of this grammar or the `$ref` to `Construct`,
+whose elements the check leaves to `edit.py` (above), and
 optionally `minItems: 1`, the only count its sentence can say;
 `description` anywhere, `$defs` at the top alone; and one property
 declared as a bare `object`, `answer`'s `answer`, which the check reads

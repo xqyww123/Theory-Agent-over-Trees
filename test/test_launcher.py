@@ -253,7 +253,7 @@ async def test_a_compile_writes_what_a_conversation_left_and_isabelle_reads_it(
     assert (wd / "ROOT").read_text() == \
         'session "TAT_C" in "TAT_C" = "HOL" +\n  theories\n    "TAT_C_A"\n    "TAT_C_B"\n'
     assert (wd / "TAT_C" / "TAT_C_B.thy").read_text() == \
-        'theory TAT_C_B\n  imports "TAT_C_A"\nbegin\nend\n'
+        'theory "TAT_C_B"\n  imports "TAT_C_A"\nbegin\nend\n'
     assert (wd / "tat.lock").read_bytes() == b""
 
     extra = tmp_path / "extra"

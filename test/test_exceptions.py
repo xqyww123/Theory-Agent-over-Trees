@@ -129,6 +129,10 @@ def test_unexpected_field():
     check(of_tool(UnexpectedField(holder="location", field="where", takes=["position", "node_id"],
                                   holder_is_top=False)),
           "`location` has no argument `where`; it takes `position`, `node_id`.")
+    check(UnexpectedField(holder="note", field="children", takes=[], holder_is_top=True),
+          "A `note` has no field `children`; it takes no fields.")
+    check(of_tool(UnexpectedField(holder="answer", field="verdict", takes=[], holder_is_top=False)),
+          "`answer` has no argument `verdict`; it takes no arguments.")
 
 def test_duplicate_name():
     check(DuplicateName(id_component="lemma_assoc",

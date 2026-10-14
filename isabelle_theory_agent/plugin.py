@@ -22,6 +22,7 @@ import importlib
 import inspect
 import re
 import sys
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -396,21 +397,25 @@ def _defined_by(cls: type, name: str) -> type:
 
 
 def _is_construct_array(prop: Any) -> bool:
+    """`{"type": "array", "items": X}` with X a `$ref` of the form
+    `#/$defs/<Name>`, or an `anyOf` of such, each with at most a
+    `description` beside it (PLUGIN_SYSTEM §5)."""
     if not isinstance(prop, dict) or prop.get("type") != "array" or "items" not in prop:
         return False
     items = prop["items"]
     if isinstance(items, dict) and "anyOf" in items:
-        return all(_is_def_ref(i) for i in items["anyOf"])
+        return set(items) <= {"anyOf", "description"} and all(_is_def_ref(i) for i in items["anyOf"])
     return _is_def_ref(items)
 
 
 def _is_def_ref(x: Any) -> bool:
-    return isinstance(x, dict) and isinstance(x.get("$ref"), str) and bool(_REF.match(x["$ref"]))
+    return (isinstance(x, dict) and set(x) <= {"$ref", "description"}
+            and isinstance(x.get("$ref"), str) and bool(_REF.match(x["$ref"])))
 
 
 # --- the JSON types -----------------------------------------------------------
 # What a value of each is in Python, and the phrase RENDER_BASELINES §2
-# approves for it: the one vocabulary the two checkers below render in.
+# approves for it: the one vocabulary `check_call` renders in.
 
 class _JSON_Type(NamedTuple):
     shape: type | tuple[type, ...]
@@ -428,11 +433,50 @@ def _fits(value: Any, json_type: str) -> bool:
     return isinstance(value, _JSON_TYPES[json_type].shape)
 
 
+# By the JSON type of the value, the keywords a schema may carry there
+# besides `type` and `description`, each enforced by `check_call` — in a
+# tool's schema and a construct's alike: `additionalProperties` by
+# construction (it refuses an argument the `properties` do not name,
+# always), which is why `_validate_node` demands the word be `false` —
+# `true` would advertise a freedom the check does not grant.  A boolean has
+# no `enum`: its values would render as Python's.
+_KEYWORDS = {"string": {"enum"}, "boolean": set(), "integer": {"enum"}, "number": {"enum"},
+             "array": {"items", "minItems"},
+             "object": {"properties", "required", "additionalProperties"}}
+
+
+def _validate_node(schema: Any, top: bool, grammar: str, refuse: Callable[[str], Exception]) -> str:
+    """The rules a schema of one JSON type keeps in either grammar, the
+    tool's or the construct's — what `check_call` reads unguarded: a type
+    of `_KEYWORDS`; no keyword besides `type`, `description`, the type's
+    own and `$defs` at the top; only `minItems: 1`; an `enum` of one or
+    more values of the type; an object with `properties`,
+    `additionalProperties: false` and a `required` within them.  Answers
+    the JSON type; `refuse` makes the caller's exception from a reason."""
+    json_type = schema.get("type") if isinstance(schema, dict) else None
+    if not isinstance(json_type, str) or json_type not in _KEYWORDS:   # a well-formed `type` may be a list
+        raise refuse(f"not of one JSON type of the {grammar} grammar")
+    extra = set(schema) - {"type", "description", *_KEYWORDS[json_type]} - ({"$defs"} if top else set())
+    if extra:
+        raise refuse(f"{sorted(extra)} is outside the {grammar} grammar")
+    if schema.get("minItems", 1) != 1:
+        raise refuse("only `minItems: 1` has a sentence")
+    if "enum" in schema and not (schema["enum"] and all(_fits(v, json_type) for v in schema["enum"])):
+        raise refuse("an `enum` needs one or more values of its own type")
+    if json_type == "object" and (schema.get("additionalProperties") is not False
+                                  or not isinstance(schema.get("properties"), dict)
+                                  or not set(schema.get("required", ())) <= set(schema["properties"])):
+        raise refuse("an object schema needs `properties`, `additionalProperties: false`"
+                     " and a `required` within its properties")
+    return json_type
+
+
 # --- the argument schema grammar (MODULE_STRUCTURE §4.4) ----------------------
 # `str`, `bool`, `int`, `float`, `Literal[...]` of strings, `list[X]`, a
 # non-empty list `Annotated[list[X], NON_EMPTY]`, a TypedDict, and unions of
 # `str`, `bool`, `int`, `float`, `list[X]` and TypedDicts — no two of one
-# JSON type, but TypedDicts told apart by one `Literal` field — each field
+# JSON type (`int` and `float` both numbers), but TypedDicts told apart by
+# one `Literal` field — each field
 # optionally wrapped in `NotRequired[X]` or `Required[X]`.  Closed, so that
 # every construct schema the agreement below admits is one `check_call`
 # enforces and its sentences can say.  Validated once, at registration; a
@@ -577,29 +621,23 @@ def _json_type(ann: Any) -> str:
 
 # --- the construct schema's own rules, and the agreement (PLUGIN_SYSTEM §5) ----
 
-# What a construct schema may say at each JSON type, besides `type` and
-# `description`: the construct side of the grammar, which `check_call`
-# enforces.  An `enum` is a string's alone, as a `Literal` is of strings.
-_CONSTRUCT_KEYWORDS = {"string": {"enum"}, "boolean": set(), "integer": set(), "number": set(),
-                       "array": {"items", "minItems"},
-                       "object": {"properties", "required", "additionalProperties"}}
-
-
 def _validate_construct_schema(cls: type[Node]) -> None:
     """The construct schema on its own (PLUGIN_SYSTEM §5): `$defs` keys
-    identifiers and no entry a bare `$ref`; every `$ref` outside the
-    top-level `children` of the form `#/$defs/<Name>` naming an own entry,
-    and every cycle of them passing through an object; no `anyOf` arm an
-    `anyOf`; no keyword besides the grammar's, `description`, and `$defs`
-    at the top alone.  `kind` and `children` have rules of their own
-    (`_kinds_of`, `_check_class`)."""
+    identifiers, every entry a schema and none a bare `$ref`; every `$ref`
+    outside the top-level `children` of the form `#/$defs/<Name>` naming
+    an own entry; no `anyOf` arm, its `$ref` followed, an `anyOf`; no
+    keyword besides the grammar's, `description`, and `$defs` at the top
+    alone.  `kind` and `children` have rules of their own (`_kinds_of`,
+    `_check_class`)."""
     schema = cls.construct_schema
     assert schema is not None
     defs = schema.get("$defs", {})
     for name, entry in defs.items():
         if not name.isidentifier():
             raise _refuse(cls, f"`$defs` key `{name}` is not a Python identifier")
-        if isinstance(entry, dict) and "$ref" in entry:
+        if not isinstance(entry, dict):
+            raise _refuse(cls, f"$defs.{name}: not a schema")
+        if "$ref" in entry:
             raise _refuse(cls, f"`$defs` entry `{name}` is a bare `$ref`")
 
     def allowed(s: dict, keywords: set[str], where: str) -> None:
@@ -608,9 +646,7 @@ def _validate_construct_schema(cls: type[Node]) -> None:
             raise _refuse(cls, f"{where}: {sorted(extra)} is outside the construct schema grammar")
 
     def walk(s: Any, where: str, top: bool = False) -> None:
-        if not isinstance(s, dict):
-            raise _refuse(cls, f"{where}: not a schema")
-        if "$ref" in s:
+        if isinstance(s, dict) and "$ref" in s:
             allowed(s, {"$ref"}, where)
             m = _REF.match(s["$ref"]) if isinstance(s["$ref"], str) else None
             if m is None:
@@ -618,62 +654,32 @@ def _validate_construct_schema(cls: type[Node]) -> None:
             if m.group(1) not in defs:
                 raise _refuse(cls, f"`$ref` `{s['$ref']}` names no `$defs` entry of the class")
             return
-        if "anyOf" in s:
+        if isinstance(s, dict) and "anyOf" in s:
             allowed(s, {"anyOf"}, where)
             for i, arm in enumerate(s["anyOf"]):
-                if isinstance(arm, dict) and "anyOf" in arm:
+                walk(arm, f"{where}<{i}>")             # a schema, its `$ref` naming an own entry
+                if "anyOf" in _resolved(arm, defs):
                     raise _refuse(cls, f"{where}: an `anyOf` arm is itself an `anyOf`")
-                walk(arm, f"{where}<{i}>")
             return
-        json_type = s.get("type")
-        if not isinstance(json_type, str) or json_type not in _CONSTRUCT_KEYWORDS:
-            raise _refuse(cls, f"{where}: not of one JSON type of the construct schema grammar")
-        allowed(s, {"type", *_CONSTRUCT_KEYWORDS[json_type]} | ({"$defs"} if top else set()), where)
+        json_type = _validate_node(s, top, "construct schema", lambda what: _refuse(cls, f"{where}: {what}"))
         if json_type == "object":
-            if (s.get("additionalProperties") is not False
-                    or not isinstance(s.get("properties"), dict)
-                    or not set(s.get("required", ())) <= set(s["properties"])):
-                raise _refuse(cls, f"{where}: an object schema needs `properties`,"
-                                   " `additionalProperties: false` and a `required` within its properties")
             for field, property in s["properties"].items():
                 if not (top and field in CONSTRUCT_FRAMEWORK_FIELDS):
                     walk(property, f"{where}.{field}")
-        elif json_type == "string" and "enum" in s:
-            if not (s["enum"] and all(isinstance(v, str) for v in s["enum"])):
-                raise _refuse(cls, f"{where}: an `enum` is of one or more strings")
         elif json_type == "array":
-            if s.get("minItems", 1) != 1:
-                raise _refuse(cls, f"{where}: only `minItems: 1` has a sentence")
             walk(s.get("items"), f"{where}[]")
 
     walk(schema, "construct_schema", top=True)
     for name, entry in defs.items():
         walk(entry, f"$defs.{name}")
-    if (name := _object_free_cycle(defs)) is not None:
-        raise _refuse(cls, f"the `$ref`s from `$defs` `{name}` cycle back to it through no object")
 
 
-def _object_free_cycle(defs: Mapping[str, Any]) -> str | None:
-    """A `$defs` entry reaching itself through `$ref`s without passing an
-    object — where the agreement, which stops at a `$ref` met again with
-    the same annotation, would never meet a TypedDict again — or None."""
-    def reaches(s: Any) -> list[str]:
-        if not isinstance(s, dict) or s.get("type") == "object":
-            return []
-        if "$ref" in s:
-            return [_def_name(s["$ref"])]
-        return [n for arm in s.get("anyOf", []) for n in reaches(arm)] + reaches(s.get("items"))
-    edges = {name: reaches(entry) for name, entry in defs.items()}
-    for start in defs:
-        seen, stack = set(), list(edges[start])
-        while stack:
-            name = stack.pop()
-            if name == start:
-                return start
-            if name not in seen:
-                seen.add(name)
-                stack.extend(edges.get(name, []))
-    return None
+def _required_enum_fields(arms: list[JSON_Schema]) -> list[str]:
+    """The fields every object arm requires and declares with an `enum`, in
+    the first arm's order — the schema side of `_choosing_field`: one field
+    when the arms are told apart."""
+    return [f for f in arms[0]["properties"]
+            if all(f in arm.get("required", ()) and "enum" in arm["properties"].get(f, {}) for arm in arms)]
 
 
 @dataclass
@@ -713,7 +719,7 @@ class _Agreement:
             if ("minItems" in schema) != item[1]:
                 raise self.disagree(where, "`minItems: 1` is `Annotated[list[X], NON_EMPTY]`, and only that")
             self.agree(schema["items"], item[0], where + "[]")
-        elif json_type == "string" and "enum" in schema:
+        elif "enum" in schema:                 # a `Literal` of the grammar is of strings: a non-string `enum` disagrees
             if get_origin(ann) is not Literal or set(get_args(ann)) != set(schema["enum"]):
                 raise self.disagree(where, f"an `enum` of {schema['enum']} against {ann!r}")
         elif _JSON_NAMES.get(ann) != json_type:
@@ -738,13 +744,13 @@ class _Agreement:
 
     def union(self, arms: list[JSON_Schema], ann: Any, where: str) -> None:
         """The `anyOf`'s arms and the union's pair one for one: by JSON
-        type, and objects by the values of the choosing field."""
+        type, as many of each on both sides, and objects by the values of
+        the choosing field."""
         if get_origin(ann) not in (Union, UnionType):
             raise self.disagree(where, f"an `anyOf` against {ann!r}")
-        resolved = {id(arm): self.defs[_def_name(arm["$ref"])] if "$ref" in arm else arm for arm in arms}
         by_type: dict[str, list[JSON_Schema]] = {}
         for arm in arms:
-            by_type.setdefault(_arm_type(resolved[id(arm)]["type"]), []).append(arm)
+            by_type.setdefault(_arm_type(_resolved(arm, self.defs)["type"]), []).append(arm)
         typed_by_type: dict[str, list[Any]] = {}
         for typed in get_args(ann):
             typed_by_type.setdefault(_arm_type(_json_type(typed)), []).append(typed)
@@ -753,35 +759,32 @@ class _Agreement:
                                        f" union's {sorted(typed_by_type)}")
         for json_type, schema_arms in by_type.items():
             typed_arms = typed_by_type[json_type]
-            if json_type != "object":
-                if len(schema_arms) != 1:
-                    raise self.disagree(where, f"two `anyOf` arms of one JSON type, {json_type}")
-                self.agree(schema_arms[0], typed_arms[0], f"{where}<{json_type}>")
-            elif len(schema_arms) == 1 == len(typed_arms):
+            if len(schema_arms) != len(typed_arms):
+                raise self.disagree(where, f"{len(schema_arms)} `anyOf` arms of JSON type {json_type}"
+                                           f" against {len(typed_arms)} of the union's")
+            if len(schema_arms) == 1:
                 self.agree(schema_arms[0], typed_arms[0], f"{where}<{json_type}>")
             else:
-                self.told_apart(schema_arms, [resolved[id(arm)] for arm in schema_arms], typed_arms, where)
+                self.told_apart(schema_arms, typed_arms, where)
 
-    def told_apart(self, arms: list[JSON_Schema], resolved: list[JSON_Schema],
-                   typed_arms: list[Any], where: str) -> None:
-        """Objects among objects: the one field every arm declares with an
-        `enum` is the TypedDicts' choosing field, and each arm pairs with
-        the TypedDict whose `Literal` holds the same values."""
+    def told_apart(self, arms: list[JSON_Schema], typed_arms: list[Any], where: str) -> None:
+        """Objects among objects: the one field every arm requires with an
+        `enum` is the TypedDicts' choosing field, and the arms' value sets
+        are the TypedDicts' `Literal` value sets, one for one."""
         field = _choosing_field(typed_arms, where)
-        choosing = [f for f in resolved[0]["properties"]
-                    if all("enum" in r["properties"].get(f, {}) for r in resolved)]
+        resolved = [_resolved(arm, self.defs) for arm in arms]
+        choosing = _required_enum_fields(resolved)
         if choosing != [field]:
             raise self.disagree(where, f"the `anyOf`'s objects are told apart by {choosing},"
                                        f" the union's TypedDicts by `{field}`")
-        if len(arms) != len(typed_arms):
-            raise self.disagree(where, f"{len(arms)} object arms against {len(typed_arms)} TypedDicts")
-        values = {td: frozenset(get_args(_declared(td)[0][field])) for td in typed_arms}
-        for arm, r in zip(arms, resolved):
-            enum = frozenset(r["properties"][field]["enum"])
-            td = next((td for td, vs in values.items() if vs == enum), None)
-            if td is None:
-                raise self.disagree(where, f"no TypedDict arm has `{field}` of {sorted(enum)}")
-            self.agree(arm, td, f"{where}<{field}={'|'.join(sorted(enum))}>")
+        by_values = {frozenset(get_args(_declared(td)[0][field])): td for td in typed_arms}
+        arm_values = [frozenset(r["properties"][field]["enum"]) for r in resolved]
+        if Counter(arm_values) != Counter(by_values.keys()):
+            shown = [sorted(map(str, values)) for values in arm_values]
+            raise self.disagree(where, f"the `anyOf` arms' `{field}` values {sorted(shown)} against the"
+                                       f" union's {sorted(sorted(values) for values in by_values)}")
+        for arm, values in zip(arms, arm_values):
+            self.agree(arm, by_values[values], f"{where}<{field}={'|'.join(sorted(values))}>")
 
 
 # --- the check (MODULE_STRUCTURE §4.4) ------------------------------------------
@@ -807,7 +810,7 @@ def check_call(schema: JSON_Schema, holder: str, arguments: Mapping[str, Any], *
     `edit.py` (§4.2), the holder the kind: `kind` passed over unread — the
     kind table chose the class from it —, `kind` and `children` left out
     of what the kind "takes", nothing marked."""
-    check = _Check(schema.get("$defs", {}), construct)
+    check = _Check(schema.get("$defs", {}) if construct else {}, construct)
     if construct:
         check.object(schema, holder, arguments, prefix="")
         return
@@ -836,23 +839,18 @@ def _nested_deeper_than(value: Any, levels: int) -> bool:
 @dataclass(frozen=True)
 class _Check:
     """One check's standing knowledge: the `$defs` its `$ref`s are followed
-    into, and whether the top-level object is a construct."""
+    into — a construct schema's own; a tool's none, since a tool's one
+    `$ref` names the constructs, which are edit.py's — and whether the
+    top-level object is a construct."""
     defs: Mapping[str, Any]
     construct: bool
 
-    def resolve(self, schema: JSON_Schema) -> JSON_Schema:
-        return self.defs[_def_name(schema["$ref"])] if "$ref" in schema else schema
-
     def holds_constructs(self, items: JSON_Schema) -> bool:
-        """Whether an `items` names `Construct` or a node class — a `$ref`,
-        or an `anyOf` of `$ref`s, to them.  No `$defs` entry bears their
-        names (PLUGIN_SYSTEM §5), so a `$ref` the `$defs` do not hold
-        names one."""
+        """Whether an `items` names `Construct` or a node class: a `$ref`,
+        or an `anyOf` of `$ref`s, the check holds no definition for — no
+        `$defs` entry of a class bears their names (PLUGIN_SYSTEM §5)."""
         arms = items["anyOf"] if "anyOf" in items else [items]
-        return all("$ref" in arm and self.is_construct(_def_name(arm["$ref"])) for arm in arms)
-
-    def is_construct(self, name: str) -> bool:
-        return name == CONSTRUCT or name not in self.defs
+        return all("$ref" in arm and _def_name(arm["$ref"]) not in self.defs for arm in arms)
 
     def object(self, schema: JSON_Schema, holder: str, mapping: Mapping[str, Any], prefix: str) -> None:
         """An object's fields against its `properties`: the names, then each
@@ -873,9 +871,9 @@ class _Check:
         a typed `items`' element by its index, an `anyOf` by the arm the
         value is for.  The constructs are opaque here, `edit.py`'s to
         check."""
-        schema = self.resolve(schema)
+        schema = _resolved(schema, self.defs)
         if "anyOf" in schema:
-            schema = self.arm(value, [self.resolve(arm) for arm in schema["anyOf"]], holder, path)
+            schema = self.arm(value, [_resolved(arm, self.defs) for arm in schema["anyOf"]], holder, path)
         json_type = schema["type"]
         if not _fits(value, json_type):
             raise InvalidField(path, _must_be([json_type]))
@@ -892,11 +890,12 @@ class _Check:
     def arm(self, value: Any, arms: list[JSON_Schema], holder: str, path: str) -> JSON_Schema:
         """The arm of an `anyOf` the value is checked against: by its JSON
         type — of no arm's, `must be` the arms' distinct types, each once,
-        in the schema's order; among objects told apart by an `enum`
-        field, the one every arm declares with an `enum`: a field none of
-        them declares first, `UnexpectedField` over all their fields in
-        the order they first appear, then the choosing field missing, then
-        its value outside every arm, `must be one of` all their values."""
+        in the schema's order; among objects told apart by a required
+        `enum` field, the one every arm requires with an `enum`: a field
+        none of them declares first, `UnexpectedField` over all their
+        fields in the order they first appear, then the choosing field
+        missing, then its value outside every arm, `must be one of` all
+        their values."""
         fitting = [arm for arm in arms if _fits(value, arm["type"])]
         if not fitting:
             raise InvalidField(path, _must_be([arm["type"] for arm in arms]))
@@ -904,8 +903,7 @@ class _Check:
             return fitting[0]
         declared = list(dict.fromkeys(field for arm in fitting for field in arm["properties"]))
         _check_names(declared, (), holder, value, path + ".")
-        choosing, = [field for field in declared
-                     if all("enum" in arm["properties"].get(field, {}) for arm in fitting)]
+        choosing, = _required_enum_fields(fitting)
         if choosing not in value:
             raise MissingField(holder, f"{path}.{choosing}")
         for arm in fitting:
@@ -935,6 +933,11 @@ def _def_name(ref: str) -> str:
     return ref.removeprefix("#/$defs/")
 
 
+def _resolved(schema: JSON_Schema, defs: Mapping[str, Any]) -> JSON_Schema:
+    """`schema`, its `$ref` followed one step into `defs`."""
+    return defs[_def_name(schema["$ref"])] if "$ref" in schema else schema
+
+
 def _must_be(json_types: Iterable[str]) -> str:
     """`must be` the types' phrases, each once, in the order given, joined by `or`."""
     return "must be " + " or ".join(dict.fromkeys(_JSON_TYPES[t].phrase for t in json_types))
@@ -945,20 +948,10 @@ def _one_of(values: Iterable[Any]) -> str:
 
 
 # --- the tool schema grammar (TOOL_SCHEMAS.md §4) ------------------------------
-# The keywords listed below are the whole of what a tool's schema may say —
-# closed like the argument schema grammar above, so that every rendering
-# stays within RENDER_BASELINES §2's vocabulary; `validate_call_schema`
-# refuses a schema saying anything more.
-
-# By the JSON type of the value, the keywords a schema may carry there
-# besides `type` and `description`, each enforced by `check_call`:
-# `additionalProperties` by construction (it refuses an argument the
-# `properties` do not name, always), which is why `_validate_schema` demands
-# the word be `false` — `true` would advertise a freedom the check does not
-# grant.  A boolean has no `enum`: its values would render as Python's.
-_KEYWORDS = {"string": {"enum"}, "boolean": set(), "integer": {"enum"}, "number": {"enum"},
-             "array": {"items", "minItems"},
-             "object": {"properties", "required", "additionalProperties"}}
+# `_KEYWORDS` is the whole of what a tool's schema may say — closed like the
+# argument schema grammar above, so that every rendering stays within
+# RENDER_BASELINES §2's vocabulary; `validate_call_schema` refuses a schema
+# saying anything more.
 _CONSTRUCTS = {"$ref": f"#/$defs/{CONSTRUCT}"}   # `items` the check leaves to `edit.py`
 
 
@@ -983,26 +976,12 @@ _BARE_OBJECTS = {("answer", "answer")}
 def _validate_schema(schema: Any, where: str, top: bool) -> None:
     def refuse(what: str) -> TAT_InternalError:
         return TAT_InternalError(f"{where}: {what}")
-    json_type = schema.get("type") if isinstance(schema, dict) else None
-    if not isinstance(json_type, str) or json_type not in _KEYWORDS:   # a well-formed `type` may be a list
-        raise refuse("not of one JSON type of the tool schema grammar")
+    json_type = _validate_node(schema, top, "tool schema", refuse)
     if top and json_type != "object":
         raise refuse("a tool takes an object of arguments")
-    extra = set(schema) - {"type", "description", *_KEYWORDS[json_type]} - ({"$defs"} if top else set())
-    if extra:
-        raise refuse(f"{sorted(extra)} is outside the tool schema grammar")
-    if schema.get("minItems", 1) != 1:
-        raise refuse("only `minItems: 1` has a sentence")
-    if "enum" in schema and not (schema["enum"] and all(_fits(v, json_type) for v in schema["enum"])):
-        raise refuse("an `enum` needs one or more values of its own type")
     if json_type == "array" and schema.get("items") != _CONSTRUCTS:
         _validate_schema(schema.get("items"), where + "[]", top=False)
     if json_type == "object":
-        if (schema.get("additionalProperties") is not False
-                or not isinstance(schema.get("properties"), dict)
-                or not set(schema.get("required", ())) <= set(schema["properties"])):
-            raise refuse("an object schema needs `properties`, `additionalProperties: false`"
-                         " and a `required` within its properties")
         for field, property in schema["properties"].items():
             if top and (where, field) in _BARE_OBJECTS and _is_bare_object(property):
                 continue

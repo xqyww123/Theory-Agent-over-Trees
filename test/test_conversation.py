@@ -657,30 +657,31 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
         theory_deletes
 
 
-async def test_the_header_lexicon_is_isabelles(conversation):
-    """SESSION_AND_THEORY §2: `HEADER_LEXICON` is exactly the identifier-shaped
-    words of `Thy_Header.bootstrap_keywords`, read from the running Isabelle."""
-    words = await call(conversation.forest.conversation, "TAT_test.header_lexicon", None)
-    assert len(words) == len(set(words)) and set(words) == M.HEADER_LEXICON, sorted(words)
-
-
-async def test_a_theory_named_with_a_header_word_evaluates_and_compiles(conversation):
-    """SESSION_AND_THEORY §2: a theory named `text`, a word of the header
-    lexicon, writes `theory "text"` in its own header, which Isabelle
-    accepts at evaluation and the compile writes to the file."""
+async def test_a_theory_named_with_a_keyword_evaluates_compiles_and_builds_as_one_header(conversation):
+    """SESSION_AND_THEORY §2: a theory named `lemmas`, a command of Pure,
+    writes `theory "lemmas"` in its own header, which evaluation accepts
+    and the compile writes to the file; and the file's header stays one
+    command span under the keyword table a build reads it with — the
+    evaluated theory's — which a bare `lemmas` would cut in two."""
     forest, kinds = conversation.forest, conversation.kinds
     async with forest.lock:
         (sess,) = await edit.insert(forest, 0, [
             {"kind": "session", "name": "TAT_E2E_W", "parent_session": "HOL",
-             "children": [theory("text", "Main")]}], kinds)
+             "children": [theory("lemmas", "Main")]}], kinds)
     (t,) = sess.sub_nodes
-    assert t.header() == 'theory "text"\n  imports "Main"\nbegin'
+    assert t.header() == 'theory "lemmas"\n  imports "Main"\nbegin'
     r = await t.evaluate_to(None, False)
     assert r == M.EvaluationResult(None, None) and t.is_finished(), r
-    assert t.evaluation_status_beginning == READY and t.keywords is not None and "text" in t.keywords
+    assert t.evaluation_status_beginning == READY and t.keywords is not None and "lemmas" in t.keywords
     compile.compile(forest, ())
-    assert (conversation.working_directory / "TAT_E2E_W" / "text.thy").read_text() == (
-        'theory "text"\n  imports "Main"\nbegin\nend\n')
+    text = (conversation.working_directory / "TAT_E2E_W" / "lemmas.thy").read_text()
+    assert text == 'theory "lemmas"\n  imports "Main"\nbegin\nend\n'
+    spans = await call(conversation.forest.conversation, "TAT_test.spans",
+                       (t._state_before_ending.to_msgpack(), text))
+    assert spans[0] == t.header(), spans
+    bare = await call(conversation.forest.conversation, "TAT_test.spans",
+                      (t._state_before_ending.to_msgpack(), text.replace('"lemmas"', "lemmas")))
+    assert bare[0] == "theory", bare
 
 
 async def test_a_session_folder_that_cannot_be_made_stops_the_header_before_it_runs(conversation):

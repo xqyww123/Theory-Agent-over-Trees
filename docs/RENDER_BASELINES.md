@@ -93,13 +93,16 @@ declares them, less `kind` and `children` at a construct's top — for a
 union told apart by a `Literal` field, before
 that field has chosen an arm, every arm's fields in the order they
 first appear, the arms in the schema's order (MODULE_STRUCTURE §4.4);
-for a tool call's own arguments the holder is the tool:
+a holder declaring no field takes `no fields`, or `no arguments` within
+a tool call; for a tool call's own arguments the holder is the tool:
 
 ```
 A `lemma` has no field `statment`; it takes `name`, `statement`.
 `statement.premises[1]` has no field `nmae`; it takes `name`, `term`.
+A `note` has no field `children`; it takes no fields.
 The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constructs`, `evaluate`, `auto_construct`.
 `location` has no argument `where`; it takes `position`, `node_id`.
+`answer` has no argument `verdict`; it takes no arguments.
 ```
 
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the

@@ -30,7 +30,7 @@ from .exceptions import (
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
     NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
-from .plugin import check_call
+from .plugin import _must_be, check_call
 
 
 def _gate(hook, *args) -> None:
@@ -427,7 +427,7 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
         raise MalformedRawAST(missing_kind=True)
     kind = raw["kind"]
     if not isinstance(kind, str):
-        raise InvalidField("kind", "must be a string")
+        raise InvalidField("kind", _must_be(["string"]))
     if kind not in kinds:
         raise UnknownKind(kind, list(kinds))
     cls = kinds[kind]

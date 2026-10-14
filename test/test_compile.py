@@ -137,7 +137,7 @@ def test_the_report_and_the_root_of_compilation_md_section_2(tmp_path):
         ("ROOT", "file"), ("Sorting/Late.thy", "file"), ("Sorting/Merge.thy", "file"),
         ("Sorting/Sorting.thy", "file"), ("Sorting", "folder")]
     assert (directory / "Sorting" / "Merge.thy").read_text() == (
-        'theory Merge\n  imports "Sorting" "HOL-Library.Multiset"\nbegin\nend\n')
+        'theory "Merge"\n  imports "Sorting" "HOL-Library.Multiset"\nbegin\nend\n')
     assert report.removed == (C.Entry(C.Path("Old/Stale.thy"), "file"), C.Entry(C.Path("Old"), "folder"))
     # a second compile changes nothing and removes nothing
     again = C.compile(f, [])
@@ -151,7 +151,7 @@ def test_a_files_text_is_converted_once_and_ends_every_line(tmp_path):
     rendering = C.render(f)
     (text,) = rendering.files.values()
     assert list(rendering.files) == [C.Path("S/A.thy")]
-    assert text == ('theory A\n  imports "Main"\nbegin\n'
+    assert text == ('theory "A"\n  imports "Main"\nbegin\n'
                     'text \\<open>x\\<close>\n'
                     '\n'
                     'section \\<open>B\\<close>\n'
@@ -611,7 +611,7 @@ def test_a_theorys_description_is_a_text_block_before_the_header(tmp_path):
     files = C.render(f).files
     assert files[C.Path("S/A.thy")] == (
         'text \\<open>A "quoted" word "and" a second line\nhere\\<close>\n'
-        'theory A\n  imports "Main"\nbegin\n'
+        'theory "A"\n  imports "Main"\nbegin\n'
         'text \\<open>x\\<close>\n'
         'end\n')
-    assert files[C.Path("S/B.thy")].startswith("theory B\n")
+    assert files[C.Path("S/B.thy")].startswith('theory "B"\n')

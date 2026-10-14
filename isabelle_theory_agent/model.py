@@ -2465,15 +2465,6 @@ class Session(Unchained_Node):
             "a walk reached a Session: evaluation is transparent to the Session layer")
 
 
-# The identifier-shaped words of Isabelle's fixed header lexicon,
-# `Thy_Header.bootstrap_keywords`: a theory so named is written as a string
-# token in its own header (SESSION_AND_THEORY §2).  Pinned against Isabelle
-# by test_conversation.
-HEADER_LEXICON = frozenset({
-    "abbrevs", "and", "begin", "imports", "keywords", "ML", "chapter", "paragraph", "section",
-    "subparagraph", "subsection", "subsubsection", "text", "text_raw", "theory", "txt"})
-
-
 class Theory_RawAST(TypedDict):
     kind: Literal["theory"]
     name: str
@@ -2611,19 +2602,17 @@ class Theory(StdBlock):
 
     def header(self) -> str:
         """The `theory … begin` span, as the tree's file will open — the one
-        text its evaluation runs and its emission writes: the name a string
-        token when it is a word of the header lexicon, bare otherwise; every
-        import a string token, so a hyphenated name is one token to
-        Isabelle's lexer; after the agent's, on a theory none of whose
-        imports resolves to a theory of the forest, the imports the loaded
-        plugins declare (SESSION_AND_THEORY §2)."""
+        text its evaluation runs and its emission writes: the name and every
+        import a string token, so a keyword or a hyphenated name is one
+        token to whoever reads the file (SESSION_AND_THEORY §2); after the
+        agent's, on a theory none of whose imports resolves to a theory of
+        the forest, the imports the loaded plugins declare."""
         forest = self.forest()
         items = list(self.imports)
         if not forest._resolved_imports(self):
             items += [item for item in forest.imports if item not in items]
-        name = string_token(self.name) if self.name in HEADER_LEXICON else self.name
         imports = " ".join(string_token(item) for item in items)
-        return f"theory {name}\n  imports {imports}\nbegin"
+        return f"theory {string_token(self.name)}\n  imports {imports}\nbegin"
 
     def emit_beginning(self, indent, out):
         """A non-empty `description` as a `text ‹…›` block, then the header,

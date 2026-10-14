@@ -168,7 +168,7 @@ def test_a_session_with_its_theories_in_one_call():
     assert (s.kind, x.kind) == ("session", "theory")
     assert [f.id_of(n) for n in (s, x, y, a)] == ["session_Arith", "theory_X", "theory_Y", "t_a"]
     assert f.resolve("session_Arith.theory_Y.t_a") is a
-    assert x.header() == 'theory X\n  imports "Main"\nbegin'
+    assert x.header() == 'theory "X"\n  imports "Main"\nbegin'
     assert not f.is_finished() and s._operations_ready() and not x._operations_ready()
     inv(f)
 
@@ -182,7 +182,7 @@ def test_the_fields_are_kept_and_stored(tmp_path):
         description="Arithmetic")])
     assert s.options == [{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}]
     assert s.description == "Arithmetic" and s.sub_nodes[0].description == "Sums,\nverified."   # as written
-    assert s.sub_nodes[0].header() == 'theory X\n  imports "Main" "HOL-Library.Multiset"\nbegin'
+    assert s.sub_nodes[0].header() == 'theory "X"\n  imports "Main" "HOL-Library.Multiset"\nbegin'
     before = shape(f)
     store.close()
     f2 = Forest_Under_Test(store=Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log()))
@@ -237,16 +237,15 @@ def test_the_string_token_follows_isabelles_quoting_rule():
     assert M.string_token("λx. x ≠ y") == '"λx. x ≠ y"'
 
 
-def test_the_theory_name_is_a_string_token_when_it_is_a_header_word():
-    """SESSION_AND_THEORY §2: the header lexicon, not `keywords`, governs
-    the theory's own name — `theory "text"`, `theory lemma` — and every
-    import is a string token."""
+def test_the_theory_name_and_every_import_are_string_tokens():
+    """SESSION_AND_THEORY §2: the theory's own name is a string token, as
+    every import is, whatever keywords whoever builds the file reads it
+    with."""
     f = Forest_Under_Test()
     (s,) = insert(f, f, 0, [session("S", theory("text"), theory("lemma", "HOL-Library.Multiset"))])
     t, l = s.sub_nodes
     assert t.header() == 'theory "text"\n  imports "Main"\nbegin'
-    assert l.header() == 'theory lemma\n  imports "HOL-Library.Multiset"\nbegin'
-    assert "lemma" not in M.HEADER_LEXICON and {"text", "theory", "ML"} <= M.HEADER_LEXICON
+    assert l.header() == 'theory "lemma"\n  imports "HOL-Library.Multiset"\nbegin'
 
 
 def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empty_or_none(tmp_path):
@@ -373,7 +372,7 @@ def test_a_tree_emits_its_header_its_nodes_and_its_end(tmp_path):
                                                                  {"kind": "t", "name": "c"}]},
                      {"kind": "t", "name": "d"}])
     written = text(y)
-    assert written == ('theory Y\n  imports "Main" "HOL-Library.Multiset"\nbegin\n'
+    assert written == ('theory "Y"\n  imports "Main" "HOL-Library.Multiset"\nbegin\n'
                        'text ‹a›\n'
                        '\n'
                        'section ‹S›\n'
@@ -642,7 +641,7 @@ def test_the_field_checks():
     for item in ('"lib/Rel"', "lib/Rel", "Main.thy", "A.B.C", "S'.Foo", "S.Foo'", "-x"):
         refused(s, theory("Z", "Main", item), "imports[1]", not_a_name)
     (z,) = insert(f, s, 0, [theory("Z", "Main", "Launchbury.AList-Utils")])
-    assert z.header() == 'theory Z\n  imports "Main" "Launchbury.AList-Utils"\nbegin'
+    assert z.header() == 'theory "Z"\n  imports "Main" "Launchbury.AList-Utils"\nbegin'
     run(locked(f, edit.delete(z)))
     refused(f, session("S") | {"parent_session": ""}, "parent_session", empty)
     refused(f, session("S", parent_session="HOL-Libary"), "parent_session",
@@ -745,9 +744,9 @@ def test_the_header_adds_the_imports_the_plugins_declare_where_no_forest_theory_
     (s,) = insert(f, f, 0, [session("S", theory("A", "Main", "HOL-Library.Multiset"), theory("B", "S.A"),
                                     theory("C", "Minilang_AoA.Minilang_AoA"))])
     a, b, c = s.sub_nodes
-    assert a.header() == 'theory A\n  imports "Main" "HOL-Library.Multiset" "Minilang_AoA.Minilang_AoA"\nbegin'
-    assert b.header() == 'theory B\n  imports "S.A"\nbegin'
-    assert c.header() == 'theory C\n  imports "Minilang_AoA.Minilang_AoA"\nbegin'      # written once
+    assert a.header() == 'theory "A"\n  imports "Main" "HOL-Library.Multiset" "Minilang_AoA.Minilang_AoA"\nbegin'
+    assert b.header() == 'theory "B"\n  imports "S.A"\nbegin'
+    assert c.header() == 'theory "C"\n  imports "Minilang_AoA.Minilang_AoA"\nbegin'      # written once
     out = io.StringIO()
     a.print_fields(0, out, M.RECALL, 0)
     assert out.getvalue() == "imports: Main HOL-Library.Multiset\n"

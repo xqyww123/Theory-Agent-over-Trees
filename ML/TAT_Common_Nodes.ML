@@ -14,9 +14,6 @@ sig
       when it passed and its state is in the slot (docs/EXCEPTIONS.md §1).  The
       run answers a state and no message, or no state and at least one message;
       anything else is a bug*)
-  val identifier_words : Keyword.keywords -> string list
-    (*the words of a keyword table that are identifiers, from both lexicons,
-      in the `\<name>` spelling (SESSION_AND_THEORY §2)*)
 end
 
 structure TAT_Common_Nodes : TAT_COMMON_NODES =
@@ -73,13 +70,14 @@ fun import_sessions {session_name, master_dir} (header : Thy_Header.header) =
           (#theory_name (Resources.import_name session_name master_dir import)))
       (#imports header)
 
-fun identifier_words table =
-  filter Symbol_Pos.is_identifier
-    (Scan.dest_lexicon (Keyword.minor_keywords table) @ Scan.dest_lexicon (Keyword.major_keywords table))
-
-(*the theory's keyword table: what the Python class's `print_name` quotes,
-  the rule of Token.print_name*)
-fun keywords st = identifier_words (Thy_Header.get_keywords (Toplevel.theory_of st))
+(*the words of the theory's keyword table that are identifiers, from both
+  lexicons, in the `\<name>` spelling (SESSION_AND_THEORY §2): what the
+  Python class's `print_name` quotes, the rule of Token.print_name*)
+fun keywords st =
+  let val table = Thy_Header.get_keywords (Toplevel.theory_of st)
+   in filter Symbol_Pos.is_identifier
+        (Scan.dest_lexicon (Keyword.minor_keywords table) @ Scan.dest_lexicon (Keyword.major_keywords table))
+  end
 
 (*the header, from a fresh toplevel state, into the first child's slot;
   answers the header's error messages and, when it passed, the session of

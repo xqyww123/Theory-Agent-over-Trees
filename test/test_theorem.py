@@ -647,7 +647,7 @@ async def test_isabelle_tat_compile_writes_the_theory_and_isabelle_reads_it(std_
         "TAT_Std_C/TAT_Std_C_A.thy written", "ROOT written", "removed TAT_Std_C/Gone.proof-store"]
     [lines] = fenced_blocks(TH, "5.")
     assert (wd / "TAT_Std_C" / "TAT_Std_C_A.thy").read_text() == (
-        'theory TAT_Std_C_A\n  imports "Main" "Minilang_AoA.Minilang_AoA"\nbegin\n'
+        'theory "TAT_Std_C_A"\n  imports "Main" "Minilang_AoA.Minilang_AoA"\nbegin\n'
         + "".join(ascii_of_unicode(line) + "\n" for line in lines[:-1]) + "  sorry\nend\n")
     assert (wd / "ROOT").read_text() == (
         'session "TAT_Std_C" in "TAT_Std_C" = "HOL" +\n'

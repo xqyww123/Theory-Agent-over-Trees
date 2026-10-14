@@ -322,15 +322,20 @@ end
 \<close>
 
 setup \<open>
-(*the identifier-shaped words of the fixed header lexicon, which the Python
-  side's HEADER_LEXICON must equal (SESSION_AND_THEORY §2)*)
+(*the command spans a build cuts a text into under the keyword table of the
+  theory in the slot, each as its source: what a file's header must stay one
+  of (SESSION_AND_THEORY §2)*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
-  TAT_Framework.register_callback {python_packages = []} (fn _ =>
-    {name = "TAT_test.header_lexicon",
+  TAT_Framework.register_callback {python_packages = []} (fn env =>
+    {name = "TAT_test.spans",
       on_interrupt = Remote_Procedure_Calling.Reraise,
-      arg_schema = unpackUnit,
+      arg_schema = unpackPair (#slot_unpacker env, unpackString),
       ret_schema = packList packString,
-      function = fn () => TAT_Common_Nodes.identifier_words Thy_Header.bootstrap_keywords,
+      function = fn (slot, text) =>
+        let val keywords = Thy_Header.get_keywords (Toplevel.theory_of (#get slot ()))
+        in Outer_Syntax.parse_spans (Token.explode keywords Position.none text)
+           |> map (fn span => implode (map Token.unparse (Command_Span.content span)))
+        end,
       timeout = NONE})
 end
 \<close>

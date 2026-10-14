@@ -245,7 +245,7 @@ class UnexpectedField(RawASTError):
         else:
             subject = f"A `{self.holder}`"
         what = "argument" if self.of_tool else "field"
-        takes = ", ".join(f"`{t}`" for t in self.takes)
+        takes = ", ".join(f"`{t}`" for t in self.takes) or f"no {what}s"
         return f"{subject} has no {what} `{self.field}`; it takes {takes}."
 
 

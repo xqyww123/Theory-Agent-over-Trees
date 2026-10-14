@@ -196,6 +196,9 @@ def test_the_rawast_error_family():
     with pytest.raises(InvalidField) as e:
         run(insert({"kind": "t", "name": 5}))
     assert e.value.reason == "must be a string"
+    with pytest.raises(InvalidField) as e:
+        run(insert({"kind": 5}))
+    assert (e.value.field, e.value.reason) == ("kind", "must be a string")
     with pytest.raises(InvalidField):
         run(insert({"kind": "t", "name": True}))     # a flag is not a string
     with pytest.raises(InvalidName) as e:
@@ -231,14 +234,20 @@ def refused(schema, cls, raw):
     return e.value
 
 
+INNER = {"type": "object",                                      # a nested object naming the two framework fields
+         "properties": {"kind": {"type": "string"}, "children": {"type": "array", "items": {"type": "string"}}},
+         "required": ["kind"], "additionalProperties": False}
+
+
 def test_a_construct_is_checked_against_its_construct_schema():
     """MODULE_STRUCTURE §4.4, `check_call` over a construct: the holder is
     the kind; `kind` passes unread, since the kind table chose the class
-    from it; `children` is a declared field — an array, `minItems` where
-    declared, its elements `edit.py`'s — which the kind does not "take",
-    nor `kind`; a `$ref` is followed into the class's `$defs`; an `enum`
-    and `minItems` speak for a construct's field as for a tool's argument;
-    the innermost field at fault is reported, a typo before its own hole."""
+    from it; `children` is a declared field — an array, its elements
+    `edit.py`'s — which the kind does not "take", nor `kind`, the two set
+    aside at the top alone; a `$ref` is followed into the class's `$defs`;
+    an `enum` and `minItems` speak for a construct's field as for a tool's
+    argument; the innermost field at fault is reported, a typo before its
+    own hole."""
     RICH = construct_schema({
         "name": {"type": "string"},
         "priority": {"type": "integer"},
@@ -246,15 +255,17 @@ def test_a_construct_is_checked_against_its_construct_schema():
         "note": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
         "facts": {"type": "array", "items": {"$ref": "#/$defs/Fact"}},
         "tags": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"}, "minItems": 1},
-    }, required=["name"], defs={"Fact": FACT})
+        "inner": {"$ref": "#/$defs/Inner"},
+        "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"}},
+    }, required=["name"], defs={"Fact": FACT, "Inner": INNER})
     check(RICH, {"kind": "t", "name": "x"})                       # optionals absent
     check(RICH, {"kind": "lemma", "name": "x"})                   # `kind` unread
     check(RICH, {"kind": "t", "name": "x", "priority": 3, "level": "low", "note": "n",
-                 "facts": [{"name": "f"}], "tags": ["a"],
+                 "facts": [{"name": "f"}], "tags": ["a"], "inner": {"kind": "k", "children": ["a"]},
                  "children": [5, "not a construct"]})             # the elements are edit.py's
     check(RICH, {"kind": "t", "name": "x", "note": 7})            # the union's other arm
-    takes = ["name", "priority", "level", "note", "facts", "tags"]
+    check(RICH, {"kind": "t", "name": "x", "children": []})
+    takes = ["name", "priority", "level", "note", "facts", "tags", "inner"]
     e = refused(RICH, UnexpectedField, {"kind": "t", "namee": "x"})
     assert (e.holder, e.field, e.takes, e.holder_is_top) == ("t", "namee", takes, True)
     e = refused(RICH, MissingField, {"kind": "t"})
@@ -263,6 +274,11 @@ def test_a_construct_is_checked_against_its_construct_schema():
     assert (e.holder, e.field) == ("t", "facts[0].name")          # nested required
     e = refused(RICH, UnexpectedField, {"kind": "t", "name": "x", "facts": [{"name": "f", "extra": 1}]})
     assert (e.holder, e.field, e.takes, e.holder_is_top) == ("facts[0]", "extra", ["name"], False)
+    # below the top, `kind` and `children` are fields like any other: read, and taken
+    e = refused(RICH, MissingField, {"kind": "t", "name": "x", "inner": {"children": ["a"]}})
+    assert (e.holder, e.field) == ("t", "inner.kind")
+    e = refused(RICH, UnexpectedField, {"kind": "t", "name": "x", "inner": {"kind": "k", "x": 1}})
+    assert (e.holder, e.field, e.takes, e.holder_is_top) == ("inner", "x", ["kind", "children"], False)
     for raw, field, reason in [
         ({"kind": "t", "name": 5}, "name", "must be a string"),
         ({"kind": "t", "name": True}, "name", "must be a string"),              # a flag is not a string
@@ -274,8 +290,8 @@ def test_a_construct_is_checked_against_its_construct_schema():
         ({"kind": "t", "name": "x", "tags": ["a", 5]}, "tags[1]", "must be a string"),   # the element
         ({"kind": "t", "name": "x", "tags": "a"}, "tags", "must be a list"),
         ({"kind": "t", "name": "x", "tags": []}, "tags", "must not be empty"),
+        ({"kind": "t", "name": "x", "inner": {"kind": 5}}, "inner.kind", "must be a string"),
         ({"kind": "t", "name": "x", "children": {}}, "children", "must be a list"),
-        ({"kind": "t", "name": "x", "children": []}, "children", "must not be empty"),
     ]:
         e = refused(RICH, InvalidField, raw)
         assert (e.field, e.reason) == (field, reason), raw
@@ -286,6 +302,9 @@ def test_a_construct_is_checked_against_its_construct_schema():
     assert (e.holder, e.field, e.takes) == ("t", "children", ["name"])
     e = refused(construct_schema({}), UnexpectedField, {"kind": "t", "whatever": 1})
     assert (e.field, e.takes) == ("whatever", [])
+    # `children` whose items name node classes: an array, its elements edit.py's
+    check(construct_schema({"children": {"type": "array", "items": {
+        "anyOf": [{"$ref": "#/$defs/Theory"}, {"$ref": "#/$defs/Construct"}]}}}), {"kind": "t", "children": [5]})
 
 
 def test_a_union_of_objects_is_told_apart_by_its_choosing_field_in_the_documents_order():
@@ -344,6 +363,16 @@ def test_a_union_of_objects_is_told_apart_by_its_choosing_field_in_the_documents
     # one arm of the value's type: straight to it, a `$ref` arm followed
     e = refused(UNION, UnexpectedField, {"kind": "t", "either": {"bogus": 1}})
     assert (e.holder, e.field, e.takes) == ("either", "bogus", ["name"])
+    # the choosing field is the one every arm requires with an `enum`: an
+    # optional `enum` field the arms share chooses nothing
+    STYLED = construct_schema({"s": {"anyOf": [
+        {"type": "object", "required": ["form"], "additionalProperties": False,
+         "properties": {"form": {"type": "string", "enum": ["a"]}, "style": {"type": "string", "enum": ["x", "y"]}}},
+        {"type": "object", "required": ["form"], "additionalProperties": False,
+         "properties": {"form": {"type": "string", "enum": ["b"]}, "style": {"type": "string", "enum": ["x", "y"]}}}]}})
+    check(STYLED, {"kind": "t", "s": {"form": "a"}})
+    e = refused(STYLED, InvalidField, {"kind": "t", "s": {"form": "a", "style": "z"}})
+    assert (e.field, e.reason) == ("s.style", "must be one of `x`, `y`")
 
 
 def test_schema_grammar_is_closed_at_registration():
