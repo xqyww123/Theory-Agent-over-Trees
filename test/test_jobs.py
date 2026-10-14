@@ -160,9 +160,9 @@ class Checked(Lemma):
 
 
 class Carrying(Lemma):
-    """A class whose amend carries the old job's outcome, as `Theorem` does
-    when the statement is unchanged (THEOREM.md §4); its `gen` takes a
-    moment, in which the old run may settle."""
+    """A class whose amend carries the old job's outcome, as
+    `Proof_Obligation` does when `goal_structure()` is unchanged (COMMON.md
+    §3); its `gen` takes a moment, in which the old run may settle."""
     @classmethod
     async def gen(cls, config, raw):
         node = await super().gen(config, raw)
@@ -174,13 +174,26 @@ class Carrying(Lemma):
         return True
 
 
-class Asked(Lemma):
+class Asked(Carrying):
     """A class whose answer records the question and raises a `TAT_Error`:
-    what `_carries_job_from` raises is the class's bug (EXCEPTIONS.md §1)."""
+    what `_carries_job_from` raises is the class's bug (EXCEPTIONS.md §1).
+    It derives from `Carrying`, so an `Asked` node replaced by a `Carrying`
+    one is a pair whose old node's class is a subclass of the replacement's,
+    and a question wrongly put to the replacement would be answered true."""
     questions = []
 
     def _carries_job_from(self, old):
         Asked.questions.append((self, old))
+        raise InvalidName("oops")
+
+
+class Asked_Jobless(T):
+    """A class that names no construction job class, whose answer records
+    and raises: never asked."""
+    questions = []
+
+    def _carries_job_from(self, old):
+        Asked_Jobless.questions.append((self, old))
         raise InvalidName("oops")
 
 
@@ -207,7 +220,8 @@ class Why(jobs.Interactive_Question):
         return Answered("Noted.")
 
 
-KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying, "checked": Checked, "asked": Asked}
+KINDS = {"block": Block, "t": T, "lemma": Lemma, "carrying": Carrying, "checked": Checked, "asked": Asked,
+         "asked_jobless": Asked_Jobless}
 P, Q = "block_Theory.lemma_P", "block_Theory.lemma_Q"
 P_CHECKED, Q_CHECKED = "block_Theory.checked_P", "block_Theory.checked_Q"
 
@@ -719,28 +733,40 @@ def test_an_amend_carries_the_old_jobs_image_where_the_class_says_so():
 
 
 def test_the_carry_is_asked_of_a_replacement_of_the_old_nodes_own_class_alone():
-    """The question goes to a replacement of the replaced node's own class,
-    never across classes (CONSTRUCT_INTERACTION §3.1); what it raises is the
-    class's bug, raised with the forest untouched (MODULE_STRUCTURE §4.2)."""
+    """The question goes to a replacement of the replaced node's own class
+    — never across classes, in either direction, and never to a class that
+    names no construction job class (CONSTRUCT_INTERACTION §3.1); what it
+    raises is the class's bug, raised with the forest and the old node's
+    running job untouched (MODULE_STRUCTURE §4.2)."""
     async def scenario():
         f, thy, t1, p, q = build()
+        owner = stand_ins.agent(f.conversation)
         Asked.questions.clear()
+        Asked_Jobless.questions.clear()
+        # Lemma → Asked: the replacement's class a subclass of the old node's
         p.job().outcome = Succeeded("by simp")
-        (p2,) = await locked(f, edit.amend(p, [{"kind": "asked", "name": "P2"}], KINDS))        # Lemma → Asked
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "asked", "name": "P2"}], KINDS))
         assert Asked.questions == [] and p2.job().outcome is NOT_STARTED
+        # Asked → Carrying: the old node's class a subclass of the replacement's, which would answer true
         p2.job().outcome = Succeeded("by simp")
-        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}], KINDS))    # Asked → Carrying
-        assert Asked.questions == [] and p3.job().outcome is NOT_STARTED
+        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}], KINDS))
+        assert p3.job().outcome is NOT_STARTED
+        # no construction job class: never asked
+        u = add(thy, Asked_Jobless(thy, slot(), "U"), "asked_jobless")
+        (u2,) = await locked(f, edit.amend(u, [{"kind": "asked_jobless", "name": "U2"}], KINDS))
+        assert Asked_Jobless.questions == []
+        # Asked → Asked, the old node's job running at the amend
         (p4,) = await locked(f, edit.amend(p3, [{"kind": "asked", "name": "P4"}], KINDS))
-        p4.job().outcome = Succeeded("by simp")
-        p4._store_alone()                                    # stored, as a settlement is
-        with pytest.raises(TAT_InternalError) as e:                                             # Asked → Asked
+        ready(p4)
+        p4.job().start(owner)
+        with pytest.raises(TAT_InternalError) as e:
             await locked(f, edit.amend(p4, [{"kind": "asked", "name": "P5"}], KINDS))
         assert isinstance(e.value.__cause__, InvalidName)
         [(replacement, old)] = Asked.questions
         assert old is p4 and isinstance(replacement, Asked) and replacement.name == "P5"
-        assert thy.sub_nodes == [t1, p4, q] and p4.parent is thy
-        assert p4.job().outcome == Succeeded("by simp") and records("construction_cancelled") == []
+        assert thy.sub_nodes == [t1, p4, q, u2] and p4.parent is thy
+        assert p4.job().outcome is RUNNING and records("construction_cancelled") == []   # the completed events never ran
+        p4.job().cancel(None)
         invariants.assert_store_mirrors(f, KINDS)
     run(scenario())
 

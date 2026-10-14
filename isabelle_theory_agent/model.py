@@ -445,7 +445,8 @@ class Node(ABC):
     def _slots_written_by(self, operation: Any) -> Sequence[Isar_State_Slot]:
         """The further slots the operation writes besides its resulting
         state (MODULE_STRUCTURE §4.1, "States"): slots of the class's own,
-        which it mints in `gen` and `from_store` and appends in
+        which it mints where the node is built — in `gen` and `from_store`,
+        or once in a constructor both reach — and appends in
         `_states_inside`.  The framework releases them with the operation's
         result.  `operation` is what `on_invalidated` is told.  None by
         default."""
@@ -1481,7 +1482,9 @@ class NodeConfig(NamedTuple):
     def replaces(self) -> Node | None:
         """The node this construct takes the place of: an amendment's `old`
         for the batch's first construct, else None.  Read it to carry over
-        recorded fields the class judges still valid."""
+        recorded fields the class judges still valid; the job outcome is
+        not one of them — the commit asks `_carries_job_from`
+        (CONSTRUCT_INTERACTION §3.1)."""
         return _leaving(self.role) if not self.batch_before else None
 
 
@@ -2632,10 +2635,9 @@ class Theory(StdBlock):
     # operation's errors, empty when it passed (ARCHITECTURE §6.2) — the
     # beginning's also the session of each import and the theory's
     # keywords, recorded when it passed — and whatever it lets escape is a
-    # bug (`isabelle_driver.call`).  The
-    # status the run leaves carries the errors (COMPILATION.md §4); a
-    # rendering inside the call — a `recall` takes no lock — reads the
-    # previous run's.
+    # bug (`isabelle_driver.call`).  The status the run leaves carries the
+    # errors (COMPILATION.md §4); a rendering inside the call — a `recall`
+    # takes no lock — reads the previous run's.
 
     async def _eval_beginning_opr(self):
         session = self.session()

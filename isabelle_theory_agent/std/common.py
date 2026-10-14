@@ -168,7 +168,8 @@ class Proof_Check(jobs.Evaluation_Job):
         node = self.node
         assert isinstance(node, Proof_Obligation)
         job = node.job()
-        assert job is not None and isinstance(job.outcome, Succeeded)   # a check runs on a proven node (§3.3)
+        assert job is not None and isinstance(job.outcome, Succeeded)   # a check runs on a node whose proof
+                                                                        # SUCCEEDED (CONSTRUCT_INTERACTION §3.3)
         product = job.outcome.product
         await isabelle_driver.call(self.conversation, "TAT.Proof_Obligation.check",
                                    (node.goal_state.to_msgpack(), tuple(product[k] for k in _PRODUCT), self.id))
@@ -237,7 +238,8 @@ class Proof_Obligation(Node):
         (status,) = self.evaluation_statuses()
         if isinstance(status, CannotEvaluate):
             return self.invalid_word
-        first = self.valid_word if isinstance(status, Ready) else "not evaluated"
+        evaluated = isinstance(status, Ready)
+        first = self.valid_word if evaluated else "not evaluated"
         job = self.job()
         assert job is not None
         outcome = job.outcome
@@ -246,7 +248,7 @@ class Proof_Obligation(Node):
         elif isinstance(outcome, Failed):
             proof = "failed to prove"
         elif isinstance(outcome, Succeeded):
-            if first == "not evaluated":
+            if not evaluated:
                 return first
             check = self.check_outcome()
             proof = ("unchecked proof" if check is None else "proof checking" if check is RUNNING

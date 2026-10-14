@@ -224,7 +224,8 @@ def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empt
     """COMPILATION.md §4, "Storage": the recorded fields ride with the
     node's rows; a database that predates the rows loads `import_sessions`
     empty and `keywords` None, under which `can_emit` refuses whatever the
-    stored statuses; `print_name` quotes a keyword and nothing else
+    stored statuses, and, with the keywords known, refuses a stored status
+    that is not `Ready`; `print_name` quotes a keyword and nothing else
     (SESSION_AND_THEORY §2)."""
     store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
     f = Forest_Under_Test(store=store)
@@ -249,6 +250,8 @@ def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empt
     assert not b2.can_emit()
     b2.keywords = frozenset()
     assert b2.can_emit()
+    b2._last_evaluation_statuses = [READY, NOT_EVALUATED]   # keywords known, the ending not `Ready`
+    assert not b2.can_emit()
 
 
 class Real_Theories:

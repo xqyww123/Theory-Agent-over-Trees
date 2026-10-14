@@ -1,8 +1,10 @@
 """What the classes of `Isabelle_Std` share (node_classes/COMMON.md), with
 no Isabelle: `NotInsideTheory`'s sentence, and `Theory_Member` over every
 class the package registers (§1); the `text` line (§2);
-`Proof_Obligation`'s abstraction (§3).  What `Proof_Obligation` does on
-a node is pinned through `Theorem`, test_theorem.py.
+`Proof_Obligation`'s abstraction, and its reading of the class's own
+words, callback and message, through a stand-in (§3).  The rest of what
+`Proof_Obligation` does on a node is pinned through `Theorem`,
+test_theorem.py.
 Run: python -m pytest test/test_common.py
 """
 
@@ -10,7 +12,7 @@ import pytest
 
 import test_session_theory as ts
 from baselines import DOCS, fenced_lines
-from isabelle_theory_agent import edit, model as M, plugin
+from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit
 from isabelle_theory_agent.std import theorem
 from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Obligation, Theory_Member, text_line
@@ -100,3 +102,41 @@ def test_proof_obligation_enforces_its_abstract_methods():
         with pytest.raises(TypeError, match=missing):
             cls(None, None)
     assert issubclass(theorem.Theorem, Proof_Obligation) and theorem.Theorem.__abstractmethods__ == frozenset()
+
+
+class Stand_In(theorem.Theorem):
+    """A second `Proof_Obligation` class, with its own words, callback and
+    message (§3); the rest `Theorem`'s."""
+    evaluation_callback = "TAT.Stand_In.evaluate"
+    valid_word, invalid_word = "valid definition", "invalid definition"
+
+    def message(self):
+        return ("stand_in", self.name)
+
+
+def test_proof_obligation_reads_the_class_s_own_words_callback_and_message(monkeypatch):
+    """§3: `_eval_opr` calls the class's own `evaluation_callback` with the
+    three slots and its `message()`, and the messages it answers make the
+    node an obstacle; the mark's first slot is the class's `valid_word` or
+    `invalid_word`."""
+    kinds = {**ts.KINDS, "lemma": Stand_In}
+    f = Forest_Under_Test(kinds=kinds)
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
+        lemma("p"), lemma("q")]})], kinds)))
+    (x,) = s.sub_nodes
+    p, q = x.sub_nodes
+    calls = []
+
+    async def call(conversation, name, args):
+        calls.append((name, args))
+        return ["no"] if args[3] == q.message() else []
+    monkeypatch.setattr(isabelle_driver, "call", call)
+    run(x.evaluate_to(None, False))
+    assert [name for name, _ in calls] == ["TAT.Stand_In.evaluate"] * 2
+    assert [args[:3] for _, args in calls] == [
+        (n.state.to_msgpack(), n.goal_state.to_msgpack(), n.resulting_state().to_msgpack()) for n in (p, q)]
+    assert [args[3] for _, args in calls] == [p.message(), q.message()] == [("stand_in", "p"), ("stand_in", "q")]
+    assert p.mark(M.BRIEFING, 0) == "valid definition, proof not started"
+    (status,) = q.evaluation_statuses()
+    assert isinstance(status, M.CannotEvaluate) and [m.unicode for m in status.messages] == ["no"]
+    assert q.mark(M.BRIEFING, 0) == "invalid definition"

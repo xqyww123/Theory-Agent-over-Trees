@@ -135,8 +135,8 @@ terms parse is Isabelle's business at evaluation (MODULE_STRUCTURE
 exception. `Theorem`'s `goal_structure()` (COMMON.md §3) is the
 `for_any`, `premises` and `conclusion`, names included — each binds a
 fact a stored proof may cite —, each `IsaTerm`
-as its `ascii`, built by the one private helper that also builds the
-structure sent to Isabelle (§6). `english`, `kind` and `name` are not
+as its `ascii`; `message()` carries it as its goal part (§6; COMMON.md
+§3). `english`, `kind` and `name` are not
 in it, since Isabelle opens the same goal for the four kinds and for
 any name: on an amend a rename, a change of kind or a reworded
 `english` keeps the proof, and a change to any other part of the

@@ -158,12 +158,13 @@ def test_the_identifier_grammar():
 def test_an_amend_with_the_same_structure_carries_the_proof():
     """§4: equal `for_any`, `premises` and `conclusion` — names included;
     `english`, `kind` and `name` aside — carry the replaced job's outcome;
-    a changed structure does not."""
+    a changed structure does not; the stored check is never carried
+    (CONSTRUCT_INTERACTION §3.1)."""
     f, x = forest(lemma("p"))
     (p,) = x.sub_nodes
-    p.job().outcome = PROVED
+    with_proof(p, M.READY_CLEAN, PROVED, PASSED)
     (p2,) = run(locked(f, edit.amend(p, [lemma("p", english="Another wording")], KINDS)))
-    assert p2.job().outcome == PROVED and p2.statement.english == "Another wording"
+    assert p2.job().outcome == PROVED and p2.check_outcome() is None and p2.statement.english == "Another wording"
     (p3,) = run(locked(f, edit.amend(p2, [lemma("q", kind="theorem")], KINDS)))
     assert p3.job().outcome == PROVED and (p3.kind, p3.name) == ("theorem", "q")
     (p4,) = run(locked(f, edit.amend(p3, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs")], KINDS)))

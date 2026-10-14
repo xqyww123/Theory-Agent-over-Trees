@@ -76,7 +76,8 @@ exactly one goal, admitted as the operation's last transition. A class
 of that shape whose command opens a proof obligation (INDEX.md) derives
 from it before its framework base — `class Theorem(Theory_Member,
 Proof_Obligation, Leaf)` — and `Proof_Obligation` derives from `Node`,
-so that its abstract method is enforced. `Theorem` derives from it; `Typedef`,
+so that its abstract methods, `goal_structure()` and `message()`, are
+enforced. `Theorem` derives from it; `Typedef`,
 `QuotientType`, `LiftDefinition`, `Interpretation` and `Sublocale` are
 expected to, each confirming it in its own document; `Instantiation`,
 whose goal opens on a `StdBlock`'s ending, decides in its own document

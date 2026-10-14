@@ -18,7 +18,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
-Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
+Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML, TAT_Proof_Obligation.ML, and one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -424,7 +424,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — Theory_Member and NotInsideTheory, Proof_Obligation with Proof_Job and Proof_Check, the english line, the shared $defs and their writers, the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); statement.py, the statement's schema definitions
+  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — Theory_Member and NotInsideTheory, Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); statement.py, the statement's schema definitions
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -770,7 +770,11 @@ on the node, and the framework reads only the status it returns,
 copying the operation's input into its resulting state itself on a
 `CannotEvaluate` — for a beginning, the node's input into the node's
 resulting slot, as the ending's write and only when the walk goes on
-after the block (below; ARCHITECTURE §6.2). The jobs are exempt from the cadence: a construction job's `_run`
+after the block (below; ARCHITECTURE §6.2). The answer of a callback
+that gives its operation's messages alone, by `operation`'s rule (§2.5),
+becomes that status through model.py's `status_of_errors`:
+`CannotEvaluate` with the messages, a clean `Ready` with none. The jobs
+are exempt from the cadence: a construction job's `_run`
 and an evaluation job's `_start` design their own use of the wire, still
 through `call` (CONSTRUCT_INTERACTION §3.2, §3.3). `gen` and the event
 hooks never call a class's own callback;
