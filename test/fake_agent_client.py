@@ -31,6 +31,13 @@ SIGTERM_DELAY = 5.0                                     # `hold_a_child` obeys S
 report: dict = {"signals": [], "children": []}
 
 
+def variables(act: str, report_path: Path, marker: Path | None = None) -> dict[str, str]:
+    """What a case puts in the tool's environment for the fake — the client
+    inherits the JVM's: the act, the report's path, `exit_on_marker`'s marker."""
+    return {"TAT_FAKE_ACT": act, "TAT_FAKE_REPORT": str(report_path),
+            **({"TAT_FAKE_MARKER": str(marker)} if marker is not None else {})}
+
+
 def write_report() -> None:
     path = Path(os.environ["TAT_FAKE_REPORT"])
     tmp = path.with_name(path.name + ".tmp")
@@ -61,8 +68,9 @@ def on_sigterm() -> None:
 
 
 def started() -> None:
-    """What every act does first: the report, the request to TAT's URL — to
-    the address itself, whatever proxy the environment names — and the line."""
+    """What every act does once it is set up: the report, the request to
+    TAT's URL — to the address itself, whatever proxy the environment
+    names — and the line, which tells the case the act is set up."""
     report.update(pid=os.getpid(), cwd=os.getcwd(), argv=sys.argv, url=url(), status=None)
     write_report()
     try:
@@ -71,13 +79,13 @@ def started() -> None:
     except urllib.error.HTTPError as e:
         report["status"] = e.code
     write_report()
+    print(LINE, flush=True)
 
 
 def exit_on_marker() -> None:
     """The terminal's mode sane while it runs; exits once TAT_FAKE_MARKER exists."""
-    started()
     subprocess.run(["stty", "sane"], check=True)
-    print(LINE, flush=True)
+    started()
     marker = Path(os.environ["TAT_FAKE_MARKER"])
     while not marker.exists():
         time.sleep(0.05)
@@ -93,10 +101,8 @@ def hold_a_child() -> None:
         time.sleep(SIGTERM_DELAY)
         sys.exit(0)
     on_sigterm = obey_late
-    started()
     report["children"] = [subprocess.Popen(["sleep", "3600"]).pid]
-    write_report()
-    print(LINE, flush=True)
+    started()
     while True:
         signal.pause()
 
@@ -108,17 +114,16 @@ def refused() -> None:
     SIGTERM_LINE, SIGKILLs the `sh` (orphaning its `sleep`), starts a second
     `sleep`, reports both, and is otherwise ignored."""
     global on_sigterm
-    pidfile = os.environ["TAT_FAKE_PIDFILE"]
-    sh = subprocess.Popen(["sh", "-c", 'sleep 3600 & echo $! > "$1"; wait', "sh", pidfile])
+    pidfile = Path(os.environ["TAT_FAKE_REPORT"]).with_name("sh.pid")
+    sh = subprocess.Popen(["sh", "-c", 'sleep 3600 & echo $! > "$1"; wait', "sh", str(pidfile)])
 
     def kill_the_sh() -> None:
         os.write(2, (SIGTERM_LINE + "\n").encode())
         os.kill(sh.pid, signal.SIGKILL)
-        report["children"] = [int(Path(pidfile).read_text()), subprocess.Popen(["sleep", "3600"]).pid]
+        report["children"] = [int(pidfile.read_text()), subprocess.Popen(["sleep", "3600"]).pid]
         write_report()
     on_sigterm = kill_the_sh
     started()
-    print(LINE, flush=True)
     session()
     while True:
         signal.pause()
@@ -162,7 +167,6 @@ def append_warning() -> None:
 def raw() -> None:
     """The terminal left raw; exits at once."""
     started()
-    print(LINE, flush=True)
     tty.setraw(0)
     sys.exit(RAW_EXIT)
 

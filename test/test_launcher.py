@@ -194,7 +194,7 @@ def test_a_refusal_of_the_launch_leaves_the_directory_made_and_starts_no_client(
     wd = tmp_path / "wd"
     report = tmp_path / "report.json"
     r = tat("-o", "parallel_proofs=3", "-P", "Some.Plugin", str(wd),
-            env={**fake_clients.env, **fake_clients.variables("exit_on_marker", report)})
+            env={**fake_clients.env, **fake.variables("exit_on_marker", report)})
     assert r.returncode == 2 and r.stdout == "", r
     assert r.stderr.splitlines() == [WAITING_LINE,
                                      "*** TAT requires parallel_proofs below 3, but the options give 3"]
@@ -394,7 +394,7 @@ def test_a_process_whose_name_is_cut_mid_character_is_listed(tmp_path):
     """The kernel cuts a process's name to 15 bytes, which can split a
     character; `group` reads every process on the machine, and such a name
     must not stop it."""
-    sleep = tmp_path / "a测试工具脚本"                 # 16 bytes: its name is cut inside the last character
+    sleep = tmp_path / "a测试工具脚"                   # 16 bytes: its name is cut inside the last character
     sleep.symlink_to(shutil.which("sleep"))
     process = subprocess.Popen([str(sleep), "60"], start_new_session=True)
     try:
@@ -463,8 +463,7 @@ class Fake_Clients:
     """`directory` holds the fakes `claude` and `codex` (fake_agent_client.py);
     `broken` a `claude`
     whose shebang names no interpreter; `env` is the tools' environment
-    with `directory` first on `PATH`; `variables(act, report, ...)` is what
-    a fake reads from its environment — the client inherits the JVM's."""
+    with `directory` first on `PATH`."""
 
     def __init__(self, root: Path):
         self.directory = root / "bin"
@@ -477,10 +476,6 @@ class Fake_Clients:
         executable(self.broken / "claude", "#!/nonexistent/interpreter\n")
         self.env = environment(self.directory)
 
-    @staticmethod
-    def variables(act: str, report: Path, **more: Any) -> dict[str, str]:
-        return {"TAT_FAKE_ACT": act, "TAT_FAKE_REPORT": str(report),
-                **{name: str(value) for name, value in more.items()}}
 
 
 class Launcher:
@@ -586,7 +581,7 @@ async def test_claude_code_runs_in_the_agent_directory_until_it_exits(launcher, 
         tty.setraw(slave)
         raw = termios.tcgetattr(slave)
         async with launcher.tool(["isabelle", "TAT", str(wd)],
-                                 fake_clients.variables("exit_on_marker", report, TAT_FAKE_MARKER=marker),
+                                 fake.variables("exit_on_marker", report, marker),
                                  stdin=slave, terminal=slave) as h:
             await h.line("stdout", lambda line: line == fake.LINE)
             pid = conversation_pid(wd)
@@ -595,7 +590,7 @@ async def test_claude_code_runs_in_the_agent_directory_until_it_exits(launcher, 
                         "the client's record of the interrupt")
             assert running(h.pid) and running(pid)
             second = await launcher.run_tool(["isabelle", "TAT", str(wd)],
-                                             fake_clients.variables("exit_on_marker", second_report))
+                                             fake.variables("exit_on_marker", second_report))
             assert second.returncode == 2 and second.stdout == "", second
             lines = second.stderr.splitlines()
             assert lines[0] == WAITING_LINE and all(line.startswith("***") for line in lines[1:]), second
@@ -632,7 +627,7 @@ async def test_codex_gets_the_launch_arguments_and_the_sweep_reaches_its_child(l
     report = tmp_path / "report.json"
     users = ["exec", "--skip-git-repo-check", "foo"]
     async with launcher.tool(["isabelle", "TAT", "-c", "codex", str(wd), *users],
-                             fake_clients.variables("hold_a_child", report)) as h:
+                             fake.variables("hold_a_child", report)) as h:
         await h.line("stdout", lambda line: line == fake.LINE)
         pid = conversation_pid(wd)
         (java,) = [p for p in group(h.pid) if p.comm == "java"]
@@ -654,9 +649,9 @@ async def test_the_conversation_ending_first_ends_the_client(launcher, fake_clie
     before the SIGTERM and the one it started after — and the tool prints
     the end's messages, no `warning` echoed, and exits 2."""
     wd = tmp_path / "wd"
-    report, pidfile = tmp_path / "report.json", tmp_path / "sh.pid"
+    report = tmp_path / "report.json"
     async with launcher.tool(["isabelle", "TAT", str(wd)],
-                             fake_clients.variables("refused", report, TAT_FAKE_PIDFILE=pidfile)) as h:
+                             fake.variables("refused", report)) as h:
         assert await h.exited == 2
     lines = h.stderr.splitlines()
     assert lines[:2] == [WAITING_LINE, f"Log: {log_directory(wd)}"], lines
@@ -683,12 +678,12 @@ async def test_the_terminal_mode_is_restored_after_the_client_exits(launcher, fa
     master, slave = pty.openpty()
     try:
         before = termios.tcgetattr(slave)
-        async with launcher.tool(["isabelle", "TAT", str(wd)], fake_clients.variables("raw", report),
+        async with launcher.tool(["isabelle", "TAT", str(wd)], fake.variables("raw", report),
                                  stdin=slave, stdout=slave, terminal=slave) as h:
             assert await h.exited == fake.RAW_EXIT
         assert termios.tcgetattr(slave) == before
-        # the group has exited, so every write has returned; read to EAGAIN,
-        # since one read may hand back only what the pty had already passed on
+        # the group has exited, so every write has returned; one read may hand
+        # back only part, but a read flushes the pty's pending input before EAGAIN
         received = bytearray()
         os.set_blocking(master, False)
         with suppress(BlockingIOError):
