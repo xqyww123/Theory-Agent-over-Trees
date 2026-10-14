@@ -565,7 +565,7 @@ def launcher(warm_up, fake_clients):
     return Launcher(fake_clients)
 
 
-async def test_claude_code_runs_in_the_agent_directory_until_it_exits(launcher, fake_clients, tmp_path):
+async def test_claude_code_runs_in_the_agent_directory_until_it_exits(launcher, tmp_path):
     """MODULE_STRUCTURE §5: the client started in the agent directory once
     the conversation serves, on a URL it can reach, stdout its own; a
     Ctrl-C at the terminal is the client's; a second `isabelle TAT` on the
@@ -642,7 +642,7 @@ async def test_codex_gets_the_launch_arguments_and_the_sweep_reaches_its_child(l
     await conversation_exits(pid)
 
 
-async def test_the_conversation_ending_first_ends_the_client(launcher, fake_clients, tmp_path):
+async def test_the_conversation_ending_first_ends_the_client(launcher, tmp_path):
     """MODULE_STRUCTURE §5: a client TAT refuses ends the conversation, and
     the conversation's end, first, ends the client — SIGTERM, which it
     ignores, then SIGKILL after the bound, reaching the sleep it orphaned
@@ -666,7 +666,7 @@ async def test_the_conversation_ending_first_ends_the_client(launcher, fake_clie
     assert not running(conversation_pid(wd))
 
 
-async def test_the_terminal_mode_is_restored_after_the_client_exits(launcher, fake_clients, tmp_path):
+async def test_the_terminal_mode_is_restored_after_the_client_exits(launcher, tmp_path):
     """MODULE_STRUCTURE §5: the pty the tool's stdin, stdout and terminal,
     so the mode is saved; the client leaves it raw and exits on its own;
     the tool exits with the client's code, the mode is back, and after the
