@@ -321,6 +321,20 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 end
 \<close>
 
+setup \<open>
+(*the identifier-shaped words of the fixed header lexicon, which the Python
+  side's HEADER_LEXICON must equal (SESSION_AND_THEORY §2)*)
+let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
+  TAT_Framework.register_callback {python_packages = []} (fn _ =>
+    {name = "TAT_test.header_lexicon",
+      on_interrupt = Remote_Procedure_Calling.Reraise,
+      arg_schema = unpackUnit,
+      ret_schema = packList packString,
+      function = fn () => TAT_Common_Nodes.identifier_words Thy_Header.bootstrap_keywords,
+      timeout = NONE})
+end
+\<close>
+
 ML \<open>
 (*a duplicated callback wire name is rejected before anything starts*)
 let

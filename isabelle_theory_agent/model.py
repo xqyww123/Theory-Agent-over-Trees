@@ -292,11 +292,35 @@ def emit_lines(indent: int, out: TextIO, text: str) -> None:
 
 
 def cartouche(text: str) -> str:
-    """`text` as one cartouche that closes where it should (SESSION_AND_THEORY
-    §1, §2): `‹`, `›`, `\\<open>` and `\\<close>` in it replaced by `"`."""
+    """`text` as one cartouche that closes where it should (COMPILATION.md
+    §3): `‹`, `›`, `\\<open>` and `\\<close>` in it replaced by `"`."""
     for mark in ("‹", "›", "\\<open>", "\\<close>"):
         text = text.replace(mark, '"')
     return f"‹{text}›"
+
+
+# An Isabelle symbol as `Symbol.explode` cuts it: `\<name>` or `\<^name>`, a
+# `\<` left unfinished one symbol all the same; any other character on its own.
+_SYMBOL = re.compile(r"\\<\^?(?:[A-Za-z][A-Za-z0-9_']*)?>?|[\s\S]")
+
+
+def string_token(text: str) -> str:
+    """`text` as Isabelle's outer-syntax string token, by the rule of
+    `Symbol_Pos.quote_string_qq` (COMPILATION.md §3): Isabelle symbols left
+    intact; a double quote and a lone backslash escaped with a backslash;
+    an ASCII control character that is not a blank written as a backslash
+    and its three-digit code; a carriage return read as a newline, as
+    `Symbol.explode` reads it."""
+    out = ['"']
+    for symbol in _SYMBOL.findall(text.replace("\r\n", "\n").replace("\r", "\n")):
+        if len(symbol) == 1 and ord(symbol) < 32 and symbol not in " \t\n\v\f":
+            out.append(f"\\{ord(symbol):03d}")
+        elif symbol in ('"', "\\"):
+            out.append("\\" + symbol)
+        else:
+            out.append(symbol)
+    out.append('"')
+    return "".join(out)
 
 
 def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
@@ -2441,6 +2465,15 @@ class Session(Unchained_Node):
             "a walk reached a Session: evaluation is transparent to the Session layer")
 
 
+# The identifier-shaped words of Isabelle's fixed header lexicon,
+# `Thy_Header.bootstrap_keywords`: a theory so named is written as a string
+# token in its own header (SESSION_AND_THEORY §2).  Pinned against Isabelle
+# by test_conversation.
+HEADER_LEXICON = frozenset({
+    "abbrevs", "and", "begin", "imports", "keywords", "ML", "chapter", "paragraph", "section",
+    "subparagraph", "subsection", "subsubsection", "text", "text_raw", "theory", "txt"})
+
+
 class Theory_RawAST(TypedDict):
     kind: Literal["theory"]
     name: str
@@ -2578,17 +2611,19 @@ class Theory(StdBlock):
 
     def header(self) -> str:
         """The `theory … begin` span, as the tree's file will open — the one
-        text its evaluation runs and its emission writes: every import
-        quoted, so a hyphenated name is one token to Isabelle's lexer; after
-        the agent's, on a theory none of whose imports resolves to a theory
-        of the forest, the imports the loaded plugins declare
-        (SESSION_AND_THEORY §2)."""
+        text its evaluation runs and its emission writes: the name a string
+        token when it is a word of the header lexicon, bare otherwise; every
+        import a string token, so a hyphenated name is one token to
+        Isabelle's lexer; after the agent's, on a theory none of whose
+        imports resolves to a theory of the forest, the imports the loaded
+        plugins declare (SESSION_AND_THEORY §2)."""
         forest = self.forest()
         items = list(self.imports)
         if not forest._resolved_imports(self):
             items += [item for item in forest.imports if item not in items]
-        imports = " ".join(f'"{item}"' for item in items)
-        return f"theory {self.name}\n  imports {imports}\nbegin"
+        name = string_token(self.name) if self.name in HEADER_LEXICON else self.name
+        imports = " ".join(string_token(item) for item in items)
+        return f"theory {name}\n  imports {imports}\nbegin"
 
     def emit_beginning(self, indent, out):
         """A non-empty `description` as a `text ‹…›` block, then the header,
@@ -2610,11 +2645,11 @@ class Theory(StdBlock):
 
     def print_name(self, name: str) -> str:
         """A name of the tree as its file writes it (SESSION_AND_THEORY §2):
-        in double quotes when its `ascii` spelling is a keyword of the
+        a string token when its `ascii` spelling is a keyword of the
         theory, bare otherwise — `Token.print_name`'s rule for an
         identifier.  Emission's alone, after `can_emit`."""
         assert self.keywords is not None, "print_name before a header run recorded the keywords"
-        return f'"{name}"' if name in self.keywords else name
+        return string_token(name) if name in self.keywords else name
 
     def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever

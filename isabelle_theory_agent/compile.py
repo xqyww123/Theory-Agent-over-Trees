@@ -26,7 +26,8 @@ from Isabelle_RPC_Host.unicode import ascii_of_unicode
 from .exceptions import TAT_InternalError, TAT_StartupError
 from .model import (
     INDENT, CannotEvaluate, EvaluationStatus, Forest, Node, NotEvaluated, Ready, Session,
-    StdBlock, Theory, _indented, _option_value, cartouche, make_session_folder, session_folder_refusal)
+    StdBlock, Theory, _indented, _option_value, cartouche, make_session_folder, session_folder_refusal,
+    string_token)
 
 
 # ---------------------------------------------------------------------------
@@ -169,11 +170,6 @@ def _refusing(node: Node, out: list[tuple[Node, EvaluationStatus | None]]
     return out
 
 
-def _quoted(name: str) -> str:
-    """A name or a value as one token of the ROOT's syntax."""
-    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
 def _root(forest: Forest, written: dict[Theory, bool]) -> str:
     """The ROOT's text (COMPILATION.md §2): one entry per `Session`, in the
     forest's order, the clauses in the order Isabelle's grammar fixes."""
@@ -181,12 +177,12 @@ def _root(forest: Forest, written: dict[Theory, bool]) -> str:
     for session in forest.sub_nodes:
         if not isinstance(session, Session):
             continue
-        lines = [f"session {_quoted(session.name)} in {_quoted(str(session.folder()))}"
-                 f" = {_quoted(session.parent_session)} +"]
+        lines = [f"session {string_token(session.name)} in {string_token(str(session.folder()))}"
+                 f" = {string_token(session.parent_session)} +"]
         if session.description:
             lines.append(f"{INDENT}description {cartouche(session.description)}")
         if session.options:
-            options = ", ".join(f"{_quoted(o['name'])} = {_quoted(_option_value(o))}"
+            options = ", ".join(f"{string_token(o['name'])} = {string_token(_option_value(o))}"
                                 for o in session.options)
             lines.append(f"{INDENT}options [{options}]")
         theories = [t for t in session.sub_nodes if isinstance(t, Theory) and written[t]]
@@ -196,7 +192,7 @@ def _root(forest: Forest, written: dict[Theory, bool]) -> str:
         for clause, names in (("sessions", sessions), ("theories", [t.name for t in theories])):
             if names:
                 lines.append(INDENT + clause)
-                lines.extend(INDENT * 2 + _quoted(n) for n in names)
+                lines.extend(INDENT * 2 + string_token(n) for n in names)
         entries.append("".join(line + "\n" for line in lines))
     return "\n".join(entries)
 

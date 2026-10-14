@@ -367,6 +367,11 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
                                   "    fixes n", '    shows "length (rev xs) = length xs"', "    sorry")
     (r,) = insert(f, x, 2, [lemma("r", english="Bang!", kind="corollary", for_any=(), premises=())])
     assert emitted(r)[:2] == expected("  text ‹Corollary r. Bang!›", "  corollary r:")
+    # every type and term through the framework's `string_token` (COMPILATION.md §3)
+    (t,) = insert(f, x, 3, [lemma("t", conclusion='v = "q"', for_any=({"name": "v", "type": 'foo "bar"'},),
+                                  premises=({"name": "h", "term": 'v \\<noteq> "r"'},))])
+    assert emitted(t)[2:5] == expected('    fixes v :: "foo \\"bar\\""', '    assumes h: "v ≠ \\"r\\""',
+                                       '    shows "v = \\"q\\""')
 
 
 def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores_of_no_tree(monkeypatch):

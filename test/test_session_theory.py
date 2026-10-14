@@ -220,6 +220,35 @@ def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(t
     inv(f2)
 
 
+def test_the_string_token_follows_isabelles_quoting_rule():
+    """COMPILATION.md §3, the rule of `Symbol_Pos.quote_string_qq`: a double
+    quote and a lone backslash escaped; Isabelle symbols — `\\<and>`,
+    `\\<^sub>`, even an unfinished `\\<` — left intact; a non-blank ASCII
+    control character as its three-digit code, blanks raw; a carriage
+    return read as a newline."""
+    assert M.string_token("xs = ys") == '"xs = ys"'
+    assert M.string_token('say "hi"') == r'"say \"hi\""'
+    assert M.string_token("a \\ b") == r'"a \\ b"'
+    assert M.string_token("P \\<and> Q\\<^sub>1 \\<open>t\\<close>") == '"P \\<and> Q\\<^sub>1 \\<open>t\\<close>"'
+    assert M.string_token("x\\<") == '"x\\<"'
+    assert M.string_token("a\x01b\x1fc") == '"a\\001b\\031c"'
+    assert M.string_token("a\tb\nc\x0bd\x0ce ") == '"a\tb\nc\x0bd\x0ce "'
+    assert M.string_token("a\r\nb\rc") == '"a\nb\nc"'
+    assert M.string_token("λx. x ≠ y") == '"λx. x ≠ y"'
+
+
+def test_the_theory_name_is_a_string_token_when_it_is_a_header_word():
+    """SESSION_AND_THEORY §2: the header lexicon, not `keywords`, governs
+    the theory's own name — `theory "text"`, `theory lemma` — and every
+    import is a string token."""
+    f = Forest_Under_Test()
+    (s,) = insert(f, f, 0, [session("S", theory("text"), theory("lemma", "HOL-Library.Multiset"))])
+    t, l = s.sub_nodes
+    assert t.header() == 'theory "text"\n  imports "Main"\nbegin'
+    assert l.header() == 'theory lemma\n  imports "HOL-Library.Multiset"\nbegin'
+    assert "lemma" not in M.HEADER_LEXICON and {"text", "theory", "ML"} <= M.HEADER_LEXICON
+
+
 def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empty_or_none(tmp_path):
     """COMPILATION.md §4, "Storage": the recorded fields ride with the
     node's rows; a database that predates the rows loads `import_sessions`

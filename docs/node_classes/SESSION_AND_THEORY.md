@@ -177,7 +177,12 @@ declare (PLUGIN_SYSTEM §1), which every other theory receives through
 the forest theories it imports. The agent writes none
 of them, and `recall` shows the agent's items alone (§4); their sessions
 are recorded in `import_sessions` with the agent's, so the ROOT's
-`sessions` clause names them (COMPILATION.md §2).
+`sessions` clause names them (COMPILATION.md §2). The theory's own name
+is written bare, or as a string token (COMPILATION.md §3) when it is
+one of the identifier-shaped words of Isabelle's fixed header lexicon,
+`Thy_Header.bootstrap_keywords` — `theory "text"`: the header is read
+before any keyword is recorded, and a compile has no Isabelle, so that
+lexicon, not `keywords`, governs it.
 
 The qualified name is `<Session name>.<name>`, computed, never stored; the
 tree's file path, `<Session name>/<name>.thy` relative to the working

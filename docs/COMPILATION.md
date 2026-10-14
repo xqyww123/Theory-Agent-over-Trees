@@ -389,7 +389,8 @@ should and nothing is refused.
 double quotes — a term, a type, a sort, a mixfix symbol or template, a
 quoted name — is written as Isabelle's outer-syntax string token, by
 the rule of `Symbol_Pos.quote_string_qq`, Isabelle symbols left intact,
-through one framework function; the ROOT's quoted items (§2),
+through one framework function, `string_token` (model.py); the ROOT's
+quoted items (§2),
 `print_name` (node_classes/SESSION_AND_THEORY.md §2) and every class's
 emission go through it.
 
