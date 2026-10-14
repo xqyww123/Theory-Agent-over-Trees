@@ -39,7 +39,7 @@ COMMON.md.
 | `Sublocale` | `sublocale` | `Leaf` | the locale's assumptions | not yet |
 | `Datatype` | `datatype`, `codatatype` | `Leaf` | none | DATATYPE.md |
 | `Record` | `record` | `Leaf` | none | not yet |
-| `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | not yet |
+| `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | TYPEDEF.md |
 | `QuotientType` | `quotient_type` | `Leaf` | the relation is an equivalence | not yet |
 | `LiftDefinition` | `lift_definition` | `Leaf` | the function respects the representation | not yet; what is decided ahead of it, LIFT_DEFINITION.md |
 | `Define` | `definition`, `fun`, `function`, the `form` recorded at evaluation; `abbreviation`, a kind of it or a class of its own, decided with it | `Leaf` | pattern completeness and termination, under `function` | ARCHITECTURE §2.2 in part; OPEN_QUESTIONS §4 |
@@ -53,8 +53,8 @@ COMMON.md.
 
 Commands no row covers whose fate is settled when the named class is
 designed: `text_raw` with `Text`; `termination`, which `Define` emits
-(ARCHITECTURE §2.2); `setup_lifting`, `lifting_forget` and
-`lifting_update` with `Typedef` and `LiftDefinition`.
+(ARCHITECTURE §2.2), and `setup_lifting`, which `Typedef` emits
+(TYPEDEF.md §5).
 
 ## 3. Not in the plugin
 
@@ -75,7 +75,11 @@ Every command inside a proof, since a tree holds no proof (ARCHITECTURE
   `bundle`, `open_bundle`, `unbundle`, `named_theorems`,
   `adhoc_overloading`, `no_adhoc_overloading`, `alias`, `type_alias`,
   `hide_class`, `hide_type`, `hide_const`, `hide_fact`, `default_sort`,
-  `judgment`.
+  `judgment`, `lifting_forget`, `lifting_update`. The last two delete a
+  type's lifting setup and transfer rules to hide a library type's
+  construction, which an agent's theory has no use for; after them a
+  later theory's `lift_definition` on the type needs `including
+  t.lifting`.
 - **Isabelle's own machinery**: `bnf`, `lift_bnf`, `copy_bnf`, `functor`,
   `free_constructors`, `datatype_compat`, `old_rep_datatype`,
   `primcorecursive`, `quotient_definition`, `syntax`, `no_syntax`,

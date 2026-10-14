@@ -14,6 +14,7 @@ from abc import abstractmethod
 from typing import Any, ClassVar
 
 import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§3)
+from Isabelle_RPC_Host.unicode import IsaTerm
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
@@ -187,7 +188,8 @@ class Proof_Obligation(Node):
     construction_job_class = Proof_Job
     evaluation_job_class = Proof_Check
 
-    evaluation_callback: ClassVar[str]      # the class's callback, one call of `TAT_Proof_Obligation.evaluate`
+    evaluation_callback: ClassVar[str]      # the class's callback, built by `TAT_Proof_Obligation.register`
+                                            # from its two steps, `open_goal` and `after_admission` (§3)
     valid_word: ClassVar[str]               # the mark's first slot under `ready` ...
     invalid_word: ClassVar[str]             # ... and under `cannot_evaluate`
 
@@ -219,16 +221,27 @@ class Proof_Obligation(Node):
     def _slots_written_by(self, operation):
         return (self.goal_state,)
 
+    def record_from_evaluation(self, what: Any) -> tuple[IsaTerm, ...]:
+        """What the two steps yielded, `[a, b]` on the wire, recorded on the
+        node; answers the messages the `Ready` carries (§3).  The default
+        records nothing and answers `()`."""
+        return ()
+
     async def _eval_opr(self):
-        """The class's callback, one call of `TAT_Proof_Obligation.evaluate`
-        (§3): the goal opened into `goal_state` and admitted into the
-        resulting slot; the messages make the node an obstacle, none is
-        `Ready`."""
-        messages = await isabelle_driver.call(
+        """The class's callback (§3) with the input slot, `goal_state`, the
+        resulting slot and `message()`: the goal opened into `goal_state`,
+        admitted into the resulting slot with the class's commands after
+        the admission.  Its answer is the messages and, when there are
+        none, what the two steps yielded: the messages make the node an
+        obstacle; none is `Ready` carrying what `record_from_evaluation`
+        answers."""
+        messages, what = await isabelle_driver.call(
             self.forest().conversation, type(self).evaluation_callback,
             (self.state.to_msgpack(), self.goal_state.to_msgpack(), self.resulting_state().to_msgpack(),
              self.message()))
-        return status_of_errors(messages)
+        if messages:
+            return status_of_errors(messages)
+        return Ready(self.record_from_evaluation(what))
 
     def mark(self, mode, depth):
         """Two slots, `(<status>, <proof>)` (§3): the class's word for the

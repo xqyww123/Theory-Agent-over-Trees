@@ -2,23 +2,35 @@
 
 The ML half of the plugin's `Proof_Obligation` (isabelle_theory_agent/std/common.py;
 docs/node_classes/COMMON.md §3): the goal a class's command opens, admitted and never
-proved in the tree; the proof construction, AoA's standard entry on that goal; the
-proof check, the proof replayed on it.
+proved in the tree, with the class's commands after the admission; the proof
+construction, AoA's standard entry on that goal; the proof check, the proof replayed
+on it.
 *)
 
 signature TAT_PROOF_OBLIGATION =
 sig
-  val evaluate : TAT_Framework.slot * TAT_Framework.slot * TAT_Framework.slot
-                 -> (Toplevel.state -> Toplevel.state option * string list) -> string list
-    (*the body of a class's evaluation callback (COMMON.md §3): the class's own
-      function from the input slot's state to the state with its goal open -- NONE
-      with messages when the command, or a check the class makes on the open goal,
-      refuses the input -- run under `operation` into `goal_state`; then the half
-      of `sorry` that ends a toplevel goal into the resulting slot.  Answers the
-      messages, empty when it passed.  On any failure no state is written into
-      either slot and `goal_state` is emptied -- a rerun of a `ready` node releases
-      nothing, so an earlier run's goal would stand there; an interrupt and a Bug
-      are re-raised*)
+  val register :
+    {name : string,
+     message : 'm MessagePackBinIO.Unpack.unpacker,
+     open_goal : 'm -> Toplevel.state -> (Toplevel.state * 'a) option * string list,
+     after_admission : 'm -> Toplevel.state -> Toplevel.state * 'b,
+     records : ('a * 'b) MessagePackBinIO.Pack.packer} -> theory -> theory
+    (*registers a class's evaluation callback (COMMON.md §3), built from the
+      callback's name, the message's unpacker, the class's two steps -- each a
+      function of the message -- and the packer of what they yield.  The
+      arguments are the input slot, `goal_state`, the resulting slot and the
+      message.  `open_goal`, from the input state to the state with the goal
+      open and what the class records -- NONE with messages when the command,
+      or a check the class makes on the open goal, refuses the input -- runs
+      under `operation'` into `goal_state`; then, as one operation into the
+      resulting slot, the half of `sorry` that ends a toplevel goal and
+      `after_admission`, total from the admitted state.  The answer is the
+      messages and, when there are none, the pair of what the two steps
+      yielded: on the wire [[msgs], nil] or [[], [a, b]].  On any failure
+      `goal_state` is emptied -- a rerun of a `ready` node releases nothing, so
+      an earlier run's goal would stand there -- and the resulting slot is
+      written only when everything passed; an interrupt and a Bug are
+      re-raised*)
 end
 
 structure TAT_Proof_Obligation : TAT_PROOF_OBLIGATION =
@@ -30,15 +42,31 @@ local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 val admit_transition =
   Toplevel.make "sorry" Position.none |> Toplevel.end_proof Proof.global_skip_proof
 
-fun evaluate (input, goal, result) open_goal =
+(*the body of a class's evaluation callback: `register`'s contract*)
+fun evaluate (input, goal, result) open_goal after_admission =
   let
-    val errors = TAT_Common_Nodes.operation goal (fn () => open_goal (#get input ()))
-    val errors =
-      if null errors
-      then TAT_Common_Nodes.operation result (fn () =>
-             TAT_Framework.apply_transition admit_transition (#get goal ()))
-      else errors
-  in if null errors then [] else (#put goal NONE; errors) end
+    val (messages, a) = TAT_Common_Nodes.operation' goal (fn () => open_goal (#get input ()))
+    val (messages, b) =
+      if is_some a
+      then TAT_Common_Nodes.operation' result (fn () =>
+             apfst (Option.map after_admission)
+               (TAT_Framework.apply_transition admit_transition (#get goal ())))
+      else (messages, NONE)
+  in
+    (case (a, b) of
+      (SOME a, SOME b) => ([], SOME (a, b))
+    | _ => (#put goal NONE; (messages, NONE)))
+  end
+
+fun register {name, message, open_goal, after_admission, records} =
+  TAT_Framework.register_callback {python_packages = ["isabelle_theory_agent.std"]} (fn env =>
+    {name = name,
+     on_interrupt = Remote_Procedure_Calling.Reraise,
+     arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env, message),
+     ret_schema = packPair (packList packString, packOption records),
+     function = fn (input, goal, result, m) =>
+       evaluate (input, goal, result) (open_goal m) (after_admission m),
+     timeout = NONE})
 
 (*the product on the wire (COMMON.md §3): the method text and the two times of
   its replay in milliseconds, thread CPU then wall, as the store orders them*)

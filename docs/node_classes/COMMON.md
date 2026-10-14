@@ -1,7 +1,8 @@
 # What the classes of `Isabelle_Std` share
 
-Status: proposed 2026-10-10, revised after the first review; under
-review.
+Status: proposed 2026-10-10, revised after the first review, committed
+2026-10-13 (e3eadf3); revised 2026-10-14 with the `Typedef` design
+(TYPEDEF.md; ai-artifacts/review/TYPEDEF_REVIEW.md).
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -9,8 +10,9 @@ this document's: the base every class derives from (§1), the `english`
 field and its `text` line (§2), the base of the classes whose command
 opens a proof obligation (§3), the `$defs` several classes merge (§4),
 and the conventions their schemas and sentences follow (§5). Its
-Python half is `isabelle_theory_agent/std/common.py`, its ML half
-`Isabelle_Std/ML/TAT_Proof_Obligation.ML`. What a class makes of it is that
+Python half is `isabelle_theory_agent/std/common.py`, its ML halves
+`Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` and
+`TAT_Overloaded.ML` (§4). What a class makes of it is that
 class's own document's.
 
 ## 1. `Theory_Member`
@@ -72,14 +74,18 @@ rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5). Evaluat
 ## 3. `Proof_Obligation`
 
 `Proof_Obligation` serves one shape: a `Leaf` whose one command opens
-exactly one goal, admitted as the operation's last transition. A class
+exactly one goal, which is admitted, the class's `after_admission` step
+following the admission in the same operation into the resulting slot
+(`Typedef`'s tries `setup_lifting` and keeps the admitted state when
+Isabelle refuses it, TYPEDEF.md §6; `Theorem`'s is the identity). A class
 of that shape whose command opens a proof obligation (INDEX.md) derives
 from it before its framework base — `class Theorem(Theory_Member,
 Proof_Obligation, Leaf)` — and `Proof_Obligation` derives from `Node`,
 so that its abstract methods, `goal_structure()` and `message()`, are
-enforced. `Theorem` derives from it; `Typedef`,
-`QuotientType`, `LiftDefinition`, `Interpretation` and `Sublocale` are
-expected to, each confirming it in its own document; `Instantiation`,
+enforced. `Theorem` and `Typedef` derive from it (THEOREM.md,
+TYPEDEF.md); `QuotientType`, `LiftDefinition`, `Interpretation` and
+`Sublocale` are expected to, each confirming it in its own document;
+`Instantiation`,
 whose goal opens on a `StdBlock`'s ending, decides in its own document
 how it discharges its own, and extends `Proof_Obligation` then if it
 uses it. Open, `Proof_Obligation`'s own, decided with the first of
@@ -136,22 +142,48 @@ own callback, named by its class attribute `evaluation_callback` —
 `goal_state`, the resulting slot and the class's message, the result of
 its `message()`: a public, synchronous hook returning its fields as
 structure, each `IsaTerm` as its `ascii`, with `goal_structure()` as
-its goal part (the amend, below). On the ML side the callback's body is
-one call of `TAT_Proof_Obligation.evaluate`, an ML function, not
-a callback: it takes the three slots and the class's own function from
-the input state to the state with the goal open, whose result is
-`Toplevel.state option * string list` — `NONE` with messages when the
-command, or a check the class makes on the open goal, refuses the
-input. It runs the function under `TAT_Common_Nodes.operation`
-(MODULE_STRUCTURE §3), writes the state it yields into `goal_state`,
-applies the half of `sorry` that ends a toplevel goal —
-`Toplevel.end_proof Proof.global_skip_proof`, through
-`apply_transition` — into the resulting slot, and answers the messages,
-empty when it passed (`operation`'s rule). On any failure no state
-is written into either slot and `goal_state` is emptied; an interrupt
-and a `Bug` are re-raised. `_eval_opr` returns `CannotEvaluate
-(messages)` on a failure — the node is an obstacle — and `Ready` with
-no messages otherwise.
+its goal part (the amend, below). On the ML side the class gives two
+steps, each a function of the message:
+
+- `open_goal : Toplevel.state -> (Toplevel.state * 'a) option * string
+  list`, from the input state to the state with the goal open together
+  with what the class records, or to no state and at least one message
+  — `operation`'s rule — when the command, or a check the class makes
+  on the open goal, refuses the input;
+- `after_admission : Toplevel.state -> Toplevel.state * 'b`, total,
+  from the state with the goal admitted to the state after the class's
+  commands that follow the admission, together with what it records:
+  a command of its own that Isabelle refuses leaves it carrying on from
+  the state it was given.
+
+Every transition of a step runs through `apply_transition`
+(MODULE_STRUCTURE §2.4), whose refusal is no state and Isabelle's
+messages; an interrupt, and a `Bug` from the step's own code,
+propagate. `TAT_Proof_Obligation` builds the class's evaluation
+callback from the callback's name, the message's unpacker, the two
+steps and the packer of the two records, and the class registers
+through the builder — the body, `evaluate`, is private to it, so the
+steps cannot touch a slot and every class answers one shape. The
+callback's arguments are the input slot, `goal_state`, the resulting
+slot and the message; its `on_interrupt` is `Reraise`, its `timeout`
+`NONE`. It runs `open_goal` under `operation'` (MODULE_STRUCTURE §2.5)
+into `goal_state`; then, as one operation into the resulting slot, the
+half of `sorry` that ends a toplevel goal — `Toplevel.end_proof
+Proof.global_skip_proof` — and `after_admission`; a failure anywhere
+empties `goal_state`, and the resulting slot is written only when
+everything passed. The answer is `(messages, (a, b) option)` — on the
+wire `[[msgs], nil]` or `[[], [a, b]]`: the messages, and when there are
+none the pair of what the two steps yielded. `_eval_opr` returns
+`CannotEvaluate(messages)` when there are messages — the node is an
+obstacle — and `Ready(self.record_from_evaluation(what))` otherwise.
+`record_from_evaluation(what)`, a member beside `evaluation_callback`
+and `message()`, records what the two steps yielded and answers the
+tuple of `IsaTerm` messages the `Ready` carries; the default records
+nothing and answers `()`; `Typedef`'s sets `overloaded` and `lifting`
+and answers its notice exactly when it sets `lifting` to false
+(TYPEDEF.md §6). `Theorem`'s `open_goal` is the `lemma` transition and
+the undeclared-variable check, yielding `()`; its `after_admission` the
+identity (THEOREM.md §6).
 
 **The jobs.** `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s
 `construction_job_class` and `evaluation_job_class`, their callbacks
@@ -277,9 +309,10 @@ The following proofs no longer hold, so their proof constructions were started a
 **The amend.** `goal_structure()`, abstract on `Proof_Obligation` —
 which derives from `Node`, so that the abstraction is enforced and a
 class that leaves it out fails at its first instantiation — is the
-class's: the fields that determine the goal — `Proof.goal`'s record,
-the context it stands in included, so the names the command binds
-there count — `english` aside, as the structure sent to Isabelle —
+class's: the fields that decide the goal — its term, the assumptions
+of the context it stands in, and the names that bind a fact a stored
+proof may cite (THEOREM.md §4's criterion) — `english` aside, as the
+structure sent to Isabelle —
 `message()` carries it as its goal part, so what an amend compares is
 what Isabelle receives —, a value compared with `==`, read from the
 node's own authored fields alone. It holds every field that determines the
@@ -295,14 +328,17 @@ true to have the old job's image copied, the replay times with it
 `Proof_Obligation` answers with `old.goal_structure() ==
 self.goal_structure()`; a class may override the answer, saying in its
 own document why its goal is not decided by those fields alone. No
-class's `gen` reads the replaced node for it.
+class's `gen` reads the replaced node for it. `Theorem`'s is its
+statement, names included (THEOREM.md §4); `Typedef`'s is
+`type_parameters` and `set` (TYPEDEF.md §4).
 
 **The mark.** `Proof_Obligation` overrides `mark` with two slots, `(<status>,
 <proof>)`; the framework's `complete` never appears on the line. The
 first slot is the class's two words for its evaluation status, its
 class attributes `valid_word` and `invalid_word` — `valid statement`
 and `invalid statement` for `Theorem`, `valid definition` and `invalid
-definition` for a class that defines — and `not evaluated`. The second, from `proof` and the proof
+definition` for a class that defines, `Typedef` (TYPEDEF.md §7) — and
+`not evaluated`. The second, from `proof` and the proof
 check:
 
 | `proof` | proof check | word |
@@ -340,10 +376,11 @@ node is not an obstacle (CONSTRUCT_INTERACTION §6) — are the failure
 blocks alone: the header above and the message one level deeper (for
 example THEOREM.md §8).
 
-What stays the class's: its command's transition and what the agent
-authors; `evaluation_callback`, the name of its callback; `message()`;
-`goal_structure()`; `valid_word` and `invalid_word`; and its own
-`print_fields`. `Proof_Obligation`
+What stays the class's: its two steps, `open_goal` and
+`after_admission`; `record_from_evaluation` and the recorded fields it
+sets; what the agent authors; `evaluation_callback`, the name of its
+callback; `message()`; `goal_structure()`; `valid_word` and
+`invalid_word`; and its own `print_fields`. `Proof_Obligation`
 stores no row of its own: `proof` and the check are the framework's
 (CONSTRUCT_INTERACTION §3.1, ARCHITECTURE §4.1).
 
@@ -352,20 +389,22 @@ stores no row of its own: `proof` and the check are the framework's
 A structure several classes use is defined once and merged by name
 (PLUGIN_SYSTEM §4–§5): `STATEMENT_DEFS` in `std/statement.py`, with
 its check and its writer, which are `Theorem`'s (THEOREM.md); the
-other two here, in `common.py`.
+other three here, in `common.py`. A class's `$defs` spreads only the
+definitions its schema reaches (PLUGIN_SYSTEM §5).
 
 | definition | holds | used by |
 | --- | --- | --- |
 | `STATEMENT_DEFS` | `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem` |
 | `TYPE_PARAMETER_DEFS` | `TypeParameter` | `Datatype`, `Record`, `Typedef` |
-| `MIXFIX_DEFS` | `Mixfix` | `Datatype`, and `Notation` for a constant's syntax |
+| `TYPE_MIXFIX_DEFS` | `TypeMixfix` | `Typedef`, and `Datatype` for a type's syntax |
+| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, and `Notation` for a constant's |
 
 `TypeSynonym`'s and `QuotientType`'s parameters, which take no sort
-(`Parse.type_args`), and a type's own syntax, which takes no binder, are
-decided with those classes. Each class's document lists every
-description its schema carries, the shared ones included (§5); a test
-of the plugin pins the schema text below against `common.py`'s
-constants.
+(`Parse.type_args`), are decided with those classes. The descriptions
+the definitions below carry and the shared refusal sentences have
+their one home here (§5): a test of the plugin pins the schema text
+below against `common.py`'s constants, and the sentences against its
+check.
 
 `TYPE_PARAMETER_DEFS` — a type parameter, a type variable with an
 optional sort:
@@ -385,14 +424,26 @@ optional sort:
 ```
 
 `common.py` holds its `gen`-time check — on the `ascii` form, a prime,
-then an Isabelle identifier (§5), and no two the same, the two
-`InvalidField` sentences DATATYPE.md §4 pins — and its writer,
-`type_parameters_text(parameters, spelling)`, which every class taking
-the definition uses, for the file in `ascii` and under `recall` in
-`unicode`: no parameter writes nothing; one without a sort writes it
-bare, `'a`; otherwise they are parenthesised and comma-separated, a
-sort in double quotes after `::`: `('a :: "linorder", 'b)`. An empty
-`sort` is no sort.
+then an Isabelle identifier (§5), and no two the same — whose two
+`InvalidField` sentences, pinned here, every class taking the
+definition renders:
+
+```
+The field `type_parameters[0].name` must be a type variable, such as 'a.
+The field `type_parameters[1].name` binds `'a` a second time.
+```
+
+and its writer, `type_parameters_text(theory, parameters, spelling)`,
+which every class taking the definition uses, for the file in `ascii`
+and under `recall` in `unicode`: no parameter writes nothing; one
+without a sort writes it bare, `'a`; otherwise they are parenthesised
+and comma-separated, a sort after `::` through the theory's
+`print_name` (SESSION_AND_THEORY §2) — bare when its `ascii` is an
+Isabelle identifier that is not a keyword of the theory, a string
+token otherwise: `('a :: linorder, 'b)`, `('a :: "{zero, linorder}")`;
+while the theory's `keywords` is `None` no keyword is known, so
+`recall` may write it before a header has run. An empty `sort` is no
+sort.
 
 `MIXFIX_DEFS` — Isabelle's mixfix annotation (`Parse.mixfix`) less the
 `structure` form and a binder's own body priority:
@@ -426,27 +477,72 @@ sort in double quotes after `::`: `('a :: "linorder", 'b)`. An empty
 }
 ```
 
-`Mixfix` is a union told apart by `form`, which `check_call` judges
-against the construct schema (MODULE_STRUCTURE §4.4). `symbol` and
-`template` are `IsaTerm`s, normalised at `gen` for newlines and tabs
-alone, since runs of spaces in a template are layout; no `gen` refuses
-one. Whether a priority lies within 0 and 1000, and whether there are
-more argument priorities than the template has arguments, is
-Isabelle's business at evaluation; fewer are padded with 0. Its writer,
-`mixfix_text(syntax, spelling)`, writes the annotation as Isabelle
-does, the symbol or template in double quotes: `(infixr "#" 65)`,
-`(binder "∀" 10)`, `("⟨_, _⟩")`, a general mixfix's argument priorities
-in brackets and its result priority after them, each when given, `("_
-! _" [100, 101] 100)`. Its ML decoding stays in `TAT_Datatype.ML` until
-a second class takes it. The writers take the spelling alone and never
-`print_name`: a type variable is written bare, a sort, a symbol and a
-template in double quotes.
+`TYPE_MIXFIX_DEFS` — a type's mixfix annotation: `Mixfix`'s infix and
+general arms and no binder, which a type's mixfix refuses (`Bad mixfix
+declaration`, mixfix.ML `syn_ext_types`):
+
+```jsonc
+{
+  "TypeMixfix": {
+    "description": "Isabelle's mixfix annotation for a type",
+    "anyOf": [
+      { "type": "object", "description": "an infix type constructor. Example: (infixr \"+\" 10)",
+        "properties": {
+          "form":     { "type": "string", "enum": ["infix", "infixl", "infixr"] },
+          "symbol":   { "type": "string" },
+          "priority": { "type": "integer" } },
+        "required": ["form", "symbol", "priority"], "additionalProperties": false },
+      { "type": "object", "description": "a template with one _ per type parameter. Example: (\"_⇩⊥\" [21] 21)",
+        "properties": {
+          "form":                { "type": "string", "enum": ["mixfix"] },
+          "template":            { "type": "string" },
+          "argument_priorities": { "type": "array", "items": { "type": "integer" }, "description": "one per _; 0 when left out" },
+          "priority":            { "type": "integer", "description": "the result's; 1000 when left out" } },
+        "required": ["form", "template"], "additionalProperties": false }
+    ]
+  }
+}
+```
+
+`Mixfix` and `TypeMixfix` are unions told apart by `form`, which
+`check_call` judges against the construct schema (MODULE_STRUCTURE
+§4.4). `symbol` and `template` are `IsaTerm`s, normalised at `gen` for
+newlines and tabs alone, since runs of spaces in a template are layout;
+no `gen` refuses one. Whether a priority lies within 0 and 1000,
+whether there are more argument priorities than the template has
+arguments, and whether a type's template has one `_` per parameter, is
+Isabelle's business at evaluation; fewer priorities are padded with 0.
+Their writer, `mixfix_text(syntax, spelling)`, writes either
+annotation as Isabelle does, the symbol or template as a string token
+(COMPILATION.md §3): `(infixr "#" 65)`, `(binder "∀" 10)`, `("⟨_,
+_⟩")`, a general mixfix's argument priorities in brackets and its
+result priority after them, each when given, `("_ ! _" [100, 101]
+100)`. Their ML decoding is `Isabelle_Std/ML/TAT_Mixfix.ML`, structure
+`TAT_Mixfix`, loaded by `TAT_Isabelle_Std.thy` before the class files.
+`mixfix_text` takes the spelling alone: a symbol and a template are
+string tokens by Isabelle's grammar; `type_parameters_text` writes a
+type variable bare and a sort through the theory's `print_name`.
+
+Beside it, `Isabelle_Std/ML/TAT_Overloaded.ML`, structure
+`TAT_Overloaded`: `needed : theory -> string -> bool`, whether the type
+of that full name has open dependencies on overloaded definitions in
+the theory's definition table — `not (null (maps #2 (Defs.get_deps
+(Theory.defs_of thy) (Defs.Type, name))))`, the check `typedef` makes
+when `(overloaded)` is not given (typedef.ML, `primitive_typedef`); it
+does not consult the configuration option `typedef_overloaded`.
+`Typedef` (TYPEDEF.md §6), `Record` (RECORD.md §6, on the extension
+type from `Record.get_extension`) and `QuotientType` decide their
+recorded `overloaded` with it, each after one run of its command with
+the option. A test pins both answers: `{x :: 'a::zero. x = 0}` true,
+`{n :: nat. n > 0}` false.
 
 ## 5. Conventions
 
 - Whether a field carries a description is decided field by field, by
-  whether its key and its place already say what it holds: `kind` and
-  the class carry none; `Theorem`'s `name` and a constructor's `name`
+  whether its key and its place already say what it holds, and whether
+  the class carries one by whether its name says what it defines:
+  `kind` never does; `Datatype`'s class carries none and `Typedef`'s
+  one (TYPEDEF.md §3); `Theorem`'s `name` and a constructor's `name`
   carry none, `premises[].name` keeps `binding name for the premise`
   (THEOREM.md §3), `selector` says what it extracts (DATATYPE.md §3).
   An example in a description is Isabelle's own text, never JSON, and
@@ -471,7 +567,10 @@ template in double quotes.
   (`GRAMMARS`, RENDER_BASELINES §2): `InvalidName` renders it after the
   noun of its grammar, `InvalidField` after `must be`, the noun of what
   the field must be and a colon (THEOREM.md §4, DATATYPE.md §4).
-- A class's sentences — its descriptions, the descriptions of the
-  shared `$defs` it merges included, its `gen`'s refusals, the words of
-  its mark — are in its own document, pinned by the baseline tests; a
-  framework exception's whole rendering is RENDER_BASELINES §2's own.
+- A class's own sentences — its descriptions, its `gen`'s refusals,
+  the words of its mark — are in its own document, pinned by the
+  baseline tests. Every shared sentence — a shared `$defs`
+  description, a shared refusal sentence — has one home, §4, and one
+  test pin there; a class document lists its own sentences alone and
+  names that home for the rest. `NotInsideTheory`'s sentence is §1's.
+  A framework exception's whole rendering is RENDER_BASELINES §2's own.

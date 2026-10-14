@@ -367,11 +367,15 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
                                   "    fixes n", '    shows "length (rev xs) = length xs"', "    sorry")
     (r,) = insert(f, x, 2, [lemma("r", english="Bang!", kind="corollary", for_any=(), premises=())])
     assert emitted(r)[:2] == expected("  text ‹Corollary r. Bang!›", "  corollary r:")
-    # every type and term through the framework's `string_token` (COMPILATION.md §3)
+    # every piece of Isabelle text through the theory's `print_name` (§5): a string token
+    # (COMPILATION.md §3) unless an identifier that is no keyword
     (t,) = insert(f, x, 3, [lemma("t", conclusion='v = "q"', for_any=({"name": "v", "type": 'foo "bar"'},),
                                   premises=({"name": "h", "term": 'v \\<noteq> "r"'},))])
     assert emitted(t)[2:5] == expected('    fixes v :: "foo \\"bar\\""', '    assumes h: "v ≠ \\"r\\""',
                                        '    shows "v = \\"q\\""')
+    (u,) = insert(f, x, 4, [lemma("u", conclusion="True", for_any=({"name": "v", "type": "'a"},),
+                                  premises=({"name": "h", "term": "P"},))])
+    assert emitted(u)[2:5] == expected('    fixes v :: "\'a"', "    assumes h: P", "    shows True")
 
 
 def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores_of_no_tree(monkeypatch):
@@ -393,7 +397,7 @@ def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores
 
     async def evaluate(conversation, name, args):
         assert name == "TAT.Theorem.evaluate"
-        return []
+        return [[], [None, None]]
     monkeypatch.setattr(isabelle_driver, "call", evaluate)
     run(x.evaluate_to(None, False))                                          # `Y` stays unevaluated: not written
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
@@ -441,7 +445,7 @@ def test_the_store_mirror_catches_a_proof_text_read_off_an_instant_status(monkey
     (p,) = x.sub_nodes
 
     async def evaluate(conversation, name, args):
-        return []
+        return [[], [None, None]]
     monkeypatch.setattr(isabelle_driver, "call", evaluate)
     run(x.evaluate_to(None, False))
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
@@ -512,12 +516,16 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
             "    Refused",
             "    Error:"], lines
         assert lines[12].startswith("      Type unification failed"), lines
-    messages = await isabelle_driver.call(
+    messages, what = await isabelle_driver.call(
         forest.conversation, "TAT.Theorem.evaluate",
         (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(),
          ("lemma", "again", [["xs", "'a list"]], [], "xs = (0::nat)")))
-    assert messages
+    assert messages and what is None                                         # `[[msgs], nil]` (COMMON.md §3)
     assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()
+    messages, what = await isabelle_driver.call(                             # `[[], [a, b]]`: `Theorem` yields nothing twice
+        forest.conversation, "TAT.Theorem.evaluate",
+        (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(), p.message()))
+    assert (messages, what) == ([], [None, None]) and await p.goal_state.is_initialized()
 
 
 async def test_an_undeclared_variable_is_refused(std_conversation):

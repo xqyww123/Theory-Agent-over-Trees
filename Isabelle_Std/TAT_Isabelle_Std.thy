@@ -3,6 +3,7 @@ theory TAT_Isabelle_Std
 begin
 
 ML_file "ML/TAT_Proof_Obligation.ML"
+ML_file "ML/TAT_Overloaded.ML"
 ML_file "ML/TAT_Theorem.ML"
 
 end

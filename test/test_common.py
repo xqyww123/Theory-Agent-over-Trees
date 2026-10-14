@@ -1,12 +1,14 @@
-"""What the classes of `Isabelle_Std` share (node_classes/COMMON.md), with
-no Isabelle: `NotInsideTheory`'s sentence, and `Theory_Member` over every
-class the package registers (§1); the `text` line (§2);
-`Proof_Obligation`'s abstraction, and its reading of the class's own
-words, callback and message, through a stand-in (§3).  The rest of what
-`Proof_Obligation` does on a node is pinned through `Theorem`,
-test_theorem.py.
+"""What the classes of `Isabelle_Std` share (node_classes/COMMON.md):
+`NotInsideTheory`'s sentence, and `Theory_Member` over every class the
+package registers (§1); the `text` line (§2); `Proof_Obligation`'s
+abstraction, and its reading of the class's own words, callback, message
+and records, through a stand-in (§3); `TAT_Overloaded`, Isabelle-backed
+(§4).  The rest of what `Proof_Obligation` does on a node is pinned
+through `Theorem`, test_theorem.py.
 Run: python -m pytest test/test_common.py
 """
+
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,7 @@ from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit
 from isabelle_theory_agent.std import theorem
 from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Obligation, Theory_Member, text_line
+from Isabelle_RPC_Host.unicode import IsaTerm
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
@@ -105,20 +108,28 @@ def test_proof_obligation_enforces_its_abstract_methods():
 
 
 class Stand_In(theorem.Theorem):
-    """A second `Proof_Obligation` class, with its own words, callback and
-    message (§3); the rest `Theorem`'s."""
+    """A second `Proof_Obligation` class, with its own words, callback,
+    message and records (§3); the rest `Theorem`'s."""
     evaluation_callback = "TAT.Stand_In.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"
+    recorded = None                     # what `record_from_evaluation` was given, once called
 
     def message(self):
         return ("stand_in", self.name)
 
+    def record_from_evaluation(self, what):
+        self.recorded = what
+        return (IsaTerm.from_agent(f"recorded {what[0]} and {what[1]}"),)
 
-def test_proof_obligation_reads_the_class_s_own_words_callback_and_message(monkeypatch):
+
+def test_proof_obligation_reads_the_class_s_own_words_callback_message_and_records(monkeypatch):
     """§3: `_eval_opr` calls the class's own `evaluation_callback` with the
-    three slots and its `message()`, and the messages it answers make the
-    node an obstacle; the mark's first slot is the class's `valid_word` or
-    `invalid_word`."""
+    three slots and its `message()`, and reads its answer, the messages and
+    what the two steps yielded: the messages make the node an obstacle,
+    the class's `record_from_evaluation` not called; none is `Ready`
+    carrying what `record_from_evaluation` answers, given the pair; the
+    default, `Theorem`'s, records nothing and answers `()`.  The mark's
+    first slot is the class's `valid_word` or `invalid_word`."""
     kinds = {**ts.KINDS, "lemma": Stand_In}
     f = Forest_Under_Test(kinds=kinds)
     (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
@@ -129,14 +140,44 @@ def test_proof_obligation_reads_the_class_s_own_words_callback_and_message(monke
 
     async def call(conversation, name, args):
         calls.append((name, args))
-        return ["no"] if args[3] == q.message() else []
+        return [["no"], None] if args[3] == q.message() else [[], ["opened", "admitted"]]
     monkeypatch.setattr(isabelle_driver, "call", call)
     run(x.evaluate_to(None, False))
     assert [name for name, _ in calls] == ["TAT.Stand_In.evaluate"] * 2
     assert [args[:3] for _, args in calls] == [
         (n.state.to_msgpack(), n.goal_state.to_msgpack(), n.resulting_state().to_msgpack()) for n in (p, q)]
     assert [args[3] for _, args in calls] == [p.message(), q.message()] == [("stand_in", "p"), ("stand_in", "q")]
+    (status,) = p.evaluation_statuses()
+    assert isinstance(status, M.Ready) and [m.unicode for m in status.messages] == ["recorded opened and admitted"]
+    assert p.recorded == ["opened", "admitted"]
     assert p.mark(M.BRIEFING, 0) == "valid definition, proof not started"
     (status,) = q.evaluation_statuses()
     assert isinstance(status, M.CannotEvaluate) and [m.unicode for m in status.messages] == ["no"]
+    assert q.recorded is None
     assert q.mark(M.BRIEFING, 0) == "invalid definition"
+    assert "record_from_evaluation" not in vars(theorem.Theorem)
+    assert Proof_Obligation.record_from_evaluation(p, [None, None]) == ()
+
+
+# --- TAT_Overloaded (§4), on a raw ML process: the std harness offers no probe
+
+OVERLOADED_ML = Path(__file__).resolve().parent.parent / "Isabelle_Std" / "ML" / "TAT_Overloaded.ML"
+
+
+async def test_tat_overloaded_needed_answers_section_4_s_two_typedefs(std_harness):
+    """§4: `needed` is true for `{x :: 'a::zero. x = 0}` and false for
+    `{n :: nat. n > 0}`, each made with `(overloaded)` given, as the
+    classes make theirs."""
+    ml = f"""
+      use {M.string_token(str(OVERLOADED_ML))};
+      val thy0 = Theory.begin_theory ("Probe", Position.none) [Thy_Info.get_theory "Main"];
+      fun after text =
+        Toplevel.theory_of (fold (Toplevel.command_exception true)
+          (Outer_Syntax.parse_text thy0 (K thy0) Position.start text) (Toplevel.make_state (SOME thy0)));
+      fun needed thy name = TAT_Overloaded.needed thy (Sign.full_name thy (Binding.name name));
+      val zero_only = after "typedef (overloaded) 'a zero_only = \\"{{x :: 'a::zero. x = 0}}\\" by simp";
+      val pos = after "typedef (overloaded) pos = \\"{{n :: nat. n > 0}}\\" by (rule exI[of _ 1]) simp";
+      writeln ("needed: " ^ Value.print_bool (needed zero_only "zero_only") ^ " " ^ Value.print_bool (needed pos "pos"));
+    """
+    r = await std_harness.run_tool(["isabelle", "ML_process", "-l", "HOL", "-e", ml])
+    assert r.returncode == 0 and "needed: true false" in r.stdout.splitlines(), (r.stdout, r.stderr)

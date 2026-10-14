@@ -170,11 +170,14 @@ lemma rev_length:
 - The `text` line's lead: the kind capitalised and the name, `Lemma
   rev_length.`; the line is COMMON.md §2's.
 - A variable without `type` is fixed bare (`fixes xs`); an empty
-  `for_any` or `premises` omits its clause; every term in double quotes.
-- Every name — the fact's, a variable's, a premise's — is written
-  through the theory's `print_name` (SESSION_AND_THEORY §2): in double
-  quotes when it is a keyword of the theory, `lemma "open":`, `fixes
-  "for"`, `assumes "if":`, bare otherwise.
+  `for_any` or `premises` omits its clause.
+- Every piece of Isabelle text — a name, a variable's type, a term —
+  is written through the theory's `print_name` (SESSION_AND_THEORY §2),
+  `Token.print_name`'s rule: bare when its `ascii` is an Isabelle
+  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
+  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise —
+  `lemma "open":`, `fixes "for"`, `assumes "if":`; `fixes xs :: "'a"`
+  quoted, a conclusion `True` bare, `"P x"` quoted.
 - The terminal proof, `by aoa` or `sorry`, is `Proof_Obligation`'s
   `proof_text()` (COMMON.md §3); the `aoa` method's import is the
   plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
@@ -190,12 +193,12 @@ sends the class's callback — `evaluation_callback`,
 `TAT.Theorem.evaluate` — the input slot, `goal_state`, the resulting
 slot, and its `message()`: `kind`, `name` and `goal_structure()` — the
 `for_any` variables with their types, the premises, the conclusion —
-each `IsaTerm` as its `ascii` (§2). The callback is one call of
-`TAT_Proof_Obligation.evaluate` (COMMON.md §3) with `Theorem`'s own
-function, which builds the `lemma` command's transition;
-`TAT_Proof_Obligation.evaluate` applies the half of `sorry` that ends a
-toplevel goal
-(`Isar_Cmd.global_skip_proof`):
+each `IsaTerm` as its `ascii` (§2). The callback is built by
+`TAT_Proof_Obligation` (COMMON.md §3) from `Theorem`'s two steps:
+`open_goal`, the `lemma` command's transition and, on the open goal,
+the check below, yielding nothing; `after_admission`, the identity.
+Between the two the base applies the half of `sorry` that ends a
+toplevel goal (`Isar_Cmd.global_skip_proof`):
 
 ```
 Toplevel.local_theory_to_proof NONE NONE
@@ -213,8 +216,8 @@ their goal; the second's into the resulting slot (COMMON.md §3): at
 theory level the same four steps as a hand-written `theory_init …
 exit_global`, and inside a future `Context` or `Locale` the statement
 is checked in that context, as ARCHITECTURE §2 promises. A failure is
-`TAT_Proof_Obligation.evaluate`'s (COMMON.md §3). Between the two transitions, the goal open,
-`Theorem`'s function refuses the statement whose
+the base's (COMMON.md §3). On the open goal, `Theorem`'s `open_goal`
+refuses the statement whose
 free variables — in the goal, or in the premises assumed beside it —
 `for_any` does not declare, which Isabelle fixed by itself (§2): the
 same failure, one message naming them in alphabetical order,
@@ -224,7 +227,9 @@ Undeclared variable `x`: declare it in `for_any`.
 Undeclared variables `x` and `y`: declare them in `for_any`.
 ```
 
-Otherwise `_eval_opr` returns `Ready` with no messages. The proof check
+Otherwise `_eval_opr` returns `Ready` with no messages: `Theorem`'s
+`record_from_evaluation` is `Proof_Obligation`'s default, which records
+nothing (COMMON.md §3). The proof check
 and the proof construction, with their callbacks
 `TAT.Proof_Obligation.check` and `TAT.Proof_Obligation.construct`, are
 `Proof_Obligation`'s (COMMON.md §3).

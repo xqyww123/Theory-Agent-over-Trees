@@ -282,6 +282,29 @@ def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empt
     assert not b2.can_emit()
 
 
+def test_print_name_writes_a_piece_of_isabelle_text_bare_or_as_a_string_token():
+    """SESSION_AND_THEORY §2: bare when its `ascii` spelling is an identifier
+    that is not in `keywords`, Isabelle's string token otherwise —
+    `Token.print_name`'s rule; while `keywords` is None, no keyword is
+    known; the `unicode` spelling is written, the test still on `ascii`;
+    a `str` is the text's `ascii`, an `IsaTerm` carries both."""
+    f = Forest_Under_Test()
+    (s,) = insert(f, f, 0, [session("S", theory("A", kind="fake_theory"))])
+    (a,) = s.sub_nodes
+    a.keywords = frozenset({"and", "lemma"})
+    for bare in ("xs", "UNIV", "\\<alpha>", "x\\<^sub>1"):
+        assert a.print_name(bare) == bare
+    for quoted in ("and", "lemma", "'a", "{xs. distinct xs}", "'a \\<Rightarrow> 'b", "0.5"):
+        assert a.print_name(quoted) == f'"{quoted}"'
+    assert a.print_name(IsaTerm.from_agent("'a ⇒ 'b")) == '"\'a \\<Rightarrow> \'b"'
+    assert a.print_name(IsaTerm.from_agent("'a ⇒ 'b"), "unicode") == '"\'a ⇒ \'b"'
+    assert a.print_name(IsaTerm.from_agent("α"), "unicode") == "α"       # an identifier on its `ascii` alone
+    assert a.print_name(IsaTerm.from_agent("x⇩1"), "unicode") == "x⇩1"
+    assert a.print_name(IsaTerm.from_agent("lemma"), "unicode") == '"lemma"'
+    a.keywords = None
+    assert (a.print_name("and"), a.print_name("'a")) == ("and", '"\'a"')
+
+
 class Real_Theories:
     """A forest of the real `Theory` on a working directory of its own, the
     class's two callbacks faked, both passing; `refused` is a tree whose

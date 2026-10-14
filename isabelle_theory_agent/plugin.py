@@ -327,7 +327,9 @@ def _check_class(cls: type[Node]) -> list[str]:
     except TAT_InternalError as e:
         raise _refuse(cls, f"argument_schema: {e}") from e
     _validate_construct_schema(cls)
-    _Agreement(cls, schema.get("$defs", {})).object(schema, cls.argument_schema, "construct_schema", top=True)
+    agreement = _Agreement(cls, schema.get("$defs", {}))
+    agreement.object(schema, cls.argument_schema, "construct_schema", top=True)
+    agreement.reached_every_def()
     return own_kinds
 
 
@@ -687,15 +689,23 @@ class _Agreement:
     """The two schemas held to each other at every depth (PLUGIN_SYSTEM §5),
     a `$ref` followed into `$defs` once per annotation it is met with —
     which is how a definition that refers to itself meets a TypedDict that
-    nests itself.  Values, fields and arms are compared as sets, never by
-    position: typing's cache hands one union's arms, or one `Literal`'s
-    values, to an equal one written in another order."""
+    nests itself; `met` keeps the keys followed, which is how an entry no
+    `$ref` reaches is known.  Values, fields and arms are compared as sets,
+    never by position: typing's cache hands one union's arms, or one
+    `Literal`'s values, to an equal one written in another order."""
     cls: type[Node]
     defs: Mapping[str, Any]
     met: set[tuple[str, Any]] = dataclasses.field(default_factory=set)
 
     def disagree(self, where: str, what: str) -> CannotLoadPlugin:
         return _refuse(self.cls, f"construct_schema and argument_schema disagree at `{where}`: {what}")
+
+    def reached_every_def(self) -> None:
+        """After the agreement: a `$defs` entry no `$ref` reached, directly or
+        through other entries, is refused, the first by name."""
+        unreached = sorted(set(self.defs) - {name for name, _ in self.met})
+        if unreached:
+            raise _refuse(self.cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` of the schema")
 
     def agree(self, schema: JSON_Schema, ann: Any, where: str) -> None:
         if "$ref" in schema:

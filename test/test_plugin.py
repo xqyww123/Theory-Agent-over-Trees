@@ -229,8 +229,14 @@ def test_children_only_on_a_nesting_class_and_only_as_refs():
 
 
 def test_children_must_point_at_construct_or_a_node_class():
-    own = plugin.TAT_node(block(
-        "Own", {"type": "array", "items": {"$ref": "#/$defs/Statement"}}, defs=STATEMENT))
+    class Sec_With_Statement(TypedDict):
+        title: str
+        s: Thm_Statement
+    own = block("Own", {"type": "array", "items": {"$ref": "#/$defs/Statement"}}, defs=STATEMENT)
+    own.construct_schema["properties"]["s"] = {"$ref": "#/$defs/Statement"}     # reached by a field: what
+    own.construct_schema["required"] = ["kind", "title", "s"]                     # `children` points at is
+    own.argument_schema = Sec_With_Statement                                      # assembly's to refuse
+    plugin.TAT_node(own)
     refused_at_assembly(own, "`children` must be an array of `\\$ref`s to `Construct` or to"
                              " node classes, not to `#/\\$defs/Statement`")
 
@@ -633,6 +639,26 @@ def test_a_ref_names_an_own_def_in_the_one_form_judged_at_registration():
             r"names no `\$defs` entry")
 
 
+def test_every_def_is_reached_by_a_ref_of_the_schema():
+    """PLUGIN_SYSTEM §5: a `$defs` entry no `$ref` reaches, directly or
+    through other entries, is refused after the agreement, naming the key;
+    one reached only through another entry is admitted."""
+    class Holds_Statement(TypedDict):
+        s: Thm_Statement
+
+    class Outer_TD(TypedDict):
+        inner: Thm_Statement
+
+    class Holds_Outer(TypedDict):
+        s: Outer_TD
+    unused = {**STATEMENT, "Unused": {"type": "string"}}
+    refused(declaring("P", {"s": {"$ref": "#/$defs/Statement"}}, Holds_Statement, required=["s"], defs=unused),
+            r"`\$defs` entry `Unused` is reached by no `\$ref`")
+    outer = {"Outer": {"type": "object", "properties": {"inner": {"$ref": "#/$defs/Statement"}},
+                       "required": ["inner"], "additionalProperties": False}, **STATEMENT}
+    plugin.TAT_node(declaring("Q", {"s": {"$ref": "#/$defs/Outer"}}, Holds_Outer, required=["s"], defs=outer))
+
+
 def test_a_definition_may_refer_to_itself_through_an_object():
     """PLUGIN_SYSTEM §3, §5: a `$defs` entry referring to itself through an
     object meets a TypedDict that nests itself, defined at module level
@@ -829,16 +855,20 @@ def test_shared_defs_must_be_equal():
     refused_at_assembly(other, "defines `\\$defs` `Statement` differently from Thm")
 
 
+class Uses_C(TypedDict):          # the own entry reached by a field, so that assembly judges its name
+    c: str
+
+
 def test_own_defs_may_not_take_construct_or_a_class_name():
-    r = plugin.TAT_node(leaf("R", ["r"], construct_schema=leaf_schema(
-        ["r"], defs={"Construct": {"type": "string"}})))
+    r = plugin.TAT_node(leaf("R", ["r"], argument_schema=Uses_C, construct_schema=leaf_schema(
+        ["r"], {"c": {"$ref": "#/$defs/Construct"}}, required=["c"], defs={"Construct": {"type": "string"}})))
     refused_at_assembly(r, "reserved name `Construct`")
 
 
 def test_own_defs_may_not_take_another_class_name():
     plugin.TAT_node(Thm)
-    s = plugin.TAT_node(leaf("S", ["s"], construct_schema=leaf_schema(
-        ["s"], defs={"Thm": {"type": "string"}})))
+    s = plugin.TAT_node(leaf("S", ["s"], argument_schema=Uses_C, construct_schema=leaf_schema(
+        ["s"], {"c": {"$ref": "#/$defs/Thm"}}, required=["c"], defs={"Thm": {"type": "string"}})))
     refused_at_assembly(s, "reserved name `Thm`")
 
 

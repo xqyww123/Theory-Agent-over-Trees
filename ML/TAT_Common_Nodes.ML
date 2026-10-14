@@ -1,19 +1,24 @@
 (*  Title:      ML/TAT_Common_Nodes.ML
     Author:     Qiyuan Xu
 
-`operation`, the helper a node class writes its callbacks against, then the
-predefined node classes (docs/MODULE_STRUCTURE.md §3), each a client of
-TAT_Framework's node class interface.
+`operation'` and `operation`, the helpers a node class writes its callbacks
+against, then the predefined node classes (docs/MODULE_STRUCTURE.md §3), each
+a client of TAT_Framework's node class interface.
 *)
 
 signature TAT_COMMON_NODES =
 sig
+  val operation' : TAT_Framework.slot -> (unit -> (Toplevel.state * 'a) option * string list)
+                   -> string list * 'a option
+    (*runs one operation of a node class that yields a value beside its state,
+      and answers its error messages and the value: no message and the value
+      when it passed and its state is in the slot (docs/EXCEPTIONS.md §1); at
+      least one message and no value when it failed.  The run answers a state
+      and no message, or no state and at least one message; anything else is
+      a bug*)
   val operation : TAT_Framework.slot -> (unit -> Toplevel.state option * string list)
                   -> string list
-    (*runs one operation of a node class and answers its error messages: empty
-      when it passed and its state is in the slot (docs/EXCEPTIONS.md §1).  The
-      run answers a state and no message, or no state and at least one message;
-      anything else is a bug*)
+    (*`operation'` for a run that yields nothing: the messages alone*)
 end
 
 structure TAT_Common_Nodes : TAT_COMMON_NODES =
@@ -29,25 +34,28 @@ fun escapes exn = is_some (TAT_Framework.bug_message exn) orelse TAT_Framework.i
 
 (*The callback's side of docs/EXCEPTIONS.md §1: every failure of the operation
   is data, and what escapes is a bug.  A run's success is a state, written
-  into the target slot; its failure is its messages, the slot left to the
-  framework, which copies the input through.  An exception raised under
-  `run` becomes the operation's messages, read the way Toplevel.command_errors
-  reads an exception's (a failing import load arrives as whatever Thy_Info
-  raised, released through Par_Exn by TAT_Framework.Loader.load) -- except
-  what `escapes` names, re-raised as it arrived.  An exception rendering to
-  no message at all would read as success with the slot unwritten; none is
-  known, and it is refused as a bug should one appear.*)
-fun operation slot (run : unit -> Toplevel.state option * string list) =
+  into the target slot, and the value it yields beside it; its failure is its
+  messages, the slot left to the framework, which copies the input through.
+  An exception raised under `run` becomes the operation's messages, read the
+  way Toplevel.command_errors reads an exception's (a failing import load
+  arrives as whatever Thy_Info raised, released through Par_Exn by
+  TAT_Framework.Loader.load) -- except what `escapes` names, re-raised as it
+  arrived.  An exception rendering to no message at all would read as success
+  with the slot unwritten; none is known, and it is refused as a bug should
+  one appear.*)
+fun operation' slot (run : unit -> (Toplevel.state * 'a) option * string list) =
   (case Exn.capture_body run of
-    Exn.Res (SOME st, []) => (#put slot (SOME st); [])
-  | Exn.Res (NONE, msgs as _ :: _) => msgs
+    Exn.Res (SOME (st, a), []) => (#put slot (SOME st); ([], SOME a))
+  | Exn.Res (NONE, msgs as _ :: _) => (msgs, NONE)
   | Exn.Res _ => raise TAT_Framework.Bug "operation: a state and no message, or messages and no state"
   | Exn.Exn exn =>
       if escapes exn then Exn.reraise exn
       else
         (case map (#2 o #1) (Runtime.exn_messages exn) of
           [] => raise TAT_Framework.Bug "operation: an exception with no message"
-        | msgs => msgs))
+        | msgs => (msgs, NONE)))
+
+fun operation slot run = #1 (operation' slot (fn () => apfst (Option.map (rpair ())) (run ())))
 
 (*** Theory ***)
 

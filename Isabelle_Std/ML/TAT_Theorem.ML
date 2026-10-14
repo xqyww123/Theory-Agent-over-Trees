@@ -2,9 +2,9 @@
 
 The ML half of the plugin's `Theorem` (isabelle_theory_agent/std/theorem.py;
 docs/node_classes/THEOREM.md §6): the statement opened as the `lemma` command's
-goal, with the undeclared-variable check on it; what admits the goal, and the
-proof construction and the proof check on it, are `TAT_Proof_Obligation`'s
-(COMMON.md §3).
+goal, with the undeclared-variable check on it, and nothing after the admission;
+the callback is built by `TAT_Proof_Obligation.register` (COMMON.md §3), whose
+are also the admission, the proof construction and the proof check.
 *)
 
 structure TAT_Theorem =
@@ -55,26 +55,24 @@ fun undeclared_sentence names =
       else "Undeclared variables " ^ listed ^ ": declare them in `for_any`."
   end
 
-(*`Theorem`'s function for TAT_Proof_Obligation.evaluate: the statement's
-  transition from the input state to the state with the goal open, refused --
-  no state, one message -- when a variable is undeclared*)
+(*`Theorem`'s `open_goal` (COMMON.md §3): the statement's transition from the
+  input state to the state with the goal open, refused -- no state, one
+  message -- when a variable is undeclared; yields nothing*)
 fun open_goal statement st =
   (case TAT_Framework.apply_transition (statement_transition statement) st of
     (SOME st', []) =>
       (case undeclared statement st' of
-        [] => (SOME st', [])
+        [] => (SOME (st', ()), [])
       | names => (NONE, [undeclared_sentence names]))
-  | refused => refused)
+  | (_, messages) => (NONE, messages))
 
-val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["isabelle_theory_agent.std"]} (fn env =>
+(*`after_admission` the identity, yielding nothing*)
+val _ = Theory.setup (TAT_Proof_Obligation.register
   {name = "TAT.Theorem.evaluate",
-    on_interrupt = Remote_Procedure_Calling.Reraise,
-    arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env,
-                               unpack_statement),
-    ret_schema = packList packString,
-    function = fn (input, goal, result, statement) =>
-      TAT_Proof_Obligation.evaluate (input, goal, result) (open_goal statement),
-    timeout = NONE}))
+   message = unpack_statement,
+   open_goal = open_goal,
+   after_admission = K (rpair ()),
+   records = packPair (packUnit, packUnit)})
 
 end
 

@@ -13,7 +13,7 @@ from typing import Any, Literal, TypedDict
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from ..exceptions import GRAMMARS, InvalidField, InvalidName
-from ..model import INDENT, RECALL, Leaf, emit_lines, string_token
+from ..model import INDENT, RECALL, Leaf, emit_lines
 from ..plugin import TAT_node
 from .common import Proof_Obligation, Theory_Member, text_line
 from .statement import STATEMENT_DEFS, LongStatement_RawAST
@@ -155,16 +155,16 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
 
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.statement.english, f"{self.kind.capitalize()} {self.name}."))
-        print_name = self.theory().print_name               # every name through it, every term
-        lines = [f"{self.kind} {print_name(self.name)}:"]   # and type through `string_token` (§5)
+        print_name = self.theory().print_name               # every piece of Isabelle text through it (§5)
+        lines = [f"{self.kind} {print_name(self.name)}:"]
         if self.statement.for_any:
             lines.append("  fixes " + " and ".join(
-                print_name(v.name.ascii) + (f" :: {string_token(v.type.ascii)}" if v.type is not None else "")
+                print_name(v.name) + (f" :: {print_name(v.type)}" if v.type is not None else "")
                 for v in self.statement.for_any))
         if self.statement.premises:
             lines.append("  assumes " + " and ".join(
-                f"{print_name(p.name.ascii)}: {string_token(p.term.ascii)}" for p in self.statement.premises))
-        lines.append(f"  shows {string_token(self.statement.conclusion.ascii)}")
+                f"{print_name(p.name)}: {print_name(p.term)}" for p in self.statement.premises))
+        lines.append(f"  shows {print_name(self.statement.conclusion)}")
         lines.append("  " + self.proof_text())
         emit_lines(indent, out, "\n".join(lines))
         return indent

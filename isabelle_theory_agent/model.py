@@ -25,7 +25,7 @@ from typing import (TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
                     TextIO, TypeAlias, TypedDict, TypeVar, final)
 
 from Isabelle_RPC_Host import Connection
-from Isabelle_RPC_Host.unicode import IsaTerm
+from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from . import isabelle_driver
 from .exceptions import (
@@ -2632,13 +2632,18 @@ class Theory(StdBlock):
         COMPILATION.md §4)."""
         return super().can_emit() and self.keywords is not None
 
-    def print_name(self, name: str) -> str:
-        """A name of the tree as its file writes it (SESSION_AND_THEORY §2):
-        a string token when its `ascii` spelling is a keyword of the
-        theory, bare otherwise — `Token.print_name`'s rule for an
-        identifier.  Emission's alone, after `can_emit`."""
-        assert self.keywords is not None, "print_name before a header run recorded the keywords"
-        return string_token(name) if name in self.keywords else name
+    def print_name(self, text: str | IsaTerm, spelling: Literal["ascii", "unicode"] = "ascii") -> str:
+        """A piece of Isabelle text — a name, a term, a type, a sort — as the
+        tree's file writes it (`ascii`) and `recall` shows it (`unicode`)
+        (SESSION_AND_THEORY §2): bare when its `ascii` spelling is an
+        identifier that is not in `keywords`, as Isabelle's string token
+        otherwise — `Token.print_name`'s rule; while `keywords` is `None`,
+        no keyword is known.  A `str` is the text's `ascii`."""
+        if isinstance(text, str):
+            text = IsaTerm.from_isabelle(text)
+        bare = is_identifier(text.ascii) and (self.keywords is None or text.ascii not in self.keywords)
+        written = text.ascii if spelling == "ascii" else text.unicode
+        return written if bare else string_token(written)
 
     def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever
