@@ -1118,8 +1118,8 @@ packages define. The loader checks a hook is a plain function of one
 positional argument, neither a coroutine nor a generator. The table is what `edit`
 dispatches on. What the loader
 checks at registration and at assembly, and how it completes the `edit`
-schema, is PLUGIN_SYSTEM.md. `check_call` — given a schema, the holder
-and the top-level fields to pass over — is the one checker: of a tool
+schema, is PLUGIN_SYSTEM.md. `check_call` — given a schema, the holder,
+and whether it checks a construct — is the one checker: of a tool
 call's own arguments against the schema the tool advertises, the one
 object the agent is told and held to; and, handed one by one by
 `edit.py`, of each submitted construct against its class's construct

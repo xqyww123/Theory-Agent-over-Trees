@@ -103,7 +103,18 @@ class T_RawAST(TypedDict):
     name: str
     fail: NotRequired[bool]
 
+# The stand-ins' construct schemas, which `edit` checks a construct against
+# (MODULE_STRUCTURE §4.4); `kind` is a string, since a table may register a
+# stand-in under any kind, and the check passes it over unread.
+T_SCHEMA = {"type": "object",
+            "properties": {"kind": {"type": "string"}, "name": {"type": "string"},
+                           "fail": {"type": "boolean"}},
+            "required": ["kind", "name"], "additionalProperties": False}
+BLOCK_SCHEMA = {**T_SCHEMA, "properties": {
+    **T_SCHEMA["properties"], "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"}}}}
+
 class T(M.Leaf):                    # a leaf whose operation succeeds unless told to fail
+    construct_schema = T_SCHEMA
     argument_schema = T_RawAST
     def __init__(self, parent, state, name, fail=False):
         super().__init__(parent, state)
@@ -135,6 +146,7 @@ class T(M.Leaf):                    # a leaf whose operation succeeds unless tol
 
 
 class Block(M.StdBlock):
+    construct_schema = BLOCK_SCHEMA
     argument_schema = T_RawAST
     def __init__(self, parent, state, name, sbe, fail_beginning=False, fail_ending=False):
         super().__init__(parent, state, [], sbe)
@@ -914,6 +926,7 @@ def test_a_block_threads_the_indent_through_what_it_emits():
 
 
 class Bare(M.Leaf):                 # a class that wrote neither persistence method
+    construct_schema = T_SCHEMA
     argument_schema = T_RawAST
     @classmethod
     async def gen(cls, config, raw):

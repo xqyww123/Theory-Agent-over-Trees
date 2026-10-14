@@ -1,8 +1,9 @@
 """Loading node classes (PLUGIN_SYSTEM.md): registration under `@TAT_node`,
 the table from `kind` to class that `edit` dispatches on, the `$defs` that
-complete the `edit` tool's schema at start, and the argument schema grammar
-— what a class's TypedDict may declare, and how a submitted construct is
-checked against it.
+complete the `edit` tool's schema at start, the one checker — of a tool
+call's arguments and of a submitted construct, each against its schema
+(MODULE_STRUCTURE §4.4) — and the argument schema grammar, what a class's
+TypedDict may declare.
 
 Importing a plugin's package is what registers its classes, into the
 process-wide `registry`; `load` imports every package `launch_TAT`
@@ -20,7 +21,7 @@ import importlib
 import inspect
 import re
 import sys
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import UnionType
@@ -36,7 +37,7 @@ from .jobs import Construction_Job, Evaluation_Job
 from .exceptions import (
     InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
     UnexpectedField)
-from .model import (Forest, JSON_Schema, Leaf, Node, NonLeaf_Node, RawAST, StdBlock,
+from .model import (Forest, JSON_Schema, Leaf, Node, NonLeaf_Node, StdBlock,
                     Unchained_Node, is_valid_name)
 from .store import CONSTRUCT_FRAMEWORK_FIELDS, FRAMEWORK_FIELDS
 
@@ -427,8 +428,8 @@ def _fits(value: Any, json_type: str) -> bool:
 # those holding at most one TypedDict, each field optionally wrapped in
 # `NotRequired[X]` or `Required[X]` — closed, so every rendering stays
 # within RENDER_BASELINES §2's vocabulary.  Validated once, at registration;
-# then every submitted construct is checked against the declaration before
-# its class's `gen` is consulted (MODULE_STRUCTURE §4.2).
+# a submitted construct is checked against the class's construct schema, not
+# the declaration (`check_call`, MODULE_STRUCTURE §4.2).
 
 _JSON_NAMES = {str: "string", bool: "boolean", int: "integer", float: "number"}   # the scalars
 
@@ -516,105 +517,171 @@ def _holds_object(ann: Any) -> bool:
     return is_typeddict(ann)
 
 
-def _matches(value: Any, ann: Any) -> bool:
-    """Whether a JSON value fits a field annotation of the grammar; a
-    TypedDict is matched as an object here, its fields by `_check_value`."""
-    if ann is Any:
+# --- the check (MODULE_STRUCTURE §4.4) ------------------------------------------
+# One checker: of a tool call's own arguments against the very schema the
+# tool advertises (TOOL_SCHEMAS.md §4), and of each submitted construct
+# against its class's construct schema, so that what the agent is told and
+# what it is held to are one object.  Its sentences stay within
+# RENDER_BASELINES §2's vocabulary — the JSON types' phrases, `must be one
+# of`, `must not be empty`, the nesting bound — each held once here.
+
+NESTING_LEVELS = 100      # a tool call's argument nests no deeper, each object or array a level
+
+
+def check_call(schema: JSON_Schema, holder: str, arguments: Mapping[str, Any], *,
+               construct: bool = False) -> None:
+    """A tool call's own arguments against the schema the tool advertises
+    — one `validate_call_schema` has passed, whose keywords the check
+    therefore reads unguarded —, the holder the tool's name: an argument
+    nested deeper than `NESTING_LEVELS` refused before anything else, and
+    every refusal marked the call's on its way out, so that its sentence
+    says tool and argument (EXCEPTIONS.md §3).  Or, with `construct`, a
+    submitted construct against its class's construct schema, handed by
+    `edit.py` (§4.2), the holder the kind: `kind` passed over unread — the
+    kind table chose the class from it —, `kind` and `children` left out
+    of what the kind "takes", nothing marked."""
+    check = _Check(schema.get("$defs", {}), construct)
+    if construct:
+        check.object(schema, holder, arguments, prefix="")
+        return
+    try:
+        for argument, value in arguments.items():
+            if _nested_deeper_than(value, NESTING_LEVELS):
+                raise InvalidField(argument, f"must not be nested deeper than {NESTING_LEVELS} levels")
+        check.object(schema, holder, arguments, prefix="")
+    except RawASTError as e:
+        e._mark_of_tool()
+        raise
+
+
+def _nested_deeper_than(value: Any, levels: int) -> bool:
+    """Whether an object or array lies more than `levels` levels down in
+    `value`, each object or array a level; the descent stops there, so no
+    depth of input exhausts the stack."""
+    if not isinstance(value, (Mapping, list)):
+        return False
+    if levels == 0:
         return True
-    if is_typeddict(ann):
-        return isinstance(value, Mapping)
-    origin = get_origin(ann)
-    if origin is list:
-        return isinstance(value, list) and all(
-            _matches(v, get_args(ann)[0]) for v in value)
-    if origin in (Union, UnionType):
-        return any(_matches(value, a) for a in get_args(ann))
-    if ann not in _JSON_NAMES:
-        raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
-    return _fits(value, _JSON_NAMES[ann])
+    members = value.values() if isinstance(value, Mapping) else value
+    return any(_nested_deeper_than(m, levels - 1) for m in members)
 
 
-def _json_name(ann: Any) -> str:
-    """The approved rendering of a type (RENDER_BASELINES §2)."""
-    if is_typeddict(ann):
-        return _JSON_TYPES["object"].phrase
-    if get_origin(ann) is list:
-        return _JSON_TYPES["array"].phrase
-    if get_origin(ann) in (Union, UnionType):
-        names = []
-        for a in get_args(ann):
-            if _json_name(a) not in names:
-                names.append(_json_name(a))
-        return " or ".join(names)
-    if ann not in _JSON_NAMES:
-        raise TAT_InternalError(f"{ann!r} is outside the argument schema grammar")
-    return _JSON_TYPES[_JSON_NAMES[ann]].phrase
+@dataclass(frozen=True)
+class _Check:
+    """One check's standing knowledge: the `$defs` its `$ref`s are followed
+    into, and whether the top-level object is a construct."""
+    defs: Mapping[str, Any]
+    construct: bool
 
+    def resolve(self, schema: JSON_Schema) -> JSON_Schema:
+        return self.defs[_def_name(schema["$ref"])] if "$ref" in schema else schema
 
-def check_fields(cls: type[Node], kind: str, raw: RawAST) -> None:
-    """The mechanical shape of a submitted construct, before its class is
-    consulted: no field the class does not declare, required fields
-    present, types right — against the class's `argument_schema`."""
-    _check_fields(cls.argument_schema, kind, raw, prefix="", framework=CONSTRUCT_FRAMEWORK_FIELDS)
+    def holds_constructs(self, items: JSON_Schema) -> bool:
+        """Whether an `items` names `Construct` or a node class — a `$ref`,
+        or an `anyOf` of `$ref`s, to them.  No `$defs` entry bears their
+        names (PLUGIN_SYSTEM §5), so a `$ref` the `$defs` do not hold
+        names one."""
+        arms = items["anyOf"] if "anyOf" in items else [items]
+        return all("$ref" in arm and self.is_construct(_def_name(arm["$ref"])) for arm in arms)
+
+    def is_construct(self, name: str) -> bool:
+        return name == CONSTRUCT or name not in self.defs
+
+    def object(self, schema: JSON_Schema, holder: str, mapping: Mapping[str, Any], prefix: str) -> None:
+        """An object's fields against its `properties`: the names, then each
+        value; at a construct's top, `kind` passed over."""
+        properties = schema["properties"]
+        top = self.construct and not prefix
+        _check_names(properties, schema.get("required", ()), holder, mapping, prefix,
+                     unlisted=CONSTRUCT_FRAMEWORK_FIELDS if top else ())
+        for field, value in mapping.items():
+            if top and field == "kind":
+                continue
+            self.value(value, properties[field], holder, prefix + field)
+
+    def value(self, value: Any, schema: JSON_Schema, holder: str, path: str) -> None:
+        """One value against its schema — its JSON type, its `enum`, an
+        empty list against `minItems` — descending so that the field
+        reported is the innermost at fault: an object's field by its name,
+        a typed `items`' element by its index, an `anyOf` by the arm the
+        value is for.  The constructs are opaque here, `edit.py`'s to
+        check."""
+        schema = self.resolve(schema)
+        if "anyOf" in schema:
+            schema = self.arm(value, [self.resolve(arm) for arm in schema["anyOf"]], holder, path)
+        json_type = schema["type"]
+        if not _fits(value, json_type):
+            raise InvalidField(path, _must_be([json_type]))
+        if "enum" in schema and value not in schema["enum"]:
+            raise InvalidField(path, _one_of(schema["enum"]))
+        if "minItems" in schema and not value:
+            raise InvalidField(path, "must not be empty")
+        if json_type == "object" and not _is_bare_object(schema):     # a bare object is "an object", no more
+            self.object(schema, holder, value, path + ".")
+        elif json_type == "array" and not self.holds_constructs(schema["items"]):
+            for i, v in enumerate(value):
+                self.value(v, schema["items"], holder, f"{path}[{i}]")
+
+    def arm(self, value: Any, arms: list[JSON_Schema], holder: str, path: str) -> JSON_Schema:
+        """The arm of an `anyOf` the value is checked against: by its JSON
+        type — of no arm's, `must be` the arms' distinct types, each once,
+        in the schema's order; among objects told apart by an `enum`
+        field, the one every arm declares with an `enum`: a field none of
+        them declares first, `UnexpectedField` over all their fields in
+        the order they first appear, then the choosing field missing, then
+        its value outside every arm, `must be one of` all their values."""
+        fitting = [arm for arm in arms if _fits(value, arm["type"])]
+        if not fitting:
+            raise InvalidField(path, _must_be([arm["type"] for arm in arms]))
+        if len(fitting) == 1:
+            return fitting[0]
+        declared = list(dict.fromkeys(field for arm in fitting for field in arm["properties"]))
+        _check_names(declared, (), holder, value, path + ".")
+        choosing, = [field for field in declared
+                     if all("enum" in arm["properties"].get(field, {}) for arm in fitting)]
+        if choosing not in value:
+            raise MissingField(holder, f"{path}.{choosing}")
+        for arm in fitting:
+            if value[choosing] in arm["properties"][choosing]["enum"]:
+                return arm
+        raise InvalidField(f"{path}.{choosing}",
+                           _one_of([v for arm in fitting for v in arm["properties"][choosing]["enum"]]))
 
 
 def _check_names(declared: Collection[str], required: Collection[str], holder: str,
-                 mapping: Mapping[str, Any], prefix: str, framework: Collection[str] = ()) -> None:
-    """The names a mapping carries against those declared for it, for both
-    checkers: one the declaration does not name first — a typo beats its
-    own hole — then a required one missing, in declaration order.
-    `framework` are the framework's own fields, which pass unread and
-    which the holder does not "take" (RENDER_BASELINES.md §2)."""
+                 mapping: Mapping[str, Any], prefix: str, unlisted: Collection[str] = ()) -> None:
+    """The names a mapping carries against those declared for it: one the
+    declaration does not name first — a typo beats its own hole — then a
+    required one missing, in declaration order.  `unlisted` are the
+    declared fields the holder does not "take" (RENDER_BASELINES §2)."""
     for field in mapping:
-        if field not in framework and field not in declared:
+        if field not in declared:
             raise UnexpectedField(prefix[:-1] if prefix else holder, field,
-                                  [f for f in declared if f not in framework],
-                                  holder_is_top=not prefix)
+                                  [f for f in declared if f not in unlisted], holder_is_top=not prefix)
     for field in declared:
         if field in required and field not in mapping:
             raise MissingField(holder, prefix + field)
 
 
-def _check_fields(td: Any, holder: str, mapping: Mapping[str, Any], prefix: str,
-                  framework: Collection[str] = ()) -> None:
-    """`holder` is the kind; `framework` the fields of the framework's own
-    that pass unread, `kind` and `children` at a construct's top level."""
-    hints, required = _declared(td)
-    _check_names(hints, required, holder, mapping, prefix, framework)
-    for field, value in mapping.items():
-        if field in framework:
-            continue
-        _check_value(value, hints[field], holder, prefix + field)
+def _def_name(ref: str) -> str:
+    """`<Name>` of a `$ref` `#/$defs/<Name>`, the one form the loader admits."""
+    return ref.removeprefix("#/$defs/")
 
 
-def _check_value(value: Any, ann: Any, holder: str, path: str) -> None:
-    """One value against its annotation, descending so that the field
-    reported is the innermost at fault: a list element by its index, a
-    TypedDict's field by its name, a union by the arm the value fits."""
-    if get_origin(ann) is list:
-        if not isinstance(value, list):
-            raise InvalidField(path, "must be a list")
-        for i, v in enumerate(value):
-            _check_value(v, get_args(ann)[0], holder, f"{path}[{i}]")
-    elif get_origin(ann) in (Union, UnionType):
-        arm = next((a for a in get_args(ann) if _matches(value, a)), None)
-        if arm is None:
-            raise InvalidField(path, f"must be {_json_name(ann)}")
-        _check_value(value, arm, holder, path)
-    elif is_typeddict(ann):
-        if not isinstance(value, Mapping):
-            raise InvalidField(path, "must be an object")
-        _check_fields(ann, holder, value, path + ".")
-    elif not _matches(value, ann):
-        raise InvalidField(path, f"must be {_json_name(ann)}")
+def _must_be(json_types: Iterable[str]) -> str:
+    """`must be` the types' phrases, each once, in the order given, joined by `or`."""
+    return "must be " + " or ".join(dict.fromkeys(_JSON_TYPES[t].phrase for t in json_types))
 
 
-# --- a tool call's own arguments (TOOL_SCHEMAS.md §4) ------------------------
-# Checked against the very schema the tool advertises, so what the agent is
-# told and what it is held to are one object.  The keywords listed below are
-# the whole of it — closed like the grammar above, so every rendering stays
-# within RENDER_BASELINES §2's vocabulary; `validate_call_schema` refuses a
-# schema saying anything more.
+def _one_of(values: Iterable[Any]) -> str:
+    return "must be one of " + ", ".join(f"`{v}`" for v in values)
+
+
+# --- the tool schema grammar (TOOL_SCHEMAS.md §4) ------------------------------
+# The keywords listed below are the whole of what a tool's schema may say —
+# closed like the argument schema grammar above, so that every rendering
+# stays within RENDER_BASELINES §2's vocabulary; `validate_call_schema`
+# refuses a schema saying anything more.
 
 # By the JSON type of the value, the keywords a schema may carry there
 # besides `type` and `description`, each enforced by `check_call`:
@@ -628,20 +695,6 @@ _KEYWORDS = {"string": {"enum"}, "boolean": set(), "integer": {"enum"}, "number"
 _CONSTRUCTS = {"$ref": f"#/$defs/{CONSTRUCT}"}   # `items` the check leaves to `edit.py`
 
 
-def check_call(schema: JSON_Schema, tool: str, arguments: Mapping[str, Any]) -> None:
-    """A tool call's own arguments against the schema the tool advertises
-    — one `validate_call_schema` has passed, whose keywords the check
-    therefore reads unguarded — as a construct's fields are checked
-    against its class's declaration: the tool's name where the kind would
-    be, and the refusal marked on its way out, so that its sentence says
-    tool and argument (EXCEPTIONS.md §3)."""
-    try:
-        _check_arguments(schema, tool, arguments, prefix="")
-    except RawASTError as e:
-        e._mark_of_tool()
-        raise
-
-
 def validate_call_schema(schema: JSON_Schema, where: str) -> None:
     """Refuse a tool schema saying anything `check_call` does not enforce,
     or its sentences cannot say, or too little for the check to read —
@@ -653,34 +706,6 @@ def validate_call_schema(schema: JSON_Schema, where: str) -> None:
     except jsonschema.SchemaError as e:
         raise TAT_InternalError(f"{where}: not a well-formed JSON schema: {e.message}") from e
     _validate_schema(schema, where, top=True)
-
-
-def _check_arguments(schema: JSON_Schema, tool: str, mapping: Mapping[str, Any],
-                     prefix: str) -> None:
-    properties = schema["properties"]
-    _check_names(properties, schema.get("required", ()), tool, mapping, prefix)
-    for field, value in mapping.items():
-        _check_argument(value, properties[field], tool, prefix + field)
-
-
-def _check_argument(value: Any, schema: JSON_Schema, tool: str, path: str) -> None:
-    """One argument against its schema — its JSON type, its `enum`, an
-    empty list against `minItems` — descending so that the argument
-    reported is the innermost at fault: an object's field by its name, a
-    typed `items`' element by its index.  The constructs are opaque here,
-    `edit.py`'s to check."""
-    json_type = schema["type"]
-    if not _fits(value, json_type):
-        raise InvalidField(path, f"must be {_JSON_TYPES[json_type].phrase}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise InvalidField(path, "must be one of " + ", ".join(f"`{a}`" for a in schema["enum"]))
-    if "minItems" in schema and not value:
-        raise InvalidField(path, "must not be empty")
-    if json_type == "object" and not _is_bare_object(schema):     # a bare object is "an object", no more
-        _check_arguments(schema, tool, value, path + ".")
-    elif json_type == "array" and schema["items"] != _CONSTRUCTS:
-        for i, v in enumerate(value):
-            _check_argument(v, schema["items"], tool, f"{path}[{i}]")
 
 
 # The one property the grammar admits as a bare `object` (MODULE_STRUCTURE

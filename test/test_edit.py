@@ -205,83 +205,145 @@ def test_the_rawast_error_family():
         run(insert({"kind": "t", "name": "x", "children": []}))
     assert e.value.is_leaf
 
-def test_schema_typed_dict_forms():
-    from typing import NotRequired, TypedDict
+FACT = {"type": "object", "properties": {"name": {"type": "string"}},
+        "required": ["name"], "additionalProperties": False}
 
-    class Fact(TypedDict):
-        name: str
 
-    class Rich_RawAST(TypedDict):
-        name: str
-        priority: NotRequired[int]
-        note: NotRequired[str | int]
-        facts: NotRequired[list[Fact]]
-        tags: NotRequired[list[str]]
+def construct_schema(fields, required=(), defs=None):
+    """A construct schema of a stand-in kind `t` with `fields`."""
+    schema = {"type": "object",
+              "properties": {"kind": {"const": "t"}, **fields},
+              "required": ["kind", *required], "additionalProperties": False}
+    if defs is not None:
+        schema["$defs"] = defs
+    return schema
 
-    class Rich(RT):
-        argument_schema = Rich_RawAST
 
-    def check_ok(raw):
-        plugin.check_fields(Rich, "t", raw)
-    def check_bad(raw, field, reason):
-        with pytest.raises((MissingField, InvalidField)) as e:
-            plugin.check_fields(Rich, "t", raw)
-        got = e.value
-        assert (got.field if isinstance(got, InvalidField)
-                else got.field) == field
-        if reason is not None:
-            assert got.reason == reason
+def check(schema, raw):
+    plugin.check_call(schema, "t", raw, construct=True)
 
-    check_ok({"kind": "t", "name": "x"})                 # optionals absent
-    check_ok({"kind": "t", "name": "x", "priority": 3,
-              "note": "n", "facts": [{"name": "f"}]})
-    check_ok({"kind": "t", "name": "x", "note": 7})      # the union's other arm
-    check_bad({"kind": "t"}, "name", None)               # required missing
-    check_bad({"kind": "t", "name": "x", "priority": True},
-              "priority", "must be an integer")          # a flag is not a number
-    check_bad({"kind": "t", "name": "x", "priority": 1.5},
-              "priority", "must be an integer")
-    check_bad({"kind": "t", "name": "x", "note": []},
-              "note", "must be a string or an integer")
-    check_bad({"kind": "t", "name": "x", "facts": [{"name": 1}]},
-              "facts[0].name", "must be a string")
-    check_bad({"kind": "t", "name": "x", "facts": [{}]},
-              "facts[0].name", None)                     # nested required
-    check_bad({"kind": "t", "name": "x", "tags": ["a", 5]},
-              "tags[1]", "must be a string")             # the element, not the list
-    check_bad({"kind": "t", "name": "x", "tags": "a"},
-              "tags", "must be a list")
-    # undeclared fields are refused, the typo before its own hole
-    with pytest.raises(UnexpectedField) as e:
-        plugin.check_fields(Rich, "t", {"kind": "t", "namee": "x"})
-    assert (e.value.holder, e.value.field) == ("t", "namee")
-    assert e.value.takes == ["name", "priority", "note", "facts", "tags"]
-    assert e.value.holder_is_top
-    with pytest.raises(UnexpectedField) as e:
-        plugin.check_fields(Rich, "t", {"kind": "t", "name": "x",
-                                    "facts": [{"name": "f", "extra": 1}]})
-    assert (e.value.holder, e.value.field) == ("facts[0]", "extra")
-    assert e.value.takes == ["name"] and not e.value.holder_is_top
-    # a TypedDict that declares `kind` for the static checker: `takes`
-    # still does not advertise the framework's field
-    from typing import Literal, TypedDict
 
-    class WithKind(TypedDict):
-        kind: Literal["t"]
-        name: str
-    with pytest.raises(UnexpectedField) as e:
-        plugin.check_fields(type("RK", (RT,), {"argument_schema": WithKind}),
-                        "t", {"kind": "t", "nmae": "x"})
-    assert e.value.takes == ["name"]
-    # a declaration is compulsory (PLUGIN_SYSTEM §5); an empty one declares no field
-    with pytest.raises(TAT_InternalError, match="not a TypedDict"):
-        plugin.validate_argument_schema(None)
-    class Empty(TypedDict):
-        pass
-    plugin.validate_argument_schema(Empty)
-    with pytest.raises(UnexpectedField):
-        plugin.check_fields(type("RE", (RT,), {"argument_schema": Empty}),
-                        "t", {"kind": "t", "whatever": 1})
+def refused(schema, cls, raw):
+    """A construct's refusal: never marked the tool's (MODULE_STRUCTURE §4.4)."""
+    with pytest.raises(cls) as e:
+        check(schema, raw)
+    assert not e.value.of_tool
+    return e.value
+
+
+def test_a_construct_is_checked_against_its_construct_schema():
+    """MODULE_STRUCTURE §4.4, `check_call` over a construct: the holder is
+    the kind; `kind` passes unread, since the kind table chose the class
+    from it; `children` is a declared field — an array, `minItems` where
+    declared, its elements `edit.py`'s — which the kind does not "take",
+    nor `kind`; a `$ref` is followed into the class's `$defs`; an `enum`
+    and `minItems` speak for a construct's field as for a tool's argument;
+    the innermost field at fault is reported, a typo before its own hole."""
+    RICH = construct_schema({
+        "name": {"type": "string"},
+        "priority": {"type": "integer"},
+        "level": {"type": "string", "enum": ["low", "high"]},
+        "note": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+        "facts": {"type": "array", "items": {"$ref": "#/$defs/Fact"}},
+        "tags": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"}, "minItems": 1},
+    }, required=["name"], defs={"Fact": FACT})
+    check(RICH, {"kind": "t", "name": "x"})                       # optionals absent
+    check(RICH, {"kind": "lemma", "name": "x"})                   # `kind` unread
+    check(RICH, {"kind": "t", "name": "x", "priority": 3, "level": "low", "note": "n",
+                 "facts": [{"name": "f"}], "tags": ["a"],
+                 "children": [5, "not a construct"]})             # the elements are edit.py's
+    check(RICH, {"kind": "t", "name": "x", "note": 7})            # the union's other arm
+    takes = ["name", "priority", "level", "note", "facts", "tags"]
+    e = refused(RICH, UnexpectedField, {"kind": "t", "namee": "x"})
+    assert (e.holder, e.field, e.takes, e.holder_is_top) == ("t", "namee", takes, True)
+    e = refused(RICH, MissingField, {"kind": "t"})
+    assert (e.holder, e.field) == ("t", "name")
+    e = refused(RICH, MissingField, {"kind": "t", "name": "x", "facts": [{}]})
+    assert (e.holder, e.field) == ("t", "facts[0].name")          # nested required
+    e = refused(RICH, UnexpectedField, {"kind": "t", "name": "x", "facts": [{"name": "f", "extra": 1}]})
+    assert (e.holder, e.field, e.takes, e.holder_is_top) == ("facts[0]", "extra", ["name"], False)
+    for raw, field, reason in [
+        ({"kind": "t", "name": 5}, "name", "must be a string"),
+        ({"kind": "t", "name": True}, "name", "must be a string"),              # a flag is not a string
+        ({"kind": "t", "name": "x", "priority": True}, "priority", "must be an integer"),
+        ({"kind": "t", "name": "x", "priority": 1.5}, "priority", "must be an integer"),
+        ({"kind": "t", "name": "x", "level": "mid"}, "level", "must be one of `low`, `high`"),
+        ({"kind": "t", "name": "x", "note": []}, "note", "must be a string or an integer"),
+        ({"kind": "t", "name": "x", "facts": [{"name": 1}]}, "facts[0].name", "must be a string"),
+        ({"kind": "t", "name": "x", "tags": ["a", 5]}, "tags[1]", "must be a string"),   # the element
+        ({"kind": "t", "name": "x", "tags": "a"}, "tags", "must be a list"),
+        ({"kind": "t", "name": "x", "tags": []}, "tags", "must not be empty"),
+        ({"kind": "t", "name": "x", "children": {}}, "children", "must be a list"),
+        ({"kind": "t", "name": "x", "children": []}, "children", "must not be empty"),
+    ]:
+        e = refused(RICH, InvalidField, raw)
+        assert (e.field, e.reason) == (field, reason), raw
+    # a nesting class that declares no `children` takes contents only
+    # through later edits (PLUGIN_SYSTEM §3); a class with no field takes nothing
+    e = refused(construct_schema({"name": {"type": "string"}}), UnexpectedField,
+                {"kind": "t", "name": "x", "children": []})
+    assert (e.holder, e.field, e.takes) == ("t", "children", ["name"])
+    e = refused(construct_schema({}), UnexpectedField, {"kind": "t", "whatever": 1})
+    assert (e.field, e.takes) == ("whatever", [])
+
+
+def test_a_union_of_objects_is_told_apart_by_its_choosing_field_in_the_documents_order():
+    """MODULE_STRUCTURE §4.4's order for an `anyOf`: a value of no arm's
+    JSON type, `must be` the arms' distinct types, each once, in the
+    schema's order; of one arm's type, that arm; among objects told apart
+    by an `enum` field — a field none of them declares, over all their
+    fields in the order they first appear; the choosing field missing; its
+    value not a string or outside every arm, `must be one of` all their
+    values; then the chosen arm.  A `$ref` arm is followed."""
+    SYNTAX = {"anyOf": [
+        {"type": "object",
+         "properties": {"form": {"type": "string", "enum": ["infix", "infixl"]},
+                        "symbol": {"type": "string"}, "priority": {"type": "integer"}},
+         "required": ["form", "symbol", "priority"], "additionalProperties": False},
+        {"type": "object",
+         "properties": {"form": {"type": "string", "enum": ["binder"]}, "symbol": {"type": "string"}},
+         "required": ["form", "symbol"], "additionalProperties": False},
+        {"type": "object",
+         "properties": {"form": {"type": "string", "enum": ["mixfix"]}, "template": {"type": "string"},
+                        "priorities": {"type": "array", "items": {"type": "integer"}}},
+         "required": ["form", "template"], "additionalProperties": False},
+    ]}
+    UNION = construct_schema({
+        "syntax": {"$ref": "#/$defs/Syntax"},
+        "either": {"anyOf": [{"$ref": "#/$defs/Fact"}, {"type": "string"}]},
+        "or": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/Fact"}]},
+    }, defs={"Syntax": SYNTAX, "Fact": FACT})
+    check(UNION, {"kind": "t", "syntax": {"form": "infixl", "symbol": "#", "priority": 65},
+                  "either": {"name": "f"}, "or": "s"})
+    check(UNION, {"kind": "t", "syntax": {"form": "mixfix", "template": "_ + _"}, "either": "s"})
+    for raw, field, reason in [
+        ({"syntax": 5}, "syntax", "must be an object"),                          # three objects, once
+        ({"either": 5}, "either", "must be an object or a string"),
+        ({"or": 5}, "or", "must be a string or an object"),                      # the schema's order
+        ({"syntax": {"form": "postfix", "symbol": "#"}}, "syntax.form",
+         "must be one of `infix`, `infixl`, `binder`, `mixfix`"),                # all the arms' values
+        ({"syntax": {"form": 5, "symbol": "#"}}, "syntax.form",
+         "must be one of `infix`, `infixl`, `binder`, `mixfix`"),                # not a string
+        ({"syntax": {"form": "mixfix", "template": "_", "priorities": [1, "x"]}},
+         "syntax.priorities[1]", "must be an integer"),                           # inside the chosen arm
+    ]:
+        e = refused(UNION, InvalidField, {"kind": "t", **raw})
+        assert (e.field, e.reason) == (field, reason), raw
+    # a field none of the arms declares, before the choosing field's hole
+    e = refused(UNION, UnexpectedField, {"kind": "t", "syntax": {"bogus": 1}})
+    assert (e.holder, e.field, e.takes, e.holder_is_top) == (
+        "syntax", "bogus", ["form", "symbol", "priority", "template", "priorities"], False)
+    e = refused(UNION, MissingField, {"kind": "t", "syntax": {"symbol": "#"}})
+    assert (e.holder, e.field) == ("t", "syntax.form")
+    # the chosen arm: its own fields, its own holes
+    e = refused(UNION, UnexpectedField, {"kind": "t", "syntax": {"form": "binder", "symbol": "#", "priority": 1}})
+    assert (e.holder, e.field, e.takes) == ("syntax", "priority", ["form", "symbol"])
+    e = refused(UNION, MissingField, {"kind": "t", "syntax": {"form": "infix", "symbol": "#"}})
+    assert (e.holder, e.field) == ("t", "syntax.priority")
+    # one arm of the value's type: straight to it, a `$ref` arm followed
+    e = refused(UNION, UnexpectedField, {"kind": "t", "either": {"bogus": 1}})
+    assert (e.holder, e.field, e.takes) == ("either", "bogus", ["name"])
 
 
 def test_schema_grammar_is_closed_at_registration():
@@ -328,25 +390,12 @@ def test_schema_grammar_is_closed_at_registration():
                Nums, Dangling, Nesting_RawAST):
         refused(td)
     refused(dict)                            # not a TypedDict at all
-
-    # what the grammar admits, the checker renders within the approved words
-    class R(RT):
-        argument_schema = Fine
-    plugin.check_fields(R, "t", {"kind": "t", "a": "x", "n": 3})         # an int is a number
-    plugin.check_fields(R, "t", {"kind": "t", "a": "x", "either": "s"})
-    with pytest.raises(InvalidField) as e:
-        plugin.check_fields(R, "t", {"kind": "t", "a": "x", "either": 5})
-    assert e.value.reason == "must be an object or a string"
-    with pytest.raises(UnexpectedField) as e:                          # D5: through a union arm
-        plugin.check_fields(R, "t", {"kind": "t", "a": "x", "either": {"bogus": 1}})
-    assert (e.value.holder, e.value.field) == ("either", "bogus")
-    class Lists(TypedDict):
-        xs: list[str] | list[int]
-    class L(RT):
-        argument_schema = Lists
-    with pytest.raises(InvalidField) as e:
-        plugin.check_fields(L, "t", {"kind": "t", "xs": "3"})
-    assert e.value.reason == "must be a list"                          # deduplicated
+    # a declaration is compulsory (PLUGIN_SYSTEM §5); an empty one declares no field
+    with pytest.raises(TAT_InternalError, match="not a TypedDict"):
+        plugin.validate_argument_schema(None)
+    class Empty(TypedDict):
+        pass
+    plugin.validate_argument_schema(Empty)
 
 
 def test_children_field_must_be_a_list():

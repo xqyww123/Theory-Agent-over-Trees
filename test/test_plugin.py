@@ -370,13 +370,17 @@ CALL = call_schema({
                        "line": {"type": "integer", "enum": [1, 2, 3]}}, required=["row"]),
     "constructs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Construct"}},
     "flag": {"type": "boolean"},
-}, required=["names", "at"], **{"$defs": {}})
+}, required=["names", "at"], **{"$defs": {                    # as the assembled `edit` schema's (PLUGIN_SYSTEM §4)
+    "Construct": {"anyOf": [{"$ref": "#/$defs/Thm"}]},
+    "Thm": {"type": "object", "properties": {"kind": {"const": "lemma"}},
+            "required": ["kind"], "additionalProperties": False}}})
 
 
 def test_a_call_is_checked_against_its_schema_down_to_the_innermost_argument():
     """Every shape `check_call` reads, on one schema: the arguments the tool
     takes and requires, each JSON type, an `enum`, `minItems`, an object's
-    fields, a typed `items`' elements — and the constructs, left alone."""
+    fields, a typed `items`' elements — and the constructs, left alone
+    though `$defs` holds `Construct`, as the assembled `edit` schema's does."""
     plugin.validate_call_schema(CALL, "t")
     plugin.check_call(CALL, "t", {"names": ["x"], "at": {"row": 1.5, "tag": "a", "line": 3},
                                   "constructs": [5, "not a construct"], "flag": True})

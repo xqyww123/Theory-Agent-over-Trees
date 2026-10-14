@@ -32,8 +32,8 @@ from isabelle_theory_agent import jobs, mcp, plugin
 from isabelle_theory_agent.jobs import NOT_STARTED, RUNNING, Agent, Message, Succeeded
 from isabelle_theory_agent.exceptions import (
     AmbiguousId, BadAnswer, ConstructNotSupported, ConstructOwnedByAnother, HoldsNoChildren, InvalidField,
-    MissingField, MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, NoQuestionPending, ProtectedNode,
-    RawASTError, TAT_Error, TAT_InternalError, UnexpectedField)
+    MalformedRawAST, MissingField, MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, NoQuestionPending,
+    ProtectedNode, RawASTError, TAT_Error, TAT_InternalError, UnexpectedField)
 from isabelle_theory_agent.mcp_server import With_Trailer
 from isabelle_theory_agent.model import NOT_EVALUATED
 from test_model import CANNOT_EVALUATE, READY
@@ -142,6 +142,14 @@ def refused(tool, cls: type[_E], **arguments) -> tuple[_E, list[str]]:
 
 def t(name, **fields):
     return {"kind": "t", "name": name, **fields}
+
+
+def nested(levels):
+    """A value `levels` levels deep, objects and arrays in turn (TOOL_SCHEMAS §4)."""
+    value = []
+    for level in range(levels - 1):
+        value = {"a": value} if level % 2 else [value]
+    return value
 
 
 def block(name, *children):
@@ -589,12 +597,18 @@ def test_a_malformed_call_is_refused_on_its_own_shape_with_no_opening_line():
         (edit, dict(action="amend", target_id="block_Section", constructs=[], evaluate=True)),
         (edit, dict(action="prepend", target_id="t_c", constructs=[t("x")], evaluate=False)),
         (move, dict(source_id="t_a", location={"position": "under", "node_id": "t_c"}, evaluate=False)),
+        # the bound, before any other check: `evaluate` is missing too
+        (edit, dict(action="append", target_id="t_c", constructs=nested(101))),
     ]:
         e, lines = refused(tool, RawASTError, **arguments)
         assert isinstance(e, (MissingField, UnexpectedField, InvalidField)) and e.of_tool
         assert len(lines) == 1 and lines[0] in malformed, arguments
         rendered.add(lines[0])
     assert rendered == set(malformed)
+    # a hundred levels pass the bound; the call then fails on what it holds
+    e, lines = refused(edit, MalformedRawAST, action="append", target_id="block_Theory",
+                       constructs=nested(100), evaluate=False)
+    assert (e.of_tool, e.raw_ast_path) == (False, "constructs[0]")
     # Beyond the block, asserted by class and fields: a nested argument's
     # shape errors, and a missing top-level one on another tool.
     for tool, arguments, field in [

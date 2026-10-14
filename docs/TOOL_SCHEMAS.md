@@ -141,6 +141,7 @@ The `edit` tool needs the argument `evaluate`.
 The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constructs`, `evaluate`, `auto_construct`.
 The argument `constructs` must be a list.
 The argument `constructs` must not be empty.
+The argument `constructs` must not be nested deeper than 100 levels.
 The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
 The argument `location.position` must be one of `before`, `after`, `into`.
 ```

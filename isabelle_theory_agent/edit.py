@@ -30,7 +30,7 @@ from .exceptions import (
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
     NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
-from .plugin import check_fields
+from .plugin import check_call
 
 
 def _gate(hook, *args) -> None:
@@ -441,13 +441,13 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
             raise UnexpectedChildren(kind, is_leaf=True)
         if replacing is not None:
             raise UnexpectedChildren(kind, is_leaf=False)
-        if not isinstance(raw["children"], list):
-            raise InvalidField("children", "must be a list")
     if (replacing is not None and isinstance(replacing, NonLeaf_Node)
             and replacing.sub_nodes and issubclass(cls, Leaf)):
         raise ChildrenNotInheritable(forest.id_of(replacing), kind,
                                      len(replacing.sub_nodes))
-    check_fields(cls, kind, raw)
+    schema = cls.construct_schema
+    assert schema is not None                 # registration checked it
+    check_call(schema, kind, raw, construct=True)
     node = await cls.gen(config, {k: v for k, v in raw.items()
                                   if k != "children"})
     if isinstance(node, NonLeaf_Node) and node.sub_nodes:
