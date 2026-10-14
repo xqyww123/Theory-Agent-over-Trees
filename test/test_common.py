@@ -10,15 +10,18 @@ Run: python -m pytest test/test_common.py
 
 from pathlib import Path
 
+import jsoncomment
 import pytest
 
 import test_session_theory as ts
-from baselines import DOCS, fenced_lines
+from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
-from isabelle_theory_agent.exceptions import BadEdit
-from isabelle_theory_agent.std import theorem
-from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Obligation, Theory_Member, text_line
+from isabelle_theory_agent.exceptions import BadEdit, InvalidField
+from isabelle_theory_agent.std import common, datatype, theorem
+from isabelle_theory_agent.std.common import (
+    Mixfix, NotInsideTheory, Proof_Obligation, Theory_Member, Type_Parameter, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
+from test_datatype import LIST, definition
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
@@ -28,7 +31,8 @@ COMMON = DOCS / "node_classes" / "COMMON.md"
 
 # One construct per kind the package registers, valid under a theory; held
 # to the registered kinds, so a new class adds its example here.
-EXAMPLES = {kind: lemma("p", kind=kind) for kind in theorem.KINDS}
+EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
+            **{kind: definition(LIST, kind=kind) for kind in datatype.KINDS}}
 
 
 def test_not_inside_theory_is_section_1_s_sentence():
@@ -157,6 +161,92 @@ def test_proof_obligation_reads_the_class_s_own_words_callback_message_and_recor
     assert q.mark(M.BRIEFING, 0) == "invalid definition"
     assert "record_from_evaluation" not in vars(theorem.Theorem)
     assert Proof_Obligation.record_from_evaluation(p, [None, None]) == ()
+
+
+# --- the shared `$defs` (§4): the schema text, the type parameters' check and writer, the mixfix writers
+
+def test_the_shared_defs_are_section_4_s_schema_text():
+    """§4: the three definitions, descriptions included, are the section's
+    jsonc blocks, pinned here alone; `Datatype`'s `$defs` are the three."""
+    blocks = [jsoncomment.JsonComment().loads("\n".join(b)) for b in fenced_blocks(COMMON, "4.") if b[0] == "{"]
+    assert blocks == [common.TYPE_PARAMETER_DEFS, common.MIXFIX_DEFS, common.TYPE_MIXFIX_DEFS]
+    assert datatype.Datatype.construct_schema["$defs"] == {**common.TYPE_PARAMETER_DEFS, **common.TYPE_MIXFIX_DEFS,
+                                                           **common.MIXFIX_DEFS}
+
+
+def test_the_type_parameters_check_renders_section_4_s_two_sentences():
+    """§4: a name that is not a prime and an Isabelle identifier on its
+    `ascii`, and a name bound twice, each the section's sentence; the
+    pieces normalised, an empty `sort` no sort."""
+    [variable, binds] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field")][0]
+    with pytest.raises(InvalidField) as e:
+        common.type_parameters_of([{"name": "a"}])
+    assert str(e.value) == variable and e.value.field == "type_parameters[0].name"
+    with pytest.raises(InvalidField) as e:
+        common.type_parameters_of([{"name": "'a"}, {"name": "'a", "sort": "linorder"}])
+    assert str(e.value) == binds and e.value.field == "type_parameters[1].name"
+    for bad in ("", "'", "'1", "''a", "'a b", "a'", "'a-b"):
+        with pytest.raises(InvalidField) as e:
+            common.type_parameters_of([{"name": "'b"}, {"name": bad}])
+        assert e.value.field == "type_parameters[1].name" and e.value.reason.startswith("must be a type variable"), bad
+    parameters = common.type_parameters_of([{"name": " 'a "}, {"name": "'b", "sort": ""},
+                                            {"name": "'c", "sort": " {zero,\n linorder} "}, {"name": "'x⇩1"}])
+    assert parameters == (Type_Parameter(IsaTerm.from_agent("'a"), None), Type_Parameter(IsaTerm.from_agent("'b"), None),
+                          Type_Parameter(IsaTerm.from_agent("'c"), IsaTerm.from_agent("{zero, linorder}")),
+                          Type_Parameter(IsaTerm.from_agent("'x⇩1"), None))
+    assert [p.image() for p in parameters] == [{"name": "'a"}, {"name": "'b"}, {"name": "'c", "sort": "{zero, linorder}"},
+                                               {"name": "'x⇩1"}]
+
+
+def test_type_parameters_text_writes_section_4_s_examples():
+    """§4: nothing for none, one without a sort bare, otherwise parenthesised
+    and comma-separated with a sort after `::` through `print_name` — a
+    keyword quoted, none known while `keywords` is None; both spellings."""
+    f = Forest_Under_Test()
+    (s,) = run(locked(f, edit.insert(f, 0, [session("S", theory("A", kind="fake_theory"))], ts.KINDS)))
+    (a,) = s.sub_nodes
+    of = common.type_parameters_of
+    assert common.type_parameters_text(a, of([]), "ascii") == ""
+    assert common.type_parameters_text(a, of([{"name": "'a"}]), "ascii") == "'a"
+    assert common.type_parameters_text(a, of([{"name": "'a", "sort": "linorder"}]), "ascii") == "('a :: linorder)"
+    assert common.type_parameters_text(a, of([{"name": "'a", "sort": "linorder"}, {"name": "'b"}]), "ascii") == "('a :: linorder, 'b)"
+    assert common.type_parameters_text(a, of([{"name": "'a", "sort": "{zero, linorder}"}]), "ascii") == "('a :: \"{zero, linorder}\")"
+    assert common.type_parameters_text(a, of([{"name": "'a"}, {"name": "'b"}]), "ascii") == "('a, 'b)"
+    greek = of([{"name": "'α", "sort": "linorder"}, {"name": "'b"}])
+    assert common.type_parameters_text(a, greek, "ascii") == "('\\<alpha> :: linorder, 'b)"
+    assert common.type_parameters_text(a, greek, "unicode") == "('α :: linorder, 'b)"
+    a.keywords = frozenset({"linorder"})
+    assert common.type_parameters_text(a, greek, "unicode") == "('α :: \"linorder\", 'b)"
+
+
+def test_mixfix_text_and_mixfix_wire_write_section_4_s_examples():
+    """§4: either annotation as Isabelle writes it, the symbol or template a
+    string token, a general mixfix's priorities each when given; the wire
+    form the form, the `ascii`, the priority, the argument priorities, a
+    left-out value None; the image the construct's shape."""
+    of = common.mixfix_of
+    cases = [
+        ({"form": "infixr", "symbol": "#", "priority": 65}, '(infixr "#" 65)', '(infixr "#" 65)', ("infixr", "#", 65, None)),
+        ({"form": "infix", "symbol": "+", "priority": 0}, '(infix "+" 0)', '(infix "+" 0)', ("infix", "+", 0, None)),
+        ({"form": "infixl", "symbol": "\"", "priority": 1}, '(infixl "\\"" 1)', '(infixl "\\"" 1)', ("infixl", '"', 1, None)),
+        ({"form": "binder", "symbol": "∀", "priority": 10}, '(binder "∀" 10)', '(binder "\\<forall>" 10)', ("binder", "\\<forall>", 10, None)),
+        ({"form": "mixfix", "template": "⟨_, _⟩"}, '("⟨_, _⟩")', '("\\<langle>_, _\\<rangle>")', ("mixfix", "\\<langle>_, _\\<rangle>", None, None)),
+        ({"form": "mixfix", "template": "_ ! _", "argument_priorities": [100, 101], "priority": 100},
+         '("_ ! _" [100, 101] 100)', '("_ ! _" [100, 101] 100)', ("mixfix", "_ ! _", 100, [100, 101])),
+        ({"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21]}, '("_⇩⊥" [21])', '("_\\<^sub>\\<bottom>" [21])',
+         ("mixfix", "_\\<^sub>\\<bottom>", None, [21])),
+        ({"form": "mixfix", "template": "_!", "priority": 999}, '("_!" 999)', '("_!" 999)', ("mixfix", "_!", 999, None)),
+        ({"form": "mixfix", "template": "_", "argument_priorities": []}, '("_" [])', '("_" [])', ("mixfix", "_", None, [])),
+    ]
+    for raw, unicode, ascii, wire in cases:
+        syntax = of(raw)
+        assert isinstance(syntax, Mixfix) and syntax.image() == raw, raw
+        assert (common.mixfix_text(syntax, "unicode"), common.mixfix_text(syntax, "ascii")) == (unicode, ascii), raw
+        assert common.mixfix_wire(syntax) == wire and of(syntax.image()) == syntax, raw
+    assert common.mixfix_wire(None) is None
+    # the symbol or template normalised for newlines and tabs alone: runs of spaces are layout
+    assert of({"form": "mixfix", "template": "⟨_,\n\t_⟩  "}).text.unicode == "⟨_,  _⟩  "
+    assert of({"form": "infix", "symbol": "a\r\nb", "priority": 1}).text.unicode == "a b"
 
 
 # --- TAT_Overloaded (§4), on a raw ML process: the std harness offers no probe

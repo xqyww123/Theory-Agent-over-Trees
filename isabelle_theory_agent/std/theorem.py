@@ -6,20 +6,17 @@ proof check replays it, the emitted theory carrying `by aoa`."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
-from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
+from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..exceptions import GRAMMARS, InvalidField, InvalidName
 from ..model import INDENT, RECALL, Leaf, emit_lines
 from ..plugin import TAT_node
-from .common import Proof_Obligation, Theory_Member, text_line
+from .common import Proof_Obligation, Theory_Member, check_identifier, normalised, require_id_name, text_line
 from .statement import STATEMENT_DEFS, LongStatement_RawAST
 
 KINDS = ("lemma", "theorem", "corollary", "proposition")   # the Isar commands Isabelle treats alike
-_FACT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_']*")        # the id grammar without hyphens (§1)
 _RULE_SYMBOLS = ("⋀", "⟹", "\\<And>", "\\<Longrightarrow>")   # what a part is parenthesised for (§8)
 
 
@@ -87,11 +84,6 @@ class Statement:
                    IsaTerm.from_agent(image["conclusion"]))
 
 
-def _normalised(text: str) -> str:
-    """Newlines spaces, runs of whitespace one space (§2)."""
-    return " ".join(text.split())
-
-
 @TAT_node
 class Theorem(Theory_Member, Proof_Obligation, Leaf):
     construct_schema = {
@@ -120,10 +112,8 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
     @classmethod
     async def gen(cls, config, raw: Theorem_RawAST):
         cls.require_inside_theory(config, raw["kind"])
-        name = raw["name"]
-        if not _FACT_NAME.fullmatch(name) or name.endswith("_"):
-            raise InvalidName(name, "fact name")
-        return cls(config.parent, config.state, name, _statement_of(raw["statement"]))
+        require_id_name(raw["name"], "fact name")
+        return cls(config.parent, config.state, raw["name"], _statement_of(raw["statement"]))
 
     def to_store(self, rows):
         rows.put("name", self.name)
@@ -171,27 +161,20 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
 
 
 def _statement_of(raw: LongStatement_RawAST) -> Statement:
-    """The construct's statement, normalised (§2) and checked (§4): every
-    variable's and premise's name an Isabelle identifier on its `ascii`
-    form, a variable's not ending with an underscore, no two of either the
-    same."""
+    """The construct's statement, normalised (§2) and checked (§4, by the
+    plugin's `check_identifier`): every variable's and premise's name an
+    Isabelle identifier on its `ascii` form, a variable's not ending with
+    an underscore, no two of either the same."""
     variables: list[Variable] = []
     for i, v in enumerate(raw.get("for_any", [])):
         name = IsaTerm.from_agent(v["name"])
-        _check_name(name, f"statement.for_any[{i}].name", [x.name for x in variables], variable=True)
-        type_ = _normalised(v.get("type", ""))
+        check_identifier(name, f"statement.for_any[{i}].name", [x.name for x in variables], in_term=True)
+        type_ = normalised(v.get("type", ""))
         variables.append(Variable(name, IsaTerm.from_agent(type_) if type_ else None))
     premises: list[Premise] = []
     for i, p in enumerate(raw.get("premises", [])):
         name = IsaTerm.from_agent(p["name"])
-        _check_name(name, f"statement.premises[{i}].name", [x.name for x in premises], variable=False)
-        premises.append(Premise(name, IsaTerm.from_agent(_normalised(p["term"]))))
-    return Statement(_normalised(raw["english"]), tuple(variables), tuple(premises),
-                     IsaTerm.from_agent(_normalised(raw["conclusion"])))
-
-
-def _check_name(name: IsaTerm, field: str, earlier: list[IsaTerm], *, variable: bool) -> None:
-    if not is_identifier(name.ascii) or (variable and name.ascii.endswith("_")):
-        raise InvalidField(field, f"must be an Isabelle identifier: it {GRAMMARS['fact name']}")
-    if any(e.ascii == name.ascii for e in earlier):
-        raise InvalidField(field, f"binds `{name.unicode}` a second time")
+        check_identifier(name, f"statement.premises[{i}].name", [x.name for x in premises], in_term=False)
+        premises.append(Premise(name, IsaTerm.from_agent(normalised(p["term"]))))
+    return Statement(normalised(raw["english"]), tuple(variables), tuple(premises),
+                     IsaTerm.from_agent(normalised(raw["conclusion"])))

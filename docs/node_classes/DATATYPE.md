@@ -4,7 +4,7 @@ Status: proposed 2026-10-06; revised 2026-10-12 after three review
 rounds (ai-artifacts/review/NODE_CLASS_RULINGS.md), committed
 2026-10-13 (e3eadf3); revised 2026-10-14 with the `Typedef` design
 (TYPEDEF.md): a type's syntax, and the shared text's home in COMMON.md
-§4; awaiting the owner's approval.
+§4; approved 2026-10-14.
 
 A `Datatype` defines an inductive or coinductive type — or several at
 once, when they are mutually recursive — each by its name, its type
