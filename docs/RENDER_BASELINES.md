@@ -109,8 +109,8 @@ The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constru
 framework's check), against the theory name's grammar (`Theory.gen`'s
 check), against the session name's (`Session.gen`'s check), against
 the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4) and
-against the type name's (`Datatype.gen`'s check,
-node_classes/DATATYPE.md §4); `grammar` selects the rendering, the
+against the type name's (`Datatype.gen`'s and `Typedef.gen`'s check,
+node_classes/DATATYPE.md §4, TYPEDEF.md §4); `grammar` selects the rendering, the
 fact name's and the type name's sharing one text:
 
 ```

@@ -53,7 +53,7 @@ language. A concept that needs a name gets one here first.
 | **owner** | the agent a construction job's current run belongs to: the one whose `construct` started it, or, for a run started automatically, the one whose call ran the evaluation that started it |
 | **starter** | the agent whose call ran the evaluation that started an evaluation job |
 | **title** | a job class's words for its work, singular and plural: `proof construction`, `proof check` |
-| **message** | text addressed to one agent: a notification, told once, or a question, which waits for an answer (CONSTRUCT_INTERACTION §3.4); also, the messages of a status value: Isabelle's output of a run, as `IsaTerm`s, shown under `Error:` or `Notice:` (§3.2, PRINT.md §3) |
+| **message** | text addressed to one agent: a notification, told once, or a question, which waits for an answer (CONSTRUCT_INTERACTION §3.4); also, the messages of a status value: Isabelle's output of a run, or a class's notice about it, as `IsaTerm`s, shown under `Error:` or `Notice:` (§3.2, PRINT.md §3) |
 | **mailbox** | an agent's undelivered messages, delivered on its next tool result |
 | **compulsory** | a construction job the forest is not complete without (§3.2) |
 

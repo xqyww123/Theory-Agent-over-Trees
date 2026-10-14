@@ -206,18 +206,22 @@ Isabelle refuses two theory files whose names differ only in case
 names the holder). Whether an import exists is reported by `begin_theory`
 at evaluation, which also records `import_sessions` and `keywords`.
 
-`print_name(name)` is how a name of the tree is written into its file:
-in double quotes — as Isabelle's string token (COMPILATION.md §3) —
-when the name's `ascii` spelling is in `keywords` —
-`lemma "open":`, `fixes "for"` — and bare otherwise, the rule of
-Isabelle's own `Token.print_name` for a name that is an identifier,
-which every name a class writes through it is. A keyword as a name is no
-failure: Isabelle accepts it quoted at every use. `Theory.can_emit` is
-the framework's default and `keywords` known: a tree whose keyword
-table is `None` is not written (COMPILATION.md §3, §4). A node of the
-plugin reaches its theory through `theory()` of its base
-`Theory_Member` (node_classes/COMMON.md §1); `recall` writes names
-bare, in the `unicode` spelling — `print_name` is emission's alone.
+`print_name(text, spelling)` is how a piece of Isabelle text — a name,
+a term, a type, a sort — is written into the tree's file (`ascii`) and
+under `recall` (`unicode`): bare
+when its `ascii` spelling is an identifier
+(`Isabelle_RPC_Host.unicode.is_identifier`) that is not in `keywords`,
+and as Isabelle's string token (COMPILATION.md §3) otherwise — the
+rule of Isabelle's own `Token.print_name`: `lemma open:` is refused by
+Isabelle, so `lemma "open":`, `fixes "for"`; `UNIV` bare, `"{xs.
+distinct xs}"`, `"'a ⇒ 'b"` and `"0.5"` quoted. A keyword as a name is
+no failure: Isabelle accepts it quoted at every use. While `keywords` is
+`None`, no keyword is known. `Theory.can_emit` is the framework's
+default and `keywords` known: a tree whose keyword table is `None` is
+not written (COMPILATION.md §3, §4). A node of the plugin reaches its
+theory through `theory()` of its base `Theory_Member`
+(node_classes/COMMON.md §1); `recall` writes names bare, in the
+`unicode` spelling, and a term through `print_name` in that spelling.
 
 ## 3. The `InvalidField` reasons
 

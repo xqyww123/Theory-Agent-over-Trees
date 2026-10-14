@@ -18,7 +18,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
-Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML, TAT_Proof_Obligation.ML, and one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
+Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Overloaded.ML — and one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -146,9 +146,11 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   `operation`'s shape (§3): the state, or the errors as messages, markup
   stripped; a folded interrupt is re-raised. `Theory`'s header goes
   through it (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
-  transition through it, and a proof obligation's evaluation runs the
-  class's own transition and then `sorry`'s half through it
-  (node_classes/COMMON.md §3). Nothing splits a node's text into
+  transition through it, and a proof obligation's evaluation runs every
+  transition of the class's two steps and `sorry`'s half through it
+  (node_classes/COMMON.md §3) — `Typedef`'s `typedef` with its option
+  and its `setup_lifting` among them (node_classes/TYPEDEF.md §6).
+  Nothing splits a node's text into
   spans or registers anything in Isabelle's execution table, which a
   library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6). The
   output buffers below, `Output_Routing.new_buffer` and `take_buffer`,
@@ -292,7 +294,10 @@ state and no message, or no state and at least one message — anything else
 is a `Bug` — and `operation` writes the state into the slot, turns any
 other exception into the operation's messages the way
 `Toplevel.command_errors` reads one, and lets a `Bug` and an interrupt
-through as they arrived.
+through as they arrived. Its general form, `operation'`, carries a value
+beside the state — `slot -> (unit -> (Toplevel.state * 'a) option *
+string list) -> string list * 'a option`, the value answered beside the
+messages and absent on a failure — and `operation` is its `unit` case.
 
 ### 2.6 Conversation
 
@@ -385,17 +390,19 @@ text.
 then `Theory`'s section, a client of §2.5. The rows after `Theory` are
 the plugin `Isabelle_Std`'s, one structure per class in a file of its
 own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem` —
-after the plugin's shared half, `TAT_Proof_Obligation`
-(node_classes/COMMON.md §3).
+after the plugin's shared structures, `TAT_Proof_Obligation`
+(node_classes/COMMON.md §3), `TAT_Mixfix` and `TAT_Overloaded`
+(COMMON.md §4).
 
 | section | what it runs |
 | --- | --- |
-| `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through |
+| `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through; `operation'`, its general form, a value beside the state |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2), and the identifier-shaped words of the theory's keyword table, the two lexicons of `Thy_Header.get_keywords`, which it records as `keywords` (node_classes/SESSION_AND_THEORY.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
-| `Proof_Obligation` | the plugin's shared half, `TAT_Proof_Obligation` (§4.5), for the classes that derive from `Proof_Obligation` (node_classes/COMMON.md §3): `TAT_Proof_Obligation.evaluate`, an ML function a class's evaluation callback calls with the three slots and the class's own function from the input state to the state with the goal open — run under `operation`, its state into the node's `goal_state` slot, then `sorry`'s half, `Toplevel.end_proof Proof.global_skip_proof`, into the resulting slot; `TAT.Proof_Obligation.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Proof_Obligation.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way |
-| `Theorem` | `TAT.Theorem.evaluate`: one call of `TAT_Proof_Obligation.evaluate` with the statement's transition and, on the open goal, the undeclared-variable check (THEOREM.md §6) |
+| `Proof_Obligation` | the plugin's shared base, `TAT_Proof_Obligation` (§4.5), for the classes that derive from `Proof_Obligation` (node_classes/COMMON.md §3): it builds a class's evaluation callback from its two steps — `open_goal`, from the input state to the state with the goal open together with what the class records, or to the messages of its failure; `after_admission`, total, from the admitted state — and the packer of their records: the arguments are the three slots and the class's message; `open_goal` runs under `operation'` into the node's `goal_state` slot, then `sorry`'s half, `Toplevel.end_proof Proof.global_skip_proof`, and `after_admission` as one operation into the resulting slot; the answer is the messages and, when there are none, the pair of the records; `TAT.Proof_Obligation.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Proof_Obligation.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way |
+| `Theorem` | `TAT.Theorem.evaluate`: built by `TAT_Proof_Obligation` from the statement's transition with, on the open goal, the undeclared-variable check, yielding nothing, and the identity after the admission (THEOREM.md §6) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
 | `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure, under `operation` (DATATYPE.md §6) |
+| `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition with `{overloaded = true}`, then `TAT_Overloaded.needed` on the open goal's theory, yielding `overloaded` — and `after_admission` — the `setup_lifting` transition, its state kept when Isabelle accepts it and the admitted one otherwise, yielding `lifting` (node_classes/TYPEDEF.md §6) |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
 `Theory`'s evaluator is registered like every other class's. `Session`
@@ -424,7 +431,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — Theory_Member and NotInsideTheory, Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); statement.py, the statement's schema definitions
+  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — Theory_Member and NotInsideTheory, Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); typedef.py, Typedef (TYPEDEF.md); statement.py, the statement's schema definitions
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -1216,8 +1223,8 @@ resolve — so TAT requires Isa-Mini present, which is no loss, since the
 nothing (EVALUATOR_DESIGN §5). Its theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and
 `Minilang_AoA.Minilang_AoA` and loads from `Isabelle_Std/ML/` the
-plugin's shared ML, `TAT_Proof_Obligation.ML`, then one ML file per node
-class; the Python half is the subpackage `isabelle_theory_agent.std`,
+plugin's shared ML — `TAT_Proof_Obligation.ML`, `TAT_Mixfix.ML`,
+`TAT_Overloaded.ML` — then one ML file per node class; the Python half is the subpackage `isabelle_theory_agent.std`,
 which the theory's registrations name (§2.5), `common.py` and one
 module per class (node_classes/COMMON.md). A working directory takes the plugin with
 `-P TAT_Isabelle_Std.TAT_Isabelle_Std` to `isabelle TAT_new` or
