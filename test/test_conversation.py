@@ -482,9 +482,11 @@ async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     assert msgs == [] and await probes.is_toplevel(sl) is True
     sl, msgs = await probes.operation("error")          # a user-level error: messages, no state
     assert msgs == ["tat-user-error"] and not await sl.is_initialized()
+    sl, msgs = await probes.operation("refused")        # a refusal: its messages in order, no state
+    assert msgs == ["tat-refused-1", "tat-refused-2"] and not await sl.is_initialized()
     await escapes("bug", "tat-bug")                     # a framework Bug propagates
-    await escapes("nothing", "a state and no message, or messages and no state")
-    await escapes("both", "a state and no message, or messages and no state")
+    await escapes("nothing", "a refusal with no message")
+    await escapes("silent", "a refusal with no message")   # an exception rendering to no message
     # The records (LOGGING.md §4): on the Isabelle side the wrapper's
     # `callback` for every run, `raised` for the three that escaped, and
     # `bug` for each Bug -- the explicit one and the two `operation` raises;
@@ -492,13 +494,13 @@ async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     isabelle = stand_ins.records("isabelle", conversation.log.directory)
     outcomes = [r["data"]["outcome"] for r in isabelle
                 if r["event"] == "callback" and r["data"]["name"] == "TAT_test.operation"]
-    assert outcomes == ["returned", "returned", "raised", "raised", "raised"]
+    assert outcomes == ["returned"] * 3 + ["raised"] * 3
     bugs = [r for r in isabelle if r["event"] == "bug"]
     assert [(r["level"], r["data"]["callback"]) for r in bugs] == [("error", "TAT_test.operation")] * 3
     assert bugs[0]["data"]["message"] == "tat-bug"
     trips = [r["data"] for r in stand_ins.records("round_trip", conversation.log.directory)
              if r["data"]["name"] == "TAT_test.operation"]
-    assert "tat-bug" in trips[2]["error"] and "result" in trips[0]
+    assert "tat-bug" in trips[3]["error"] and "result" in trips[0]
 
 
 async def test_a_log_the_isabelle_side_cannot_write_stops_nothing(conversation, probes):

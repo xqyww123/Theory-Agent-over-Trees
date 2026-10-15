@@ -12,7 +12,7 @@ sig
   val register :
     {name : string,
      message : 'm MessagePackBinIO.Unpack.unpacker,
-     open_goal : 'm -> Toplevel.state -> (Toplevel.state * 'a) option * string list,
+     open_goal : 'm -> Toplevel.state -> (Toplevel.state * 'a) TAT_Framework.answer,
      after_admission : 'm -> Toplevel.state -> Toplevel.state * 'b,
      records : ('a * 'b) MessagePackBinIO.Pack.packer} -> theory -> theory
     (*registers a class's evaluation callback (COMMON.md §3), built from the
@@ -20,21 +20,24 @@ sig
       function of the message -- and the packer of what they yield.  The
       arguments are the input slot, `goal_state`, the resulting slot and the
       message.  `open_goal`, from the input state to the state with the goal
-      open and what the class records -- NONE with messages when the command,
-      or a check the class makes on the open goal, refuses the input -- runs
-      under `operation'` into `goal_state`; then, as one operation into the
-      resulting slot, the half of `sorry` that ends a toplevel goal and
-      `after_admission`, total from the admitted state.  The answer is the
-      messages and, when there are none, the pair of what the two steps
-      yielded: on the wire [[msgs], nil] or [[], [a, b]].  On any failure
-      `goal_state` is emptied -- a rerun of a `ready` node releases nothing, so
-      an earlier run's goal would stand there -- and the resulting slot is
-      written only when everything passed; an interrupt and a Bug are
-      re-raised*)
+      open and what the class records -- refused with messages when the
+      command, or a check the class makes on the open goal, refuses the input
+      -- runs under `operation'` into `goal_state`; then, as one operation
+      into the resulting slot, the half of `sorry` that ends a toplevel goal
+      and `after_admission`, total from the admitted state.  The answer is
+      `Refused` with the messages, or `Accepted` with the pair of what the
+      two steps yielded, packed by TAT_Framework.pack_answer: on the wire
+      [[msgs], nil] or [[], [a, b]].  When either operation answers
+      `Refused`, `goal_state` is emptied -- a rerun of a `ready` node
+      releases nothing, so an earlier run's goal would stand there -- and
+      the resulting slot is written only when both answer `Accepted`; an
+      interrupt and a Bug are re-raised*)
 end
 
 structure TAT_Proof_Obligation : TAT_PROOF_OBLIGATION =
 struct
+
+datatype answer = datatype TAT_Framework.answer
 
 local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
@@ -47,25 +50,23 @@ val admit_transition =
   step does on the message is the operation's too*)
 fun evaluate (input, goal, result) open_goal after_admission message =
   let
-    val (messages, a) = TAT_Common_Nodes.operation' goal (fn () => open_goal message (#get input ()))
-    val (messages, b) =
-      if is_some a
-      then TAT_Common_Nodes.operation' result (fn () =>
-             apfst (Option.map (after_admission message))
-               (TAT_Framework.apply_transition admit_transition (#get goal ())))
-      else (messages, NONE)
-  in
-    (case (a, b) of
-      (SOME a, SOME b) => ([], SOME (a, b))
-    | _ => (#put goal NONE; (messages, NONE)))
-  end
+    val answer =
+      (case TAT_Common_Nodes.operation' goal (fn () => open_goal message (#get input ())) of
+        Accepted a =>
+          TAT_Common_Nodes.operation' result (fn () =>
+            TAT_Framework.apply_transition admit_transition (#get goal ())
+            |> TAT_Framework.map_answer (after_admission message))
+          |> TAT_Framework.map_answer (pair a)
+      | Refused messages => Refused messages)
+    val _ = (case answer of Refused _ => #put goal NONE | Accepted _ => ())
+  in answer end
 
 fun register {name, message, open_goal, after_admission, records} =
   TAT_Framework.register_callback {python_packages = ["isabelle_theory_agent.std"]} (fn env =>
     {name = name,
      on_interrupt = Remote_Procedure_Calling.Reraise,
      arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env, message),
-     ret_schema = packPair (packList packString, packOption records),
+     ret_schema = TAT_Framework.pack_answer records,
      function = fn (input, goal, result, m) =>
        evaluate (input, goal, result) open_goal after_admission m,
      timeout = NONE})

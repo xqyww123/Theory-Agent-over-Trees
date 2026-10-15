@@ -254,10 +254,11 @@ end
 \<close>
 
 setup \<open>
-(*TAT_Common_Nodes.operation under each of its outcomes (docs/EXCEPTIONS.md
-  §1): a state written and no message; a user-level error as messages; a
-  Bug, a run answering nothing, and a run answering both a state and a
-  message, all three escaping the callback*)
+(*TAT_Common_Nodes.operation under each answer of its run and each kind of
+  exception but an interrupt (docs/EXCEPTIONS.md §1): accepted, its state
+  written and no message; a user-level error, as messages; refused, its
+  messages; a Bug, a refusal with no message, and an exception rendering to
+  no message, all three escaping the callback*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     {name = "TAT_test.operation",
@@ -267,11 +268,12 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
       function = fn (slot, outcome) =>
         TAT_Common_Nodes.operation slot (fn () =>
           (case outcome of
-            "ok" => (SOME (Toplevel.make_state NONE), [])
+            "ok" => TAT_Framework.Accepted (Toplevel.make_state NONE)
           | "error" => error "tat-user-error"
+          | "refused" => TAT_Framework.Refused ["tat-refused-1", "tat-refused-2"]
           | "bug" => raise TAT_Framework.Bug "tat-bug"
-          | "nothing" => (NONE, [])
-          | "both" => (SOME (Toplevel.make_state NONE), ["tat-both"])
+          | "nothing" => TAT_Framework.Refused []
+          | "silent" => raise Exn.EXCEPTIONS []
           | _ => raise Fail ("unknown outcome " ^ outcome))),
       timeout = NONE})
 end

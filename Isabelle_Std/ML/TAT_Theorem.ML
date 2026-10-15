@@ -10,6 +10,8 @@ are also the admission, the proof construction and the proof check.
 structure TAT_Theorem =
 struct
 
+datatype answer = datatype TAT_Framework.answer
+
 local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
 (*the statement as the Python class sends it: the kind, the fact's name, the
@@ -56,15 +58,15 @@ fun undeclared_sentence names =
   end
 
 (*`Theorem`'s `open_goal` (COMMON.md §3): the statement's transition from the
-  input state to the state with the goal open, refused -- no state, one
-  message -- when a variable is undeclared; yields nothing*)
+  input state to the state with the goal open, refused -- one message --
+  when a variable is undeclared; yields nothing*)
 fun open_goal statement st =
   (case TAT_Framework.apply_transition (statement_transition statement) st of
-    (SOME st', []) =>
+    Accepted st' =>
       (case undeclared statement st' of
-        [] => (SOME (st', ()), [])
-      | names => (NONE, [undeclared_sentence names]))
-  | (_, messages) => (NONE, messages))
+        [] => Accepted (st', ())
+      | names => Refused [undeclared_sentence names])
+  | Refused messages => Refused messages)
 
 (*`after_admission` the identity, yielding nothing*)
 val _ = Theory.setup (TAT_Proof_Obligation.register

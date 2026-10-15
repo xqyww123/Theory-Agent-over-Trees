@@ -146,11 +146,11 @@ structure, each `IsaTerm` as its `ascii`, with `goal_structure()` as
 its goal part (the amend, below). On the ML side the class gives two
 steps, each a function of the message:
 
-- `open_goal : Toplevel.state -> (Toplevel.state * 'a) option * string
-  list`, from the input state to the state with the goal open together
-  with what the class records, or to no state and at least one message
-  — `operation`'s rule — when the command, or a check the class makes
-  on the open goal, refuses the input;
+- `open_goal : Toplevel.state -> (Toplevel.state * 'a) answer`
+  (`TAT_Framework.answer`, MODULE_STRUCTURE §2.4), from the input state
+  to the state with the goal open together with what the class records,
+  or to the refusal with at least one message when the command, or a
+  check the class makes on the open goal, refuses the input;
 - `after_admission : Toplevel.state -> Toplevel.state * 'b`, total,
   from the state with the goal admitted to the state after the class's
   commands that follow the admission, together with what it records:
@@ -158,8 +158,8 @@ steps, each a function of the message:
   the state it was given.
 
 Every transition of a step runs through `apply_transition`
-(MODULE_STRUCTURE §2.4), whose refusal is no state and Isabelle's
-messages; an interrupt, and a `Bug` from the step's own code,
+(MODULE_STRUCTURE §2.4), which answers `Refused` with Isabelle's
+messages when it refuses; an interrupt, and a `Bug` from the step's own code,
 propagate. `TAT_Proof_Obligation` builds the class's evaluation
 callback from the callback's name, the message's unpacker, the two
 steps and the packer of what they yield, and the class registers
@@ -173,8 +173,9 @@ into `goal_state`; then, as one operation into the resulting slot, the
 half of `sorry` that ends a toplevel goal — `Toplevel.end_proof
 Proof.global_skip_proof` — and `after_admission`; a failure anywhere
 empties `goal_state`, and the resulting slot is written only when
-everything passed. The answer is `(messages, (a, b) option)` — on the
-wire `[[msgs], nil]` or `[[], [a, b]]`: the messages, and when there are
+everything passed. The answer is `Refused` with the messages or
+`Accepted (a, b)`, packed by `TAT_Framework.pack_answer` — on the wire
+`[[msgs], nil]` or `[[], [a, b]]`: the messages, and when there are
 none the pair of what the two steps yielded. `_eval_opr` returns
 `CannotEvaluate(messages)` when there are messages — the node is an
 obstacle — and `Ready(self.record_from_evaluation(what))` otherwise.

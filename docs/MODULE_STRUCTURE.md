@@ -142,10 +142,12 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   `|> Toplevel.init_theory`, its init `Resources.begin_theory`) and runs
   it from `Toplevel.make_state NONE`.
 - `apply_transition` — one transition, built in ML by its operation,
-  applied through `Toplevel.command_errors true`; the answer is
-  `operation`'s shape (§3): the state, or the errors as messages, markup
-  stripped; a folded interrupt is re-raised. `Theory`'s header goes
-  through it (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
+  applied through `Toplevel.command_errors true`; the answer is a
+  `Toplevel.state answer` — `datatype 'a answer = Accepted of 'a |
+  Refused of string list`, a run's answer: `Accepted` with the state, or
+  `Refused` with the errors as messages, markup stripped, at least one;
+  a folded interrupt is re-raised. `Theory`'s header goes through
+  `apply_transition` (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
   transition through it, and a proof obligation's evaluation runs every
   transition of the class's two steps and `sorry`'s half through it
   (node_classes/COMMON.md §3) — `Typedef`'s `typedef` with its option
@@ -154,7 +156,10 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   spans or registers anything in Isabelle's execution table, which a
   library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6). The
   output buffers below, `Output_Routing.new_buffer` and `take_buffer`,
-  are exported beside it.
+  are exported beside it. `map_answer` and `pack_answer` are exported
+  beside the datatype: `map_answer` applies a function to what
+  `Accepted` carries; `pack_answer` is a packer a callback answering an
+  `answer` may use, on the wire `[[msgs], nil]` or `[[], x]`.
 - `end_theory` — `Toplevel.end_theory`, yielding the value the theory table
   stores.
 - `fork_job` — the jobs' one function (CONSTRUCT_INTERACTION §3.3; a
@@ -238,9 +243,11 @@ type env = {
                     (*§2.4's, imports resolved through this conversation's tables*)
   end_theory    : Toplevel.state -> unit,
                     (*§2.4's, the result put into this conversation's theory table*)
-  fork_job      : {id : int, work : unit -> unit} -> unit
+  fork_job      : {id : int, work : unit -> MessagePackBinIO.Pack.raw_packer option} -> unit
                     (*§2.4's: the work as a Future task, its end reported to
-                      Python by the remote procedure job_finished*)
+                      Python by the remote procedure job_finished, with the
+                      product the work yields -- a construction's; an
+                      evaluation's yields none*)
 }
 val register_callback :
   {python_packages : string list} ->    (*the class's Python half; imported at
@@ -286,15 +293,16 @@ bug: the RPC library answers it to Python as `IsabelleInterrupt`, which
 re-raises it afterwards, so it unwinds the ML call and with it the
 conversation.
 `TAT_Common_Nodes.operation`
-keeps the rule for a callback whose success is a state: the run answers a
-state and no message, or no state and at least one message — anything else
-is a `Bug` — and `operation` writes the state into the slot, turns any
-other exception into the operation's messages the way
-`Toplevel.command_errors` reads one, and lets a `Bug` and an interrupt
-through as they arrived. Its general form, `operation'`, carries a value
-beside the state — `slot -> (unit -> (Toplevel.state * 'a) option *
-string list) -> string list * 'a option`, the value answered beside the
-messages and absent on a failure — and `operation` is its `unit` case.
+keeps the rule for a callback whose success is a state: the run answers
+an `answer` (§2.4) — `Accepted` with the state, or `Refused` with at
+least one message; a refusal with no message, an exception rendering to
+none among its sources, is a `Bug` — and `operation` writes the state
+into the slot, reads any other exception as a refusal of its messages
+the way `Toplevel.command_errors` reads one, lets a `Bug` and an
+interrupt through as they arrived, and answers the messages. Its general
+form, `operation'`, carries a value beside the state — `slot -> (unit ->
+(Toplevel.state * 'a) answer) -> 'a answer`, the value answered in the
+`Accepted` — and `operation` is its `unit` case.
 
 ### 2.6 Conversation
 

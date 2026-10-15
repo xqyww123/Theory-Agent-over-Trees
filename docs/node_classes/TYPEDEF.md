@@ -281,21 +281,12 @@ syntax (absent when left out), the two function names with the defaults
 filled in, then `goal_structure()` — the type parameters with their
 sorts, and `set` — whole, as its goal part (§4), each `IsaTerm` as its
 `ascii`; a test pins the order, as THEOREM.md's does. The callback is
-built by `TAT_Proof_Obligation` (COMMON.md §3) from the class's two
-steps: `open_goal : Toplevel.state -> (Toplevel.state * 'a) option *
-string list`, from the input state to the state with the goal open
-together with what the class records, or to the messages of its
-failure; `after_admission : Toplevel.state -> Toplevel.state * 'b`,
-total, from the state with the goal admitted. Every transition of a
-step runs through `apply_transition` (MODULE_STRUCTURE §2.4); an
-interrupt, and a Bug raised by the step's own code, propagate. The
-callback runs `open_goal` into `goal_state`; then, as one operation into the
-resulting slot, the half of `sorry` that ends a toplevel goal,
-`Toplevel.end_proof Proof.global_skip_proof`, and `after_admission`; it
-answers the messages and, when there are none, the pair of what the two
-steps yielded, which `_eval_opr` hands the class's
-`record_from_evaluation` (COMMON.md §3). `Theorem`'s `open_goal` yields
-nothing and its `after_admission` is the identity.
+built by `TAT_Proof_Obligation` (COMMON.md §3) from `Typedef`'s two
+steps: `open_goal`, the `typedef` command's transition and, on the open
+goal, `TAT_Overloaded.needed` (COMMON.md §4), yielding `overloaded`;
+`after_admission`, the `setup_lifting` transition, yielding `lifting`.
+What the two steps yield `_eval_opr` hands the class's
+`record_from_evaluation` (COMMON.md §3).
 
 `Typedef`'s `open_goal` builds the `typedef` command's transition and
 runs it — the shape of `begin_theory`, through `apply_transition` — no
@@ -332,7 +323,7 @@ refused the command without the option. The configuration option
 file carries an `(overloaded)` Isabelle does not need. The same helper
 decides `Record`'s and `QuotientType`'s option, on the type each
 defines through `Typedef.add_typedef`. The transition refused —
-`apply_transition` answering no state and Isabelle's messages: a `set`
+`apply_transition` answering `Refused` with Isabelle's messages: a `set`
 that is no set, `Not a set type`; a free variable in it, `Illegal
 variables in representing set`; a type variable not among the
 parameters — is the step's failure with those messages, which never
@@ -348,7 +339,7 @@ the theorem `type_definition_dlist`, read by
 `type_name` — the lookup by name that the command's own
 `Attrib.eval_thms` makes, with no attribute to apply. Isabelle
 accepting it, `lifting` is true and the state is the one after it.
-Isabelle refusing it — `apply_transition` answering no state and its
+Isabelle refusing it — `apply_transition` answering `Refused` with its
 messages; an interrupt, and a Bug of the step's own, propagate instead
 — `lifting` is false and the state is the admitted one, the refusal's
 messages dropped. A refusal never makes the definition invalid,

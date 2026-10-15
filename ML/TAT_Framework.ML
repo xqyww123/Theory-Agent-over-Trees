@@ -45,10 +45,17 @@ sig
                                         (*its messages, oldest first, plain text; the
                                           buffer gone*)
   end
-  val apply_transition : Toplevel.transition -> Toplevel.state -> Toplevel.state option * string list
+  datatype 'a answer = Accepted of 'a | Refused of string list
+                                      (*a run's answer: what it was accepted with, or
+                                        the messages it was refused with, at least one*)
+  val map_answer : ('a -> 'b) -> 'a answer -> 'b answer
+  val pack_answer : 'a MessagePackBinIO.Pack.packer -> 'a answer MessagePackBinIO.Pack.packer
+                                      (*[[msgs], nil] or [[], x]: a packer a callback
+                                        answering an answer may use*)
+  val apply_transition : Toplevel.transition -> Toplevel.state -> Toplevel.state answer
                                           (*one transition through Toplevel.command_errors
-                                            true: the state, or its errors as messages --
-                                            `operation`'s shape (TAT_Common_Nodes.ML)*)
+                                            true: accepted with the state, or refused with
+                                            its errors as messages, markup stripped*)
 
   (*** Node classes (§2.5) ***)
   type env = {
@@ -521,6 +528,19 @@ fun install () =
 
 end
 
+(*§2.4: a run's answer -- the datatype of the signature -- and its packer,
+  the wire form of docs/node_classes/COMMON.md §3.*)
+datatype 'a answer = Accepted of 'a | Refused of string list
+
+fun map_answer f (Accepted x) = Accepted (f x)
+  | map_answer _ (Refused messages) = Refused messages
+
+fun pack_answer p =
+  let open MessagePackBinIO.Pack in
+    packPair (packList packString, packOption p)
+    o (fn Accepted x => ([], SOME x) | Refused messages => (messages, NONE))
+  end
+
 (*§2.4: one transition, built in ML by its operation, applied through
   Toplevel.command_errors true.  The first argument `true` is Isabelle's
   interactive flag and load-bearing: `sorry` is refused without it
@@ -532,9 +552,9 @@ end
   conversation whole.*)
 fun apply_transition tr st =
   (case Toplevel.command_errors true tr st of
-    (_, SOME st') => (SOME st', [])
+    (_, SOME st') => Accepted st'
   | ([], NONE) => Isabelle_Thread.raise_interrupt ()
-  | (errors, NONE) => (NONE, map (Protocol_Message.clean_output o #2 o #1) errors))
+  | (errors, NONE) => Refused (map (Protocol_Message.clean_output o #2 o #1) errors))
 
 (*§2.4.  The header's name is qualified through the same one import_name call
   as every import (EVALUATOR_DESIGN §7), as batch loading does
@@ -563,8 +583,8 @@ fun begin_theory theories (context as {session_name, master_dir}) (header : Thy_
       |> Toplevel.init_theory (fn () => Resources.begin_theory master_dir header' parents)
   in
     (case apply_transition tr (Toplevel.make_state NONE) of
-      (SOME st, _) => st
-    | (NONE, messages) => error (cat_lines messages))
+      Accepted st => st
+    | Refused messages => error (cat_lines messages))
   end
 
 (*§2.4: the value the theory table stores.  The state must have run the

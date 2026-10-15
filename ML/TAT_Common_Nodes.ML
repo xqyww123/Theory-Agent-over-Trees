@@ -8,21 +8,21 @@ a client of TAT_Framework's node class interface.
 
 signature TAT_COMMON_NODES =
 sig
-  val operation' : TAT_Framework.slot -> (unit -> (Toplevel.state * 'a) option * string list)
-                   -> string list * 'a option
+  val operation' : TAT_Framework.slot -> (unit -> (Toplevel.state * 'a) TAT_Framework.answer)
+                   -> 'a TAT_Framework.answer
     (*runs one operation of a node class that yields a value beside its state,
-      and answers its error messages and the value: no message and the value
-      when it passed and its state is in the slot (docs/EXCEPTIONS.md §1); at
-      least one message and no value when it failed.  The run answers a state
-      and no message, or no state and at least one message; anything else is
-      a bug*)
-  val operation : TAT_Framework.slot -> (unit -> Toplevel.state option * string list)
+      and answers its answer: accepted with the value, its state in the slot
+      (docs/EXCEPTIONS.md §1); refused with its messages, at least one -- a
+      refusal with no message is a bug*)
+  val operation : TAT_Framework.slot -> (unit -> Toplevel.state TAT_Framework.answer)
                   -> string list
     (*`operation'` for a run that yields nothing: the messages alone*)
 end
 
 structure TAT_Common_Nodes : TAT_COMMON_NODES =
 struct
+
+datatype answer = datatype TAT_Framework.answer
 
 (*** Operations (§2.5) ***)
 
@@ -33,29 +33,35 @@ struct
 fun escapes exn = is_some (TAT_Framework.bug_message exn) orelse TAT_Framework.interrupted exn
 
 (*The callback's side of docs/EXCEPTIONS.md §1: every failure of the operation
-  is data, and what escapes is a bug.  A run's success is a state, written
-  into the target slot, and the value it yields beside it; its failure is its
-  messages, the slot left to the framework, which copies the input through.
-  An exception raised under `run` becomes the operation's messages, read the
-  way Toplevel.command_errors reads an exception's (a failing import load
-  arrives as whatever Thy_Info raised, released through Par_Exn by
-  TAT_Framework.Loader.load) -- except what `escapes` names, re-raised as it
-  arrived.  An exception rendering to no message at all would read as success
-  with the slot unwritten; none is known, and it is refused as a bug should
-  one appear.*)
-fun operation' slot (run : unit -> (Toplevel.state * 'a) option * string list) =
-  (case Exn.capture_body run of
-    Exn.Res (SOME (st, a), []) => (#put slot (SOME st); ([], SOME a))
-  | Exn.Res (NONE, msgs as _ :: _) => (msgs, NONE)
-  | Exn.Res _ => raise TAT_Framework.Bug "operation: a state and no message, or messages and no state"
-  | Exn.Exn exn =>
-      if escapes exn then Exn.reraise exn
-      else
-        (case map (#2 o #1) (Runtime.exn_messages exn) of
-          [] => raise TAT_Framework.Bug "operation: an exception with no message"
-        | msgs => (msgs, NONE)))
+  is data, and what escapes is a bug.  A run accepted is a state, written
+  into the target slot, and the value it yields beside it; a run refused is
+  its messages, the slot left to the framework, which copies the input
+  through.  An exception raised under `run` is read as a refusal of its
+  messages, the way Toplevel.command_errors reads an exception's (a failing
+  import load arrives as whatever Thy_Info raised, released through Par_Exn
+  by TAT_Framework.Loader.load) -- except what `escapes` names, re-raised as
+  it arrived.  A refusal with no message -- the run's own, or an exception
+  rendering to no message at all -- would read as success with the slot
+  unwritten, and is a Bug.*)
+fun operation' slot (run : unit -> (Toplevel.state * 'a) answer) =
+  let
+    val answer =
+      (case Exn.capture_body run of
+        Exn.Res answer => answer
+      | Exn.Exn exn =>
+          if escapes exn then Exn.reraise exn
+          else Refused (map (#2 o #1) (Runtime.exn_messages exn)))
+  in
+    (case answer of
+      Accepted (st, a) => (#put slot (SOME st); Accepted a)
+    | Refused [] => raise TAT_Framework.Bug "operation: a refusal with no message"
+    | Refused messages => Refused messages)
+  end
 
-fun operation slot run = #1 (operation' slot (fn () => apfst (Option.map (rpair ())) (run ())))
+fun operation slot run =
+  (case operation' slot (TAT_Framework.map_answer (rpair ()) o run) of
+    Accepted () => []
+  | Refused messages => messages)
 
 (*** Theory ***)
 
@@ -97,17 +103,12 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
                    unpackTuple3 (unpackString, unpackString, unpackString)),
     ret_schema = packTuple3 (packList packString, packList packString, packList packString),
     function = fn (slot, (session_name, master_dir, header)) =>
-      let
-        val context = {session_name = session_name, master_dir = Path.explode master_dir}
-        val errors =
-          operation slot (fn () =>
-            (SOME (#begin_theory env context (Thy_Header.read Position.start header)), []))
-      in
-        (*a header that passed is read a second time: it parsed, and every
-          import resolved*)
-        if null errors
-        then (errors, import_sessions context (Thy_Header.read Position.start header), keywords (#get slot ()))
-        else (errors, [], [])
+      let val context = {session_name = session_name, master_dir = Path.explode master_dir} in
+        (case operation' slot (fn () =>
+                let val parsed = Thy_Header.read Position.start header
+                in Accepted (#begin_theory env context parsed, parsed) end) of
+          Accepted parsed => ([], import_sessions context parsed, keywords (#get slot ()))
+        | Refused messages => (messages, [], []))
       end,
     timeout = NONE}))
 
@@ -124,11 +125,8 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
     ret_schema = packList packString,
     function = fn (src, dst) =>
       operation dst (fn () =>
-        let
-          val (st, messages) =
-            TAT_Framework.apply_transition
-              (Toplevel.make "end" Position.none |> Toplevel.exit) (#get src ())
-        in (Option.app (#end_theory env) st; (st, messages)) end),
+        TAT_Framework.apply_transition (Toplevel.make "end" Position.none |> Toplevel.exit) (#get src ())
+        |> TAT_Framework.map_answer (tap (#end_theory env))),
     timeout = NONE}))
 
 end
