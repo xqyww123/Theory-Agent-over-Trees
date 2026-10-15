@@ -195,7 +195,7 @@ def test_the_definition_is_stored_and_a_missing_row_is_refused_at_start(tmp_path
     before = [fields(n) for n in nodes]
     rows = f.store.fields(nodes[0].identity)
     assert "name" not in rows and rows["type_name"] == "dlist" and rows["set"] == "{xs :: 'a list. distinct xs}"
-    assert rows["syntax"] is None and rows["rep_function_name"] == "list_of_dlist"      # a field left out: a None row
+    assert rows["syntax"] is None and rows["rep_function_name"] == "list_of_dlist"      # a field left out: a None-valued row
     assert rows["abs_function_name"] == "dlist_of_list" and (rows["overloaded"], rows["lifting"]) == (False, False)
     rows = f.store.fields(nodes[1].identity)
     assert rows["syntax"] == ERRORABLE_SYNTAX and rows["rep_function_name"] is None
@@ -280,8 +280,8 @@ def test_the_recorded_fields_reach_the_store_and_the_mirror_catches_an_emit_off_
     """§1, §6; COMPILATION §3: a walk's store writes `overloaded` and
     `lifting` as the evaluation recorded them, so a loaded forest emits the
     same file; an `emit` reading the instant status instead writes
-    `setup_lifting` in memory and not once loaded, which the package's
-    helper says at once."""
+    `setup_lifting` in memory and not once loaded, which
+    `assert_store_mirrors` says at once."""
     f = Forest_Under_Test(kinds=KINDS)
     (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [DLIST, POLY]})])
     (x,) = s.sub_nodes

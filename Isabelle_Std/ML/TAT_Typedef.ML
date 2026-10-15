@@ -5,8 +5,8 @@ docs/node_classes/TYPEDEF.md §6): the subtype's definition as the Python class
 sends it, run as the `typedef` command's transition with `(overloaded)`, the
 option's need read off the open goal; after the admission, `setup_lifting` on the
 type's theorem, its state kept when Isabelle accepts it.  The callback is built by
-`TAT_Proof_Obligation.register` (COMMON.md §3), whose are also the admission, the
-proof construction and the proof check.
+`TAT_Proof_Obligation.register` (COMMON.md §3); the admission, the proof
+construction and the proof check are that structure's too.
 *)
 
 structure TAT_Typedef =
@@ -38,16 +38,17 @@ fun typedef_transition ((name, syntax, rep, abs, parameters, set) : definition) 
         (SOME (Typedef.make_morphisms (Binding.name name) (SOME (Binding.name rep, Binding.name abs)))) lthy)
 
 (*`Typedef`'s open_goal (COMMON.md §3): the transition from the input state to
-  the state with the goal open, yielding whether the type needs the option.
-  The type's dependencies are registered as the goal opens (typedef.ML,
-  prepare_typedef), under the full name Typedecl gives the type -- the local
-  theory's (Typedecl.basic_decl), which the goal's context still carries, so
-  that a type defined inside a locale is found under its name*)
+  the state with the goal open, yielding whether the type needs the option --
+  TAT_Overloaded.needed under the type's full name as Typedecl declared it
+  (TYPEDEF.md §6); the dependencies are registered as the goal opens
+  (typedef.ML, prepare_typedef)*)
 fun open_goal (definition as (name, _, _, _, _, _)) st =
   TAT_Framework.apply_transition (typedef_transition definition) st
   |> TAT_Framework.map_answer (fn st' =>
-      let val ctxt = Proof.context_of (Toplevel.proof_of st')
-      in (st', TAT_Overloaded.needed (Proof_Context.theory_of ctxt) (Local_Theory.full_name ctxt (Binding.name name))) end)
+      let
+        val ctxt = Proof.context_of (Toplevel.proof_of st')
+        val full_name = Local_Theory.full_name ctxt (Binding.name name)
+      in (st', TAT_Overloaded.needed (Proof_Context.theory_of ctxt) full_name) end)
 
 (*the one transition `setup_lifting type_definition_<name>` makes: the theorem
   read by its name and no attribute, the lookup the command's own

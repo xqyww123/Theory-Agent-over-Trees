@@ -108,8 +108,8 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
                    mixfix_of(raw["syntax"]) if "syntax" in raw else None, IsaTerm.from_agent(normalised(raw["set"])),
                    rep, abs_)
 
-    # --- the store: the authored fields in the `unicode` spelling and the recorded ones (§1), every row read with
-    #     `get`, so that a missing one is refused at start; a field left out is a None row, this class's own choice
+    # --- the store (§1): the authored fields in the `unicode` spelling and the recorded ones, a field left out a
+    #     None-valued row; every row read with `get`, so that a missing one is refused at start
 
     def to_store(self, rows):
         rows.put("english", self.english)
