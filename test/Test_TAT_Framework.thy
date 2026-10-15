@@ -24,7 +24,8 @@ structure TAT_Test_Lib = struct
 type command_record = {
   source : string,                (*the command's text, sliced verbatim*)
   range : Position.range,         (*within the text handed to run_commands*)
-  errors : Runtime.error list,
+  errors : string list,           (*TAT_Framework.messages_of_errors of the
+                                    command's errors and its forks'*)
   output : TAT_Framework.output_message list    (*plain text, markup stripped*)
 }
 
@@ -62,11 +63,7 @@ fun run_span tr st =
         val fork_errors =
           maps Runtime.exn_messages (maps Task_Queue.group_status (Execution.peek exec))
         val output = TAT_Framework.Output_Routing.take_buffer id
-        (*one normalisation contract for both record fields (the output side
-          is stripped by the framework's routing)*)
-        val all_errors =
-          map (fn ((i, msg), pos_id) => ((i, Protocol_Message.clean_output msg), pos_id))
-            (errors @ fork_errors)
+        val all_errors = TAT_Framework.messages_of_errors (errors @ fork_errors)
       in
         (*an interrupt is folded to ([], NONE) by command_errors -- Par_Exn.dest
           yields no messages for a proper interrupt; stock re-raises the case
@@ -139,7 +136,7 @@ fun output_message (TAT_Framework.Writeln s) = ("writeln", s)
 (*records travel as (source, error messages, (kind, text) output) triples*)
 fun serialize records =
   map (fn {source, errors, output, ...} : command_record =>
-        (source, map (#2 o #1) errors, map output_message output)) records
+        (source, errors, map output_message output)) records
 
 val pack_records =
   let open MessagePackBinIO.Pack in
@@ -256,9 +253,10 @@ end
 setup \<open>
 (*TAT_Common_Nodes.operation under each answer of its run and each kind of
   exception but an interrupt (docs/EXCEPTIONS.md §1): accepted, its state
-  written and no message; a user-level error, as messages; refused, its
-  messages; a Bug, a refusal with no message, and an exception rendering to
-  no message, all three escaping the callback*)
+  written and no message; a user-level error, as messages -- one carrying a
+  position, its markup stripped; refused, its messages; a Bug, a refusal
+  with no message, and an exception rendering to no message, all three
+  escaping the callback*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     {name = "TAT_test.operation",
@@ -270,6 +268,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
           (case outcome of
             "ok" => TAT_Framework.Accepted (Toplevel.make_state NONE)
           | "error" => error "tat-user-error"
+          | "position" => error ("tat-pos" ^ Position.here (Position.line 1))
           | "refused" => TAT_Framework.Refused ["tat-refused-1", "tat-refused-2"]
           | "bug" => raise TAT_Framework.Bug "tat-bug"
           | "nothing" => TAT_Framework.Refused []
@@ -295,9 +294,9 @@ end
 
 setup \<open>
 (*env's fork_job under each end of a job's work (docs/CONSTRUCT_INTERACTION.md
-  §3.3): it passes, fails with a message, raises a Bug, or waits for the file
-  the case names to appear -- for as long as the case likes, or until it is
-  cancelled*)
+  §3.3): it passes, fails with a message carrying markup, which the report
+  strips, raises a Bug, or waits for the file the case names to appear -- for
+  as long as the case likes, or until it is cancelled*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     {name = "TAT_test.fork_job",
@@ -310,7 +309,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
           else
             ((case outcome of
               "pass" => ()
-            | "fail" => error "tat-job-error"
+            | "fail" => error (Markup.markup Markup.keyword1 "tat-job-error")
             | "empty" => error ""
             | "bug" => raise TAT_Framework.Bug "tat-job-bug"
             | "interrupt" => Isabelle_Thread.raise_interrupt ()

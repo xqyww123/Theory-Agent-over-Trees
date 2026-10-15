@@ -52,10 +52,12 @@ sig
   val pack_answer : 'a MessagePackBinIO.Pack.packer -> 'a answer MessagePackBinIO.Pack.packer
                                       (*[[msgs], nil] or [[], x]: a packer a callback
                                         answering an answer may use*)
+  val messages_of_errors : Runtime.error list -> string list
+                                      (*the errors as messages, markup stripped*)
   val apply_transition : Toplevel.transition -> Toplevel.state -> Toplevel.state answer
                                           (*one transition through Toplevel.command_errors
                                             true: accepted with the state, or refused with
-                                            its errors as messages, markup stripped*)
+                                            messages_of_errors of its errors*)
 
   (*** Node classes (§2.5) ***)
   type env = {
@@ -541,20 +543,26 @@ fun pack_answer p =
     o (fn Accepted x => ([], SOME x) | Refused messages => (messages, NONE))
   end
 
+(*§2.4: the messages of Runtime errors -- a transition's from command_errors,
+  an exception's from Runtime.exn_messages -- markup stripped, as
+  Output_Routing.route strips the output: in the PIDE print mode the process
+  runs in, any markup in a message -- a position, a pretty-printed term -- is
+  YXML.*)
+fun messages_of_errors errors = map (Protocol_Message.clean_output o #2 o #1) errors
+
 (*§2.4: one transition, built in ML by its operation, applied through
   Toplevel.command_errors true.  The first argument `true` is Isabelle's
   interactive flag and load-bearing: `sorry` is refused without it
-  (EVALUATOR_DESIGN §1).  The errors are the messages, markup stripped, as
-  the output side is in Output_Routing.route.  An interrupt is folded to
-  ([], NONE) by command_errors -- Par_Exn.dest yields no messages for a
-  proper interrupt; stock re-raises the case (command.ML:247-249,
-  toplevel.ML:652-654) and so does TAT: a cancellation unwinds the
-  conversation whole.*)
+  (EVALUATOR_DESIGN §1).  The errors are read by messages_of_errors.  An
+  interrupt is folded to ([], NONE) by command_errors -- Par_Exn.dest yields
+  no messages for a proper interrupt; stock re-raises the case
+  (command.ML:247-249, toplevel.ML:652-654) and so does TAT: a cancellation
+  unwinds the conversation whole.*)
 fun apply_transition tr st =
   (case Toplevel.command_errors true tr st of
     (_, SOME st') => Accepted st'
   | ([], NONE) => Isabelle_Thread.raise_interrupt ()
-  | (errors, NONE) => Refused (map (Protocol_Message.clean_output o #2 o #1) errors))
+  | (errors, NONE) => Refused (messages_of_errors errors))
 
 (*§2.4.  The header's name is qualified through the same one import_name call
   as every import (EVALUATOR_DESIGN §7), as batch loading does
@@ -646,7 +654,7 @@ fun outcome_of exn =
         (case exn of
           ERROR "" => SOME (Messages [""])     (*one empty error, which Runtime would render `Error`*)
         | _ =>
-            (case map (#2 o #1) (Runtime.exn_messages exn) of
+            (case messages_of_errors (Runtime.exn_messages exn) of
               [] => SOME (Bug_Raised "fork_job: an exception with no message")
             | messages => SOME (Messages messages))))
 

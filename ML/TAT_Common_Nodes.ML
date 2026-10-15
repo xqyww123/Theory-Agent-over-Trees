@@ -36,10 +36,11 @@ fun escapes exn = is_some (TAT_Framework.bug_message exn) orelse TAT_Framework.i
   is data, and what escapes is a bug.  A run accepted is a state, written
   into the target slot, and the value it yields beside it; a run refused is
   its messages, the slot left to the framework, which copies the input
-  through.  An exception raised under `run` is read as a refusal of its
-  messages, the way Toplevel.command_errors reads an exception's (a failing
-  import load arrives as whatever Thy_Info raised, released through Par_Exn
-  by TAT_Framework.Loader.load) -- except what `escapes` names, re-raised as
+  through.  An exception raised under `run` (a failing import load arrives
+  as whatever Thy_Info raised, released through Par_Exn by
+  TAT_Framework.Loader.load) is read as a refusal of its messages,
+  Runtime.exn_messages through TAT_Framework.messages_of_errors as a
+  transition's errors are read -- except what `escapes` names, re-raised as
   it arrived.  A refusal with no message -- the run's own, or an exception
   rendering to no message at all -- would read as success with the slot
   unwritten, and is a Bug.*)
@@ -50,7 +51,7 @@ fun operation' slot (run : unit -> (Toplevel.state * 'a) answer) =
         Exn.Res answer => answer
       | Exn.Exn exn =>
           if escapes exn then Exn.reraise exn
-          else Refused (map (#2 o #1) (Runtime.exn_messages exn)))
+          else Refused (TAT_Framework.messages_of_errors (Runtime.exn_messages exn)))
   in
     (case answer of
       Accepted (st, a) => (#put slot (SOME st); Accepted a)

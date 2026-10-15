@@ -390,6 +390,16 @@ async def test_end_and_the_theory_table(probes):
     recs = await probes.run(d, d, 'lemma "tat_test_x2 = 42" by (simp add: tat_test_x2_def)')
     assert not errors(recs), recs
 
+    # a refused `end`, its theory still inside a context: Isabelle's message
+    # as data, the keyword markup around the command's name stripped
+    n = await probes.begun("theory TAT_Test_N imports Main begin")
+    recs = await probes.run(n, n, "context begin")
+    assert len(recs) == 1 and not errors(recs), recs
+    dst = probes.slot()
+    assert await call(probes.conversation, "TAT.Theory.end", (n.to_msgpack(), dst.to_msgpack())) \
+        == ['Bad context for command "end"']
+    assert not await dst.is_initialized()
+
 
 async def test_output_is_isolated_between_concurrent_runs(probes):
     """Two run_commands in two futures: each run's messages land in its own
@@ -482,6 +492,8 @@ async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     assert msgs == [] and await probes.is_toplevel(sl) is True
     sl, msgs = await probes.operation("error")          # a user-level error: messages, no state
     assert msgs == ["tat-user-error"] and not await sl.is_initialized()
+    sl, msgs = await probes.operation("position")       # an error with a position: its text, markup stripped
+    assert msgs == ["tat-pos (line 1)"] and not await sl.is_initialized()
     sl, msgs = await probes.operation("refused")        # a refusal: its messages in order, no state
     assert msgs == ["tat-refused-1", "tat-refused-2"] and not await sl.is_initialized()
     await escapes("bug", "tat-bug")                     # a framework Bug propagates
@@ -494,13 +506,13 @@ async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     isabelle = stand_ins.records("isabelle", conversation.log.directory)
     outcomes = [r["data"]["outcome"] for r in isabelle
                 if r["event"] == "callback" and r["data"]["name"] == "TAT_test.operation"]
-    assert outcomes == ["returned"] * 3 + ["raised"] * 3
+    assert outcomes == ["returned"] * 4 + ["raised"] * 3
     bugs = [r for r in isabelle if r["event"] == "bug"]
     assert [(r["level"], r["data"]["callback"]) for r in bugs] == [("error", "TAT_test.operation")] * 3
     assert bugs[0]["data"]["message"] == "tat-bug"
     trips = [r["data"] for r in stand_ins.records("round_trip", conversation.log.directory)
              if r["data"]["name"] == "TAT_test.operation"]
-    assert "tat-bug" in trips[3]["error"] and "result" in trips[0]
+    assert "tat-bug" in trips[4]["error"] and "result" in trips[0]
 
 
 async def test_a_log_the_isabelle_side_cannot_write_stops_nothing(conversation, probes):

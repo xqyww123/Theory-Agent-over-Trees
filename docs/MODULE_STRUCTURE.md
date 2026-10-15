@@ -145,8 +145,10 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   applied through `Toplevel.command_errors true`; the answer is a
   `Toplevel.state answer` — `datatype 'a answer = Accepted of 'a |
   Refused of string list`, a run's answer: `Accepted` with the state, or
-  `Refused` with the errors as messages, markup stripped, at least one;
-  a folded interrupt is re-raised. `Theory`'s header goes through
+  `Refused` with the errors as messages, at least one; a folded interrupt
+  is re-raised. `messages_of_errors`, exported beside it, reads the
+  errors: a `Runtime.error list` to the messages, markup stripped.
+  `Theory`'s header goes through
   `apply_transition` (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
   transition through it, and a proof obligation's evaluation runs every
   transition of the class's two steps and `sorry`'s half through it
@@ -169,7 +171,7 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   framework's table, and when the work ends calls Python's remote
   procedure `job_finished(id, failure)` with interrupts deferred,
   `failure` one value of two shapes: the messages of the exception the
-  work raised, `Runtime.exn_messages` as `operation` reports them — an
+  work raised, `Runtime.exn_messages` through `messages_of_errors` — an
   `ERROR` with no text one empty message, which Isabelle would render
   `Error` —, none
   on success — with the product the work yields, if it yields one,
@@ -297,8 +299,9 @@ keeps the rule for a callback whose success is a state: the run answers
 an `answer` (§2.4) — `Accepted` with the state, or `Refused` with at
 least one message; a refusal with no message, an exception rendering to
 none among its sources, is a `Bug` — and `operation` writes the state
-into the slot, reads any other exception as a refusal of its messages
-the way `Toplevel.command_errors` reads one, lets a `Bug` and an
+into the slot, reads any other exception as a refusal of its messages —
+`Runtime.exn_messages` through `messages_of_errors` (§2.4), markup
+stripped, as a transition's errors are read —, lets a `Bug` and an
 interrupt through as they arrived, and answers the messages. Its general
 form, `operation'`, carries a value beside the state — `slot -> (unit ->
 (Toplevel.state * 'a) answer) -> 'a answer`, the value answered in the
