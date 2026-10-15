@@ -284,23 +284,25 @@ def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empt
 
 def test_print_name_writes_a_piece_of_isabelle_text_bare_or_as_a_string_token():
     """SESSION_AND_THEORY §2: bare when its `ascii` spelling is an identifier
-    that is not in `keywords`, Isabelle's string token otherwise —
-    `Token.print_name`'s rule; while `keywords` is None, no keyword is
-    known; the `unicode` spelling is written, the test still on `ascii`;
-    a `str` is the text's `ascii`, an `IsaTerm` carries both."""
+    that is not in the keyword set given, Isabelle's string token
+    otherwise, written in `unicode`; a `str` is the text's `ascii`, an
+    `IsaTerm` carries both; the theory's `print_name` is the rule against
+    its `keywords`, none known while they are None."""
     f = Forest_Under_Test()
     (s,) = insert(f, f, 0, [session("S", theory("A", kind="fake_theory"))])
     (a,) = s.sub_nodes
     a.keywords = frozenset({"and", "lemma"})
-    for bare in ("xs", "UNIV", "\\<alpha>", "x\\<^sub>1"):
-        assert a.print_name(bare) == bare
-    for quoted in ("and", "lemma", "'a", "{xs. distinct xs}", "'a \\<Rightarrow> 'b", "0.5"):
+    for bare in ("xs", "UNIV", "a", "x'", "x_1"):
+        assert a.print_name(bare) == M.print_name(bare, a.keywords) == bare
+    assert (a.print_name("\\<alpha>"), a.print_name("x\\<^sub>1")) == ("α", "x₁")    # identifiers on `ascii`, written in `unicode`
+    for quoted in ("and", "lemma", "'a", "{xs. distinct xs}", "0.5", "0", "List.list"):
         assert a.print_name(quoted) == f'"{quoted}"'
-    assert a.print_name(IsaTerm.from_agent("'a ⇒ 'b")) == '"\'a \\<Rightarrow> \'b"'
-    assert a.print_name(IsaTerm.from_agent("'a ⇒ 'b"), "unicode") == '"\'a ⇒ \'b"'
-    assert a.print_name(IsaTerm.from_agent("α"), "unicode") == "α"       # an identifier on its `ascii` alone
-    assert a.print_name(IsaTerm.from_agent("x⇩1"), "unicode") == "x⇩1"
-    assert a.print_name(IsaTerm.from_agent("lemma"), "unicode") == '"lemma"'
+    assert a.print_name("'a \\<Rightarrow> 'b") == '"\'a ⇒ \'b"'
+    assert a.print_name(IsaTerm.from_agent("'a ⇒ 'b")) == '"\'a ⇒ \'b"'
+    assert a.print_name(IsaTerm.from_agent("x⇩1")) == "x⇩1"
+    assert a.print_name(IsaTerm.from_agent("lemma")) == '"lemma"'
+    assert M.print_name(IsaTerm.from_agent("lemma")) == "lemma"              # against no keyword: `recall`'s rule
+    assert M.print_name("'a") == '"\'a"'
     a.keywords = None
     assert (a.print_name("and"), a.print_name("'a")) == ("and", '"\'a"')
 

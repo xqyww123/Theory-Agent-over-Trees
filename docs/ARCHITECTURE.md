@@ -256,9 +256,11 @@ order its base class fixes — one for a leaf, two for a nesting node, none
 for a container whose children are not chained — and no class adds
 operations of its own. The values have one form each: `NOT_EVALUATED`,
 `Ready(messages)` and `CannotEvaluate(messages)`, where `messages` are
-what the run reported, Isabelle's output as `IsaTerm`s — a
-`CannotEvaluate`'s the reason it failed, a `Ready`'s the warnings or the
-failure the class carried on past, `Ready()` a clean run; the evaluation
+what the class's callback reported, as `IsaTerm`s — a
+`CannotEvaluate`'s the reason it failed, a `Ready`'s what the class
+chose to report: a failure it carried on past, a notice of its own —
+`Ready()` a clean run; what Isabelle prints on its warning channel is
+no part of it (MODULE_STRUCTURE §2.4); the evaluation
 hook returns the status (§6.2), and the framework prints the messages
 under `Error:` or `Notice:` (PRINT.md §3). Which field a reader reads:
 everything about slots and running — the walk's rerun tests, the
@@ -744,7 +746,8 @@ and no question of whether our partition of a file agrees with Isabelle's.
 
 No node's commands reach the next node's: each node's operations are
 built and applied on their own (§8), and no command text is parsed at run
-time but a `Theory`'s header.
+time but a `Theory`'s header and a mixfix annotation as `mixfix_text`
+writes it (node_classes/COMMON.md §4).
 
 ## 8. Substrate *(decided)*
 
@@ -755,8 +758,10 @@ of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md). Every
 operation builds its transition in ML and applies it through
 `Toplevel.command_errors` — `Theory`'s header and `end` (MODULE_STRUCTURE
 §2.4), and a `Theorem`'s statement, one transition built from its
-structure (THEOREM.md §6). The one text parsed at run time is a
-`Theory`'s header, read with `Thy_Header.read` (EVALUATOR_DESIGN §1).
+structure (THEOREM.md §6). The texts parsed at run time are a
+`Theory`'s header, read with `Thy_Header.read` (EVALUATOR_DESIGN §1),
+and a mixfix annotation as `mixfix_text` writes it, read with
+`Parse.mixfix` (node_classes/COMMON.md §4).
 
 The prover runs on one **base heap** — chosen by the launcher (§9), with
 nothing of TAT in it — and the forest sits on top of it, no tree

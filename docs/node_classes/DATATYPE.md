@@ -278,14 +278,15 @@ and bexp =
 - Every further type as a block of the same shape, `and` at the left
   margin in place of the command.
 - Every piece of Isabelle text — a name, a sort, an argument's type —
-  is written through the theory's `print_name` (SESSION_AND_THEORY §2),
-  `Token.print_name`'s rule: bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise —
-  `nat` and `linorder` bare, `"'a list"` and a keyword quoted; a type
-  variable, a symbol and a template as the writers write them.
-- The whole text in the `\<name>` form (`IsaTerm.ascii`); the file
-  reads as Unicode in jEdit all the same.
+  is written through the theory's `print_name` (SESSION_AND_THEORY §2):
+  bare when its `ascii` is an Isabelle identifier (`is_identifier`,
+  COMMON.md §5) that is not a keyword of the theory, as Isabelle's
+  string token (COMPILATION.md §3) otherwise — `nat` and `linorder`
+  bare, `"'a list"` and a keyword quoted; a type variable, a symbol and
+  a template as the writers write them.
+- The text in the `unicode` spelling; the file takes the `\<name>` form
+  from the compile's conversion (COMPILATION.md §2) and reads as Unicode
+  in jEdit all the same.
 
 ## 6. Evaluation
 
@@ -310,20 +311,17 @@ Toplevel.local_theory NONE NONE
 `construct` are `Least_FP` and `BNF_LFP.construct_lfp` for `datatype`,
 `Greatest_FP` and `BNF_GFP.construct_gfp` for `codatatype`: the
 function each command's parser hands its result to. `specs` is that
-parser's structure, one entry per type, built from the fields: the
-node's type parameters, each `(SOME Binding.empty, (name, sort))`, in
-every entry; the type's name as a binding; the type's syntax, decoded
-as a constructor's is; each constructor `((Binding.empty, name),
-arguments)` with its mixfix — `NoSyn` without `syntax`; otherwise,
-decoded by the plugin's `TAT_Mixfix` (COMMON.md §4), the constructor
-of Isabelle's `mixfix` datatype the form names, `Infix`, `Infixl`,
-`Infixr`, `Binder` or `Mixfix`, with
-the symbol or template as `Input.string` of its `ascii`, the priorities
-as given — a binder's `priority` serving as both of its, as Isabelle
-reads `(binder "∀" 10)`; a general mixfix's argument priorities `[]`
-and result priority 1000 when left out — and `Position.no_range` —;
-each argument `(selector or Binding.empty, type)`; no `map`, `rel` or
-`pred` binding; no selector defaults. The
+parser's structure, one entry per type, built from the fields inside
+the local theory's function: the node's type parameters, each `(SOME
+Binding.empty, (name, sort))`, in every entry; the type's name as a
+binding; the type's syntax, read as a constructor's is; each
+constructor `((Binding.empty, name), arguments)` with its mixfix —
+`NoSyn` without `syntax`; otherwise the annotation as `mixfix_text`
+writes it, in `ascii`, read by Isabelle's `Parse.mixfix` under the
+local theory's keywords through the plugin's `TAT_Mixfix` (COMMON.md
+§4), so the command receives what the file carries —; each argument
+`(selector or Binding.empty, type)`; no `map`, `rel` or `pred`
+binding; no selector defaults. The
 result is written into the resulting
 slot: at theory level the same steps as a hand-written definition, and
 inside a `Context` or `Locale` the definition is made in that context.
@@ -357,13 +355,14 @@ messages after it:
 The definition is one line per type: the type with its parameters and
 its syntax as emitted (§5), `=`, the constructors as emitted, joined by
 ` | `, every further type's line led by `and ` — assembled from the
-stored text in the `unicode` spelling, every name bare, a sort and an
-argument's type through `print_name`, which knows no keyword before
-the header has run, without a round trip to Isabelle; `english`
-follows at depth 0 alone; no line carries a key.
-One private helper writes a type's head and constructors, given the
-spelling and how names are written; emission and `print_fields` lay its
-lines out differently.
+stored text, every piece through `print_name` against no keyword
+(SESSION_AND_THEORY §2): every name, an identifier, bare, a sort and
+an argument's type quoted unless an identifier, whatever keywords the
+theory recorded, without a round trip to Isabelle; `english` follows
+at depth 0 alone; no line carries a key. One private helper writes a
+type's head and constructors, given the keyword set — the theory's for
+emission, none here; emission and `print_fields` lay its lines out
+differently.
 
 ```
 'a list = Nil | Cons (hd: "'a") (tl: "'a list") (infixr "#" 65)

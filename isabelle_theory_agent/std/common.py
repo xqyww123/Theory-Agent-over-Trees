@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, NotRequired, TypedDict
+from typing import Any, ClassVar, Literal, NotRequired, TypedDict, overload
 
 import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§3)
-from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
+from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
@@ -26,7 +26,7 @@ from ..exceptions import GRAMMARS, BadEdit, InvalidField, InvalidName
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
     CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Location, Node, NodeConfig, NonLeaf_Node, Ready, Theory,
-    cartouche, status_of_errors, string_token)
+    cartouche, print_name, status_of_errors, string_token)
 from ..plugin import TAT_compile_hook, TAT_import
 
 TAT_import("Minilang_AoA.Minilang_AoA")      # the `aoa` method's theory, for every theory of the forest (§3)
@@ -116,19 +116,26 @@ def require_id_name(name: str, grammar: Literal["fact name", "type name"]) -> No
         raise InvalidName(name, grammar)
 
 
-def check_identifier(name: IsaTerm, field: str, earlier: Iterable[IsaTerm], *, in_term: bool) -> None:
-    """`InvalidField` unless `name` is an Isabelle identifier on its `ascii`
-    form, not ending with an underscore when Isabelle reads it in a term
-    (§5), and not among `earlier`."""
+def check_identifier(text: str, field: str, earlier: Iterable[IsaTerm], *, in_term: bool) -> IsaTerm:
+    """A name the construct gives, normalised, as the node holds it (§5):
+    `InvalidField` unless an Isabelle identifier on its `ascii` form, not
+    ending with an underscore when Isabelle reads it in a term, and not
+    among `earlier`."""
+    name = IsaTerm.from_agent(normalised(text))
     if not is_identifier(name.ascii) or (in_term and name.ascii.endswith("_")):
         raise InvalidField(field, f"must be an Isabelle identifier: it {GRAMMARS['fact name']}")
-    if any(e.ascii == name.ascii for e in earlier):
-        raise InvalidField(field, f"binds `{name.unicode}` a second time")
+    check_not_bound_twice(name, field, earlier)
+    return name
+
+
+def check_not_bound_twice(name: IsaTerm | str, field: str, earlier: Iterable[IsaTerm | str]) -> None:
+    """`InvalidField` with the plugin's one sentence when `name` is among
+    `earlier` (§4, §5)."""
+    if any(e == name for e in earlier):
+        raise InvalidField(field, f"binds `{IsaTerm.to_unicode(name)}` a second time")
 
 
 # --- the shared `$defs` (§4): the type parameter and the two mixfix annotations
-
-Spelling = Literal["ascii", "unicode"]
 
 TYPE_PARAMETER_DEFS: dict[str, JSON_Schema] = {
     "TypeParameter": {
@@ -240,86 +247,103 @@ def type_parameters_of(raw: list[TypeParameter_RawAST]) -> tuple[Type_Parameter,
         name = IsaTerm.from_agent(normalised(p["name"]))
         if not (name.ascii.startswith("'") and is_identifier(name.ascii[1:])):
             raise InvalidField(f"type_parameters[{i}].name", "must be a type variable, such as 'a")
-        if any(q.name.ascii == name.ascii for q in parameters):
-            raise InvalidField(f"type_parameters[{i}].name", f"binds `{name.unicode}` a second time")
+        check_not_bound_twice(name, f"type_parameters[{i}].name", [q.name for q in parameters])
         sort = normalised(p.get("sort", ""))
         parameters.append(Type_Parameter(name, IsaTerm.from_agent(sort) if sort else None))
     return tuple(parameters)
 
 
-def type_parameters_text(theory: Theory, parameters: Sequence[Type_Parameter], spelling: Spelling) -> str:
-    """§4's writer, for the file in `ascii` and under `recall` in `unicode`:
-    nothing for none; one without a sort bare, `'a`; otherwise
-    parenthesised and comma-separated, a sort after `::` through the
-    theory's `print_name` — `('a :: linorder, 'b)`."""
+def type_parameters_text(parameters: Sequence[Type_Parameter], keywords: Container[str] = ()) -> str:
+    """§4's writer: nothing for none; one without a sort bare, `'a`;
+    otherwise parenthesised and comma-separated, a sort after `::`
+    through `print_name` against `keywords` — `('a :: linorder, 'b)`."""
     if not parameters:
         return ""
     if len(parameters) == 1 and parameters[0].sort is None:
-        return _spelt(parameters[0].name, spelling)
+        return parameters[0].name.unicode
     return "(" + ", ".join(
-        _spelt(p.name, spelling) + (f" :: {theory.print_name(p.sort, spelling)}" if p.sort is not None else "")
+        p.name.unicode + (f" :: {print_name(p.sort, keywords)}" if p.sort is not None else "")
         for p in parameters) + ")"
 
 
-def _spelt(text: IsaTerm, spelling: Spelling) -> str:
-    return text.ascii if spelling == "ascii" else text.unicode
+@dataclass(frozen=True)
+class Infix:
+    """An infix arm of `Mixfix` and `TypeMixfix` (§4)."""
+    form: Literal["infix", "infixl", "infixr"]
+    symbol: IsaTerm
+    priority: int
+
+    def image(self) -> dict[str, Any]:
+        return {"form": self.form, "symbol": self.symbol.unicode, "priority": self.priority}
 
 
 @dataclass(frozen=True)
-class Mixfix:
-    """A `Mixfix` or `TypeMixfix` annotation as a node holds it (§4): the
-    form; the symbol, or the template under `mixfix`; the priorities as
-    authored, None when left out."""
-    form: Literal["infix", "infixl", "infixr", "binder", "mixfix"]
-    text: IsaTerm
-    priority: int | None = None
-    argument_priorities: tuple[int, ...] | None = None      # `mixfix`'s alone
+class Binder:
+    """The binder arm of `Mixfix` (§4)."""
+    symbol: IsaTerm
+    priority: int
 
     def image(self) -> dict[str, Any]:
-        """The store's row, in the `unicode` spelling, the construct's shape."""
-        if self.form == "mixfix":
-            return {"form": self.form, "template": self.text.unicode,
-                    **({"argument_priorities": list(self.argument_priorities)}
-                       if self.argument_priorities is not None else {}),
-                    **({"priority": self.priority} if self.priority is not None else {})}
-        return {"form": self.form, "symbol": self.text.unicode, "priority": self.priority}
+        return {"form": "binder", "symbol": self.symbol.unicode, "priority": self.priority}
 
 
-def mixfix_of(raw: Mixfix_RawAST | TypeMixfix_RawAST) -> Mixfix:
+@dataclass(frozen=True)
+class Template:
+    """The template arm of `Mixfix` and `TypeMixfix` (§4): the priorities as
+    authored, None when left out."""
+    template: IsaTerm
+    argument_priorities: tuple[int, ...] | None = None
+    priority: int | None = None
+
+    def image(self) -> dict[str, Any]:
+        return {"form": "mixfix", "template": self.template.unicode,
+                **({"argument_priorities": list(self.argument_priorities)}
+                   if self.argument_priorities is not None else {}),
+                **({"priority": self.priority} if self.priority is not None else {})}
+
+
+Mixfix = Infix | Binder | Template           # as a node holds an annotation; its store image the construct's shape
+TypeMixfix = Infix | Template
+
+
+@overload
+def mixfix_of(raw: TypeMixfix_RawAST) -> TypeMixfix: ...
+@overload
+def mixfix_of(raw: Mixfix_RawAST) -> Mixfix: ...
+def mixfix_of(raw: Mixfix_RawAST) -> Mixfix:
     """The construct's annotation as the node holds it, the symbol or
     template normalised for newlines and tabs alone (§4); a stored image
     is read back through it too."""
     if raw["form"] == "mixfix":
-        return Mixfix("mixfix", IsaTerm.from_agent(layout_normalised(raw["template"])), raw.get("priority"),
-                      tuple(raw["argument_priorities"]) if "argument_priorities" in raw else None)
-    return Mixfix(raw["form"], IsaTerm.from_agent(layout_normalised(raw["symbol"])), raw["priority"])
+        return Template(IsaTerm.from_agent(layout_normalised(raw["template"])),
+                        tuple(raw["argument_priorities"]) if "argument_priorities" in raw else None,
+                        raw.get("priority"))
+    symbol = IsaTerm.from_agent(layout_normalised(raw["symbol"]))
+    return Binder(symbol, raw["priority"]) if raw["form"] == "binder" else Infix(raw["form"], symbol, raw["priority"])
 
 
-def mixfix_text(syntax: Mixfix, spelling: Spelling) -> str:
+def mixfix_text(syntax: Mixfix) -> str:
     """§4's writer, either annotation as Isabelle writes it, the symbol or
     template a string token: `(infixr "#" 65)`, `(binder "∀" 10)`,
-    `("⟨_, _⟩")`, `("_ ! _" [100, 101] 100)` — a general mixfix's
-    argument priorities in brackets and its result priority after them,
-    each when given."""
-    text = string_token(_spelt(syntax.text, spelling))
-    if syntax.form != "mixfix":
-        return f"({syntax.form} {text} {syntax.priority})"
-    parts = [text]
-    if syntax.argument_priorities is not None:
-        parts.append("[" + ", ".join(str(p) for p in syntax.argument_priorities) + "]")
-    if syntax.priority is not None:
-        parts.append(str(syntax.priority))
-    return "(" + " ".join(parts) + ")"
+    `("⟨_, _⟩")`, `("_ ! _" [100, 101] 100)` — a template's argument
+    priorities in brackets and its result priority after them, each when
+    given."""
+    if isinstance(syntax, Template):
+        parts = [string_token(syntax.template.unicode)]
+        if syntax.argument_priorities is not None:
+            parts.append("[" + ", ".join(str(p) for p in syntax.argument_priorities) + "]")
+        if syntax.priority is not None:
+            parts.append(str(syntax.priority))
+        return "(" + " ".join(parts) + ")"
+    form = "binder" if isinstance(syntax, Binder) else syntax.form
+    return f"({form} {string_token(syntax.symbol.unicode)} {syntax.priority})"
 
 
-def mixfix_wire(syntax: Mixfix | None) -> tuple[str, str, int | None, list[int] | None] | None:
-    """The one wire form `TAT_Mixfix` decodes (§4): the form, the symbol or
-    template as `ascii`, the priority, the argument priorities — a
-    left-out value None; None for no annotation."""
-    if syntax is None:
-        return None
-    return (syntax.form, syntax.text.ascii, syntax.priority,
-            list(syntax.argument_priorities) if syntax.argument_priorities is not None else None)
+def mixfix_wire(syntax: Mixfix | None) -> str | None:
+    """The annotation as the ML reads it with Isabelle's `Parse.mixfix`
+    (§4): `mixfix_text`'s text in `ascii`, the conversion the compile
+    applies to a file; None for none."""
+    return None if syntax is None else ascii_of_unicode(mixfix_text(syntax))
 
 
 # --- Proof_Obligation and its jobs (§3)
@@ -413,12 +437,13 @@ class Proof_Check(jobs.Evaluation_Job):
 
 class Proof_Obligation(Node):
     """The base of a `Leaf` whose one command opens exactly one goal,
-    admitted as the operation's last transition (§3), taken before the
-    framework base: `class Theorem(Theory_Member, Proof_Obligation, Leaf)`.
-    The tree holds no proof: every evaluation admits the goal, the proof
-    construction finds the proof, the proof check replays it, and the
-    file carries `by aoa`.  Derives from `Node`, so that the abstract
-    methods are enforced at the class's first instantiation."""
+    which is admitted, the class's `after_admission` step following in
+    the same operation (§3), taken before the framework base: `class
+    Theorem(Theory_Member, Proof_Obligation, Leaf)`.  The tree holds no
+    proof: every evaluation admits the goal, the proof construction finds
+    the proof, the proof check replays it, and the file carries `by aoa`.
+    Derives from `Node`, so that the abstract methods are enforced at the
+    class's first instantiation."""
 
     construction_job_class = Proof_Job
     evaluation_job_class = Proof_Check

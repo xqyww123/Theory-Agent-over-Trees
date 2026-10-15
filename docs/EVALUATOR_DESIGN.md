@@ -21,7 +21,9 @@ input slot to the resulting slot.
 
 For the `Theory` root node's header:
 
-- read its text with `Thy_Header.read` — the one text parsed at run time
+- read its text with `Thy_Header.read` — one of the two texts parsed at
+  run time, the other a mixfix annotation as the plugin writes it
+  (ARCHITECTURE §7)
 - resolve each import to a `theory` value (§2)
 - do not pre-create the theory: build the transition the `theory` span
   would parse to, `Toplevel.make Thy_Header.theoryN pos |>

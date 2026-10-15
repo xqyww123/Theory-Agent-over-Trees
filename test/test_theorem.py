@@ -30,6 +30,7 @@ from isabelle_theory_agent.std.theorem import Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
 from test_compile import listing
 from test_descriptions import descriptions
+from std_forest import KINDS, forest, insert, inv, refused
 from test_launcher import compiled, leave, tat_new
 from test_model import locked, run, slot
 from test_session_theory import Forest_Under_Test, session, theory
@@ -37,7 +38,6 @@ from test_session_theory import Forest_Under_Test, session, theory
 table = ts.table                    # the fake state slot table and the fake wire, per test
 TH = DOCS / "node_classes" / "THEOREM.md"
 COMMON = DOCS / "node_classes" / "COMMON.md"
-KINDS = {**ts.KINDS, **{kind: Theorem for kind in theorem.KINDS}}
 
 
 def lemma(name, conclusion="length (rev xs) = length xs", english="The length of a reversed list",
@@ -45,28 +45,6 @@ def lemma(name, conclusion="length (rev xs) = length xs", english="The length of
           kind="lemma"):
     return {"kind": kind, "name": name, "statement": {
         "english": english, "for_any": list(for_any), "premises": list(premises), "conclusion": conclusion}}
-
-
-def insert(f, parent, index, raws):
-    return run(locked(f, edit.insert(parent, index, raws, KINDS)))
-
-
-def forest(*theorems, store=None):
-    """session_Arith > theory_X > the theorems; the forest and the theory."""
-    f = Forest_Under_Test(store=store, kinds=KINDS)
-    (s,) = insert(f, f, 0, [session("Arith", theory("X") | {"children": list(theorems)})])
-    return f, s.sub_nodes[0]
-
-
-def inv(f):
-    assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
-
-
-def refused(f, parent, raws, cls):
-    with pytest.raises(cls) as e:
-        insert(f, parent, 0, raws)
-    return e.value
 
 
 # --- the schema and the descriptions (§2, §3) ------------------------------
@@ -88,7 +66,10 @@ def test_the_schema_and_the_descriptions_are_the_documents(monkeypatch):
 # --- `gen` (§4) --------------------------------------------------------------
 
 def test_gen_keeps_the_statement_normalised_as_isaterms():
-    f, x = forest(lemma("rev_length", conclusion="length  (rev xs)\n= length xs", english="The length\nof a list"))
+    """§2: every piece of Isabelle text — the names too — and `english`
+    normalised once."""
+    f, x = forest(lemma("rev_length", conclusion="length  (rev xs)\n= length xs", english="The length\nof a list",
+                        for_any=({"name": " xs ", "type": "'a\n list"},), premises=({"name": "ne\t", "term": "xs ≠ []"},)))
     (p,) = x.sub_nodes
     assert isinstance(p, Theorem) and (p.kind, p.name) == ("lemma", "rev_length")
     assert p.statement.english == "The length of a list"
@@ -146,11 +127,14 @@ def test_gen_refuses_as_section_4_says():
 
 
 def test_the_identifier_grammar():
-    """§4: a letter or a letter symbol, then letters, digits, underscores,
-    primes, and `\\<^sub>` before a letter or digit, on the `ascii` form."""
-    for good in ("xs", "x'", "x_1", "x_", "\\<epsilon>", "x\\<^sub>1", "x\\<^sub>i'", "\\<alpha>\\<beta>"):
+    """§4, COMMON §5: a letter or one of Isabelle's own letter symbols, then
+    letters, digits, underscores, primes, and `\\<^sub>` before one of
+    those, on the `ascii` form."""
+    for good in ("xs", "x'", "x_1", "x_", "\\<epsilon>", "x\\<^sub>1", "x\\<^sub>i'", "\\<alpha>\\<beta>",
+                 "x\\<^sub>_", "x\\<^sub>_a", "\\<AA>", "\\<bb>x"):
         assert is_identifier(good), good
-    for bad in ("", "1x", "x-y", "x y", "_x", "x\\<^sub>", "x\\<^sub>_", "'x", "x.y", "\\<noteq>"):
+    for bad in ("", "1x", "x-y", "x y", "_x", "x\\<^sub>", "'x", "x.y", "\\<noteq>",
+                "h\\<nat>", "x\\<lambda>", "a\\<bbbA>", "f\\<real>"):     # letters are Isabelle's own list, not the symbol files'
         assert not is_identifier(bad), bad
     assert is_identifier(IsaTerm.from_agent("ε").ascii) and is_identifier(IsaTerm.from_agent("x⇩1").ascii)
 
@@ -343,14 +327,13 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
     x.keywords = frozenset()                                 # recorded by a header run, which emission presupposes
 
     def emitted(node) -> list[str]:
-        """In the `\\<name>` form the file takes (§5), as the expected lines are read."""
+        """In the `unicode` spelling (§5); the file's `\\<name>` form is the compile's conversion (COMPILATION §2)."""
         out = io.StringIO()
         assert node.emit(1, out) == 1
-        assert "≠" not in out.getvalue()                                     # the terms in their `ascii`
-        return ascii_of_unicode(out.getvalue()).splitlines()
+        return out.getvalue().splitlines()
 
     def expected(*unicode_lines: str) -> list[str]:
-        return [ascii_of_unicode(line) for line in unicode_lines]
+        return list(unicode_lines)
     assert emitted(p) == expected(*("  " + line for line in lines[:-1]), "    sorry")
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)                                         # proven: the document's block whole
     assert emitted(p) == expected(*("  " + line for line in lines))
@@ -371,7 +354,7 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
     # (COMPILATION.md §3) unless an identifier that is no keyword
     (t,) = insert(f, x, 3, [lemma("t", conclusion='v = "q"', for_any=({"name": "v", "type": 'foo "bar"'},),
                                   premises=({"name": "h", "term": 'v \\<noteq> "r"'},))])
-    assert emitted(t)[2:5] == expected('    fixes v :: "foo \\"bar\\""', '    assumes h: "v ≠ \\"r\\""',
+    assert emitted(t)[2:5] == expected('    fixes v :: "foo \\"bar\\""', '    assumes h: "v \\<noteq> \\"r\\""',   # as authored
                                        '    shows "v = \\"q\\""')
     (u,) = insert(f, x, 4, [lemma("u", conclusion="True", for_any=({"name": "v", "type": "'a"},),
                                   premises=({"name": "h", "term": "P"},))])
@@ -526,6 +509,12 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
         forest.conversation, "TAT.Theorem.evaluate",
         (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(), p.message()))
     assert (messages, what) == ([], [None, None]) and await p.goal_state.is_initialized()
+    messages, what = await isabelle_driver.call(                             # the second operation refused: `rev_length` is
+        forest.conversation, "TAT.Theorem.evaluate",                         # a fact of the input state already, which only
+        (p.resulting_state().to_msgpack(), p.goal_state.to_msgpack(),        # the admission records (COMMON §3: a failure
+         p.resulting_state().to_msgpack(), p.message()))                     # anywhere empties `goal_state`)
+    assert what is None and messages[0].startswith("Duplicate fact declaration"), messages
+    assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()
 
 
 async def test_an_undeclared_variable_is_refused(std_conversation):

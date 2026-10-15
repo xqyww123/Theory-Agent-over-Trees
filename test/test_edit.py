@@ -251,6 +251,7 @@ def test_a_construct_is_checked_against_its_construct_schema():
     RICH = construct_schema({
         "name": {"type": "string"},
         "priority": {"type": "integer"},
+        "weight": {"type": "number"},
         "level": {"type": "string", "enum": ["low", "high"]},
         "note": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
         "facts": {"type": "array", "items": {"$ref": "#/$defs/Fact"}},
@@ -260,12 +261,15 @@ def test_a_construct_is_checked_against_its_construct_schema():
     }, required=["name"], defs={"Fact": FACT, "Inner": INNER})
     check(RICH, {"kind": "t", "name": "x"})                       # optionals absent
     check(RICH, {"kind": "lemma", "name": "x"})                   # `kind` unread
+    for end in (2**63 - 1, -2**63):                               # both ends of the integer range, under `number` too
+        check(RICH, {"kind": "t", "name": "x", "priority": end, "weight": end})
+    check(RICH, {"kind": "t", "name": "x", "weight": 1.5})
     check(RICH, {"kind": "t", "name": "x", "priority": 3, "level": "low", "note": "n",
                  "facts": [{"name": "f"}], "tags": ["a"], "inner": {"kind": "k", "children": ["a"]},
                  "children": [5, "not a construct"]})             # the elements are edit.py's
     check(RICH, {"kind": "t", "name": "x", "note": 7})            # the union's other arm
     check(RICH, {"kind": "t", "name": "x", "children": []})
-    takes = ["name", "priority", "level", "note", "facts", "tags", "inner"]
+    takes = ["name", "priority", "weight", "level", "note", "facts", "tags", "inner"]
     e = refused(RICH, UnexpectedField, {"kind": "t", "namee": "x"})
     assert (e.holder, e.field, e.takes, e.holder_is_top) == ("t", "namee", takes, True)
     e = refused(RICH, MissingField, {"kind": "t"})
@@ -284,6 +288,10 @@ def test_a_construct_is_checked_against_its_construct_schema():
         ({"kind": "t", "name": True}, "name", "must be a string"),              # a flag is not a string
         ({"kind": "t", "name": "x", "priority": True}, "priority", "must be an integer"),
         ({"kind": "t", "name": "x", "priority": 1.5}, "priority", "must be an integer"),
+        ({"kind": "t", "name": "x", "priority": 2**63}, "priority", "must be a 64-bit integer"),      # the signed range
+        ({"kind": "t", "name": "x", "priority": -2**63 - 1}, "priority", "must be a 64-bit integer"),
+        ({"kind": "t", "name": "x", "note": 2**64}, "note", "must be a 64-bit integer"),            # in an `anyOf` arm too
+        ({"kind": "t", "name": "x", "weight": 2**64}, "weight", "must be a 64-bit integer"),        # an integer under `number`
         ({"kind": "t", "name": "x", "level": "mid"}, "level", "must be one of `low`, `high`"),
         ({"kind": "t", "name": "x", "note": []}, "note", "must be a string or an integer"),
         ({"kind": "t", "name": "x", "facts": [{"name": 1}]}, "facts[0].name", "must be a string"),

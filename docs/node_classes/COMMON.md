@@ -31,7 +31,8 @@ things:
   `NotInsideTheory`, carrying the destination's id.
 - `theory()`, the `Theory` the node lives in — the root of its tree,
   which the two checks guarantee exists — through which a class writes
-  its names into the file (`print_name`, SESSION_AND_THEORY §2).
+  its Isabelle text into the file (`print_name` against the theory's
+  `keywords`, SESSION_AND_THEORY §2).
 
 `NotInsideTheory` derives from `BadEdit` and carries the kind and the
 parent's id as the agent sees it — `forest().id_of` of the parent:
@@ -161,9 +162,10 @@ Every transition of a step runs through `apply_transition`
 messages; an interrupt, and a `Bug` from the step's own code,
 propagate. `TAT_Proof_Obligation` builds the class's evaluation
 callback from the callback's name, the message's unpacker, the two
-steps and the packer of the two records, and the class registers
-through the builder — the body, `evaluate`, is private to it, so the
-steps cannot touch a slot and every class answers one shape. The
+steps and the packer of what they yield, and the class registers
+through the builder, `register`, the structure's one export — the
+body, `evaluate`, is private to it, so the steps cannot touch a slot
+and every class answers one shape. The
 callback's arguments are the input slot, `goal_state`, the resulting
 slot and the message; its `on_interrupt` is `Reraise`, its `timeout`
 `NONE`. It runs `open_goal` under `operation'` (MODULE_STRUCTURE §2.5)
@@ -433,17 +435,15 @@ The field `type_parameters[0].name` must be a type variable, such as 'a.
 The field `type_parameters[1].name` binds `'a` a second time.
 ```
 
-and its writer, `type_parameters_text(theory, parameters, spelling)`,
-which every class taking the definition uses, for the file in `ascii`
-and under `recall` in `unicode`: no parameter writes nothing; one
-without a sort writes it bare, `'a`; otherwise they are parenthesised
-and comma-separated, a sort after `::` through the theory's
+and its writer, `type_parameters_text(parameters, keywords)`, which
+every class taking the definition uses, for the file against the
+theory's `keywords` and under `recall` against none: no parameter
+writes nothing; one without a sort writes it bare, `'a`; otherwise
+they are parenthesised and comma-separated, a sort after `::` through
 `print_name` (SESSION_AND_THEORY §2) — bare when its `ascii` is an
-Isabelle identifier that is not a keyword of the theory, a string
-token otherwise: `('a :: linorder, 'b)`, `('a :: "{zero, linorder}")`;
-while the theory's `keywords` is `None` no keyword is known, so
-`recall` may write it before a header has run. An empty `sort` is no
-sort.
+Isabelle identifier not in the keyword set given, a string token
+otherwise: `('a :: linorder, 'b)`, `('a :: "{zero, linorder}")`. An
+empty `sort` is no sort.
 
 `MIXFIX_DEFS` — Isabelle's mixfix annotation (`Parse.mixfix`) less the
 `structure` form and a binder's own body priority:
@@ -512,16 +512,20 @@ no `gen` refuses one. Whether a priority lies within 0 and 1000,
 whether there are more argument priorities than the template has
 arguments, and whether a type's template has one `_` per parameter, is
 Isabelle's business at evaluation; fewer priorities are padded with 0.
-Their writer, `mixfix_text(syntax, spelling)`, writes either
-annotation as Isabelle does, the symbol or template as a string token
+Their writer, `mixfix_text(syntax)`, writes either annotation as
+Isabelle does, the symbol or template as a string token
 (COMPILATION.md §3): `(infixr "#" 65)`, `(binder "∀" 10)`, `("⟨_,
-_⟩")`, a general mixfix's argument priorities in brackets and its
-result priority after them, each when given, `("_ ! _" [100, 101]
-100)`. Their ML decoding is `Isabelle_Std/ML/TAT_Mixfix.ML`, structure
-`TAT_Mixfix`, loaded by `TAT_Isabelle_Std.thy` before the class files.
-`mixfix_text` takes the spelling alone: a symbol and a template are
-string tokens by Isabelle's grammar; `type_parameters_text` writes a
-type variable bare and a sort through the theory's `print_name`.
+_⟩")`, a template's argument priorities in brackets and its result
+priority after them, each when given, `("_ ! _" [100, 101] 100)`. The
+ML receives that text, in `ascii` (`mixfix_wire`), and reads it with
+Isabelle's own parser of the annotation, `Parse.mixfix`, under the
+local theory's keywords — `Isabelle_Std/ML/TAT_Mixfix.ML`, structure
+`TAT_Mixfix`, `read`, loaded by `TAT_Isabelle_Std.thy` before the
+class files — so the command receives what the file carries; a text it
+does not read whole is the operation's messages. `mixfix_text` takes
+no keyword set: a symbol and a template are string tokens by
+Isabelle's grammar; `type_parameters_text` writes a type variable bare
+and a sort through `print_name`.
 
 Beside it, `Isabelle_Std/ML/TAT_Overloaded.ML`, structure
 `TAT_Overloaded`: `needed : theory -> string -> bool`, whether the type
@@ -554,12 +558,14 @@ the option. A test pins both answers: `{x :: 'a::zero. x = 0}` true,
   ending in an underscore (MCP_SPECIFICATION §2); a type parameter's
   name is a type variable, shown in its refusal by Isabelle's own
   example, `such as 'a`, since it has no grammar text of its own; every
-  other name is an Isabelle identifier: on the `ascii` form, a letter or
+  other name is an Isabelle identifier: on the `ascii` form of its
+  normalised text, a letter or
   one of Isabelle's letter symbols, then letters, digits, underscores,
-  primes, and `\<^sub>` before a letter or digit, judged in Python
-  beside `IsaTerm` with the symbol table's letter symbols
-  (`get_LETTER_SYMBOLS()` of `Isabelle_RPC_Host.unicode`), so `ε` and
-  `x⇩1` pass. A name Isabelle reads in a term — a variable's, a
+  primes, and `\<^sub>` before one of those — `Symbol_Pos.scan_ident`'s
+  grammar over Isabelle's own letter list (`Symbol.is_letter_symbol`'s),
+  judged in Python beside `IsaTerm` (`is_identifier` of
+  `Isabelle_RPC_Host.unicode`), so `ε` and `x⇩1` pass and `h\<nat>`
+  does not. A name Isabelle reads in a term — a variable's, a
   constructor's, a selector's — does not end with an underscore, since
   Isabelle marks internal names that way (`Name.is_internal`) and
   refuses one in a term (`Name.reject_internal`); a fact's name may.

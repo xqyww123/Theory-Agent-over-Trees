@@ -23,9 +23,11 @@ from invariants import assert_invariants, assert_store_mirrors
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.std import common, datatype
-from isabelle_theory_agent.std.common import Mixfix, NotInsideTheory, Type_Parameter
+from isabelle_theory_agent.std.common import Binder, Infix, NotInsideTheory, Template, Type_Parameter
 from isabelle_theory_agent.std.datatype import Argument, Constructor, Datatype, Defined_Type
 from isabelle_theory_agent.store import Forest_Store
+from ml_process import ml_process, ml_string
+from std_forest import KINDS, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -33,7 +35,6 @@ from test_theorem import lemma
 
 table = ts.table                    # the fake state slot table and the fake wire, per test
 DT = DOCS / "node_classes" / "DATATYPE.md"
-KINDS = {**ts.KINDS, **{kind: Datatype for kind in datatype.KINDS}}
 
 # §2's example, the construct of `'a list`, read from the document
 LIST_CONSTRUCT = json.loads("\n".join(fenced_blocks(DT, "2.")[0]))
@@ -60,28 +61,6 @@ Q = {"type_name": "q", "constructors": [{"name": "N"}, {"name": "Q", "arguments"
 def definition(*types, kind="datatype", english="Finite sequences", type_parameters=({"name": "'a"},)):
     """A construct of `kind` defining `types`; §2's example by default."""
     return {"kind": kind, "english": english, "type_parameters": list(type_parameters), "types": list(types)}
-
-
-def insert(f, parent, index, raws):
-    return run(locked(f, edit.insert(parent, index, raws, KINDS)))
-
-
-def forest(*definitions, store=None):
-    """session_Arith > theory_X > the definitions; the forest and the theory."""
-    f = Forest_Under_Test(store=store, kinds=KINDS)
-    (s,) = insert(f, f, 0, [session("Arith", theory("X") | {"children": list(definitions)})])
-    return f, s.sub_nodes[0]
-
-
-def inv(f):
-    assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
-
-
-def refused(f, parent, raws, cls):
-    with pytest.raises(cls) as e:
-        insert(f, parent, 0, raws)
-    return e.value
 
 
 # --- the schema and the descriptions (§2, §3) ------------------------------
@@ -113,12 +92,12 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
     assert isinstance(p, Datatype) and p.kind == "datatype" and p.name == "list" and p.english == "Finite sequences"
     assert p.type_parameters == (Type_Parameter(IsaTerm.from_agent("'a"), None),)
     assert p.types == (Defined_Type(
-        "list", Mixfix("mixfix", IsaTerm.from_agent("_  list  ")),        # newlines and tabs alone, the spaces layout
+        "list", Template(IsaTerm.from_agent("_  list  ")),                 # newlines and tabs alone, the spaces layout
         (Constructor(IsaTerm.from_agent("Nil"), (), None),
          Constructor(IsaTerm.from_agent("Cons"),
                      (Argument(IsaTerm.from_agent("'a"), IsaTerm.from_agent("hd")),
                       Argument(IsaTerm.from_agent("'a list"), IsaTerm.from_agent("tl"))),
-                     Mixfix("infixr", IsaTerm.from_agent("#"), 65)))),)
+                     Infix("infixr", IsaTerm.from_agent("#"), 65)))),)
     assert all(isinstance(t, IsaTerm) for c in p.types[0].constructors for a in c.arguments for t in (a.type, a.selector))
     (q,) = insert(f, x, 1, [definition(EXPR, BEXP, english="Arithmetic and boolean expressions", type_parameters=())])
     assert q.name == "expr_bexp" and q.type_parameters == () and f.id_of(q) == "datatype_expr_bexp"
@@ -168,6 +147,25 @@ def test_gen_refuses_as_section_4_says():
     assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
     e = refused(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
     assert (e.field, e.reason) == ("type_parameters[1].name", "binds `'a` a second time")
+    # §4's order under two faults: the type names first, then the parameters, then the constructors and selectors
+    bad_name = {"type_name": "my-list", "constructors": [{"name": "Nil"}]}
+    bad_constructor = {"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]}
+    bad_selector = {"type_name": "cell", "constructors": [{"name": "Cons", "arguments": [{"type": "'a", "selector": "hd_"}]}]}
+    assert refused(f, x, [definition(bad_name, type_parameters=({"name": "a"},))], InvalidName).grammar == "type name"
+    assert refused(f, x, [definition(bad_constructor, {"type_name": "list", "constructors": [{"name": "N"}]})],
+                   InvalidField).field == "types[1].type_name"
+    assert refused(f, x, [definition(bad_constructor, type_parameters=({"name": "a"},))], InvalidField).field == "type_parameters[0].name"
+    assert refused(f, x, [definition(bad_selector, bad_constructor)], InvalidField).field == "types[0].constructors[0].arguments[0].selector"
+    # two constructors of one type may share a selector's name: Isabelle makes one selector of them
+    (q,) = insert(f, x, 0, [definition({"type_name": "t", "constructors": [
+        {"name": "A", "arguments": [{"type": "'a", "selector": "get"}]},
+        {"name": "B", "arguments": [{"type": "'a", "selector": "get"}, {"type": "nat"}]}]})])
+    run(locked(f, edit.delete(q)))
+    # the framework's integer bound (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's line, the forest unchanged
+    [bound] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line.endswith("must be a 64-bit integer.")]
+    e = refused(f, x, [definition({"type_name": "list", "constructors": [
+        {"name": "Nil"}, {"name": "Cons", "syntax": {"form": "infixr", "symbol": "#", "priority": 2**64}}]})], InvalidField)
+    assert str(e) == "At `constructs[0]`: " + bound and e.field == "types[0].constructors[1].syntax.priority"
     for raw in ({"kind": "datatype", "english": "e", "types": []},
                 {"kind": "datatype", "english": "e", "types": [{"type_name": "t", "constructors": []}]},
                 {"kind": "datatype", "english": "e", "types": [{"type_name": "t", "constructors": [{"name": "C", "syntax": {"form": "infix", "symbol": "+"}}]}]},
@@ -228,19 +226,19 @@ def test_eval_opr_sends_the_definition_and_reads_the_messages(monkeypatch):
     assert calls[0][1][2] == p.message() == (
         "datatype", [("'a", None)],
         [("list", None, [("Nil", [], None),
-                         ("Cons", [("'a", "hd"), ("'a list", "tl")], ("infixr", "#", 65, None))])])
+                         ("Cons", [("'a", "hd"), ("'a list", "tl")], '(infixr "#" 65)')])])
     assert isinstance(p._status, M.Ready) and p._status.messages == () and p.mark(M.BRIEFING, 0) == "complete"
     assert isinstance(q._status, M.CannotEvaluate) and [m.unicode for m in q._status.messages] == ['Cannot define empty datatype "stream"']
     assert q.mark(M.BRIEFING, 0) == "failed" and p.is_finished() and not q.is_finished()
-    # the wire form of a syntax (COMMON §4): the form, the ascii, the priority, the argument priorities, a left-out value None
+    # a syntax on the wire (COMMON §4): the annotation as `mixfix_text` writes it, in `ascii`; None for none
     (r,) = insert(f, x, 2, [definition(
         {"type_name": "t", "syntax": {"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21], "priority": 21},
          "constructors": [{"name": "C", "syntax": {"form": "mixfix", "template": "⟨_⟩"}},
                           {"name": "D", "arguments": [{"type": "'a"}], "syntax": {"form": "binder", "symbol": "∀", "priority": 10}}]},
         type_parameters=({"name": "'a", "sort": "linorder"},))])
-    assert r.message() == ("datatype", [("'a", "linorder")], [("t", ("mixfix", "_\\<^sub>\\<bottom>", 21, [21]),
-                                                               [("C", [], ("mixfix", "\\<langle>_\\<rangle>", None, None)),
-                                                                ("D", [("'a", None)], ("binder", "\\<forall>", 10, None))])])
+    assert r.message() == ("datatype", [("'a", "linorder")], [("t", '("_\\<^sub>\\<bottom>" [21] 21)',
+                                                               [("C", [], '("\\<langle>_\\<rangle>")'),
+                                                                ("D", [("'a", None)], '(binder "\\<forall>" 10)')])])
     assert r.mark(M.BRIEFING, 0) == "not evaluated"
 
 
@@ -260,16 +258,15 @@ def test_print_fields_writes_the_definition_and_english_by_depth():
     assert fields(p, M.OUT_FOCUS, 0) == [] and fields(p, M.Relative_Focus(frozenset({p}), 0), 0) == []
     (r,) = insert(f, x, 2, [definition(STREAM, english="An infinite sequence")])
     assert fields(r, M.RECALL, 0) == [line.strip() for line in failed[1:3]]      # §8's last example, under its node line
-    # names bare whatever the keywords; a sort and an argument's type through `print_name`, in `unicode`
-    x.keywords = frozenset({"list", "Nil", "hd", "nat", "linorder"})
-    assert fields(p, M.RECALL, 1) == one[:1]
+    # against no keyword, whatever the theory recorded: every name bare, a sort and a type quoted unless an identifier
     (t,) = insert(f, x, 3, [definition(
         {"type_name": "map", "syntax": {"form": "infixr", "symbol": "⇒", "priority": 60},
          "constructors": [{"name": "M", "arguments": [{"type": "nat"}, {"type": "'a ⇒ 'b"}], "syntax": {"form": "mixfix", "template": "⟨_, _⟩"}}]},
         english="Maps", type_parameters=({"name": "'a", "sort": "linorder"}, {"name": "'b"}))])
-    assert fields(t, M.RECALL, 1) == ['(\'a :: "linorder", \'b) map (infixr "⇒" 60) = M "nat" "\'a ⇒ \'b" ("⟨_, _⟩")']
-    x.keywords = None
-    assert fields(t, M.RECALL, 1) == ['(\'a :: linorder, \'b) map (infixr "⇒" 60) = M nat "\'a ⇒ \'b" ("⟨_, _⟩")']
+    line = ['(\'a :: linorder, \'b) map (infixr "⇒" 60) = M nat "\'a ⇒ \'b" ("⟨_, _⟩")']
+    for keywords in (None, frozenset(), frozenset({"list", "Nil", "hd", "nat", "linorder", "map", "M"})):
+        x.keywords = keywords
+        assert fields(t, M.RECALL, 1) == line and fields(p, M.RECALL, 1) == one[:1], keywords
 
 
 # --- emission (§5) ------------------------------------------------------------
@@ -281,13 +278,14 @@ def test_the_emitted_text_is_section_5_s():
     x.keywords = frozenset()                                 # recorded by a header run, which emission presupposes
 
     def emitted(node) -> list[str]:
+        """In `unicode` (§5); the file's `\\<name>` form is the compile's conversion (COMPILATION §2)."""
         out = io.StringIO()
         assert node.emit(1, out) == 1
-        assert "⟨" not in out.getvalue() and "‹" in out.getvalue()        # the Isabelle text in its `ascii`
-        return ascii_of_unicode(out.getvalue()).splitlines()
+        assert "\\<" not in out.getvalue()                                 # nothing written in `ascii`
+        return out.getvalue().splitlines()
 
     def expected(*unicode_lines: str) -> list[str]:
-        return [ascii_of_unicode("  " + line) for line in unicode_lines]
+        return ["  " + line for line in unicode_lines]
     assert emitted(p) == expected(*one) and emitted(q) == expected(*two)
     x.keywords = frozenset({"list", "Nil", "hd", "nat", "linorder"})    # keywords of the theory: quoted (§5)
     assert emitted(p) == expected("text ‹Finite sequences.›", 'datatype \'a "list" =', '    "Nil"',
@@ -307,21 +305,60 @@ def test_the_emitted_text_is_section_5_s():
     (v,) = insert(f, x, 4, [definition({"type_name": "either", "syntax": {"form": "infixr", "symbol": "⊕", "priority": 60},
                                         "constructors": [{"name": "L", "arguments": [{"type": "'a"}]}, {"name": "R", "arguments": [{"type": "'b"}]}]},
                                        english="Sums", type_parameters=({"name": "'a"}, {"name": "'b"}))])
-    assert emitted(v)[1] == ascii_of_unicode('  datatype (\'a, \'b) either (infixr "⊕" 60) =')
+    assert emitted(v)[1] == '  datatype (\'a, \'b) either (infixr "⊕" 60) ='
+
+
+def test_a_codatatype_is_the_same_class_under_its_own_kind():
+    """§1, §5, §6: `codatatype` heads the id component, the message and the
+    emitted command; the definition is otherwise the same."""
+    f, x = forest(definition(STREAM, kind="codatatype", english="Streams"))
+    (p,) = x.sub_nodes
+    x.keywords = frozenset()
+    assert p.kind == "codatatype" and f.id_of(p) == "codatatype_stream" and p.message()[0] == "codatatype"
+    out = io.StringIO()
+    p.emit(0, out)
+    assert out.getvalue() == "text ‹Streams.›\ncodatatype 'a stream =\n    SCons \"'a\" \"'a stream\"\n"
+
+
+def test_the_two_spellings_are_kept_apart():
+    """§2, §5, §8: a name or type whose `unicode` and `ascii` differ — `'α`,
+    `C⇩1`, `ε` — is stored, printed and emitted in `unicode` and sent to
+    Isabelle in `ascii`."""
+    f, x = forest(definition(
+        {"type_name": "t", "constructors": [{"name": "C⇩1", "arguments": [{"type": "'α", "selector": "ε"}]}]},
+        english="Greek", type_parameters=({"name": "'α", "sort": "linorder"},)))
+    (p,) = x.sub_nodes
+    x.keywords = frozenset()
+    assert p.message() == ("datatype", [("'\\<alpha>", "linorder")],
+                           [("t", None, [("C\\<^sub>1", [("'\\<alpha>", "\\<epsilon>")], None)])])
+    rows = {}
+    p.to_store(type("Rows", (), {"put": lambda self, k, v: rows.__setitem__(k, v)})())
+    assert rows["type_parameters"] == [{"name": "'α", "sort": "linorder"}]
+    assert rows["types"] == [{"type_name": "t", "constructors": [
+        {"name": "C⇩1", "arguments": [{"type": "'α", "selector": "ε"}]}]}]
+    out = io.StringIO()
+    p.print_fields(0, out, M.RECALL, 1)
+    assert out.getvalue() == "('α :: linorder) t = C⇩1 (ε: \"'α\")\n"
+    out = io.StringIO()
+    p.emit(0, out)
+    assert out.getvalue().splitlines()[1:] == ["datatype ('α :: linorder) t =", "    C⇩1 (ε: \"'α\")"]
 
 
 # --- the evaluation, in the plugin's run of the harness (§5, §6, §8) --------
 
 @pytest.mark.isabelle(deadline=300)
-async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversation):
+async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversation, std_harness, tmp_path):
     """§6 through `TAT.Datatype.evaluate`: a theory of §2's `'a list`, the
     mutually recursive `expr`/`bexp`, three types carrying every arm of
-    `TypeMixfix` and `Mixfix` with a sort — each defined, the resulting
-    slot written — and a theorem whose statement parses only through the
-    selector and every syntax defined, admitted; a second theory of a
-    `datatype` with no finite value, an obstacle with Isabelle's message;
-    `recall` as §8 shows; the first theory rendered as §5 shows, under the
-    recorded keywords."""
+    `TypeMixfix` and `Mixfix` with a sort, and a `codatatype` — each
+    defined, the resulting slot written — and a theorem whose statement
+    parses only through the selector `hd`, the set function of `bot`'s
+    live parameter, the type syntax `⊕`, the template `«_»` and the
+    binder `QQ`, admitted; a second theory of a
+    `datatype` with no finite value, and a third of a theorem whose type
+    breaks the sort, each an obstacle with Isabelle's message; `recall` as
+    §8 shows; the first theory rendered as §5 shows, under the recorded
+    keywords, and read back whole by Isabelle."""
     forest = std_conversation.forest
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
@@ -333,33 +370,45 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
                                           definition(EITHER, english="Sums", type_parameters=({"name": "'a"}, {"name": "'b"})),
                                           definition(BOT, english="Lifted", type_parameters=({"name": "'a", "sort": "linorder"},)),
                                           definition(Q, english="Binders"),
+                                          definition(STREAM, kind="codatatype", english="Streams"),
                                           lemma("uses_the_syntax", english="Every syntax defined above parses",
-                                                for_any=({"name": "x", "type": "'a :: linorder"}, {"name": "xs", "type": "'a list"}),
-                                                premises=(),
+                                                for_any=({"name": "x", "type": "'a :: linorder"}, {"name": "xs", "type": "'a list"},
+                                                         {"name": "P", "type": "bool"}),
+                                                premises=({"name": "h", "term": "P"},),
                                                 conclusion="hd (Cons x xs) = x ∧ (L x :: 'a ⊕ 'b) = L x ∧ («x») = Val x"
-                                                           " ∧ (QQ z. N) = Q (λz. N)")]},        # `«x»` of priority 21: parenthesised
+                                                           " ∧ (QQ z. N) = Q (λz. N) ∧ set_bot (Val x) = {x}")]},   # `«x»` of priority 21: parenthesised
                                       ts.theory("TAT_Std_B") | {"children": [definition(STREAM, english="An infinite sequence")]})]})
         text = text_of(result)
         assert not result.isError and text.count("Error:") == 1, text
+        result = await session.call_tool("edit", {                    # a walk stops at an obstacle: the third theory after it
+            "action": "append", "target_id": "session_TAT_Std", "evaluate": True,
+            "constructs": [ts.theory("TAT_Std_C", "TAT_Std.TAT_Std_A") | {"children": [
+                lemma("sort_broken", english="A sort the argument lacks", premises=(), conclusion="Val y = Val y",
+                      for_any=({"name": "y", "type": "bool set"},))]}]})      # `bool set` is no `linorder`
+        text = text_of(result)
+        assert not result.isError and text.count("Error:") == 1, text
         (s,) = forest.sub_nodes
-        a, b = s.sub_nodes
+        a, b, c = s.sub_nodes
         (r,) = b.sub_nodes
-        for node in a.sub_nodes:                                      # the five definitions and the theorem
+        (sort_broken,) = c.sub_nodes
+        for node in a.sub_nodes:                                      # the six definitions and the theorem
             assert isinstance(node._status, M.Ready) and node._status.messages == (), (node.name, node._status)
             assert await node.resulting_state().is_initialized()
-        assert len(a.sub_nodes) == 6
+        assert len(a.sub_nodes) == 7
         assert isinstance(r._status, M.CannotEvaluate)
         [one, two, failed] = fenced_blocks(DT, "8.")
         assert r._status.messages[0].unicode == failed[4].strip(), r._status.messages
+        assert isinstance(sort_broken._status, M.CannotEvaluate) and "linorder" in sort_broken._status.messages[0].unicode
         recalled = await session.call_tool("recall", {"node_id": "theory_TAT_Std_A"})      # the nodes at depth 1: no `english`
         shown = text_of(recalled).splitlines()
-        assert not recalled.isError and shown[2:13] == [
+        assert not recalled.isError and shown[2:15] == [
             "  - datatype_list (complete)", "    " + one[0],
             "  - datatype_expr_bexp (complete)", *("    " + line for line in two[:2]),
             "  - datatype_either (complete)", '    (\'a, \'b) either (infixr "⊕" 60) = L "\'a" | R "\'b"',
             "  - datatype_bot (complete)", '    (\'a :: linorder) bot ("_⇩⊥" [21] 21) = Bot | Val "\'a" ("«_»" [21] 21)',
-            "  - datatype_q (complete)", '    \'a q = N | Q "\'a ⇒ \'a q" (binder "QQ" 10)'], shown
-        assert shown[13] == "  - lemma_uses_the_syntax (valid statement, proof not started)", shown
+            "  - datatype_q (complete)", '    \'a q = N | Q "\'a ⇒ \'a q" (binder "QQ" 10)',
+            "  - codatatype_stream (complete)", "    " + failed[1].strip()], shown
+        assert shown[15] == "  - lemma_uses_the_syntax (valid statement, proof not started)", shown
         recalled = await session.call_tool("recall", {"node_id": "datatype_stream"})       # §8's last example whole
         assert not recalled.isError and text_of(recalled).splitlines() == failed, text_of(recalled)
     rendered = C.render(forest)
@@ -368,7 +417,14 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
     blocks = fenced_blocks(DT, "5.") + [
         ["text ‹Sums.›", 'datatype (\'a, \'b) either (infixr "⊕" 60) =', '    L "\'a"', '  | R "\'b"'],
         ["text ‹Lifted.›", 'datatype (\'a :: linorder) bot ("_⇩⊥" [21] 21) =', "    Bot", '  | Val "\'a" ("«_»" [21] 21)'],
-        ["text ‹Binders.›", "datatype 'a q =", "    N", '  | Q "\'a ⇒ \'a q" (binder "QQ" 10)']]
+        ["text ‹Binders.›", "datatype 'a q =", "    N", '  | Q "\'a ⇒ \'a q" (binder "QQ" 10)'],
+        ["text ‹Streams.›", "codatatype 'a stream =", '    SCons "\'a" "\'a stream"']]
     for block in blocks:
         assert "".join(ascii_of_unicode(line) + "\n" for line in block) in file, file
-    assert C.Path("TAT_Std/TAT_Std_B.thy") not in rendered.files            # its definition refused: not written
+    assert not any(C.Path(f"TAT_Std/TAT_Std_{t}.thy") in rendered.files for t in "BC")   # an obstacle: not written
+    # the file's body read back whole by Isabelle on the heap's Main, through the same commands
+    body = tmp_path / "body.thy"
+    body.write_text(file[file.index("begin\n") + len("begin\n"):file.rindex("end\n")])
+    r = await ml_process(std_harness, f'val _ = after thy0 (File.read (Path.explode {ml_string(str(body))}));\n'
+                                           'writeln "read back";')
+    assert r.returncode == 0 and "read back" in r.stdout.splitlines(), (r.stdout, r.stderr)

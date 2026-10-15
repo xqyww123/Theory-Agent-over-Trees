@@ -167,14 +167,12 @@ def _statement_of(raw: LongStatement_RawAST) -> Statement:
     an underscore, no two of either the same."""
     variables: list[Variable] = []
     for i, v in enumerate(raw.get("for_any", [])):
-        name = IsaTerm.from_agent(v["name"])
-        check_identifier(name, f"statement.for_any[{i}].name", [x.name for x in variables], in_term=True)
+        name = check_identifier(v["name"], f"statement.for_any[{i}].name", [x.name for x in variables], in_term=True)
         type_ = normalised(v.get("type", ""))
         variables.append(Variable(name, IsaTerm.from_agent(type_) if type_ else None))
     premises: list[Premise] = []
     for i, p in enumerate(raw.get("premises", [])):
-        name = IsaTerm.from_agent(p["name"])
-        check_identifier(name, f"statement.premises[{i}].name", [x.name for x in premises], in_term=False)
+        name = check_identifier(p["name"], f"statement.premises[{i}].name", [x.name for x in premises], in_term=False)
         premises.append(Premise(name, IsaTerm.from_agent(normalised(p["term"]))))
     return Statement(normalised(raw["english"]), tuple(variables), tuple(premises),
                      IsaTerm.from_agent(normalised(raw["conclusion"])))

@@ -203,20 +203,17 @@ channels (`contrib/Isabelle2025-2/src/Pure/General/output.ML`):
 `writeln_fn`, `writeln_urgent_fn` — a proof's or definition's result block
 prints through this one (`Pure/Isar/proof_display.ML:322-328`) —
 `tracing_fn`, `warning_fn`, `information_fn` and `legacy_fn`. The
-conversation replaces the six once, with functions that route a message by
-the id in `Position.thread_data ()` into a per-command buffer, and fall back
-to the function they replaced when there is no id, or no buffer under it.
-The remaining channels stay untouched: proof states are read off the states
-themselves, errors travel structurally out of `Toplevel.command_errors`, and
-the rest is PIDE protocol machinery. Each operation runs its transition
-under a fresh id in the thread's position — minted by
-`Document_ID.make`, registered nowhere: the id slot of a position is the
-execution registry's key, but nothing of TAT's calls `Execution.fork` or
-`Execution.print` (EVALUATOR_DESIGN §6) — so its messages land in its
-own buffer. The id travels with `Future.fork`
-(`Pure/Concurrent/future.ML:452`), so a message printed on a forked
-worker still reaches its command's buffer; a key in `Thread_Data` would
-not (EVALUATOR_DESIGN §4).
+conversation replaces the six once, at its start (`Output_Routing.install`),
+with functions that deliver a message to the buffer registered under the
+id in `Position.thread_data ()`, and to the function they replaced when
+there is no id, or no buffer under it. The remaining channels stay
+untouched: proof states are read off the states themselves, errors travel
+structurally out of `Toplevel.command_errors`, and the rest is PIDE
+protocol machinery. No operation of TAT registers a buffer or mints an
+id — the test theory's `run_span` alone does — so what a command prints
+on those channels, Isabelle's warnings among it, goes to the process's
+own output and reaches no status: what a class reports beside its
+state is its callback's own, in its answer (ARCHITECTURE §1).
 
 ### 2.5 Node classes
 
@@ -398,10 +395,10 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 | --- | --- |
 | `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through; `operation'`, its general form, a value beside the state |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2), and the identifier-shaped words of the theory's keyword table, the two lexicons of `Thy_Header.get_keywords`, which it records as `keywords` (node_classes/SESSION_AND_THEORY.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
-| `Proof_Obligation` | the plugin's shared base, `TAT_Proof_Obligation` (§4.5), for the classes that derive from `Proof_Obligation` (node_classes/COMMON.md §3): it builds a class's evaluation callback from its two steps — `open_goal`, from the input state to the state with the goal open together with what the class records, or to the messages of its failure; `after_admission`, total, from the admitted state — and the packer of their records: the arguments are the three slots and the class's message; `open_goal` runs under `operation'` into the node's `goal_state` slot, then `sorry`'s half, `Toplevel.end_proof Proof.global_skip_proof`, and `after_admission` as one operation into the resulting slot; the answer is the messages and, when there are none, the pair of the records; `TAT.Proof_Obligation.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Proof_Obligation.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way |
+| `Proof_Obligation` | the plugin's shared base, `TAT_Proof_Obligation` (§4.5), for the classes that derive from `Proof_Obligation` (node_classes/COMMON.md §3): it builds a class's evaluation callback from its two steps — `open_goal`, from the input state to the state with the goal open together with what the class records, or to the messages of its failure; `after_admission`, total, from the admitted state — and the packer of what they yield: the arguments are the three slots and the class's message; `open_goal` runs under `operation'` into the node's `goal_state` slot, then `sorry`'s half, `Toplevel.end_proof Proof.global_skip_proof`, and `after_admission` as one operation into the resulting slot; the answer is the messages and, when there are none, the pair of what the two steps yielded; `TAT.Proof_Obligation.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Proof_Obligation.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way |
 | `Theorem` | `TAT.Theorem.evaluate`: built by `TAT_Proof_Obligation` from the statement's transition with, on the open goal, the undeclared-variable check, yielding nothing, and the identity after the admission (THEOREM.md §6) |
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
-| `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure, under `operation` (DATATYPE.md §6) |
+| `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure built inside the local theory's function, each mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), under `operation` (DATATYPE.md §6) |
 | `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition with `{overloaded = true}`, then `TAT_Overloaded.needed` on the open goal's theory, yielding `overloaded` — and `after_admission` — the `setup_lifting` transition, its state kept when Isabelle accepts it and the admitted one otherwise, yielding `lifting` (node_classes/TYPEDEF.md §6) |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
@@ -738,8 +735,9 @@ the same `Evaluation` (the invalidation functions, below).
   header's `master_dir`, the compile and the compile hooks share;
   `import_sessions` and `keywords`, recorded when the header runs
   (COMPILATION.md §2; node_classes/SESSION_AND_THEORY.md §2); and
-  `print_name`, which writes a name of the tree into its file over
-  `keywords`.
+  `print_name(text)`, which writes a piece of Isabelle text — a name, a
+  term, a type, a sort — into the tree's file against `keywords`
+  (SESSION_AND_THEORY §2).
   Before its header runs it makes its `Session`'s folder when that is
   absent, with the function the compile uses (COMPILATION.md §2, §5), so
   that AoA's proof store beside the file has a directory to be written
@@ -1104,7 +1102,8 @@ text in both spellings, `unicode` as the agent writes and reads it and
 `ascii` in Isabelle's `\<name>` form, the only form Isabelle/ML reads;
 built by `IsaTerm.from_agent` at `gen` and by `IsaTerm.from_isabelle`
 where Isabelle's text comes back, `str()` refused, two equal when their
-`ascii` is. Printing writes `.unicode`, emission and every ML call
+`ascii` is. Printing and emission write `.unicode`, a compile
+converting each file whole (COMPILATION.md §2); every ML call sends
 `.ascii`; the store holds `.unicode`. A function here takes it and
 sends `.ascii`, and wraps the text Isabelle returns with
 `IsaTerm.from_isabelle`, so no caller converts.
@@ -1133,7 +1132,10 @@ object the agent is told and held to; and, handed one by one by
 schema, the holder the kind, `kind` passed over unread — the kind table
 chose the class from it, and it may be a bare `const`. Shared by both:
 a field the schema does not name, a required one missing, a type, an
-`enum` by membership, an empty list under `minItems: 1`, an object's
+integer outside the signed 64-bit range — which MessagePack holds on
+the wire and in the store — whatever the schema's number type, `must be
+a 64-bit integer`, an `enum` by membership, an empty list under
+`minItems: 1`, an object's
 fields by their names and a typed `items`' elements by their index, a
 `$ref` followed into the class's `$defs`, an `anyOf` in this order — a
 value of no arm's JSON type, `must be` the arms' distinct JSON types,

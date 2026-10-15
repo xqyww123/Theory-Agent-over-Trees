@@ -106,6 +106,8 @@ def test_invalid_field():
           "The field `statement` must be an object.")
     check(InvalidField(field="types", reason="must not be empty"),
           "The field `types` must not be empty.")
+    check(InvalidField(field="types[0].constructors[1].syntax.priority", reason="must be a 64-bit integer"),
+          "The field `types[0].constructors[1].syntax.priority` must be a 64-bit integer.")
     check(InvalidField(field="types[0].constructors[1].syntax.form",
                        reason="must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`"),
           "The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`,"

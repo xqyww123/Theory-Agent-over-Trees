@@ -17,7 +17,7 @@ import re
 import stat
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Container, Coroutine, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -321,6 +321,19 @@ def string_token(text: str) -> str:
             out.append(symbol)
     out.append('"')
     return "".join(out)
+
+
+def print_name(text: str | IsaTerm, keywords: Container[str] = ()) -> str:
+    """A piece of Isabelle text — a name, a term, a type, a sort — written
+    bare when its `ascii` is an Isabelle identifier not in `keywords`, as
+    Isabelle's string token otherwise (SESSION_AND_THEORY §2), in the
+    `unicode` spelling; a `str` is the text's `ascii`.  A tree's file is
+    written against its theory's `keywords` (`Theory.print_name`), the
+    text under `recall` against none."""
+    if isinstance(text, str):
+        text = IsaTerm.from_isabelle(text)
+    bare = is_identifier(text.ascii) and text.ascii not in keywords
+    return text.unicode if bare else string_token(text.unicode)
 
 
 def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
@@ -2632,18 +2645,11 @@ class Theory(StdBlock):
         COMPILATION.md §4)."""
         return super().can_emit() and self.keywords is not None
 
-    def print_name(self, text: str | IsaTerm, spelling: Literal["ascii", "unicode"] = "ascii") -> str:
-        """A piece of Isabelle text — a name, a term, a type, a sort — as the
-        tree's file writes it (`ascii`) and `recall` shows it (`unicode`)
-        (SESSION_AND_THEORY §2): bare when its `ascii` spelling is an
-        identifier that is not in `keywords`, as Isabelle's string token
-        otherwise — `Token.print_name`'s rule; while `keywords` is `None`,
-        no keyword is known.  A `str` is the text's `ascii`."""
-        if isinstance(text, str):
-            text = IsaTerm.from_isabelle(text)
-        bare = is_identifier(text.ascii) and (self.keywords is None or text.ascii not in self.keywords)
-        written = text.ascii if spelling == "ascii" else text.unicode
-        return written if bare else string_token(written)
+    def print_name(self, text: str | IsaTerm) -> str:
+        """A piece of Isabelle text as the tree's file writes it
+        (SESSION_AND_THEORY §2): `print_name` against the theory's
+        `keywords`, none known while they are None."""
+        return print_name(text, self.keywords or ())
 
     def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever

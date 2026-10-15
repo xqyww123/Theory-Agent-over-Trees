@@ -653,10 +653,15 @@ def test_every_def_is_reached_by_a_ref_of_the_schema():
         s: Outer_TD
     unused = {**STATEMENT, "Unused": {"type": "string"}}
     refused(declaring("P", {"s": {"$ref": "#/$defs/Statement"}}, Holds_Statement, required=["s"], defs=unused),
-            r"`\$defs` entry `Unused` is reached by no `\$ref`")
+            r"`\$defs` entry `Unused` is reached by no `\$ref` outside the top-level `children`")
     outer = {"Outer": {"type": "object", "properties": {"inner": {"$ref": "#/$defs/Statement"}},
                        "required": ["inner"], "additionalProperties": False}, **STATEMENT}
     plugin.TAT_node(declaring("Q", {"s": {"$ref": "#/$defs/Outer"}}, Holds_Outer, required=["s"], defs=outer))
+    loop = {"Loop": {"type": "object", "properties": {"next": {"$ref": "#/$defs/Loop"}}, "additionalProperties": False}}
+    refused(declaring("R", {}, Empty, defs=loop), r"`\$defs` entry `Loop` is reached by no `\$ref`")   # reaching itself alone
+    # the natural mistake: an own entry pointed at by `children` alone, which the agreement sets aside
+    refused(block("Own_Children", {"type": "array", "items": {"$ref": "#/$defs/Statement"}}, defs=STATEMENT),
+            r"`\$defs` entry `Statement` is reached by no `\$ref` outside the top-level `children`")
 
 
 def test_a_definition_may_refer_to_itself_through_an_object():

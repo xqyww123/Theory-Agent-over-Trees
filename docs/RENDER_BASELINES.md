@@ -73,9 +73,10 @@ The argument `constructs` <reason>.
 A schema check's own reasons are `must be` followed by the JSON type —
 `a string`, `an integer`, `a number`, `a boolean`, `a list`, `an object`
 — several joined with ` or `, each JSON type once, in the order the schema first names them; `must be one of` followed by the `enum`,
-backticked, and `must not be empty` for `minItems`, for a tool call's
-arguments and a construct's fields alike (MODULE_STRUCTURE §4.4); and
-`must not be nested deeper than 100 levels`, said of a tool call's
+backticked, `must not be empty` for `minItems`, and `must be a 64-bit
+integer` for an integer outside the signed 64-bit range, for a tool
+call's arguments and a construct's fields alike (MODULE_STRUCTURE §4.4);
+and `must not be nested deeper than 100 levels`, said of a tool call's
 argument before any other check, each object or array a level:
 
 ```
@@ -85,6 +86,7 @@ The argument `constructs` must not be empty.
 The argument `constructs` must not be nested deeper than 100 levels.
 The field `types` must not be empty.
 The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`.
+The field `types[0].constructors[1].syntax.priority` must be a 64-bit integer.
 ```
 
 `UnexpectedField` — the holder is the kind, or a nested container's path,

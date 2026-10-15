@@ -6,20 +6,19 @@ the node is finished when it is `ready`."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Container
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
 from .. import isabelle_driver
-from ..exceptions import InvalidField
-from ..model import INDENT, NON_EMPTY, RECALL, Leaf, emit_lines, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, Leaf, emit_lines, print_name, status_of_errors
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Spelling, Theory_Member,
-    Type_Parameter, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, mixfix_of, mixfix_text, mixfix_wire,
-    normalised, require_id_name, text_line, type_parameters_of, type_parameters_text)
+    MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Theory_Member, Type_Parameter,
+    TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice, mixfix_of,
+    mixfix_text, mixfix_wire, normalised, require_id_name, text_line, type_parameters_of, type_parameters_text)
 
 KINDS = ("datatype", "codatatype")      # the two commands, one syntax and one implementation
 
@@ -66,11 +65,8 @@ class Defined_Type:
     """One type of the definition (§2): its name, its optional syntax and its
     constructors; the parameters are the node's."""
     type_name: str
-    syntax: Mixfix | None
+    syntax: TypeMixfix | None
     constructors: tuple[Constructor, ...]
-
-
-_Name = Callable[[str | IsaTerm], str]      # how a name is written: through `print_name`, or bare
 
 
 @TAT_node
@@ -131,31 +127,19 @@ class Datatype(Theory_Member, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Datatype_RawAST):
+        """§4's checks in its order: the parent; every type name against
+        §1's grammar and no two the same; the type parameters by the
+        shared check; then each type's constructors and selectors."""
         cls.require_inside_theory(config, raw["kind"])
-        types: list[Defined_Type] = []
         for i, t in enumerate(raw["types"]):
             require_id_name(t["type_name"], "type name")
-            if any(u.type_name == t["type_name"] for u in types):
-                raise InvalidField(f"types[{i}].type_name", f"binds `{t['type_name']}` a second time")
-            constructors: list[Constructor] = []
-            for j, c in enumerate(t["constructors"]):
-                name = IsaTerm.from_agent(normalised(c["name"]))
-                check_identifier(name, f"types[{i}].constructors[{j}].name", [x.name for x in constructors],
-                                 in_term=True)
-                arguments: list[Argument] = []
-                for k, a in enumerate(c.get("arguments", [])):
-                    selector = None
-                    if "selector" in a:
-                        selector = IsaTerm.from_agent(normalised(a["selector"]))
-                        check_identifier(selector, f"types[{i}].constructors[{j}].arguments[{k}].selector",
-                                         [x.selector for x in arguments if x.selector is not None], in_term=True)
-                    arguments.append(Argument(IsaTerm.from_agent(normalised(a["type"])), selector))
-                constructors.append(Constructor(name, tuple(arguments),
-                                                mixfix_of(c["syntax"]) if "syntax" in c else None))
-            types.append(Defined_Type(t["type_name"], mixfix_of(t["syntax"]) if "syntax" in t else None,
-                                      tuple(constructors)))
-        return cls(config.parent, config.state, normalised(raw["english"]),
-                   type_parameters_of(raw.get("type_parameters", [])), tuple(types))
+            check_not_bound_twice(t["type_name"], f"types[{i}].type_name", [u["type_name"] for u in raw["types"][:i]])
+        type_parameters = type_parameters_of(raw.get("type_parameters", []))
+        types = tuple(
+            Defined_Type(t["type_name"], mixfix_of(t["syntax"]) if "syntax" in t else None,
+                         _constructors_of(t["constructors"], f"types[{i}]"))
+            for i, t in enumerate(raw["types"]))
+        return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, types)
 
     # --- the store (§2): the authored fields in the `unicode` spelling, the construct's shape
 
@@ -175,7 +159,8 @@ class Datatype(Theory_Member, Leaf):
         """The definition as `TAT.Datatype.evaluate` unpacks it: `kind`, the
         type parameters with their sorts, the types each with its name, its
         syntax and its constructors with their arguments, selectors and
-        syntax — each `IsaTerm` as its `ascii`."""
+        syntax — each `IsaTerm` as its `ascii`, a syntax as `mixfix_wire`
+        writes it."""
         return (self.kind,
                 [(p.name.ascii, p.sort.ascii if p.sort is not None else None) for p in self.type_parameters],
                 [(t.type_name, mixfix_wire(t.syntax),
@@ -195,33 +180,34 @@ class Datatype(Theory_Member, Leaf):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _definition(self, spelling: Spelling, name: _Name) -> list[tuple[str, list[str]]]:
+    def _definition(self, keywords: Container[str]) -> list[tuple[str, list[str]]]:
         """Each type's head — the parameters, the name, the syntax — and its
-        constructors' texts, in `spelling`, names written by `name`, a sort
-        and an argument's type through the theory's `print_name`."""
-        theory = self.theory()
-        parameters = type_parameters_text(theory, self.type_parameters, spelling)
+        constructors' texts, every piece through `print_name` against
+        `keywords`: the theory's for the file; none under `recall`, where
+        every name, an identifier, comes out bare."""
+        parameters = type_parameters_text(self.type_parameters, keywords)
         definition = []
         for t in self.types:
-            head = " ".join(filter(None, (parameters, name(t.type_name),
-                                          mixfix_text(t.syntax, spelling) if t.syntax is not None else "")))
+            head = " ".join(filter(None, (parameters, print_name(t.type_name, keywords),
+                                          mixfix_text(t.syntax) if t.syntax is not None else "")))
             constructors = []
             for c in t.constructors:
-                parts = [name(c.name)]
+                parts = [print_name(c.name, keywords)]
                 for a in c.arguments:
-                    type_text = theory.print_name(a.type, spelling)
-                    parts.append(f"({name(a.selector)}: {type_text})" if a.selector is not None else type_text)
+                    type_text = print_name(a.type, keywords)
+                    parts.append(f"({print_name(a.selector, keywords)}: {type_text})" if a.selector is not None
+                                 else type_text)
                 if c.syntax is not None:
-                    parts.append(mixfix_text(c.syntax, spelling))
+                    parts.append(mixfix_text(c.syntax))
                 constructors.append(" ".join(parts))
             definition.append((head, constructors))
         return definition
 
     def print_fields(self, indent, out, mode, depth):
         """Under `Recall` alone (§8): the definition, one line per type, at
-        depths 0 to 2, in `unicode` with every name bare; `english` at 0."""
+        depths 0 to 2, against no keyword; `english` at 0."""
         if mode is RECALL and depth <= 2:
-            for i, (head, constructors) in enumerate(self._definition("unicode", _bare)):
+            for i, (head, constructors) in enumerate(self._definition(())):
                 out.write(INDENT * indent + ("and " if i else "") + f"{head} = " + " | ".join(constructors) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
@@ -229,7 +215,7 @@ class Datatype(Theory_Member, Leaf):
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.english))
         lines = []
-        for i, (head, constructors) in enumerate(self._definition("ascii", self.theory().print_name)):
+        for i, (head, constructors) in enumerate(self._definition(self.theory().keywords or ())):
             lines.append(f"{self.kind if i == 0 else 'and'} {head} =")
             lines.append(f"    {constructors[0]}")
             lines.extend(f"  | {c}" for c in constructors[1:])
@@ -237,8 +223,23 @@ class Datatype(Theory_Member, Leaf):
         return indent
 
 
-def _bare(name: str | IsaTerm) -> str:
-    return name if isinstance(name, str) else name.unicode
+def _constructors_of(raw: list[Constructor_RawAST], where: str) -> tuple[Constructor, ...]:
+    """§4: each constructor's `name` and each `selector` an identifier
+    Isabelle reads in a term, no two constructors of the type the same
+    name, no two selectors of a constructor the same; the texts
+    normalised, a syntax by `mixfix_of`."""
+    constructors: list[Constructor] = []
+    for j, c in enumerate(raw):
+        name = check_identifier(c["name"], f"{where}.constructors[{j}].name", [x.name for x in constructors],
+                                in_term=True)
+        arguments: list[Argument] = []
+        for k, a in enumerate(c.get("arguments", [])):
+            selector = (check_identifier(a["selector"], f"{where}.constructors[{j}].arguments[{k}].selector",
+                                         [x.selector for x in arguments if x.selector is not None], in_term=True)
+                        if "selector" in a else None)
+            arguments.append(Argument(IsaTerm.from_agent(normalised(a["type"])), selector))
+        constructors.append(Constructor(name, tuple(arguments), mixfix_of(c["syntax"]) if "syntax" in c else None))
+    return tuple(constructors)
 
 
 def _type_image(t: Defined_Type) -> dict[str, Any]:
@@ -253,12 +254,13 @@ def _type_image(t: Defined_Type) -> dict[str, Any]:
                 for c in t.constructors]}
 
 
-def _type_of_image(image: dict[str, Any]) -> Defined_Type:
+def _type_of_image(image: Type_RawAST) -> Defined_Type:
+    """The image is the construct's shape (§2)."""
     return Defined_Type(
         image["type_name"], mixfix_of(image["syntax"]) if "syntax" in image else None,
         tuple(Constructor(IsaTerm.from_agent(c["name"]),
                           tuple(Argument(IsaTerm.from_agent(a["type"]),
                                          IsaTerm.from_agent(a["selector"]) if "selector" in a else None)
-                                for a in c["arguments"]),
+                                for a in c.get("arguments", [])),
                           mixfix_of(c["syntax"]) if "syntax" in c else None)
               for c in image["constructors"]))

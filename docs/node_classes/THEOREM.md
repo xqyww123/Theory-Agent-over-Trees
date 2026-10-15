@@ -69,10 +69,10 @@ using it merges the same definition (PLUGIN_SYSTEM §5):
 `english` and `conclusion` are required, `for_any` and `premises`
 optional. Every variable the premises and the conclusion use is declared
 in `for_any`: one Isabelle fixed by itself is refused at evaluation (§6).
-`gen` normalises every term (`for_any[].type`,
-`premises[].term`, `conclusion`) and `english` once, when the construct
-is accepted: newlines become spaces and runs of whitespace one space;
-printing, emission and evaluation all use the stored text.
+`gen` normalises every piece of Isabelle text — the names, the types,
+the terms — and `english` once, when the construct is accepted:
+newlines become spaces and runs of whitespace one space; printing,
+emission and evaluation all use the stored text.
 
 Every piece of Isabelle text is an `IsaTerm` (MODULE_STRUCTURE §4.3):
 `for_any[].name`, `for_any[].type`, `premises[].name`,
@@ -172,17 +172,18 @@ lemma rev_length:
 - A variable without `type` is fixed bare (`fixes xs`); an empty
   `for_any` or `premises` omits its clause.
 - Every piece of Isabelle text — a name, a variable's type, a term —
-  is written through the theory's `print_name` (SESSION_AND_THEORY §2),
-  `Token.print_name`'s rule: bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise —
-  `lemma "open":`, `fixes "for"`, `assumes "if":`; `fixes xs :: "'a"`
-  quoted, a conclusion `True` bare, `"P x"` quoted.
+  is written through the theory's `print_name` (SESSION_AND_THEORY §2):
+  bare when its `ascii` is an Isabelle identifier (`is_identifier`,
+  COMMON.md §5) that is not a keyword of the theory, as Isabelle's
+  string token (COMPILATION.md §3) otherwise — `lemma "open":`, `fixes
+  "for"`, `assumes "if":`; `fixes xs :: "'a"` quoted, a conclusion
+  `True` bare, `"P x"` quoted.
 - The terminal proof, `by aoa` or `sorry`, is `Proof_Obligation`'s
   `proof_text()` (COMMON.md §3); the `aoa` method's import is the
   plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
-- The whole text in the `\<name>` form (`IsaTerm.ascii`, §2); the file
-  reads as Unicode in jEdit all the same.
+- The text in the `unicode` spelling; the file takes the `\<name>` form
+  from the compile's conversion (COMPILATION.md §2) and reads as Unicode
+  in jEdit all the same.
 
 ## 6. Evaluation
 
@@ -197,7 +198,7 @@ each `IsaTerm` as its `ascii` (§2). The callback is built by
 `TAT_Proof_Obligation` (COMMON.md §3) from `Theorem`'s two steps:
 `open_goal`, the `lemma` command's transition and, on the open goal,
 the check below, yielding nothing; `after_admission`, the identity.
-Between the two the base applies the half of `sorry` that ends a
+Between the two the callback applies the half of `sorry` that ends a
 toplevel goal (`Isar_Cmd.global_skip_proof`):
 
 ```
@@ -216,8 +217,8 @@ their goal; the second's into the resulting slot (COMMON.md §3): at
 theory level the same four steps as a hand-written `theory_init …
 exit_global`, and inside a future `Context` or `Locale` the statement
 is checked in that context, as ARCHITECTURE §2 promises. A failure is
-the base's (COMMON.md §3). On the open goal, `Theorem`'s `open_goal`
-refuses the statement whose
+`Proof_Obligation`'s (COMMON.md §3). On the open goal, `Theorem`'s
+`open_goal` refuses the statement whose
 free variables — in the goal, or in the premises assumed beside it —
 `for_any` does not declare, which Isabelle fixed by itself (§2): the
 same failure, one message naming them in alphabetical order,

@@ -13,38 +13,38 @@ struct
 local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 
 (*the definition as the Python class sends it: the kind; the type parameters,
-  each its name and its sort; the types, each its name, its syntax and its
-  constructors -- each its name, its arguments (the type and the selector)
-  and its syntax -- every piece of Isabelle text in its ascii*)
+  each its name and its sort; the types, each its name, its mixfix annotation
+  as `mixfix_text` writes it and its constructors -- each its name, its
+  arguments (the type and the selector) and its annotation -- every piece of
+  Isabelle text in its ascii*)
 type argument = string * string option
-type constructor = string * argument list * TAT_Mixfix.syntax option
+type constructor = string * argument list * string option
 type definition =
-  string * (string * string option) list * (string * TAT_Mixfix.syntax option * constructor list) list
+  string * (string * string option) list * (string * string option * constructor list) list
 
 val unpack_definition =
   unpackTuple3 (unpackString,
     unpackList (unpackPair (unpackString, unpackOption unpackString)),
-    unpackList (unpackTuple3 (unpackString, unpackOption TAT_Mixfix.unpack,
+    unpackList (unpackTuple3 (unpackString, unpackOption unpackString,
       unpackList (unpackTuple3 (unpackString,
         unpackList (unpackPair (unpackString, unpackOption unpackString)),
-        unpackOption TAT_Mixfix.unpack)))))
-
-fun mixfix_of NONE = NoSyn
-  | mixfix_of (SOME syntax) = TAT_Mixfix.decode syntax
+        unpackOption unpackString)))))
 
 fun binding_of NONE = Binding.empty
   | binding_of (SOME name) = Binding.name name
 
-(*one entry of the parsers' structure (bnf_fp_def_sugar.ML, parse_spec): the
-  node's type parameters, each live and unnamed; the type's name and syntax;
-  the constructors, each with no discriminator, its arguments with their
+(*one entry of the parsers' structure (bnf_fp_def_sugar.ML, parse_spec), the
+  annotations read under the local theory's keywords: the node's type
+  parameters, each live and unnamed; the type's name and syntax; the
+  constructors, each with no discriminator, its arguments with their
   selectors, and its syntax; no map, rel or pred binding; no selector
   defaults*)
-fun spec parameters (name, syntax, constructors) =
-  (((((map (fn (v, sort) => (SOME Binding.empty, (v, sort))) parameters, Binding.name name), mixfix_of syntax),
+fun spec lthy parameters (name, syntax, constructors) =
+  (((((map (fn (v, sort) => (SOME Binding.empty, (v, sort))) parameters, Binding.name name),
+      TAT_Mixfix.read lthy syntax),
      map (fn (c, arguments, syn) =>
             (((Binding.empty, Binding.name c), map (fn (T, selector) => (binding_of selector, T)) arguments),
-             mixfix_of syn))
+             TAT_Mixfix.read lthy syn))
        constructors),
     (Binding.empty, Binding.empty, Binding.empty)),
    [])
@@ -59,9 +59,9 @@ fun transition ((kind, parameters, types) : definition) =
       | _ => raise TAT_Framework.Bug ("TAT_Datatype: the kind " ^ quote kind))
   in
     Toplevel.make kind Position.none
-    |> Toplevel.local_theory NONE NONE
-        (BNF_FP_Def_Sugar.co_datatype_cmd fp construct
-          (Ctr_Sugar.default_ctr_options_cmd, map (spec parameters) types))
+    |> Toplevel.local_theory NONE NONE (fn lthy =>
+        BNF_FP_Def_Sugar.co_datatype_cmd fp construct
+          (Ctr_Sugar.default_ctr_options_cmd, map (spec lthy parameters) types) lthy)
   end
 
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = ["isabelle_theory_agent.std"]} (fn env =>

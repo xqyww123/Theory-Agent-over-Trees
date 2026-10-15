@@ -258,10 +258,11 @@ registration, per class:
   bare `$ref`; every `$ref` outside the top-level `children` has the
   form `#/$defs/<Name>` and names a key of the class's own `$defs` —
   judgeable now, since a class carries what it refers to;
-- every `$defs` entry is reached by a `$ref` of the class's schema,
-  directly or through other entries: the agreement check (below) keeps
-  the keys it follows and compares them with the `$defs` keys, and an
-  entry it never reached is refused, the class and the key named;
+- every `$defs` entry is reached by a `$ref` of the class's schema
+  outside the top-level `children`, directly or through other entries:
+  the agreement check (below) keeps the keys it follows and compares
+  them with the `$defs` keys, and an entry it never reached is refused,
+  the class and the key named;
 - the two schemas agree, at every depth, a `$ref` followed into
   `$defs`: an object carries `additionalProperties: false`, its
   `properties` are exactly the TypedDict's keys and its `required`

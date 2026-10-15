@@ -2,9 +2,12 @@
 `NotInsideTheory`'s sentence, and `Theory_Member` over every class the
 package registers (§1); the `text` line (§2); `Proof_Obligation`'s
 abstraction, and its reading of the class's own words, callback, message
-and records, through a stand-in (§3); `TAT_Overloaded`, Isabelle-backed
-(§4).  The rest of what `Proof_Obligation` does on a node is pinned
-through `Theorem`, test_theorem.py.
+and records, through a stand-in (§3); the shared `$defs` against the
+section's schema text, the type parameters' check and writer, the
+mixfix writers, and `TAT_Overloaded`, Isabelle-backed (§4).  The rest of
+what `Proof_Obligation` does on a node is pinned through `Theorem`,
+test_theorem.py; the names' checks (§5) through `Theorem` and
+`Datatype`.
 Run: python -m pytest test/test_common.py
 """
 
@@ -19,8 +22,9 @@ from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit, InvalidField
 from isabelle_theory_agent.std import common, datatype, theorem
 from isabelle_theory_agent.std.common import (
-    Mixfix, NotInsideTheory, Proof_Obligation, Theory_Member, Type_Parameter, text_line)
+    Binder, Infix, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
+from ml_process import AFTER, ml_process, ml_string
 from test_datatype import LIST, definition
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -170,8 +174,6 @@ def test_the_shared_defs_are_section_4_s_schema_text():
     jsonc blocks, pinned here alone; `Datatype`'s `$defs` are the three."""
     blocks = [jsoncomment.JsonComment().loads("\n".join(b)) for b in fenced_blocks(COMMON, "4.") if b[0] == "{"]
     assert blocks == [common.TYPE_PARAMETER_DEFS, common.MIXFIX_DEFS, common.TYPE_MIXFIX_DEFS]
-    assert datatype.Datatype.construct_schema["$defs"] == {**common.TYPE_PARAMETER_DEFS, **common.TYPE_MIXFIX_DEFS,
-                                                           **common.MIXFIX_DEFS}
 
 
 def test_the_type_parameters_check_renders_section_4_s_two_sentences():
@@ -200,53 +202,50 @@ def test_the_type_parameters_check_renders_section_4_s_two_sentences():
 
 def test_type_parameters_text_writes_section_4_s_examples():
     """§4: nothing for none, one without a sort bare, otherwise parenthesised
-    and comma-separated with a sort after `::` through `print_name` — a
-    keyword quoted, none known while `keywords` is None; both spellings."""
-    f = Forest_Under_Test()
-    (s,) = run(locked(f, edit.insert(f, 0, [session("S", theory("A", kind="fake_theory"))], ts.KINDS)))
-    (a,) = s.sub_nodes
-    of = common.type_parameters_of
-    assert common.type_parameters_text(a, of([]), "ascii") == ""
-    assert common.type_parameters_text(a, of([{"name": "'a"}]), "ascii") == "'a"
-    assert common.type_parameters_text(a, of([{"name": "'a", "sort": "linorder"}]), "ascii") == "('a :: linorder)"
-    assert common.type_parameters_text(a, of([{"name": "'a", "sort": "linorder"}, {"name": "'b"}]), "ascii") == "('a :: linorder, 'b)"
-    assert common.type_parameters_text(a, of([{"name": "'a", "sort": "{zero, linorder}"}]), "ascii") == "('a :: \"{zero, linorder}\")"
-    assert common.type_parameters_text(a, of([{"name": "'a"}, {"name": "'b"}]), "ascii") == "('a, 'b)"
+    and comma-separated with a sort after `::` through `print_name` against
+    the keyword set given — a keyword quoted, none against no set — in
+    `unicode`."""
+    of, text = common.type_parameters_of, common.type_parameters_text
+    assert text(of([])) == ""
+    assert text(of([{"name": "'a"}])) == "'a"
+    assert text(of([{"name": "'a", "sort": "linorder"}])) == "('a :: linorder)"
+    assert text(of([{"name": "'a", "sort": "linorder"}, {"name": "'b"}])) == "('a :: linorder, 'b)"
+    assert text(of([{"name": "'a", "sort": "{zero, linorder}"}])) == "('a :: \"{zero, linorder}\")"
+    assert text(of([{"name": "'a"}, {"name": "'b"}])) == "('a, 'b)"
     greek = of([{"name": "'α", "sort": "linorder"}, {"name": "'b"}])
-    assert common.type_parameters_text(a, greek, "ascii") == "('\\<alpha> :: linorder, 'b)"
-    assert common.type_parameters_text(a, greek, "unicode") == "('α :: linorder, 'b)"
-    a.keywords = frozenset({"linorder"})
-    assert common.type_parameters_text(a, greek, "unicode") == "('α :: \"linorder\", 'b)"
+    assert text(greek) == "('α :: linorder, 'b)"
+    assert text(greek, frozenset({"linorder"})) == "('α :: \"linorder\", 'b)"
+    assert text(of([{"name": "'a", "sort": "linorder"}]), frozenset({"'a"})) == "('a :: linorder)"    # a variable never quoted
 
 
 def test_mixfix_text_and_mixfix_wire_write_section_4_s_examples():
-    """§4: either annotation as Isabelle writes it, the symbol or template a
-    string token, a general mixfix's priorities each when given; the wire
-    form the form, the `ascii`, the priority, the argument priorities, a
-    left-out value None; the image the construct's shape."""
+    """§4: either annotation as Isabelle writes it, in `unicode`, the symbol
+    or template a string token, a template's priorities each when given;
+    on the wire the same text in `ascii`, None for none; the image the
+    construct's shape, read back to the same annotation."""
     of = common.mixfix_of
     cases = [
-        ({"form": "infixr", "symbol": "#", "priority": 65}, '(infixr "#" 65)', '(infixr "#" 65)', ("infixr", "#", 65, None)),
-        ({"form": "infix", "symbol": "+", "priority": 0}, '(infix "+" 0)', '(infix "+" 0)', ("infix", "+", 0, None)),
-        ({"form": "infixl", "symbol": "\"", "priority": 1}, '(infixl "\\"" 1)', '(infixl "\\"" 1)', ("infixl", '"', 1, None)),
-        ({"form": "binder", "symbol": "∀", "priority": 10}, '(binder "∀" 10)', '(binder "\\<forall>" 10)', ("binder", "\\<forall>", 10, None)),
-        ({"form": "mixfix", "template": "⟨_, _⟩"}, '("⟨_, _⟩")', '("\\<langle>_, _\\<rangle>")', ("mixfix", "\\<langle>_, _\\<rangle>", None, None)),
-        ({"form": "mixfix", "template": "_ ! _", "argument_priorities": [100, 101], "priority": 100},
-         '("_ ! _" [100, 101] 100)', '("_ ! _" [100, 101] 100)', ("mixfix", "_ ! _", 100, [100, 101])),
-        ({"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21]}, '("_⇩⊥" [21])', '("_\\<^sub>\\<bottom>" [21])',
-         ("mixfix", "_\\<^sub>\\<bottom>", None, [21])),
-        ({"form": "mixfix", "template": "_!", "priority": 999}, '("_!" 999)', '("_!" 999)', ("mixfix", "_!", 999, None)),
-        ({"form": "mixfix", "template": "_", "argument_priorities": []}, '("_" [])', '("_" [])', ("mixfix", "_", None, [])),
+        ({"form": "infixr", "symbol": "#", "priority": 65}, Infix, '(infixr "#" 65)', '(infixr "#" 65)'),
+        ({"form": "infix", "symbol": "+", "priority": 0}, Infix, '(infix "+" 0)', '(infix "+" 0)'),
+        ({"form": "infixl", "symbol": "\"", "priority": 1}, Infix, '(infixl "\\"" 1)', '(infixl "\\"" 1)'),
+        ({"form": "binder", "symbol": "∀", "priority": 10}, Binder, '(binder "∀" 10)', '(binder "\\<forall>" 10)'),
+        ({"form": "mixfix", "template": "⟨_, _⟩"}, Template, '("⟨_, _⟩")', '("\\<langle>_, _\\<rangle>")'),
+        ({"form": "mixfix", "template": "_ ! _", "argument_priorities": [100, 101], "priority": 100}, Template,
+         '("_ ! _" [100, 101] 100)', '("_ ! _" [100, 101] 100)'),
+        ({"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21]}, Template, '("_⇩⊥" [21])',
+         '("_\\<^sub>\\<bottom>" [21])'),
+        ({"form": "mixfix", "template": "_!", "priority": 999}, Template, '("_!" 999)', '("_!" 999)'),
+        ({"form": "mixfix", "template": "_", "argument_priorities": []}, Template, '("_" [])', '("_" [])'),
+        ({"form": "mixfix", "template": "_", "argument_priorities": [0], "priority": 0}, Template, '("_" [0] 0)', '("_" [0] 0)'),
     ]
-    for raw, unicode, ascii, wire in cases:
+    for raw, arm, unicode, ascii in cases:
         syntax = of(raw)
-        assert isinstance(syntax, Mixfix) and syntax.image() == raw, raw
-        assert (common.mixfix_text(syntax, "unicode"), common.mixfix_text(syntax, "ascii")) == (unicode, ascii), raw
-        assert common.mixfix_wire(syntax) == wire and of(syntax.image()) == syntax, raw
+        assert isinstance(syntax, arm) and syntax.image() == raw and of(syntax.image()) == syntax, raw
+        assert (common.mixfix_text(syntax), common.mixfix_wire(syntax)) == (unicode, ascii), raw
     assert common.mixfix_wire(None) is None
     # the symbol or template normalised for newlines and tabs alone: runs of spaces are layout
-    assert of({"form": "mixfix", "template": "⟨_,\n\t_⟩  "}).text.unicode == "⟨_,  _⟩  "
-    assert of({"form": "infix", "symbol": "a\r\nb", "priority": 1}).text.unicode == "a b"
+    assert of({"form": "mixfix", "template": "⟨_,\n\t_⟩  "}) == Template(IsaTerm.from_agent("⟨_,  _⟩  "))
+    assert of({"form": "infix", "symbol": "a\r\nb", "priority": 1}) == Infix("infix", IsaTerm.from_agent("a b"), 1)
 
 
 # --- TAT_Overloaded (§4), on a raw ML process: the std harness offers no probe
@@ -254,20 +253,21 @@ def test_mixfix_text_and_mixfix_wire_write_section_4_s_examples():
 OVERLOADED_ML = Path(__file__).resolve().parent.parent / "Isabelle_Std" / "ML" / "TAT_Overloaded.ML"
 
 
-async def test_tat_overloaded_needed_answers_section_4_s_two_typedefs(std_harness):
+async def test_tat_overloaded_needed_answers_section_4_s_two_typedefs(std_harness, tmp_path):
     """§4: `needed` is true for `{x :: 'a::zero. x = 0}` and false for
     `{n :: nat. n > 0}`, each made with `(overloaded)` given, as the
-    classes make theirs."""
-    ml = f"""
-      use {M.string_token(str(OVERLOADED_ML))};
-      val thy0 = Theory.begin_theory ("Probe", Position.none) [Thy_Info.get_theory "Main"];
-      fun after text =
-        Toplevel.theory_of (fold (Toplevel.command_exception true)
-          (Outer_Syntax.parse_text thy0 (K thy0) Position.start text) (Toplevel.make_state (SOME thy0)));
+    classes make theirs; and true for the first set made under
+    `typedef_overloaded`, the option it does not consult.  The ML file is
+    evaluated inside a theory's context, as the plugin's theory loads it."""
+    probe = tmp_path / "overloaded_probe.ML"
+    probe.write_text(AFTER + """
+      val thy0 = Context.the_theory (Context.the_generic_context ());
       fun needed thy name = TAT_Overloaded.needed thy (Sign.full_name thy (Binding.name name));
-      val zero_only = after "typedef (overloaded) 'a zero_only = \\"{{x :: 'a::zero. x = 0}}\\" by simp";
-      val pos = after "typedef (overloaded) pos = \\"{{n :: nat. n > 0}}\\" by (rule exI[of _ 1]) simp";
-      writeln ("needed: " ^ Value.print_bool (needed zero_only "zero_only") ^ " " ^ Value.print_bool (needed pos "pos"));
-    """
-    r = await std_harness.run_tool(["isabelle", "ML_process", "-l", "HOL", "-e", ml])
-    assert r.returncode == 0 and "needed: true false" in r.stdout.splitlines(), (r.stdout, r.stderr)
+      val zero_only = after thy0 "typedef (overloaded) 'a zero_only = \\"{x :: 'a::zero. x = 0}\\" by simp";
+      val pos = after thy0 "typedef (overloaded) pos = \\"{n :: nat. n > 0}\\" by (rule exI[of _ 1]) simp";
+      val under_option = after thy0 "declare [[typedef_overloaded]] typedef 'a under_option = \\"{x :: 'a::zero. x = 0}\\" by simp";
+      writeln ("needed: " ^ Value.print_bool (needed zero_only "zero_only") ^ " " ^ Value.print_bool (needed pos "pos")
+        ^ " " ^ Value.print_bool (needed under_option "under_option"));
+    """)
+    r = await ml_process(std_harness, f"val _ = in_theory thy0 [{ml_string(str(OVERLOADED_ML))}, {ml_string(str(probe))}];")
+    assert r.returncode == 0 and "needed: true false true" in r.stdout.splitlines(), (r.stdout, r.stderr)

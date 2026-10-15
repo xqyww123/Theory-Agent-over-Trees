@@ -42,14 +42,16 @@ local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 val admit_transition =
   Toplevel.make "sorry" Position.none |> Toplevel.end_proof Proof.global_skip_proof
 
-(*the body of a class's evaluation callback: `register`'s contract*)
-fun evaluate (input, goal, result) open_goal after_admission =
+(*the body of a class's evaluation callback: `register`'s contract; each
+  step is applied to the message inside its operation, so that whatever the
+  step does on the message is the operation's too*)
+fun evaluate (input, goal, result) open_goal after_admission message =
   let
-    val (messages, a) = TAT_Common_Nodes.operation' goal (fn () => open_goal (#get input ()))
+    val (messages, a) = TAT_Common_Nodes.operation' goal (fn () => open_goal message (#get input ()))
     val (messages, b) =
       if is_some a
       then TAT_Common_Nodes.operation' result (fn () =>
-             apfst (Option.map after_admission)
+             apfst (Option.map (after_admission message))
                (TAT_Framework.apply_transition admit_transition (#get goal ())))
       else (messages, NONE)
   in
@@ -65,7 +67,7 @@ fun register {name, message, open_goal, after_admission, records} =
      arg_schema = unpackTuple4 (#slot_unpacker env, #slot_unpacker env, #slot_unpacker env, message),
      ret_schema = packPair (packList packString, packOption records),
      function = fn (input, goal, result, m) =>
-       evaluate (input, goal, result) (open_goal m) (after_admission m),
+       evaluate (input, goal, result) open_goal after_admission m,
      timeout = NONE})
 
 (*the product on the wire (COMMON.md §3): the method text and the two times of

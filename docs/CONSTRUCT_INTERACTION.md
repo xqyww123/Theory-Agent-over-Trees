@@ -639,8 +639,10 @@ started, so every job waited for belongs to a current context.
      no longer there, one entry per job at most;
   3. since the call started, a job of the caller's has ended — settled,
      cancelled or dropped — and none of its title is left running;
-  4. the deadline: `wait_seconds` clamped, silently, to at least 3
-     seconds and to a minute under the client's twelve-hour limit (§8).
+  4. the deadline: `wait_seconds` — an integer within the signed 64-bit
+     range, as every integer of a call (MODULE_STRUCTURE §4.4) — clamped,
+     silently, to at least 3 seconds and to a minute under the client's
+     twelve-hour limit (§8).
 
   Neither kind running or waiting at the start: at once, with the single
   line `No job is running.` as its body, a plain result, any messages

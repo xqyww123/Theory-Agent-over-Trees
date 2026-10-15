@@ -435,6 +435,12 @@ def _fits(value: Any, json_type: str) -> bool:
     return isinstance(value, _JSON_TYPES[json_type].shape)
 
 
+def _within_integer_range(value: Any) -> bool:
+    """An integer — under `integer` or `number` — within `INTEGER_RANGE`;
+    any other value passes."""
+    return not isinstance(value, int) or INTEGER_RANGE[0] <= value <= INTEGER_RANGE[1]
+
+
 # By the JSON type of the value, the keywords a schema may carry there
 # besides `type` and `description`, each enforced by `check_call` — in a
 # tool's schema and a construct's alike: `additionalProperties` by
@@ -701,11 +707,13 @@ class _Agreement:
         return _refuse(self.cls, f"construct_schema and argument_schema disagree at `{where}`: {what}")
 
     def reached_every_def(self) -> None:
-        """After the agreement: a `$defs` entry no `$ref` reached, directly or
-        through other entries, is refused, the first by name."""
+        """After the agreement: a `$defs` entry no `$ref` outside the
+        top-level `children` reached, directly or through other entries, is
+        refused, the first by name."""
         unreached = sorted(set(self.defs) - {name for name, _ in self.met})
         if unreached:
-            raise _refuse(self.cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` of the schema")
+            raise _refuse(self.cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` outside the"
+                                    " top-level `children`")
 
     def agree(self, schema: JSON_Schema, ann: Any, where: str) -> None:
         if "$ref" in schema:
@@ -806,6 +814,8 @@ class _Agreement:
 # of`, `must not be empty`, the nesting bound — each held once here.
 
 NESTING_LEVELS = 100      # a tool call's argument nests no deeper, each object or array a level
+INTEGER_RANGE = (-2**63, 2**63 - 1)   # a JSON integer lies within it: the signed 64-bit range, which
+                                      # MessagePack holds on the wire and in the store
 
 
 def check_call(schema: JSON_Schema, holder: str, arguments: Mapping[str, Any], *,
@@ -875,8 +885,8 @@ class _Check:
             self.value(value, properties[field], holder, prefix + field)
 
     def value(self, value: Any, schema: JSON_Schema, holder: str, path: str) -> None:
-        """One value against its schema — its JSON type, its `enum`, an
-        empty list against `minItems` — descending so that the field
+        """One value against its schema — its JSON type, an integer's
+        range, its `enum`, an empty list against `minItems` — descending so that the field
         reported is the innermost at fault: an object's field by its name,
         a typed `items`' element by its index, an `anyOf` by the arm the
         value is for.  The constructs are opaque here, `edit.py`'s to
@@ -887,6 +897,8 @@ class _Check:
         json_type = schema["type"]
         if not _fits(value, json_type):
             raise InvalidField(path, _must_be([json_type]))
+        if not _within_integer_range(value):
+            raise InvalidField(path, "must be a 64-bit integer")
         if "enum" in schema and value not in schema["enum"]:
             raise InvalidField(path, _one_of(schema["enum"]))
         if "minItems" in schema and not value:
