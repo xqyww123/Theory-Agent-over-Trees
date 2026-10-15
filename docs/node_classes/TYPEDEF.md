@@ -249,8 +249,7 @@ setup_lifting type_definition_errorable
   was given, the one left out written as its default; no line when
   neither was. The head with its parameters and syntax, the set and
   this clause are written by one private helper of typedef.py, which
-  §8's line uses too, given the spelling and how a piece of text is
-  written.
+  §8's line uses too, given the keyword set to write against.
 - The terminal proof, `by aoa` or `sorry`, indented two spaces, is
   `Proof_Obligation`'s `proof_text()` (COMMON.md §3); the `aoa` method's
   import is the plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
@@ -260,15 +259,15 @@ setup_lifting type_definition_errorable
   the type, so that `lift_definition` can define its functions and
   `transfer` can prove about it.
 - Every piece of Isabelle text — a name, the set, a sort — is written
-  through the theory's `print_name` (SESSION_AND_THEORY §2),
-  `Token.print_name`'s rule: bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise —
-  `UNIV` and `zero` bare, `"{xs :: 'a list. distinct xs}"`, `"open"` and
-  `"0.5"` quoted; a type variable, a symbol and a template as the
-  writers write them.
-- The whole text in the `\<name>` form (`IsaTerm.ascii`); the file reads
-  as Unicode in jEdit all the same.
+  through the theory's `print_name` (SESSION_AND_THEORY §2): bare when
+  its `ascii` is an Isabelle identifier (`is_identifier`, COMMON.md §5)
+  that is not a keyword of the theory, as Isabelle's string token
+  (COMPILATION.md §3) otherwise — `UNIV` and `zero` bare, `"{xs :: 'a
+  list. distinct xs}"`, `"open"` and `"0.5"` quoted; a type variable, a
+  symbol and a template as the writers write them.
+- The text in the `unicode` spelling; the file takes the `\<name>` form
+  from the compile's conversion (COMPILATION.md §2) and reads as Unicode
+  in jEdit all the same.
 
 ## 6. Evaluation
 
@@ -289,8 +288,8 @@ together with what the class records, or to the messages of its
 failure; `after_admission : Toplevel.state -> Toplevel.state * 'b`,
 total, from the state with the goal admitted. Every transition of a
 step runs through `apply_transition` (MODULE_STRUCTURE §2.4); an
-interrupt, and a Bug raised by the step's own code, propagate. The base
-runs `open_goal` into `goal_state`; then, as one operation into the
+interrupt, and a Bug raised by the step's own code, propagate. The
+callback runs `open_goal` into `goal_state`; then, as one operation into the
 resulting slot, the half of `sorry` that ends a toplevel goal,
 `Toplevel.end_proof Proof.global_skip_proof`, and `after_admission`; it
 answers the messages and, when there are none, the pair of what the two
@@ -303,16 +302,17 @@ runs it — the shape of `begin_theory`, through `apply_transition` — no
 proof step:
 
 ```
-Toplevel.local_theory_to_proof NONE NONE
-  (Typedef.typedef_cmd {overloaded = true} (name, parameters, mixfix) set (SOME bindings))
+Toplevel.local_theory_to_proof NONE NONE (fn lthy =>
+  Typedef.typedef_cmd {overloaded = true} (name, parameters, mixfix) set (SOME bindings) lthy)
 ```
 
 `name` is `type_name` as a binding; `parameters` the type parameters as
 Isabelle's parser hands them, each `(name, sort option)`; `mixfix`
-`NoSyn` without `syntax`, otherwise the constructor of Isabelle's
-`mixfix` datatype the form names, `Infix`, `Infixl`, `Infixr` or
-`Mixfix`, decoded by the plugin's `TAT_Mixfix` (COMMON.md §4) as a
-`Datatype`'s constructor syntax is; `set` the `ascii` text, which
+`NoSyn` without `syntax`, otherwise the annotation as `mixfix_text`
+writes it, in `ascii`, read by Isabelle's `Parse.mixfix` under the
+local theory's keywords through the plugin's `TAT_Mixfix` (COMMON.md
+§4) inside the local theory's function, as a `Datatype`'s syntax is;
+`set` the `ascii` text, which
 Isabelle reads; `bindings` `Typedef.make_morphisms` of the two function
 names with the defaults filled in (§2), the bindings the command's own
 syntax makes whether or not a `morphisms` clause is written.
@@ -369,7 +369,7 @@ and the two functions global all the same, and a `set` naming the
 context's parameters refused by Isabelle, `Illegal variables in
 representing set`, like any other failure.
 
-A failure anywhere is the base's (COMMON.md §3): `goal_state` is
+A failure anywhere is `Proof_Obligation`'s (COMMON.md §3): `goal_state` is
 emptied and no state is written into the resulting slot, the callback
 answers the messages and nothing to record, and `_eval_opr` returns
 `CannotEvaluate` with them: the node is an obstacle, and its
@@ -425,13 +425,14 @@ messages after it:
 
 The definition is one line: the type with its parameters and its
 syntax as emitted (§5), `=`, the set, and `morphisms` with the two
-names when either was given — assembled from the stored text in the
-`unicode` spelling, every name bare, without a round trip to Isabelle;
-`english` follows at depth 0 alone; no line carries a key. The line is
-the private helper's that writes the emitted text (§5), given the
-`unicode` spelling, names bare, and the set through `print_name`, which
-knows no keyword before the header has run. Neither `(overloaded)` nor
-`setup_lifting` is printed: neither is authored.
+names when either was given — assembled from the stored text, every
+piece through `print_name` against no keyword (SESSION_AND_THEORY §2):
+every name, an identifier, bare, a sort and the set quoted unless an
+identifier, whatever keywords the theory recorded, without a round trip
+to Isabelle; `english` follows at depth 0 alone; no line carries a key.
+The line is the private helper's that writes the emitted text (§5),
+given no keyword set. Neither `(overloaded)` nor `setup_lifting` is
+printed: neither is authored.
 
 ```
 'a dlist = "{xs :: 'a list. distinct xs}" morphisms list_of_dlist dlist_of_list

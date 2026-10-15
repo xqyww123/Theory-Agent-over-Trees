@@ -12,9 +12,19 @@ NODE_CLASS_IMPLEMENTATION_PLAN.md §2 (the builder named `register`;
 `print_name(text, spelling)`; `TAT_Mixfix.ML` and
 `type_parameters_text` land with Datatype, step 8) and owns
 COMPILATION.md from that day — its §3 sentences on `print_name` and
-`keywords` hold under the generalisation, so no edit there. The
-documents are uncommitted until the owner's word; this session's
-hunks are staged alone.
+`keywords` hold under the generalisation, so no edit there. Committed
+2026-10-14 (01e915f). The review of plan steps 7 and 8
+(ai-artifacts/review/STEPS_7_8_REVIEW.md, 2026-10-14) and the owner's
+answers to it (ai-artifacts/review/DOC_SYNC_LIST.md, entry 70) then
+settled: the writers take no `spelling` — every writer writes
+`unicode`, and the compile's conversion of the file gives it its
+`\<name>` form (every ML call still sends `ascii`); a mixfix annotation
+is read by Isabelle's own `Parse.mixfix` from the text `mixfix_text`
+writes, inside the local theory's function, which is all
+`TAT_Mixfix.ML` keeps; `recall` is written against no keyword. Where
+this list says otherwise (§2's writers and decoding, §3's `print_name`
+and decoding, §4's `print_name` bullet and decoding), those decisions
+supersede it; TYPEDEF.md follows them.
 
 ## 1. node_classes/INDEX.md
 
@@ -120,8 +130,9 @@ hunks are staged alone.
   sort — and writes it bare when its `ascii` is an Isabelle identifier
   (`Isabelle_RPC_Host.unicode.is_identifier`, the grammar §5 already
   uses) that is not in the theory's `keywords`, as Isabelle's string
-  token (COMPILATION §3) otherwise: `Token.print_name`'s rule, which was
-  its rule for a name already (the owner's ruling of 2026-10-14). `UNIV`,
+  token (COMPILATION §3) otherwise: `Token.print_name`'s rule for an
+  identifier, which was its rule for a name already (the owner's ruling
+  of 2026-10-14). `UNIV`,
   `zero`, `α`, `x⇩1` bare; `{xs. distinct xs}`, `'a ⇒ 'b`, `0.5` and
   the keyword `open` quoted. The test is made on `ascii`, the piece
   written in the spelling asked for; `keywords` still `None` means no
@@ -193,7 +204,8 @@ hunks are staged alone.
 - §5: "a sort in double quotes after `::`" and "the argument's type in
   double quotes" → through the theory's `print_name` (COMMON §4; the
   owner's ruling of 2026-10-14: every emitted term, type and sort
-  follows `Token.print_name`'s rule); the mixfix pieces stay string
+  follows `Token.print_name`'s rule for an identifier); the mixfix
+  pieces stay string
   tokens. §8: the argument types under `recall` through `print_name`
   likewise, with `unicode` as the spelling.
 - Later, the same for `QuotientType` (the slot after the name) and
