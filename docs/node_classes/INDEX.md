@@ -38,7 +38,7 @@ COMMON.md.
 | `Interpretation` | `interpretation`, `global_interpretation` | `Leaf` | the locale's assumptions | not yet |
 | `Sublocale` | `sublocale` | `Leaf` | the locale's assumptions | not yet |
 | `Datatype` | `datatype`, `codatatype` | `Leaf` | none | DATATYPE.md |
-| `Record` | `record` | `Leaf` | none | not yet |
+| `Record` | `record` | `Leaf` | none | RECORD.md |
 | `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | TYPEDEF.md |
 | `QuotientType` | `quotient_type` | `Leaf` | the relation is an equivalence | not yet |
 | `LiftDefinition` | `lift_definition` | `Leaf` | the function respects the representation | not yet; what is decided ahead of it, LIFT_DEFINITION.md |
