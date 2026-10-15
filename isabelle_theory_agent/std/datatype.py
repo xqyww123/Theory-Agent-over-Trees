@@ -18,7 +18,8 @@ from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Theory_Member, Type_Parameter,
     TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice, mixfix_of,
-    mixfix_text, mixfix_wire, normalised, require_id_name, text_line, type_parameters_of, type_parameters_text)
+    mixfix_text, mixfix_wire, normalised, require_id_name, text_line, type_parameters_of, type_parameters_text,
+    type_parameters_wire)
 
 KINDS = ("datatype", "codatatype")      # the two commands, one syntax and one implementation
 
@@ -162,7 +163,7 @@ class Datatype(Theory_Member, Leaf):
         syntax — each `IsaTerm` as its `ascii`, a syntax as `mixfix_wire`
         writes it."""
         return (self.kind,
-                [(p.name.ascii, p.sort.ascii if p.sort is not None else None) for p in self.type_parameters],
+                type_parameters_wire(self.type_parameters),
                 [(t.type_name, mixfix_wire(t.syntax),
                   [(c.name.ascii, [(a.type.ascii, a.selector.ascii if a.selector is not None else None)
                                    for a in c.arguments], mixfix_wire(c.syntax))

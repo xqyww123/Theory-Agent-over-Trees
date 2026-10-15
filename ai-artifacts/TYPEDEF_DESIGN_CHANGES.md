@@ -72,7 +72,14 @@ supersede it; TYPEDEF.md follows them.
   `[[], [a, b]]`. A class registers through the builder (its name is the
   author's, not `evaluation_callback`, the Python attribute);
   `evaluate` is private. So the steps cannot touch a slot and every
-  class answers one shape.
+  class answers one shape. Plan step 9 (9aea388) then made a run's
+  answer a datatype, `TAT_Framework.answer = Accepted of 'a | Refused of
+  string list`: `apply_transition : Toplevel.transition ->
+  Toplevel.state -> Toplevel.state answer`, `open_goal : Toplevel.state
+  -> (Toplevel.state * 'a) answer`, `operation'` over answers, the
+  callback's answer `Refused msgs` or `Accepted (a, b)` packed by
+  `pack_answer` with the wire unchanged — COMMON §3 and TYPEDEF.md §6
+  say it so; the pair above is what step 7 implemented.
 - The Python half: `_eval_opr` reads the messages and the pair; messages
   give `CannotEvaluate(messages)`; otherwise it returns
   `Ready(self.record_from_evaluation(what))`. A member beside

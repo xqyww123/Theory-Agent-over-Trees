@@ -7,5 +7,6 @@ ML_file "ML/TAT_Mixfix.ML"
 ML_file "ML/TAT_Overloaded.ML"
 ML_file "ML/TAT_Theorem.ML"
 ML_file "ML/TAT_Datatype.ML"
+ML_file "ML/TAT_Typedef.ML"
 
 end

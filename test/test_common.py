@@ -20,7 +20,7 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit, InvalidField
-from isabelle_theory_agent.std import common, datatype, theorem
+from isabelle_theory_agent.std import common, datatype, theorem, typedef
 from isabelle_theory_agent.std.common import (
     Binder, Infix, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -29,6 +29,7 @@ from test_datatype import LIST, definition
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
+from test_typedef import DLIST
 
 table = ts.table                    # the fake state slot table and the fake wire, per test
 COMMON = DOCS / "node_classes" / "COMMON.md"
@@ -36,7 +37,8 @@ COMMON = DOCS / "node_classes" / "COMMON.md"
 # One construct per kind the package registers, valid under a theory; held
 # to the registered kinds, so a new class adds its example here.
 EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
-            **{kind: definition(LIST, kind=kind) for kind in datatype.KINDS}}
+            **{kind: definition(LIST, kind=kind) for kind in datatype.KINDS},
+            **{kind: DLIST for kind in typedef.KINDS}}
 
 
 def test_not_inside_theory_is_section_1_s_sentence():

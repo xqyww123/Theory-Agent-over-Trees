@@ -2,8 +2,7 @@
 
 Status: proposed 2026-10-13; revised 2026-10-14 after two adversarial
 reviews and the owner's rulings (ai-artifacts/review/TYPEDEF_REVIEW.md);
-committed 2026-10-14. Implemented after NODE_CLASS_IMPLEMENTATION_PLAN.md
-§2's step 7.
+committed 2026-10-14; implemented 2026-10-15.
 
 A `Typedef` defines a subtype: a new type whose values stand for the
 elements of a non-empty subset of an existing type, with a function each
@@ -35,6 +34,10 @@ One kind, `typedef`, which heads the id component: `typedef_dlist`.
 | `abs_function_name` | `IsaTerm`, optional; `Abs_` before `type_name` when left out | authored |
 | `overloaded` | `bool`: whether the command carries `(overloaded)`, decided by the evaluation (§6); false until one has recorded it; stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `set` is — the class is born with the row | recorded |
 | `lifting` | `bool`: whether `setup_lifting` follows the command — Isabelle set lifting up for the subtype —, decided by the evaluation (§6); false until one has recorded it; stored and read back as `overloaded` is | recorded |
+
+`syntax`, `rep_function_name` and `abs_function_name` left out are
+stored as a None-valued row, so that every row of the class is read with
+`rows.get` and any row missing is refused at start.
 
 What the last evaluation reported travels on the status the evaluation
 hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
@@ -318,7 +321,10 @@ the plugin's `TAT_Overloaded.needed` (COMMON.md §4) asks the state's
 theory the question the check asks — whether the type's entry in the
 definition table has open dependencies, `Defs.get_deps` — and
 `overloaded` is its answer: true exactly when Isabelle would have
-refused the command without the option. The configuration option
+refused the command without the option. The type's full name is the one
+`Typedecl` declared: `Local_Theory.full_name` of the open goal's context
+on `type_name`'s binding, which inside a `Context` or `Locale` carries
+its qualifier. The configuration option
 `typedef_overloaded` is not consulted: where a theory sets it, the
 file carries an `(overloaded)` Isabelle does not need. The same helper
 decides `Record`'s and `QuotientType`'s option, on the type each

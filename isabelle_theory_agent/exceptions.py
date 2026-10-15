@@ -290,7 +290,8 @@ class InvalidName(BadEdit):
     framework's name grammar (MCP_SPECIFICATION §2), by the framework; the
     theory name's, by `Theory.gen`; the session name's, by `Session.gen`;
     the fact name's, by `Theorem.gen` (node_classes/THEOREM.md §4); the
-    type name's, by `Datatype.gen` (node_classes/DATATYPE.md §4).  Each
+    type name's, by `Datatype.gen` and `Typedef.gen` (node_classes/DATATYPE.md
+    §4, TYPEDEF.md §4).  Each
     renders its own grammar, so the agent can correct the name from the
     message."""
 

@@ -10,13 +10,14 @@ import test_model as tm
 import test_session_theory as ts
 from invariants import assert_invariants, assert_store_mirrors
 from isabelle_theory_agent import edit
-from isabelle_theory_agent.std import datatype, theorem
+from isabelle_theory_agent.std import datatype, theorem, typedef
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 
 KINDS = {**ts.KINDS,
          **{kind: theorem.Theorem for kind in theorem.KINDS},
-         **{kind: datatype.Datatype for kind in datatype.KINDS}}
+         **{kind: datatype.Datatype for kind in datatype.KINDS},
+         **{kind: typedef.Typedef for kind in typedef.KINDS}}
 
 
 def insert(f, parent, index, raws):

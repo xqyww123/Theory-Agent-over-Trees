@@ -266,6 +266,12 @@ def type_parameters_text(parameters: Sequence[Type_Parameter], keywords: Contain
         for p in parameters) + ")"
 
 
+def type_parameters_wire(parameters: Sequence[Type_Parameter]) -> list[tuple[str, str | None]]:
+    """The parameters as the ML reads them (§4): each its name and its sort
+    in `ascii`, None for no sort."""
+    return [(p.name.ascii, p.sort.ascii if p.sort is not None else None) for p in parameters]
+
+
 @dataclass(frozen=True)
 class Infix:
     """An infix arm of `Mixfix` and `TypeMixfix` (§4)."""
