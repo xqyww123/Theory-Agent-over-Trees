@@ -555,6 +555,13 @@ evidence. Every private login was refreshed from `~/.codex/auth.json`.
   announced and served, and `children: "GivenLater"` is accepted; `Stop`
   runs too. The hook needs the working directory's `tat.lock`, which TAT
   writes.
+- *measured* (`codex_given_later_e2e`, the user's `~/.codex`, its default
+  model) — `isabelle TAT -P TAT_Isabelle_Std.TAT_Isabelle_Std -l
+  Minilang_AoA -c codex WD exec …`: the model, told to, wrote a session
+  and a theory with `"children": "GivenLater"`, then appended a lemma to
+  the theory with a full structured statement (`for_any`, `conclusion`);
+  all three calls announced and served, the empty node's line shown after
+  the first two.
 - *measured* (`codex_schema/capture.py`) — under the `.codex/` files TAT
   writes, Codex's model is shown `edit` with every kind, no `unknown`, each
   `children` as `"GivenLater"` with its class's description, and no

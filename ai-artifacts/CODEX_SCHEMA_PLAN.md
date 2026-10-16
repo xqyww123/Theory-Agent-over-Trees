@@ -2,8 +2,9 @@
 
 Status: decisions taken by the owner 2026-10-15/16 (§1). Revision 3,
 after a two-turn adversarial review, the owner's rulings on its three open
-points, and a focused re-review that cleared it to start (2026-10-16); not
-yet implemented.
+points, and a focused re-review that cleared it to start (2026-10-16).
+Implemented 2026-10-16 (TAT 4ffab5d); §6's two checks passed, results in
+`AGENT_CLIENTS_MEASURED.md` ("Re-measured on codex-cli 0.163.0").
 
 ## 0. The problem
 
