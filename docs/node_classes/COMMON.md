@@ -160,7 +160,8 @@ steps, each a function of the message:
 Every transition of a step runs through `apply_transition`
 (MODULE_STRUCTURE §2.4), which answers `Refused` with Isabelle's
 messages when it refuses; an interrupt, and a `Bug` from the step's own code,
-propagate. `TAT_Proof_Obligation` builds the class's evaluation
+propagate — a proper interrupt as far as the operation, which answers it
+as the refusal `Interrupt` (MODULE_STRUCTURE §2.5). `TAT_Proof_Obligation` builds the class's evaluation
 callback from the callback's name, the message's unpacker, the two
 steps and the packer of what they yield, and the class registers
 through the builder, `register`, the structure's one export — the

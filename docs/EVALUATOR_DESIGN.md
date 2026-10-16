@@ -16,7 +16,7 @@ signatures of unpatched files.
 Every `Toplevel.state` lives in a state slot (§1.1), and a node's evaluator is
 handed the slot it starts from and the slot it writes (ARCHITECTURE §3.1). No
 file is read, and every operation builds its transition in ML and applies
-it through `Toplevel.command_errors true`, threading the state from the
+it through `Toplevel.command_exception true`, threading the state from the
 input slot to the resulting slot.
 
 For the `Theory` root node's header:
@@ -38,17 +38,18 @@ structure (THEOREM.md §6). Nothing splits a node's text with
 `Outer_Syntax.parse_spans` and runs the spans: every operation applies
 the one transition it built (MODULE_STRUCTURE §2.4, §6 below).
 
-`Toplevel.command_errors` returns `(errors, state option)`; check both, since a
-failing command can return no state. The errors are `Runtime.error` values,
-`((serial * string) * string option)`, not exceptions. It is the
-error-recovering runner — batch loading uses `Toplevel.command_exception`,
-which re-raises and therefore stops at the first failure.
+`Toplevel.command_exception` answers the state the command leaves; it
+re-raises a proper interrupt and raises every other failure as
+`Runtime.EXCURSION_FAIL (exn, _)`, `exn` the command's error, whose messages
+are `Runtime.exn_messages exn`. Batch loading lets the exception stop the
+theory; `apply_transition` catches it (MODULE_STRUCTURE §2.4).
 
 Its first argument is Isabelle's interactive flag and must be `true`. `sorry` is
 `Method.cheating`, which raises `Cheating requires quick_and_dirty mode!` unless
 that flag is set or `quick_and_dirty` is on (`Pure/Isar/method.ML:155-158`).
-Stock Isabelle passes `true` (`Pure/PIDE/command.ML:234`), on the path both
-interactive and batch runs take.
+PIDE passes `true` (`Pure/PIDE/command.ML:234`); batch loading passes `false`
+(`Pure/Isar/toplevel.ML:733`), so a batch build admits `sorry` only under
+`quick_and_dirty`.
 
 `Resources.begin_theory` does not touch the filesystem. It stores `master_dir`
 as data, which matters only for body commands like `ML_file` that resolve

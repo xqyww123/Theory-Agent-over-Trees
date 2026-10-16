@@ -181,13 +181,29 @@ async def test_a_library_theory_loads_from_source_beside_a_running_work(conversa
     assert [e["cancelled"] for e in records(log, "job_ended", job.id)] == [False]
 
 
-async def test_a_work_interrupted_by_anything_but_tats_cancel_is_reported_as_a_bug(conversation):
-    """A work that is interrupted while TAT has not cancelled it would leave
-    a job Python waits for: it is reported as a bug, which ends the job's
-    conversation, and `job_ended` does not call it cancelled."""
+async def test_a_work_meeting_a_proper_interrupt_while_tat_had_not_cancelled_it_reports_the_failure_interrupt(conversation):
+    """A work that meets a proper interrupt while TAT has not cancelled it
+    -- another computation's cancellation, reaching it through a lazy value
+    or a future it joins -- reports the failure `Interrupt`, as an operation
+    answers one (MODULE_STRUCTURE §2.4): the conversation goes on, and
+    `job_ended` does not call it cancelled."""
     conv, log = conversation.forest.conversation, conversation.log.directory
     job = Job()
     await fork(conv, job, "interrupt")
+    await asyncio.wait_for(job.reported.wait(), 30)
+    assert job.errors == ["Interrupt"] and job.ending.ended_by is None
+    [ended] = records(log, "job_ended", job.id)
+    assert (ended["failure"], ended["cancelled"]) == (["messages", ["Interrupt"]], False)
+    assert records(log, "bug", job.id) == []
+
+
+async def test_a_work_meeting_a_breakdown_while_tat_had_not_cancelled_it_is_reported_as_a_bug(conversation):
+    """A work that meets a breakdown while TAT has not cancelled it would
+    leave a job Python waits for: it is reported as a bug, which ends the
+    job's conversation, and `job_ended` does not call it cancelled."""
+    conv, log = conversation.forest.conversation, conversation.log.directory
+    job = Job()
+    await fork(conv, job, "breakdown")
     await asyncio.wait_for(job.ending.ended.wait(), 30)
     message = "fork_job: the work was interrupted, and TAT had not cancelled it"
     assert isinstance(job.ending.ended_by, TAT_InternalError) and str(job.ending.ended_by) == message

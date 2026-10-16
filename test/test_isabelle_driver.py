@@ -77,7 +77,7 @@ def test_a_result_comes_back_and_an_escaped_exception_is_a_bug():
         "duration": failed["data"]["duration"]}
 
 
-def test_an_interrupt_is_treated_like_any_isabelle_error_for_now():
+def test_an_interrupt_is_treated_like_any_isabelle_error():
     conv = conversation(Fake_Connection())
     with pytest.raises(TAT_IsabelleError) as e:
         asyncio.run(isabelle_driver.call(conv, "TAT.interrupted", ()))

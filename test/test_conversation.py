@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 import pytest
-from Isabelle_RPC_Host import IsabelleError
+from Isabelle_RPC_Host import IsabelleError, IsabelleInterrupt
 
 import stand_ins
 from baselines import DOCS, fenced_blocks, fenced_lines
@@ -88,6 +88,13 @@ class Probes:
     async def operation(self, outcome: str) -> tuple[Isar_State_Slot, list]:
         sl = self.slot()
         return sl, await call(self.conversation, "TAT_test.operation", (sl.to_msgpack(), outcome))
+
+    async def operation_escapes(self, outcome: str, expect: str,
+                                cause: type[IsabelleError] = IsabelleError) -> None:
+        with pytest.raises(TAT_IsabelleError) as e:
+            await self.operation(outcome)
+        assert expect in str(e.value), str(e.value)
+        assert type(e.value.__cause__) is cause
 
     async def short_name(self, name: str) -> isabelle_driver.Short_Name_Answer:
         return await isabelle_driver.check_new_theory_short_name(self.conversation, name)
@@ -482,12 +489,6 @@ async def test_each_span_parses_against_the_state_it_runs_in(probes):
 # --- an exception escaping a callback is a bug (EXCEPTIONS.md §1) ----------------
 
 async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
-    async def escapes(outcome: str, expect: str) -> None:
-        with pytest.raises(TAT_IsabelleError) as e:
-            await probes.operation(outcome)
-        assert expect in str(e.value), str(e.value)
-        assert isinstance(e.value.__cause__, IsabelleError)
-
     sl, msgs = await probes.operation("ok")             # success: the state, no message
     assert msgs == [] and await probes.is_toplevel(sl) is True
     sl, msgs = await probes.operation("error")          # a user-level error: messages, no state
@@ -496,9 +497,9 @@ async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     assert msgs == ["tat-pos (line 1)"] and not await sl.is_initialized()
     sl, msgs = await probes.operation("refused")        # a refusal: its messages in order, no state
     assert msgs == ["tat-refused-1", "tat-refused-2"] and not await sl.is_initialized()
-    await escapes("bug", "tat-bug")                     # a framework Bug propagates
-    await escapes("nothing", "a refusal with no message")
-    await escapes("silent", "a refusal with no message")   # an exception rendering to no message
+    await probes.operation_escapes("bug", "tat-bug")                     # a framework Bug propagates
+    await probes.operation_escapes("nothing", "a refusal with no message")
+    await probes.operation_escapes("silent", "a refusal with no message")   # an exception rendering to no message
     # The records (LOGGING.md §4): on the Isabelle side the wrapper's
     # `callback` for every run, `raised` for the three that escaped, and
     # `bug` for each Bug -- the explicit one and the two `operation` raises;
@@ -513,6 +514,28 @@ async def test_an_exception_escaping_a_callback_is_a_bug(conversation, probes):
     trips = [r["data"] for r in stand_ins.records("round_trip", conversation.log.directory)
              if r["data"]["name"] == "TAT_test.operation"]
     assert "tat-bug" in trips[4]["error"] and "result" in trips[0]
+
+
+async def test_a_proper_interrupt_is_the_operations_refusal_and_a_breakdown_escapes(conversation, probes):
+    """MODULE_STRUCTURE §2.5: a proper interrupt under the operation -- raised
+    under the run, or inside a transition `apply_transition` runs -- is the
+    refusal `Interrupt`; a breakdown escapes the callback, answered by the RPC
+    library as `IsabelleInterrupt` and raised here as `TAT_IsabelleError` (the
+    conversation goes on only because the probe is `Swallow`); a breakdown
+    inside a `Par_Exn` escapes whole, answered as its messages."""
+    for outcome in ("interrupt", "transition_interrupt"):
+        sl, msgs = await probes.operation(outcome)
+        assert msgs == ["Interrupt"] and not await sl.is_initialized(), (outcome, msgs)
+    await probes.operation_escapes("breakdown", "Interrupt", IsabelleInterrupt)
+    assert (await probes.operation("ok"))[1] == []      # the round trip after it still answered
+    await probes.operation_escapes("transition_breakdown", "Interrupt", IsabelleInterrupt)
+    assert (await probes.operation("ok"))[1] == []
+    await probes.operation_escapes("breakdown_wrapped", "Interrupt_Breakdown")
+    isabelle = stand_ins.records("isabelle", conversation.log.directory)
+    outcomes = [r["data"]["outcome"] for r in isabelle
+                if r["event"] == "callback" and r["data"]["name"] == "TAT_test.operation"]
+    assert outcomes == ["returned", "returned", "interrupted", "returned", "interrupted", "returned", "raised"]
+    assert [r for r in isabelle if r["event"] == "bug"] == []
 
 
 async def test_a_log_the_isabelle_side_cannot_write_stops_nothing(conversation, probes):

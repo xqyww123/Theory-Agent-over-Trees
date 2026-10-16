@@ -30,8 +30,9 @@ sig
       [[msgs], nil] or [[], [a, b]].  When either operation answers
       `Refused`, `goal_state` is emptied -- a rerun of a `ready` node
       releases nothing, so an earlier run's goal would stand there -- and
-      the resulting slot is written only when both answer `Accepted`; an
-      interrupt and a Bug are re-raised*)
+      the resulting slot is written only when both answer `Accepted`; a
+      proper interrupt is a refusal, its one message `Interrupt`; a Bug and
+      every other interrupt are re-raised*)
 end
 
 structure TAT_Proof_Obligation : TAT_PROOF_OBLIGATION =
@@ -116,8 +117,10 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
 
 (*the proof check (COMMON.md §3): the stored product replayed on the same goal
   through the function AoA exports, forked as the job's work; no theorem is one
-  empty error -- the replay says only that it failed; anything else the replay
-  raises is a bug, AoA's own classification of it, and ends the conversation*)
+  empty error -- the replay says only that it failed; an interrupt is re-raised
+  for fork_job to read -- a proper one TAT did not send the check's failure
+  `Interrupt` (MODULE_STRUCTURE §2.4); anything else the replay raises is a
+  bug, AoA's own classification of it, and ends the conversation*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Proof_Obligation.check",
     on_interrupt = Remote_Procedure_Calling.Reraise,

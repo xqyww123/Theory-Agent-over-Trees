@@ -35,13 +35,15 @@ library's `IsabelleError` — an escaped exception, or a failure of the wire
 contract such as no callback registered under the name (MODULE_STRUCTURE
 §2.5, §4.3); the connection going away answers a round trip with a
 connection error instead, which is the conversation's ending and not a bug
-(MODULE_STRUCTURE §4.3). An interrupt of the callback is answered by the RPC library
-as `IsabelleInterrupt`, an `IsabelleError`, and is treated the same for
-now; TAT's callbacks all re-raise it afterwards, so it then unwinds the ML
-call and with it the conversation. A node class's
+(MODULE_STRUCTURE §4.3). A bare interrupt escaping the callback is answered by the RPC library
+as `IsabelleInterrupt`, an `IsabelleError`, and is treated the same (one
+inside a `Par_Exn` or an `Exn.EXCEPTIONS` is answered as its messages,
+MODULE_STRUCTURE §2.5); TAT's callbacks all re-raise it afterwards, so it
+then unwinds the ML call and with it the conversation. A node class's
 callback follows the same rule, and `TAT_Common_Nodes.operation` is the
 helper that keeps it: an exception under the operation becomes its
-messages, a `Bug` and an interrupt propagate as they arrived. A `Bug`
+messages — a proper interrupt the one message `Interrupt` —, and a `Bug`
+and every other interrupt propagate as they arrived. A `Bug`
 raised in an evaluation job's work is a bug of this kind too: the job's
 report carries it to Python, which raises it as a `TAT_InternalError`
 (CONSTRUCT_INTERACTION §3.3).

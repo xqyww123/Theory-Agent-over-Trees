@@ -753,10 +753,11 @@ writes it (node_classes/COMMON.md §4).
 
 TAT drives Isabelle itself, through its own evaluator written in Isabelle/ML.
 The evaluator holds an explicit `Toplevel.state` and runs one command at a time
-through `Toplevel.command_errors`, which recovers from a failing command instead
-of re-raising. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md). Every
+through `Toplevel.command_exception`, whose error on a failing command
+`apply_transition` catches as the refusal (MODULE_STRUCTURE §2.4), so the
+evaluator recovers from it. Design in [EVALUATOR_DESIGN.md](EVALUATOR_DESIGN.md). Every
 operation builds its transition in ML and applies it through
-`Toplevel.command_errors` — `Theory`'s header and `end` (MODULE_STRUCTURE
+`apply_transition` — `Theory`'s header and `end` (MODULE_STRUCTURE
 §2.4), and a `Theorem`'s statement, one transition built from its
 structure (THEOREM.md §6). The texts parsed at run time are a
 `Theory`'s header, read with `Thy_Header.read` (EVALUATOR_DESIGN §1),

@@ -55,9 +55,10 @@ sig
   val messages_of_errors : Runtime.error list -> string list
                                       (*the errors as messages, markup stripped*)
   val apply_transition : Toplevel.transition -> Toplevel.state -> Toplevel.state answer
-                                          (*one transition through Toplevel.command_errors
+                                          (*one transition through Toplevel.command_exception
                                             true: accepted with the state, or refused with
-                                            messages_of_errors of its errors*)
+                                            messages_of_errors of its error; an interrupt
+                                            propagates*)
 
   (*** Node classes (§2.5) ***)
   type env = {
@@ -506,8 +507,9 @@ fun route mk fallback outputs =
   (isabelle_process.ML), hence the shared constructor.
   Deliberately not captured:
   - state_fn: proof states; the Python side reads states off the slots;
-  - error_message_fn: errors travel structurally in the command records
-    (Toplevel.command_errors), capturing the channel would report each twice;
+  - error_message_fn: errors travel structurally, in the EXCURSION_FAIL of
+    Toplevel.command_exception and in the test library's command records;
+    capturing the channel would report each twice;
   - status_fn, report_fn, result_fn, system_message_fn, protocol_message_fn:
     PIDE protocol machinery, not text for an agent.*)
 val channels = [
@@ -543,26 +545,28 @@ fun pack_answer p =
     o (fn Accepted x => ([], SOME x) | Refused messages => (messages, NONE))
   end
 
-(*§2.4: the messages of Runtime errors -- a transition's from command_errors,
-  an exception's from Runtime.exn_messages -- markup stripped, as
-  Output_Routing.route strips the output: in the PIDE print mode the process
-  runs in, any markup in a message -- a position, a pretty-printed term -- is
-  YXML.*)
+(*§2.4: the messages of Runtime errors, Runtime.exn_messages of an exception
+  -- markup stripped, as Output_Routing.route strips the output: in the PIDE
+  print mode the process runs in, any markup in a message -- a position, a
+  pretty-printed term -- is YXML.*)
 fun messages_of_errors errors = map (Protocol_Message.clean_output o #2 o #1) errors
 
 (*§2.4: one transition, built in ML by its operation, applied through
-  Toplevel.command_errors true.  The first argument `true` is Isabelle's
+  Toplevel.command_exception true.  The first argument `true` is Isabelle's
   interactive flag and load-bearing: `sorry` is refused without it
-  (EVALUATOR_DESIGN §1).  The errors are read by messages_of_errors.  An
-  interrupt is folded to ([], NONE) by command_errors -- Par_Exn.dest yields
-  no messages for a proper interrupt; stock re-raises the case
-  (command.ML:247-249, toplevel.ML:652-654) and so does TAT: a cancellation
-  unwinds the conversation whole.*)
+  (EVALUATOR_DESIGN §1).  command_exception re-raises a proper interrupt
+  itself and raises every other failure as EXCURSION_FAIL (exn, _), exn the
+  command's error: a bare breakdown is re-raised, since a breakdown
+  propagates (MODULE_STRUCTURE §2.5); anything else is read by
+  messages_of_errors.  A breakdown inside a wrapper is the command's error,
+  as in stock: on a state with a context command_transition wraps it in
+  Runtime's CONTEXT, and no load, which would release one in a Par_Exn,
+  runs inside a transition.*)
 fun apply_transition tr st =
-  (case Toplevel.command_errors true tr st of
-    (_, SOME st') => Accepted st'
-  | ([], NONE) => Isabelle_Thread.raise_interrupt ()
-  | (errors, NONE) => Refused (messages_of_errors errors))
+  Accepted (Toplevel.command_exception true tr st)
+  handle Runtime.EXCURSION_FAIL (exn, _) =>
+    if Exn.is_interrupt exn then Exn.reraise exn
+    else Refused (messages_of_errors (Runtime.exn_messages exn))
 
 (*§2.4.  The header's name is qualified through the same one import_name call
   as every import (EVALUATOR_DESIGN §7), as batch loading does
@@ -642,14 +646,19 @@ fun json_of_outcome Passed = Log.Array [Log.String "ok"]
       Log.Array [Log.String "messages", Log.Array (map Log.String messages)]
   | json_of_outcome (Bug_Raised message) = Log.Array [Log.String "bug", Log.String message]
 
-(*the exception a work raised, read as `operation` reads one (TAT_Common_Nodes.ML):
-  a Bug before anything else, an interrupt as no failure at all, and an
-  exception rendering to no message -- which would read as success -- a bug*)
-fun outcome_of exn =
+(*the report of a work that raised exn: a Bug before anything else; an
+  interrupt nothing when TAT cancelled the work, and otherwise -- Python
+  still waits for the job -- a proper one the failure `Interrupt`, as
+  `operation` reads one (TAT_Common_Nodes.ML), any other a bug; an exception
+  rendering to no message -- which would read as success -- a bug*)
+fun outcome_of cancelled exn =
   (case bug_message exn of
     SOME message => SOME (Bug_Raised message)
   | NONE =>
-      if interrupted exn then NONE
+      if interrupted exn then
+        (if cancelled then NONE
+         else if Exn.is_interrupt_proper exn then SOME (Messages ["Interrupt"])
+         else SOME (Bug_Raised "fork_job: the work was interrupted, and TAT had not cancelled it"))
       else
         (case exn of
           ERROR "" => SOME (Messages [""])     (*one empty error, which Runtime would render `Error`*)
@@ -721,17 +730,11 @@ fun fork (jobs : T) {id, work} =
             val result = Exn.capture_body (fn () => run work ())
             val cancelled = Synchronized.change_result phase (fn p => (p = Cancelled, Ended))
             val _ = Synchronized.change jobs (Inttab.delete_safe id)
-            (*an interrupt nobody of TAT sent leaves a job Python still waits for: a bug*)
             val outcome =
               (case result of
                 Exn.Res NONE => SOME Passed
               | Exn.Res (SOME product) => SOME (Produced product)
-              | Exn.Exn exn =>
-                  (case outcome_of exn of
-                    NONE =>
-                      if cancelled then NONE
-                      else SOME (Bug_Raised "fork_job: the work was interrupted, and TAT had not cancelled it")
-                  | outcome => outcome))
+              | Exn.Exn exn => outcome_of cancelled exn)
             val _ = ended log id outcome (Time.now () - start)
             val _ =
               (case outcome of
@@ -1045,8 +1048,10 @@ fun define_entry name (entry : string list -> string list * (theory list -> int 
       fun body () =
         let val (plugins, run) = entry args
         in run (map Loader.fetch_named (own_theory_name :: plugins)) end
-      (*a terminal interrupt arrives as Interrupt_Breakdown, which
-        exn_message_list does not name; the sic arm is build_session's*)
+      (*a breakdown -- a terminal interrupt among them -- arrives as
+        Interrupt_Breakdown, which exn_message_list renders "exception
+        Interrupt_Breakdown raised", not "Interrupt"; the sic arm is
+        build_session's*)
       fun messages exn =
         if Exn.is_interrupt exn then ["Interrupt"]
         else

@@ -304,7 +304,6 @@ one transition on the input slot's state:
 Toplevel.local_theory NONE NONE
   (BNF_FP_Def_Sugar.co_datatype_cmd fp construct
     (Ctr_Sugar.default_ctr_options_cmd, specs))
-|> Toplevel.command_errors true
 ```
 
 — the shape of `begin_theory`, through `apply_transition`. `fp` and
@@ -325,8 +324,9 @@ binding; no selector defaults. The
 result is written into the resulting
 slot: at theory level the same steps as a hand-written definition, and
 inside a `Context` or `Locale` the definition is made in that context.
-An interrupt and a `Bug` are re-raised; any other error is the
-definition's: no state is written, the callback answers the messages,
+A proper interrupt is the definition's error with the one message
+`Interrupt`; a `Bug` and every other interrupt are re-raised; any other
+error is the definition's: no state is written, the callback answers the messages,
 and `_eval_opr` returns `CannotEvaluate` with them — the node is an
 obstacle. Otherwise `_eval_opr` returns `Ready` with no messages.
 

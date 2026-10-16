@@ -65,12 +65,12 @@ fun run_span tr st =
         val output = TAT_Framework.Output_Routing.take_buffer id
         val all_errors = TAT_Framework.messages_of_errors (errors @ fork_errors)
       in
-        (*an interrupt is folded to ([], NONE) by command_errors -- Par_Exn.dest
-          yields no messages for a proper interrupt; stock re-raises the case
-          (command.ML:247-249, toplevel.ML:652-654) and so does TAT: a
-          cancellation unwinds the conversation whole.  A failed fork is the
-          command's failure -- its committed state carries a broken promise,
-          so it is withheld -- keeping "errors nonempty iff no state" exact.*)
+        (*a proper interrupt is folded to ([], NONE) by command_errors --
+          Par_Exn.dest yields it no messages; stock re-raises the case
+          (command.ML:247-249, toplevel.ML:655) and so does this harness.
+          A failed fork is the command's failure -- its committed state
+          carries a broken promise, so it is withheld -- keeping "errors
+          nonempty iff no state" exact.*)
         (case (all_errors, st') of
           ([], NONE) => Isabelle_Thread.raise_interrupt ()
         | ([], SOME _) => (([], output), st')
@@ -252,15 +252,35 @@ end
 
 setup \<open>
 (*TAT_Common_Nodes.operation under each answer of its run and each kind of
-  exception but an interrupt (docs/EXCEPTIONS.md §1): accepted, its state
-  written and no message; a user-level error, as messages -- one carrying a
-  position, its markup stripped; refused, its messages; a Bug, a refusal
-  with no message, and an exception rendering to no message, all three
-  escaping the callback*)
-let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
+  exception (docs/EXCEPTIONS.md §1): accepted, its state written and no
+  message; a user-level error, as messages -- one carrying a position, its
+  markup stripped; refused, its messages; a Bug, a refusal with no message,
+  and an exception rendering to no message, all three escaping the callback;
+  a proper interrupt, the refusal `Interrupt`, and a breakdown, escaping --
+  each raised under the run itself and, through TAT_Framework.apply_transition
+  on a `keep` transition, inside a transition -- its answer read as a total
+  after_admission reads it, a refusal carrying on from the state given
+  (COMMON.md §3), so that only an interrupt passing through apply_transition
+  reaches the operation; a breakdown inside a Par_Exn, escaping whole.  The
+  probe is Swallow: every case's conversation is served
+  inside the run's one ML call, the one the harness's launch_TAT answers,
+  which an interrupt re-raised under Reraise would unwind; Swallow's
+  conditions (RPC.ML) hold here -- the interrupts are raised exceptions, no
+  interrupt_thread, no Timeout.apply, the command's timeout NONE, and
+  isabelle_driver.call raising IsabelleInterrupt as TAT_IsabelleError, an
+  ordinary exception.*)
+let open MessagePackBinIO.Pack MessagePackBinIO.Unpack
+  fun transition raise_it =
+    let val st = Toplevel.make_state NONE in
+      (case TAT_Framework.apply_transition
+          (Toplevel.make "tat_test" Position.none |> Toplevel.keep (fn _ => raise_it ())) st of
+        TAT_Framework.Refused _ => TAT_Framework.Accepted st
+      | accepted => accepted)
+    end
+in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     {name = "TAT_test.operation",
-      on_interrupt = Remote_Procedure_Calling.Reraise,
+      on_interrupt = Remote_Procedure_Calling.Swallow,
       arg_schema = unpackPair (#slot_unpacker env, unpackString),
       ret_schema = packList packString,
       function = fn (slot, outcome) =>
@@ -273,6 +293,11 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
           | "bug" => raise TAT_Framework.Bug "tat-bug"
           | "nothing" => TAT_Framework.Refused []
           | "silent" => raise Exn.EXCEPTIONS []
+          | "interrupt" => Isabelle_Thread.raise_interrupt ()
+          | "breakdown" => raise Exn.Interrupt_Breakdown
+          | "breakdown_wrapped" => raise (Par_Exn.make [Exn.Interrupt_Breakdown])
+          | "transition_interrupt" => transition (fn () => Isabelle_Thread.raise_interrupt ())
+          | "transition_breakdown" => transition (fn () => raise Exn.Interrupt_Breakdown)
           | _ => raise Fail ("unknown outcome " ^ outcome))),
       timeout = NONE})
 end
@@ -295,8 +320,9 @@ end
 setup \<open>
 (*env's fork_job under each end of a job's work (docs/CONSTRUCT_INTERACTION.md
   §3.3): it passes, fails with a message carrying markup, which the report
-  strips, raises a Bug, or waits for the file the case names to appear -- for
-  as long as the case likes, or until it is cancelled*)
+  strips, raises a Bug, meets a proper interrupt or a breakdown, or waits for
+  the file the case names to appear -- for as long as the case likes, or
+  until it is cancelled*)
 let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
   TAT_Framework.register_callback {python_packages = []} (fn env =>
     {name = "TAT_test.fork_job",
@@ -313,6 +339,7 @@ let open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
             | "empty" => error ""
             | "bug" => raise TAT_Framework.Bug "tat-job-bug"
             | "interrupt" => Isabelle_Thread.raise_interrupt ()
+            | "breakdown" => raise Exn.Interrupt_Breakdown
             | "wait" =>
                 let val file = Path.explode path in
                   while not (File.exists file) do OS.Process.sleep (Time.fromMilliseconds 50)

@@ -204,10 +204,8 @@ toplevel goal (`Isar_Cmd.global_skip_proof`):
 ```
 Toplevel.local_theory_to_proof NONE NONE
   (Specification.theorem_cmd … Element.Fixes / Element.Assumes / Element.Shows …)
-|> Toplevel.command_errors true
 
 Toplevel.end_proof Proof.global_skip_proof
-|> Toplevel.command_errors true
 ```
 
 — the shape of `begin_theory`, through `apply_transition`, no proof step.

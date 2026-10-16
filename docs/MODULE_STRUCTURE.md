@@ -142,12 +142,15 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   `|> Toplevel.init_theory`, its init `Resources.begin_theory`) and runs
   it from `Toplevel.make_state NONE`.
 - `apply_transition` — one transition, built in ML by its operation,
-  applied through `Toplevel.command_errors true`; the answer is a
+  applied through `Toplevel.command_exception true`; the answer is a
   `Toplevel.state answer` — `datatype 'a answer = Accepted of 'a |
   Refused of string list`, a run's answer: `Accepted` with the state, or
-  `Refused` with the errors as messages, at least one; a folded interrupt
-  is re-raised. `messages_of_errors`, exported beside it, reads the
-  errors: a `Runtime.error list` to the messages, markup stripped.
+  `Refused` with the messages of the command's error, at least one — the
+  `exn` inside the `Runtime.EXCURSION_FAIL` it raises, through
+  `Runtime.exn_messages`; an interrupt propagates: `command_exception`
+  re-raises a proper one itself, and a bare breakdown is re-raised out
+  of the command's error. `messages_of_errors`, exported beside it, reads
+  the errors: a `Runtime.error list` to the messages, markup stripped.
   `Theory`'s header goes through
   `apply_transition` (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
   transition through it, and a proof obligation's evaluation runs every
@@ -186,8 +189,9 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   cancelled — its future cancelled by `TAT.job_cancel` or `TAT.reset` —
   reports nothing: the Python side cancels only a job it has dropped,
   and a reset ends the conversation that would hear. A work interrupted
-  by anything else is reported as a `Bug`, since Python still waits for
-  its job. The test is the
+  by anything else reports, for a proper interrupt, the failure
+  `Interrupt`, as an operation answers one (§2.5), and for any other
+  interrupt a `Bug`, since Python still waits for its job. The test is the
   framework's `bug_message : exn -> string option`, the first `Bug` found
   bare, in a `Par_Exn` or in an `Exn.EXCEPTIONS`, a `Bug` counting before
   an interrupt in an exception that holds both. The procedure
@@ -215,7 +219,8 @@ with functions that deliver a message to the buffer registered under the
 id in `Position.thread_data ()`, and to the function they replaced when
 there is no id, or no buffer under it. The remaining channels stay
 untouched: proof states are read off the states themselves, errors travel
-structurally out of `Toplevel.command_errors`, and the rest is PIDE
+structurally, in the `Runtime.EXCURSION_FAIL` `Toplevel.command_exception`
+raises, and the rest is PIDE
 protocol machinery. No operation of TAT registers a buffer or mints an
 id — the test theory's `run_span` alone does — so what a command prints
 on those channels, Isabelle's warnings among it, goes to the process's
@@ -288,12 +293,19 @@ Python half (ARCHITECTURE §6.2). One thing is not its own affair: a
 callback answers every failure of its operation as data, and an exception
 it lets escape is a bug (EXCEPTIONS.md §1) — `TAT_Framework.Bug`, the
 exception TAT raises where it caught itself out, or something the callback
-did not foresee. An interrupt is neither a failure of the operation nor a
-bug: the RPC library answers it to Python as `IsabelleInterrupt`, which
-`isabelle_driver.call` classifies as `TAT_IsabelleError`, a
-`TAT_InternalError`, for now (EXCEPTIONS.md §1), and every TAT callback
-re-raises it afterwards, so it unwinds the ML call and with it the
-conversation.
+did not foresee. Isabelle has two kinds of interrupt
+(`Pure/General/exn.ML`). A proper interrupt, `Interrupt_Break`, is
+another computation's cancellation, reaching the operation through a
+lazy value or a future it joins; it is a failure of the operation, whose
+one message is `Interrupt`. A breakdown, `Interrupt_Breakdown`, is an
+interrupt Poly/ML's runtime raises by itself — a thread's stack at its
+limit, the heap exhausted, an interrupt at the terminal (§4.6). Like a
+`Bug` it escapes the callback: `isabelle_driver.call` raises
+`TAT_IsabelleError`, a `TAT_InternalError` (EXCEPTIONS.md §1), and the
+conversation ends. The RPC library answers a bare interrupt escaping a
+callback as `IsabelleInterrupt`, and every TAT callback re-raises it
+afterwards, unwinding the ML call; one inside a `Par_Exn` or an
+`Exn.EXCEPTIONS` it answers as its messages, as it answers a `Bug`.
 `TAT_Common_Nodes.operation`
 keeps the rule for a callback whose success is a state: the run answers
 an `answer` (§2.4) — `Accepted` with the state, or `Refused` with at
@@ -301,8 +313,9 @@ least one message; a refusal with no message, an exception rendering to
 none among its sources, is a `Bug` — and `operation` writes the state
 into the slot, reads any other exception as a refusal of its messages —
 `Runtime.exn_messages` through `messages_of_errors` (§2.4), markup
-stripped, as a transition's errors are read —, lets a `Bug` and an
-interrupt through as they arrived, and answers the messages. Its general
+stripped, as a transition's errors are read —, reads a proper interrupt
+as the refusal `Interrupt`, lets a `Bug` and every other interrupt
+through as they arrived, and answers the messages. Its general
 form, `operation'`, carries a value beside the state — `slot -> (unit ->
 (Toplevel.state * 'a) answer) -> 'a answer`, the value answered in the
 `Accepted` — and `operation` is its `unit` case.
@@ -387,8 +400,9 @@ report's lines when every tree was written and `1` with them when one
 was not; either, `2` with the exception's messages when an exception
 ended it — a plugin that does not load or is not found, a bug, a
 `TAT_DisasterError`, a `TAT_StartupError`, the Python side going away
-before the procedure answered, an interrupt at the terminal, whose
-message is `Interrupt`; `CRASHED` stands for the messages when they
+before the procedure answered, an interrupt at the terminal or another
+breakdown (§2.5), whose message is `Interrupt`; `CRASHED` stands for the
+messages when they
 could not be rendered. The launcher reads the code and never parses
 text.
 
@@ -404,7 +418,7 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 
 | section | what it runs |
 | --- | --- |
-| `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages, a `Bug` and an interrupt through; `operation'`, its general form, a value beside the state |
+| `operation` | not a class: the helper of §2.5 — a run's state into the slot, its failure as messages — a proper interrupt's the one message `Interrupt` —, a `Bug` and every other interrupt through; `operation'`, its general form, a value beside the state |
 | `Theory` | the header through §2.4's `begin_theory`, writing the first child's slot and answering, beside its messages, the session of each import — `Resources.theory_qualifier` of the resolved name — which the class records as `import_sessions` (COMPILATION.md §2), and the identifier-shaped words of the theory's keyword table, the two lexicons of `Thy_Header.get_keywords`, which it records as `keywords` (node_classes/SESSION_AND_THEORY.md §2); `end` through an ML-built `Toplevel.exit` transition, writing the tree's resulting slot, and the theory value into the theory table through `end_theory` |
 | `Proof_Obligation` | the plugin's shared base, `TAT_Proof_Obligation` (§4.5), for the classes that derive from `Proof_Obligation` (node_classes/COMMON.md §3): it builds a class's evaluation callback from its two steps — `open_goal`, from the input state to the state with the goal open together with what the class records, or to the messages of its failure; `after_admission`, total, from the admitted state — and the packer of what they yield: the arguments are the three slots and the class's message; `open_goal` runs under `operation'` into the node's `goal_state` slot, then `sorry`'s half, `Toplevel.end_proof Proof.global_skip_proof`, and `after_admission` as one operation into the resulting slot; the answer is the messages and, when there are none, the pair of what the two steps yielded; `TAT.Proof_Obligation.construct`: the proof construction — AoA's `hammer_or_AoA'`, the entry with the replay times beside the text, on the `goal_state` slot's goal, forked through §2.4's `fork_job`, the product reported; `TAT.Proof_Obligation.check`: the proof check — the stored product replayed on that goal through the function AoA exports, no Toplevel transition — forked the same way |
 | `Theorem` | `TAT.Theorem.evaluate`: built by `TAT_Proof_Obligation` from the statement's transition with, on the open goal, the undeclared-variable check, yielding nothing, and the identity after the admission (THEOREM.md §6) |
@@ -1695,8 +1709,9 @@ exiting `2` — the lookup `TAT_mcp` and `TAT` share — in order:
    `2` when an exception ended
    it — a bug, a `TAT_DisasterError`, a `TAT_StartupError`, a plugin that
    did not load, the Python side going away before `launch_TAT`
-   answered, an interrupt at the terminal, whose message is `Interrupt`
-   when the answer outruns the process's termination; `2` when the
+   answered, an interrupt at the terminal or another breakdown (§2.5),
+   whose message is `Interrupt` — the terminal's when the answer outruns
+   the process's termination; `2` when the
    process terminated without `TAT.finished`, with
    `Isabelle process terminated:` and Isabelle's own wording of the
    return code; and `2` when `TAT.finished` arrived but could not be
