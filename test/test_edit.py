@@ -89,7 +89,7 @@ def told():
             for name, _, config in events("gen")]
 
 
-class Nesting_RawAST(TypedDict):             # a declaration that nests itself
+class Nesting_RawAST(TypedDict):             # a declaration that nests itself, at module level: refused
     child: NotRequired["Nesting_RawAST"]
 
 
@@ -404,7 +404,6 @@ def test_schema_grammar_is_closed_at_registration():
         either: NotRequired[Fact | str]
         mixed: NotRequired[str | int | list[str] | Fact]
     plugin.validate_argument_schema(Fine)
-    plugin.validate_argument_schema(Nesting_RawAST)     # nests itself, at module level
 
     def refused(td, match=""):
         with pytest.raises(TAT_InternalError, match=match):
@@ -440,6 +439,7 @@ def test_schema_grammar_is_closed_at_registration():
                       (TwoObjects, "one and the same"), (TwoObjectsInLists, "one JSON type"),
                       (TwoObjectsThroughAUnionInAList, "one JSON type"), (AnyArm, "outside"),
                       (Nums, "one JSON type"), (Dangling, "unresolvable"),
+                      (Nesting_RawAST, "nests itself"),
                       (LitArm, "never an arm"), (NonEmptyArm, "never an arm")]:
         refused(td, match)
     refused(dict, "not a TypedDict")         # not a TypedDict at all
@@ -487,6 +487,33 @@ def test_children_field_must_be_a_list():
                 2, [{"kind": "block", "name": "S2", "children": bad}],
                 KINDS)))
         assert e.value.field == "children"
+
+class Undeclared_Block(RBlock):              # a nesting class whose construct declares no `children`
+    construct_schema = tm.T_SCHEMA
+
+
+def test_given_later_stands_for_children_given_in_later_calls():
+    """MCP_SPECIFICATION §3.1: `GivenLater` where the class declares
+    `children` is a construct without them, nested or an amend's
+    replacement; elsewhere it is refused as any `children` is."""
+    f, thy, sec, a, b, c = rbuild()
+    (s2, s3) = run(locked(f, edit.insert(thy, 2, [
+        {"kind": "block", "name": "S2", "children": plugin.GIVEN_LATER},
+        {"kind": "block", "name": "S3", "children": [
+            {"kind": "block", "name": "S4", "children": plugin.GIVEN_LATER}]}], KINDS)))
+    assert s2.sub_nodes == [] and [n.name for n in s3.sub_nodes] == ["S4"] and s3.sub_nodes[0].sub_nodes == []
+    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9", "children": plugin.GIVEN_LATER}],
+                                     KINDS)))
+    assert [n.name for n in s9.sub_nodes] == ["a", "b"]       # inherited
+    with pytest.raises(UnexpectedChildren) as e:
+        run(locked(f, edit.insert(thy, 0, [{"kind": "t", "name": "L", "children": plugin.GIVEN_LATER}], KINDS)))
+    assert e.value.is_leaf
+    with pytest.raises(UnexpectedField) as e:
+        run(locked(f, edit.insert(thy, 0, [{"kind": "bare", "name": "U", "children": plugin.GIVEN_LATER}],
+                                  {**KINDS, "bare": Undeclared_Block})))
+    assert e.value.field == "children"
+    inv(f)
+
 
 def test_insert_moves_the_value_from_the_source_slot():
     f, thy, sec, a, b, c = rbuild()

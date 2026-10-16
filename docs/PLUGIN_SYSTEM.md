@@ -159,10 +159,9 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
 - Shared structures go in the class's own `$defs`, each key a Python
   identifier, and are used through `$ref`; a `$ref` under the top-level
   `children` names `Construct` or a node class (the bullet above), every other
-  `$ref` a key of that `$defs`. Recursion is ordinary: a definition may
-  refer to itself, provided every cycle of `$ref`s passes through an
-  object — no `$defs` entry is a bare `$ref` — whose TypedDict nests
-  itself and is defined at module level (MODULE_STRUCTURE §4.4).
+  `$ref` a key of that `$defs`. Recursion happens only at `children`: no
+  `$defs` entry refers back to itself, directly or through other
+  entries, and no TypedDict nests itself (MODULE_STRUCTURE §4.4).
 - Every `description` is agent-facing text. For a class TAT ships, it is
   approved wording, kept in the class's document under `docs/node_classes/`
   beside its field table; for a class delivered separately, it is its
@@ -190,8 +189,14 @@ After every package is imported, the loader builds the `$defs` of the
 `load` fills a copy of it for the conversation it is starting.
 
 The assembled schema keeps its references. The loader never inlines a
-`$ref`; a client that cannot take references is the MCP server's concern
-(MODULE_STRUCTURE §4.6), not this document's.
+`$ref`. A client that cannot take recursion is shown, by its MCP server
+(MODULE_STRUCTURE §4.6), the schema `given_later_inlined` derives: each
+class's top-level `children` declared becomes `{"type": "string",
+"enum": ["GivenLater"]}`, its `description` kept and its `items`, with
+any description on them, gone; then every `$ref` is inlined, the site's
+own keys over the entry's, and `$defs` dropped. Recursion only at
+`children` (§3) makes the result finite. The server accepts what that
+schema admits (MCP_SPECIFICATION §3.1).
 
 ## 5. What the loader checks
 
@@ -219,7 +224,8 @@ registration, per class:
   not in `required` — no construct must carry it, and an amend's may not
   — and the property is `{"type": "array", "items": X}` and nothing else
   but a `description`, with `X` a `$ref` of the form `#/$defs/<Name>`,
-  or an `anyOf` of such;
+  or an `anyOf` of such; a construct, an amend's included, may carry
+  `GivenLater` in its place (MCP_SPECIFICATION §3.1);
 - the class is not omissible on output while compulsory on input
   (MCP_SPECIFICATION §2.1);
 - a `construction_job_class`, when the class declares one, is a
@@ -253,16 +259,18 @@ registration, per class:
 - `argument_schema` is a TypedDict — an empty one for a class with no
   fields — within the closed annotation grammar (MODULE_STRUCTURE §4.4),
   a field optionally wrapped in `NotRequired[X]` or `Required[X]`, which
-  the loader reads off the annotation itself;
+  the loader reads off the annotation itself, and no TypedDict in it
+  nests itself;
 - every `$defs` key is a Python identifier, and no `$defs` entry is a
   bare `$ref`; every `$ref` outside the top-level `children` has the
   form `#/$defs/<Name>` and names a key of the class's own `$defs` —
   judgeable now, since a class carries what it refers to;
 - every `$defs` entry is reached by a `$ref` of the class's schema
-  outside the top-level `children`, directly or through other entries:
-  the agreement check (below) keeps the keys it follows and compares
-  them with the `$defs` keys, and an entry it never reached is refused,
-  the class and the key named;
+  outside the top-level `children`, directly or through other entries,
+  and none refers back to itself: the construct schema's walk follows
+  each `$ref` into its entry once, refusing an entry met again on its own
+  path and, at the end, an entry it never reached, the class and the key
+  named;
 - the two schemas agree, at every depth, a `$ref` followed into
   `$defs`: an object carries `additionalProperties: false`, its
   `properties` are exactly the TypedDict's keys and its `required`
@@ -275,10 +283,7 @@ registration, per class:
   `items` is, with `minItems: 1` a non-empty list; an `anyOf`, no arm
   of which is itself an `anyOf`, is a union whose arms pair with its
   own one for one — by JSON type, and TypedDicts told apart by a
-  `Literal` by the values of the choosing field; a `$ref` met again
-  with the annotation it was met with agrees without being followed
-  again, which is how a definition that refers to itself meets a
-  TypedDict that nests itself; and no schema carries a keyword besides
+  `Literal` by the values of the choosing field; and no schema carries a keyword besides
   these, `description`, and `$defs` at the top alone. Values, fields
   and arms are compared as
   sets, never by position, since an annotation does not reliably keep

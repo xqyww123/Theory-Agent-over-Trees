@@ -357,7 +357,7 @@ def test_the_path_answers_503_while_ending_and_500_on_a_bug_and_ignores_other_ho
     (Claude_Code_Server, "claude-code", "3.0.0-beta", True),
     (Claude_Code_Server, "claude-code", "2.1.295", False), (Claude_Code_Server, "claude-code", "2.1", False),
     (Claude_Code_Server, "claude-code", "dev", False), (Claude_Code_Server, "codex-mcp-client", "2.1.296", False),
-    (Codex_Server, "codex-mcp-client", "0.156.1", True), (Codex_Server, "codex-mcp-client", "0.156.0", False),
+    (Codex_Server, "codex-mcp-client", "0.163.0", True), (Codex_Server, "codex-mcp-client", "0.162.9", False),
     (Codex_Server, "claude-code", "2.1.296", False)])
 def test_the_client_info_check(server_class, name, version, served):
     """CONSTRUCT_INTERACTION §8; MODULE_STRUCTURE §4.6: at a session's first

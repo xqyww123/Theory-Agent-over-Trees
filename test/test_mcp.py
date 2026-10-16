@@ -35,7 +35,7 @@ from isabelle_theory_agent.exceptions import (
     MalformedRawAST, MissingField, MoveBesideItself, MoveIntoOwnSubtree, NodeNotFound, NoQuestionPending,
     ProtectedNode, RawASTError, TAT_Error, TAT_InternalError, UnexpectedField)
 from isabelle_theory_agent.mcp_server import With_Trailer
-from isabelle_theory_agent.model import NOT_EVALUATED
+from isabelle_theory_agent.model import EMPTY_NODE, NOT_EVALUATED
 from test_model import CANNOT_EVALUATE, READY
 
 
@@ -479,7 +479,8 @@ def test_the_roots_first_layer_takes_an_append_and_is_ordered_like_any_other():
                evaluate=False)
     assert names(f) == ["Theory", "Two"]
     assert out == ["Done: append Sessions.", "Sessions:",
-                   "- block_Theory (not evaluated)", "- block_Two (not evaluated)"]
+                   "- block_Theory (not evaluated)", "- block_Two (not evaluated)",
+                   "  " + EMPTY_NODE.format(id="block_Two")]   # the new block, empty (PRINT.md §2)
     call(tools["edit"], action="insert_before", target_id="block_Theory", constructs=[block("One")],
          evaluate=False)
     assert names(f) == ["One", "Theory", "Two"]

@@ -108,7 +108,7 @@ empty `nodes`, a node of `nodes` outside the rendered node, and one
 under another node of `nodes`.
 
 The descent is the framework's; what a class writes under its line is
-the class's, by mode and depth (§3). Three more things the framework
+the class's, by mode and depth (§3). Four more things the framework
 writes under a line: after `print_fields`, the operations' messages
 (§3), and then (CONSTRUCT_INTERACTION §6), when the
 node is detailed and not itself an obstacle, one **failure block** for
@@ -136,7 +136,17 @@ the count alone past five; no period:
 The summary appears under `Recall` alone, never in a quickview or the
 briefing; the blocks appear wherever the node is detailed — a focus, or
 `Recall` below depth 2 — and never in the briefing, which writes nothing
-under a line but the empty forest's hint (§6).
+under a line but the empty forest's hint (§6) and the empty node's line.
+
+The fourth: a nesting node with no children, in a mode that shows its
+children — `Briefing`, `Relative_Focus`, `Recall` while `depth < 3` —
+writes where its children would go the **empty node's line**, its id the
+one its own line prints:
+
+```
+- theory_X (not evaluated)
+  Empty so far. Call `edit` with action `append` and target_id `theory_X` to add children.
+```
 
 ## 3. Fields and messages
 
@@ -247,6 +257,7 @@ Sessions:
 - session_A (complete)
 - session_B (incomplete)
   - theory_X (not evaluated)
+    Empty so far. Call `edit` with action `append` and target_id `theory_X` to add children.
 ```
 
 Exactly one: neither `Sessions:` nor the list. The framework's `print`,
@@ -259,13 +270,14 @@ session itself, at depth 0, keeps the dash. The same quickview:
 session_A (incomplete)
 - theory_Base (complete)
 - theory_X (not evaluated)
+  Empty so far. Call `edit` with action `append` and target_id `theory_X` to add children.
 ```
 
 None, in every mode:
 
 ```
 Sessions:
-  There are no Isabelle sessions yet. Call `edit` with `{"action": "append", "target_id": "Sessions", "constructs": [{"kind": "session", ...}], "evaluate": false}` to declare one.
+  There are no Isabelle sessions yet. Call `edit` with action `append` and target_id `Sessions` to declare one.
 ```
 
 `Sessions:` is a header, not a node's line, and carries no mark.

@@ -30,7 +30,7 @@ from .exceptions import (
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
     NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
-from .plugin import _must_be, check_call
+from .plugin import GIVEN_LATER, _must_be, check_call
 
 
 def _gate(hook, *args) -> None:
@@ -434,6 +434,11 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
     config = NodeConfig(state=Isar_State_Slot.assign(parent.state.conversation),
                         parent=parent, batch_before=batch_before, role=role)
     replacing = config.replaces()
+    # The marker stands where `children` is declared, as the schema a client
+    # is shown offers it (MCP_SPECIFICATION §3.1); a construct carrying it
+    # is one without `children`.
+    if raw.get("children") == GIVEN_LATER and "children" in cls.construct_schema["properties"]:
+        raw = {k: v for k, v in raw.items() if k != "children"}
     # The children-legality checks run before any gen (MODULE_STRUCTURE
     # §4.2): a Leaf holds no children, an amend's replacement inherits them.
     if "children" in raw:

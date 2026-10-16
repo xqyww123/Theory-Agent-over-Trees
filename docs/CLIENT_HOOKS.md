@@ -4,7 +4,7 @@ Status: decided (2026-09-30, with CONSTRUCT_INTERACTION.md §7 and §8).
 The client facts these files rest on are measured in
 ai-artifacts/AGENT_CLIENTS_MEASURED.md, each on the version named
 there, not every one on the versions TAT requires. TAT requires of the
-client that connects at least Claude Code 2.1.296 or Codex 0.156.1,
+client that connects at least Claude Code 2.1.296 or Codex 0.163.0,
 read from its MCP `initialize` (CONSTRUCT_INTERACTION §8).
 
 One conversation — `isabelle TAT`, or `isabelle TAT_mcp` for a client
@@ -210,11 +210,18 @@ directory; the stall watchdog is left as it is.
 ## 3. Codex
 
 `.codex/config.toml` carries the server entry, `TAT`, with the URL,
-`tool_timeout_sec` 43200 and `default_tools_approval_mode = "approve"`;
+`tool_timeout_sec` 43200, `tool_input_schema_max_bytes` 1000000 and
+`default_tools_approval_mode = "approve"`;
 `check_for_update_on_startup = false`; `features.multi_agent_v2 =
 true`, under which alone the interruption tool is named
 `collaborationinterrupt_agent`; and the permission profile of §5.
 `.codex/hooks.json` carries the hooks.
+Codex renders each tool's schema for its model as a TypeScript
+declaration: above `tool_input_schema_max_bytes` bytes of JSON (default
+5,000) it compacts the schema first, and past 32 `$ref` expansions, a
+fixed bound, it writes `unknown`. So the setting is raised, and Codex is
+shown `edit`'s schema without recursion or references
+(`Codex_Server.advertised_schema`, PLUGIN_SYSTEM §4).
 The announcement identifies the caller by the call's `_meta.threadId`
 (the same value as `_meta["x-codex-turn-metadata"].thread_id`), paired
 with the call through `tool_use_id` = `_meta.callId`; a hook payload
@@ -257,6 +264,7 @@ enabled = true
 [mcp_servers.TAT]
 url = "http://127.0.0.1:<port>/mcp"
 tool_timeout_sec = 43200
+tool_input_schema_max_bytes = 1000000
 default_tools_approval_mode = "approve"
 ```
 

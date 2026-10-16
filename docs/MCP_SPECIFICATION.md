@@ -204,7 +204,12 @@ whose other fields are that class's own: the framework enforces their
 mechanical shape from the class's declared schema, and the class's `gen` is
 the authority on their meaning (MODULE_STRUCTURE §4.1). A nesting class
 takes its contents in a `children` field, a list of constructs again; the
-field's name is the same for every class.
+field's name is the same for every class. In place of the list, the
+value `GivenLater` says the contents come in later calls: where the
+class declares `children`, a construct carrying it is taken as one
+without `children`, an amend's replacement included; anywhere else it
+is refused as any `children` is. It is what a client shown the schema
+without recursion (PLUGIN_SYSTEM §4) writes.
 
 **Adding** — `append`, `insert_before` and `insert_after` (TOOL_SCHEMAS.md
 §1) — links the constructs, in order, at the destination.

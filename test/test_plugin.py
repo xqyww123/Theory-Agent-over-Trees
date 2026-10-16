@@ -4,6 +4,7 @@ assembly of the `edit` schema's `$defs`.
 Run: python -m pytest test/test_plugin.py
 """
 
+import json
 import sys
 from typing import Annotated, Literal, NotRequired, Required, TypedDict, get_args, get_type_hints
 
@@ -14,6 +15,7 @@ from isabelle_theory_agent import jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import (
     InvalidField, MissingField, TAT_InternalError, TAT_StartupError, UnexpectedField)
 from isabelle_theory_agent.model import NON_EMPTY
+from isabelle_theory_agent.mcp_server import CODEX_SCHEMA_MAX_BYTES
 from isabelle_theory_agent.plugin import CannotLoadPlugin
 
 # The classes TAT ships, captured before the fixture below empties the list
@@ -105,7 +107,7 @@ class S_RawAST(TypedDict):
     s: str
 
 
-class Tree_RawAST(TypedDict):                 # nests itself, at module level where Python resolves the name
+class Tree_RawAST(TypedDict):                 # nests itself, at module level where Python resolves the name: refused
     sub: NotRequired[list["Tree_RawAST"]]
 
 
@@ -641,8 +643,8 @@ def test_a_ref_names_an_own_def_in_the_one_form_judged_at_registration():
 
 def test_every_def_is_reached_by_a_ref_of_the_schema():
     """PLUGIN_SYSTEM §5: a `$defs` entry no `$ref` reaches, directly or
-    through other entries, is refused after the agreement, naming the key;
-    one reached only through another entry is admitted."""
+    through other entries, is refused by the construct schema's walk,
+    naming the key; one reached only through another entry is admitted."""
     class Holds_Statement(TypedDict):
         s: Thm_Statement
 
@@ -664,28 +666,26 @@ def test_every_def_is_reached_by_a_ref_of_the_schema():
             r"`\$defs` entry `Statement` is reached by no `\$ref` outside the top-level `children`")
 
 
-def test_a_definition_may_refer_to_itself_through_an_object():
-    """PLUGIN_SYSTEM §3, §5: a `$defs` entry referring to itself through an
-    object meets a TypedDict that nests itself, defined at module level
-    where Python resolves the name; a cycle through no object meets no
-    TypedDict again and the agreement refuses it; a bare `$ref` entry and
-    a self-nesting TypedDict inside a function are refused."""
+def test_recursion_happens_only_at_children():
+    """PLUGIN_SYSTEM §3, §5: a TypedDict that nests itself is refused, at
+    module level as inside a function; so is a `$defs` entry a `$ref`
+    reaches that refers back to itself, directly or through other entries;
+    a bare `$ref` entry is refused."""
     tree = {"Tree": {"type": "object", "additionalProperties": False,
                      "properties": {"sub": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}}}}
     class Forest_RawAST(TypedDict):
         more: NotRequired[list[Tree_RawAST]]
-    plugin.TAT_node(declaring("U", {"more": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}},
-                              Forest_RawAST, defs=tree))
-    assert "Tree" in plugin.assemble(registered())
+    refused(declaring("U", {"more": {"type": "array", "items": {"$ref": "#/$defs/Tree"}}},
+                      Forest_RawAST, defs=tree), "Tree_RawAST nests itself; recursion happens only at `children`")
     class Strings(TypedDict):
         more: list[str]
     loop = {"Loop": {"type": "array", "items": {"$ref": "#/$defs/Loop"}}}
     refused(declaring("V", {"more": {"$ref": "#/$defs/Loop"}}, Strings, required=["more"], defs=loop),
-            r"disagree at `construct_schema.more\[\]`: an array against <class 'str'>")
+            r"`\$defs` entry `Loop` refers back to itself; recursion happens only at `children`")
     two_step = {"A": {"type": "array", "items": {"$ref": "#/$defs/B"}},
                 "B": {"anyOf": [{"$ref": "#/$defs/A"}, {"type": "string"}]}}
     refused(declaring("V2", {"more": {"$ref": "#/$defs/A"}}, Strings, required=["more"], defs=two_step),
-            r"disagree at `construct_schema.more\[\]`: an `anyOf` against <class 'str'>")
+            r"`\$defs` entry `A` refers back to itself")
     bare = {"Alias": {"$ref": "#/$defs/Statement"}, **STATEMENT}
     refused(declaring("V3", {"more": {"$ref": "#/$defs/Alias"}}, Strings, required=["more"], defs=bare),
             r"`\$defs` entry `Alias` is a bare `\$ref`")
@@ -938,6 +938,71 @@ def test_a_construct_of_every_shipped_kind_validates():
         for kind, construct in SHIPPED_EXAMPLES.items():
             assert construct["kind"] == kind
             validator.validate(envelope(construct))
+
+
+def test_given_later_inlined_marks_children_and_inlines_every_ref():
+    """PLUGIN_SYSTEM §4: each class's top-level `children` takes
+    `GivenLater` alone, its description kept; every `$ref` is inlined, the
+    site's keys over the entry's, the entries' own descriptions kept; a
+    field named `children` inside an entry is an ordinary field."""
+    schema = {"type": "object", "properties": {"constructs": {"type": "array", "items": {"$ref": "#/$defs/Construct"}}},
+              "$defs": {
+                  "A": {"type": "object", "properties": {
+                      "kind": {"const": "a"},
+                      "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"}, "description": "A's parts"},
+                      "syntax": {"$ref": "#/$defs/M", "description": "site"}}},
+                  "B": {"type": "object", "properties": {
+                      "kind": {"const": "b"},
+                      "children": {"type": "array", "items": {"$ref": "#/$defs/A"}}}},
+                  "M": {"description": "M's own", "anyOf": [{"$ref": "#/$defs/X", "description": "arm"},
+                                                            {"type": "string"}]},
+                  "X": {"type": "object", "properties": {"y": {"$ref": "#/$defs/Y"}, "children": {"type": "string"}}},
+                  "Y": {"type": "string", "description": "Y's own"},
+                  "Construct": {"anyOf": [{"$ref": "#/$defs/A"}, {"$ref": "#/$defs/B"}]}}}
+    a = {"type": "object", "properties": {
+        "kind": {"const": "a"},
+        "children": {"type": "string", "enum": ["GivenLater"], "description": "A's parts"},
+        "syntax": {"description": "site", "anyOf": [
+            {"type": "object", "description": "arm",
+             "properties": {"y": {"type": "string", "description": "Y's own"}, "children": {"type": "string"}}},
+            {"type": "string"}]}}}
+    b = {"type": "object", "properties": {"kind": {"const": "b"},
+                                          "children": {"type": "string", "enum": ["GivenLater"]}}}
+    before = json.dumps(schema)
+    assert plugin.given_later_inlined(schema) == {
+        "type": "object", "properties": {"constructs": {"type": "array", "items": {"anyOf": [a, b]}}}}
+    assert json.dumps(schema) == before                # the argument untouched
+    plain = {"type": "object", "properties": {"s": {"type": "string"}}}
+    assert plugin.given_later_inlined(plain) is plain
+
+
+# The `edit` schema of the classes TAT's package registers, loaded before the
+# fixture above empties the registry for each test.
+STD_EDIT_SCHEMA = plugin.load(["isabelle_theory_agent.std"]).edit_schema
+
+
+def test_the_view_without_recursion_admits_what_the_server_accepts():
+    """PLUGIN_SYSTEM §4: over the classes TAT ships, the view holds no
+    `$ref` and no `$defs`, is a well-formed schema, admits every example and
+    every example of a class declaring `children` with `GivenLater` there,
+    and refuses nested children; it stays far under the bound Codex is
+    given (CLIENT_HOOKS.md §3)."""
+    from test_common import EXAMPLES
+    view = plugin.given_later_inlined(STD_EDIT_SCHEMA)
+    text = json.dumps(view, separators=(",", ":"))
+    assert "$ref" not in text and "$defs" not in text
+    jsonschema.Draft202012Validator.check_schema(view)
+    assert len(text.encode()) < CODEX_SCHEMA_MAX_BYTES // 10
+    validator = jsonschema.Draft202012Validator(view)
+    nested = SHIPPED_EXAMPLES["theory"]
+    for example in [*SHIPPED_EXAMPLES.values(), *EXAMPLES.values()]:
+        bare = {k: v for k, v in example.items() if k != "children"}
+        validator.validate(envelope(bare))
+        if example["kind"] in ("session", "theory"):    # the classes declaring `children`
+            validator.validate(envelope({**bare, "children": plugin.GIVEN_LATER}))
+            assert not validator.is_valid(envelope({**bare, "children": [nested]}))
+        else:
+            assert not validator.is_valid(envelope({**bare, "children": plugin.GIVEN_LATER}))
 
 
 def a_leaf_module(name, kind):

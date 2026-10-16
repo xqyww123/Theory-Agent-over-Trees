@@ -280,6 +280,16 @@ INDENT = "  "                            # one level
 LAST_PRINTED_DEPTH = 3                   # under `Recall`: the level below the grandchildren (PRINT.md §2)
 
 
+def _shows_children(mode: PrintMode, depth: int) -> bool:
+    """Whether a node printed in `mode` at `depth` shows its children
+    (PRINT.md §2): in the briefing, in a recall above the last printed
+    depth, and in the quickview, whose every node is a focus or on the
+    path to one; never out of focus."""
+    if isinstance(mode, Relative_Focus):
+        return True
+    return mode is BRIEFING or (mode is RECALL and depth < LAST_PRINTED_DEPTH)
+
+
 def _indented(indent: int, text: str) -> list[str]:
     """The lines of `text`, each at `indent`."""
     return [INDENT * indent + line for line in text.split("\n")]
@@ -799,8 +809,9 @@ class Node(ABC):
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The line at `indent` — the mark and the framework's tags inside
         the parentheses — then `print_fields` (never in the briefing), the
-        messages, the failure blocks, the children one level deeper, and
-        under `Recall` the summary below an `incomplete` nesting node at the
+        messages, the failure blocks, the children one level deeper — for
+        a nesting node with none, where they would be shown, the empty
+        node's line — and under `Recall` the summary below an `incomplete` nesting node at the
         last printed depth (PRINT.md §1, §2).  The root's only child,
         reached from the root, writes its line without the dash and its
         body at the same indent (§6)."""
@@ -817,6 +828,8 @@ class Node(ABC):
         self._print_failures(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
+        if isinstance(self, NonLeaf_Node) and not self.sub_nodes and _shows_children(mode, depth):
+            out.write(INDENT * below + EMPTY_NODE.format(id=forest.id_of(self)) + "\n")
         if (mode is RECALL and depth == LAST_PRINTED_DEPTH and isinstance(self, NonLeaf_Node)
                 and self._default_mark() == "incomplete"):
             self._print_summary(below, out)
@@ -1183,24 +1196,18 @@ class NonLeaf_Node(Node):
         return out
 
     def _children_to_print(self, mode: PrintMode, depth: int) -> list[tuple[Node, PrintMode]]:
-        pairs: list[tuple[Node, PrintMode]] = []
-        if mode is BRIEFING:
-            pairs = [(c, BRIEFING) for c in self.sub_nodes]
-        elif mode is RECALL and depth < LAST_PRINTED_DEPTH:
-            pairs = [(c, RECALL) for c in self.sub_nodes]
-        elif isinstance(mode, Relative_Focus):
-            if self in mode.nodes:                   # a focus: its children are focuses one level shallower
-                if mode.depth == 0:
-                    pairs = [(c, OUT_FOCUS) for c in self.sub_nodes]
-                else:
-                    below = Relative_Focus(frozenset(self.sub_nodes), max(mode.depth - 1, -1))
-                    pairs = [(c, below) for c in self.sub_nodes]
-            else:                                    # on the path: only what leads to a focus continues
-                above = self.forest()._above
-                assert above is not None and self in above, "Relative_Focus off its path"
-                pairs = [(c, mode if c in mode.nodes or c in above else OUT_FOCUS)
-                         for c in self.sub_nodes]
-        return pairs                                 # none for Out_Focus and Recall at depth 3
+        if not _shows_children(mode, depth):
+            return []
+        if not isinstance(mode, Relative_Focus):     # the briefing and a recall go on in their mode
+            return [(c, mode) for c in self.sub_nodes]
+        if self in mode.nodes:                       # a focus: its children are focuses one level shallower
+            if mode.depth == 0:
+                return [(c, OUT_FOCUS) for c in self.sub_nodes]
+            below = Relative_Focus(frozenset(self.sub_nodes), max(mode.depth - 1, -1))
+            return [(c, below) for c in self.sub_nodes]
+        above = self.forest()._above                 # on the path: only what leads to a focus continues
+        assert above is not None and self in above, "Relative_Focus off its path"
+        return [(c, mode if c in mode.nodes or c in above else OUT_FOCUS) for c in self.sub_nodes]
 
     def _resulting_state_of_child(self, child: Node) -> Isar_State_Slot:
         for i, c in enumerate(self.sub_nodes):
@@ -1583,9 +1590,10 @@ class Conversation:
 
 
 # The empty forest's one line under `Sessions:` (PRINT.md §6), approved wording.
-EMPTY_FOREST = ('There are no Isabelle sessions yet. Call `edit` with `{"action": "append",'
-                ' "target_id": "Sessions", "constructs": [{"kind": "session", ...}],'
-                ' "evaluate": false}` to declare one.')
+EMPTY_FOREST = ('There are no Isabelle sessions yet. Call `edit` with action `append` and'
+                ' target_id `Sessions` to declare one.')
+# The line under a nesting node with no children where they would be shown (PRINT.md §2), approved wording.
+EMPTY_NODE = 'Empty so far. Call `edit` with action `append` and target_id `{id}` to add children.'
 
 
 class TreeRecord(NamedTuple):

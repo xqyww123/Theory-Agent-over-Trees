@@ -32,7 +32,9 @@ framework's line — the id in its shortest form and the mark, PRINT.md §1
 blocks (PRINT.md §3, §4) and its failure blocks where the node is
 detailed (PRINT.md §2), and, under an
 `incomplete` nesting node at depth 3, the framework's summary of what is
-unfinished below it (PRINT.md §2); below depth 3 nothing, not even lines.
+unfinished below it (PRINT.md §2); under a nesting node with no children
+above depth 3, the empty node's line (PRINT.md §2); below depth 3
+nothing, not even lines.
 What each class writes at each depth is its own table: `Session` and
 `Theory` in node_classes/SESSION_AND_THEORY.md §4, `Theorem` in
 node_classes/THEOREM.md §8.

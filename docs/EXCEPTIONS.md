@@ -233,8 +233,10 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  ├─ UnexpectedChildren      kind, is_leaf — `children` may not appear
 │  │                          here: a Leaf can hold none (is_leaf), and an
 │  │                          amend's replacement inherits them; never
-│  │                          silently dropped. Raised before any gen
-│  │                          runs                                [framework]
+│  │                          silently dropped, `GivenLater` where the
+│  │                          class declares `children` aside
+│  │                          (MCP_SPECIFICATION §3.1). Raised before any
+│  │                          gen runs                            [framework]
 │  ├─ ChildrenNotInheritable  old_id, new_kind, children_count — the
 │  │                          replaced node has children and the
 │  │                          replacement class is a Leaf. Raised before

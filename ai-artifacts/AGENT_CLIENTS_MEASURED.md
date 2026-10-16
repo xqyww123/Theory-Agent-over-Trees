@@ -500,6 +500,69 @@ a decision.
   after 60 s by default (`tool_timeout_sec` per server).
   Whether hooks run under `codex exec` is not documented.
 
+### Re-measured on codex-cli 0.163.0 (2026-10-16)
+
+The facts TAT stops on, re-run with the probes that measured them on
+0.156.1; each probe directory's `RERUN_0163.md` has the commands and the
+evidence. Every private login was refreshed from `~/.codex/auth.json`.
+
+- *measured* (`session_start_and_hook_cwd_codex`, runs `A163_exec_flag_sub`,
+  `J163_tui_flag_sub`, `D163_noflag_sub`) — every `tools/call`, main and
+  subagent, exec and TUI, is preceded by its own `PreToolUse`, 6.2–9.9 ms
+  earlier; without `--dangerously-bypass-hook-trust` no hook fires and the
+  calls proceed; `clientInfo` is `{name: "codex-mcp-client", version:
+  "0.163.0"}`; every call carries `_meta.callId`, `threadId`, `sessionId`
+  as before. New: Ctrl-C in the TUI fires `SessionEnd` and sends the MCP
+  `DELETE` (one run).
+- *measured* (`stop_hook_reason_codex`, runs `01_stop_json_163`,
+  `03_substop_json_163`, `03_substop_json_163_rep`, `07_stop_json_7blocks_163`,
+  `09_stop_json_long_163`) — a blocked `Stop`/`SubagentStop` behaves as on
+  0.156.1: the reason reaches the blocked agent verbatim in the same turn,
+  seven blocks are honoured, `stop_hook_active` false then true, `agent_id`
+  on `SubagentStop` alone, a long reason cut at about 10 KB. The escaping
+  and trimming of run 05 were not re-run.
+- *measured* (`interrupt_denial_codex`, run `02_deny_hso_163`) — the
+  parent's interruption reaches hooks as `collaborationinterrupt_agent`, a
+  matcher on it fires, a `hookSpecificOutput` deny prevents it entirely
+  and the parent reads the reason. New: `multi_agent_v2` is off by
+  default (`codex features list`); TAT's `features.multi_agent_v2 = true`
+  turns it on.
+- *measured* (`late_result_after_followup_codex`, runs `01_orderA_163`,
+  `02_orderB_163`) — a subagent never acts on an MCP result arriving after
+  its interruption. New: Codex no longer records such a result at all (no
+  transcript item, no `PostToolUse`).
+- *measured* (`agent_directory`, runs `x5_g_t_163`, `x_f_hn_*_163`) — every
+  call carries `_meta["codex/sandbox-state-meta"]`, main and subagent
+  alike; `sandbox_is_the_profile` is true for TAT's profile alone (read-only,
+  workspace-write, danger-full-access, bypass all false); the agent's shell
+  still cannot see the working directory and can write the agent
+  directory. New: a second key, `codex/sandbox-state`, with the same value;
+  a field `useMxc: false`; the sandbox helper under `tmp/arg0-linux/`.
+- *measured* (`codex_subagent_compaction`, runs `*_163`) — `PreCompact`
+  and `PostCompact` fire for every thread that compacts, a subagent's with
+  its `agent_id`, the main thread's with none; their output never reaches
+  the model; an empty answer is accepted. `SessionStart` fires for the
+  main thread alone with `source` `startup`, `resume`, `fork`, `clear`,
+  `compact` (`/new` gives `startup`), and the matcher `resume|clear|compact|fork`
+  is matched against `source` (`clear` not run under the matcher). New:
+  `codex exec --json` reports `SessionEnd` and `Interrupt` hook timeouts
+  clamped to 3 s. In a scratch project, `codex exec resume` and `fork`
+  loaded its hooks only with the trust written in `config.toml`, not with
+  a `-c projects=…` trust alone.
+- *measured* (`codex_schema/capture.py <port> call`) — under the `.codex/`
+  files TAT writes and its `launch_arguments` (the `-c` trust), a fresh
+  `codex exec` runs TAT's `PreToolUse` before the `edit` call, the call is
+  announced and served, and `children: "GivenLater"` is accepted; `Stop`
+  runs too. The hook needs the working directory's `tat.lock`, which TAT
+  writes.
+- *measured* (`codex_schema/capture.py`) — under the `.codex/` files TAT
+  writes, Codex's model is shown `edit` with every kind, no `unknown`, each
+  `children` as `"GivenLater"` with its class's description, and no
+  unrecognised-setting warning. `mcp_servers.<name>.tool_input_schema_max_bytes`
+  raised also lifts the rendered declaration's 16,000-character bound: a
+  31 KB schema rendered whole, 25,470 characters
+  (`codex_schema/stub_big.py`, `run_codex_big.sh`).
+
 ## Both clients: a tool argument declared as a bare object (*measured* 2026-09-27)
 
 A tool `answer` declared with `answer: {"type": "object"}` (no
@@ -1180,6 +1243,10 @@ expand `{env:VAR}`.
 
 ## Where the probes are
 
-Scratchpad of session 57dbb3d3: `subagent_mcp_probe/` (`probe_server.py`,
-`requests.jsonl`, `run_stdout.json`, `REPORT.md`); the Codex sources under
-`codex_src/`. The scratchpad is temporary; this file is the record.
+`ai-artifacts/probes/<name>/`, on disk and not committed: one directory per
+probe named above, with its scripts, logs and report; the re-runs on
+0.163.0 in each one's `RERUN_0163.md`. The Codex sources read are under
+`probes/codex_hook_trust/src/` and `probes/codex_path_mapping_*/codex_src/`
+(0.156.1), and `probes/codex_schema/` (the schema renderer, from Codex's
+main branch). The earliest probes (`subagent_mcp_probe/`) were in a
+session's scratchpad and are gone; this file is their record.

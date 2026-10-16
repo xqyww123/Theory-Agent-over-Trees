@@ -24,7 +24,7 @@ from mcp.shared.exceptions import McpError
 import stand_ins
 from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import client, free_port, text_of
-from isabelle_theory_agent import log, mcp_server, toplevel
+from isabelle_theory_agent import log, mcp_server, plugin, toplevel
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.jobs import Agent, Message, post
@@ -693,6 +693,21 @@ def test_a_clients_cancellation_leaves_the_body_to_finish(tool):
                     ("call", "slow_bug"), ("given_up", "slow_bug")]
                 assert "text" not in records[1]["data"]
     run(scenario)
+
+
+def test_codex_is_shown_the_schema_without_recursion_and_claude_code_the_assembled_one():
+    """PLUGIN_SYSTEM §4: each server holds its tools with the schema its
+    client is shown; the body, which checks a call against the assembled
+    schema, is the same."""
+    schema = plugin.load(["isabelle_theory_agent.std"]).edit_schema
+
+    async def body(agent, arguments):
+        return ""
+    tool = Tool("edit", "Edit Isabelle theory constructs", schema, body, False)
+    for server_class, shown in ((Claude_Code_Server, schema), (Codex_Server, plugin.given_later_inlined(schema))):
+        with _bind(0) as sock:
+            server = server_class(stand_ins.ending(), sock, [tool], {})
+        assert server._tools["edit"].input_schema == shown and server._tools["edit"].run is body
 
 
 def test_an_empty_tool_list_and_an_unknown_tool():

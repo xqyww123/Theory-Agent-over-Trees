@@ -887,7 +887,7 @@ the library keeps them as the session's `client_params`, and serves no
 request before them). At the first request of a session that reaches
 TAT, the subclass compares the leading dotted numbers of that `version`
 with the version its facts were measured on — Claude Code 2.1.296,
-Codex 0.156.1, raised with every round of measurement — and the `name`
+Codex 0.163.0, raised with every round of measurement — and the `name`
 with the client `-c` chose; a version that is lower, or cannot be read,
 or a name that is another client's, refuses the session: no tool is
 served, and TAT ends the conversation with a `TAT_StartupError` naming

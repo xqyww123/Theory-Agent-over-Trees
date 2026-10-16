@@ -966,7 +966,9 @@ An `edit` takes the trees' record first — per tree, its qualified name
 and its resolved imports, the `Theory` nodes themselves
 (`Forest._record`) — and builds everything before it touches the forest:
 
-1. **Construct, detached.** Every construct, in submission order: the
+1. **Construct, detached.** Every construct, in submission order: a
+   `children` of `GivenLater` dropped where the class declares
+   `children` (MCP_SPECIFICATION §3.1); the
    `children`-legality checks (`UnexpectedChildren`,
    `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
    table alone, so they run before any `gen`), the class lookup, the
@@ -1220,12 +1222,9 @@ field. A `Literal` and a non-empty list are never arms: their refusals,
 `must be one of …` and `must not be empty`, speak for the whole field,
 and would be false where another arm accepts what they refuse. There is
 no `Any`: a field the construct schema structures is checked as deep as
-the value goes, and the grammar offers no field left opaque. A
-TypedDict may nest itself, and does exactly where the construct schema
-refers back to a definition the agreement check is already inside
-(PLUGIN_SYSTEM §5) — every cycle of `$ref`s passes through an object,
-so the TypedDict that nests itself is always there to meet it —; it is
-then defined at module level, where Python resolves the reference. `@TAT_node` refuses anything else when the
+the value goes, and the grammar offers no field left opaque. No
+TypedDict nests itself: recursion happens only at `children`
+(PLUGIN_SYSTEM §3). `@TAT_node` refuses anything else when the
 class is registered, as it refuses an annotation Python cannot resolve.
 A submitted construct is checked against its construct schema, not the
 declaration, by `check_call` (above), which `edit.py` runs before the
@@ -1233,7 +1232,10 @@ class's `gen` (§4.2); the declaration types `gen`'s `raw`, and the
 agreement check (PLUGIN_SYSTEM §5) — comparing values, fields and arms
 as sets, since an annotation does not reliably keep its order: typing's
 cache hands one union's arms, or one `Literal`'s values, to an equal
-one written in another order — is what makes the two one object.
+one written in another order — is what makes the two one object. A
+client may be shown a schema that differs from the one a call is held
+to only inside the constructs, and admits nothing the server refuses
+(§4.6).
 
 ### 4.5 The plugin `Isabelle_Std`
 
@@ -1435,13 +1437,14 @@ exits — writing the `ended` record once everything has unwound, so that
 no caller orders it — and `launch_TAT` leaves.
 
 `mcp_server.py` is also where
-the assembled `edit` schema reaches the client (PLUGIN_SYSTEM §4): TAT
-serves it as assembled, `$ref`s intact. Node classes may recurse
-(PLUGIN_SYSTEM §3), so the schema has no finite inlining; serving a client
-that drops references means choosing a different shape for it — a
-decision to take when such a client appears, on AoA's precedent
-(`contrib/Isa-Mini/IsaMini/AoA/mcp_http_server.py` serves several variants
-of one `edit` schema).
+the assembled `edit` schema reaches the client (PLUGIN_SYSTEM §4).
+`TAT_Server.advertised_schema` gives each tool's schema as `tools/list`
+shows it: the assembled one, `$ref`s intact, by default; for Codex,
+whose rendering for its model bounds `$ref` expansions (CLIENT_HOOKS.md
+§3), `plugin.given_later_inlined`'s, a finite inlining that recursion
+only at `children` (PLUGIN_SYSTEM §3) makes possible. A call is held to
+the assembled schema either way; the shown one differs only inside the
+constructs, and every construct it admits is one the server accepts.
 
 The server has one path beside `/mcp`: `POST /hook`, to which the
 conversation's hooks post their payloads (CLIENT_HOOKS.md §1). `TAT_Server` has

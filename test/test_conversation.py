@@ -21,7 +21,7 @@ from isabelle_theory_agent.exceptions import (
     DuplicateTheoryShortName, InvalidField, ReservedTheoryName, TAT_IsabelleError,
     TAT_StartupError)
 from isabelle_theory_agent.isabelle_driver import call
-from isabelle_theory_agent.model import NOT_EVALUATED, Isar_State_Slot
+from isabelle_theory_agent.model import EMPTY_NODE, NOT_EVALUATED, Isar_State_Slot
 from test_model import CANNOT_EVALUATE, READY
 
 # RENDER_BASELINES §3's three fenced lines, in order; the third is the
@@ -805,18 +805,20 @@ async def test_recall_through_the_wire(conversation):
         text = text_of(result)
         assert not result.isError and text.count("Error:") == 1, text
         briefing = await session.call_tool("recall")
+        empty = lambda node_id: "  " + EMPTY_NODE.format(id=node_id)   # noqa: E731  # PRINT.md §2
         assert not briefing.isError and text_of(briefing).splitlines() == [
-            "session_TAT_RECALL (incomplete)","- theory_TAT_RECALL_A (complete)",
-            "- theory_TAT_RECALL_B (failed)"], text_of(briefing)
+            "session_TAT_RECALL (incomplete)","- theory_TAT_RECALL_A (complete)", empty("theory_TAT_RECALL_A"),
+            "- theory_TAT_RECALL_B (failed)", empty("theory_TAT_RECALL_B")], text_of(briefing)
         sessions = await session.call_tool("recall", {"node_id": "Sessions"})
         assert not sessions.isError and text_of(sessions).splitlines() == [
             "session_TAT_RECALL (incomplete)","parent_session: HOL",
-            "- theory_TAT_RECALL_A (complete)", "  imports: Main",
-            "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope"], text_of(sessions)
+            "- theory_TAT_RECALL_A (complete)", "  imports: Main", empty("theory_TAT_RECALL_A"),
+            "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope", empty("theory_TAT_RECALL_B")
+            ], text_of(sessions)
         failed = await session.call_tool("recall", {"node_id": "theory_TAT_RECALL_B"})
         assert not failed.isError and text_of(failed).splitlines() == [
             "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope",
-            "  Error:", "    " + NOT_FOUND], text_of(failed)
+            "  Error:", "    " + NOT_FOUND, empty("theory_TAT_RECALL_B")], text_of(failed)
 
 
 async def test_a_fresh_conversation_forgets_the_previous_ones_state(conversation, probes):

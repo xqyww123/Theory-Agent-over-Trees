@@ -310,8 +310,8 @@ ignoring its cancellation — is answered what it did (MODULE_STRUCTURE
 ## 5. Rendering
 
 The lines the framework writes in every rendering (PRINT.md); the empty
-forest's hint is PRINT.md §6's, and a class's own marks are its own
-document's.
+forest's hint is PRINT.md §6's, the empty node's line PRINT.md §2's, and
+a class's own marks are its own document's.
 
 A node's line, one per default mark; `Theorem`'s two-slot marks are
 node_classes/THEOREM.md §7's:

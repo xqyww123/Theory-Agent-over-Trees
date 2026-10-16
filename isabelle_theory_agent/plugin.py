@@ -17,7 +17,6 @@ the conversation start.
 from __future__ import annotations
 
 import copy
-import dataclasses
 import importlib
 import inspect
 import re
@@ -65,6 +64,7 @@ class CannotLoadPlugin(TAT_StartupError):
 registry: dict[type[Node], list[str]] = {}
 
 CONSTRUCT = "Construct"                        # the union's reserved `$defs` name
+GIVEN_LATER = "GivenLater"                     # `children` given in later calls (MCP_SPECIFICATION §3.1)
 _REF = re.compile(r"^#/\$defs/([^/]+)$")
 _EDIT_SCHEMA = Path(__file__).parent / "tools" / "edit.jsonc"
 
@@ -329,7 +329,6 @@ def _check_class(cls: type[Node]) -> list[str]:
     _validate_construct_schema(cls)
     agreement = _Agreement(cls, schema.get("$defs", {}))
     agreement.object(schema, cls.argument_schema, "construct_schema", top=True)
-    agreement.reached_every_def()
     return own_kinds
 
 
@@ -525,11 +524,11 @@ def validate_argument_schema(td: Any) -> None:
 def _validate_typeddict(td: Any, top: bool, enclosing: tuple) -> None:
     if not is_typeddict(td):
         raise TAT_InternalError(f"argument schema {td!r} is not a TypedDict")
-    if td in enclosing:                    # nests itself: being validated above
-        return
+    if td in enclosing:                    # being validated above
+        raise TAT_InternalError(f"{td.__name__} nests itself; recursion happens only at `children`")
     try:
         hints, _ = _declared(td)
-    except NameError as e:                 # a self-nesting TypedDict not at module level, among others
+    except NameError as e:
         raise TAT_InternalError(f"{td.__name__}: unresolvable annotation") from e
     if top and "children" in hints:
         raise TAT_InternalError(
@@ -635,8 +634,10 @@ def _validate_construct_schema(cls: type[Node]) -> None:
     outside the top-level `children` of the form `#/$defs/<Name>` naming
     an own entry; no `anyOf` arm, its `$ref` followed, an `anyOf`; no
     keyword besides the grammar's, `description`, and `$defs` at the top
-    alone.  `kind` and `children` have rules of their own (`_kinds_of`,
-    `_check_class`)."""
+    alone; every entry reached by a `$ref` outside the top-level
+    `children`, and none reaching itself — recursion happens only at
+    `children`.  `kind` and `children` have rules of their own
+    (`_kinds_of`, `_check_class`)."""
     schema = cls.construct_schema
     assert schema is not None
     defs = schema.get("$defs", {})
@@ -653,14 +654,26 @@ def _validate_construct_schema(cls: type[Node]) -> None:
         if extra:
             raise _refuse(cls, f"{where}: {sorted(extra)} is outside the construct schema grammar")
 
+    reached: set[str] = set()
+    path: list[str] = []                    # the entries being walked, outermost first
+
     def walk(s: Any, where: str, top: bool = False) -> None:
         if isinstance(s, dict) and "$ref" in s:
             allowed(s, {"$ref"}, where)
             m = _REF.match(s["$ref"]) if isinstance(s["$ref"], str) else None
             if m is None:
                 raise _refuse(cls, f"`$ref` `{s['$ref']}` is not of the form `#/$defs/<Name>`")
-            if m.group(1) not in defs:
+            name = m.group(1)
+            if name not in defs:
                 raise _refuse(cls, f"`$ref` `{s['$ref']}` names no `$defs` entry of the class")
+            if name in path:
+                raise _refuse(cls, f"`$defs` entry `{name}` refers back to itself;"
+                                   " recursion happens only at `children`")
+            if name not in reached:
+                reached.add(name)
+                path.append(name)
+                walk(defs[name], f"$defs.{name}")
+                path.pop()
             return
         if isinstance(s, dict) and "anyOf" in s:
             allowed(s, {"anyOf"}, where)
@@ -678,8 +691,10 @@ def _validate_construct_schema(cls: type[Node]) -> None:
             walk(s.get("items"), f"{where}[]")
 
     walk(schema, "construct_schema", top=True)
-    for name, entry in defs.items():
-        walk(entry, f"$defs.{name}")
+    unreached = sorted(set(defs) - reached)
+    if unreached:
+        raise _refuse(cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` outside the"
+                           " top-level `children`")
 
 
 def _required_enum_fields(arms: list[JSON_Schema]) -> list[str]:
@@ -690,38 +705,22 @@ def _required_enum_fields(arms: list[JSON_Schema]) -> list[str]:
             if all(f in arm.get("required", ()) and "enum" in arm["properties"].get(f, {}) for arm in arms)]
 
 
-@dataclass
+@dataclass(frozen=True)
 class _Agreement:
     """The two schemas held to each other at every depth (PLUGIN_SYSTEM §5),
-    a `$ref` followed into `$defs` once per annotation it is met with —
-    which is how a definition that refers to itself meets a TypedDict that
-    nests itself; `met` keeps the keys followed, which is how an entry no
-    `$ref` reaches is known.  Values, fields and arms are compared as sets,
-    never by position: typing's cache hands one union's arms, or one
-    `Literal`'s values, to an equal one written in another order."""
+    a `$ref` followed into `$defs`; neither side recurses, so the walk
+    ends.  Values, fields and arms are compared as sets, never by
+    position: typing's cache hands one union's arms, or one `Literal`'s
+    values, to an equal one written in another order."""
     cls: type[Node]
     defs: Mapping[str, Any]
-    met: set[tuple[str, Any]] = dataclasses.field(default_factory=set)
 
     def disagree(self, where: str, what: str) -> CannotLoadPlugin:
         return _refuse(self.cls, f"construct_schema and argument_schema disagree at `{where}`: {what}")
 
-    def reached_every_def(self) -> None:
-        """After the agreement: a `$defs` entry no `$ref` outside the
-        top-level `children` reached, directly or through other entries, is
-        refused, the first by name."""
-        unreached = sorted(set(self.defs) - {name for name, _ in self.met})
-        if unreached:
-            raise _refuse(self.cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` outside the"
-                                    " top-level `children`")
-
     def agree(self, schema: JSON_Schema, ann: Any, where: str) -> None:
         if "$ref" in schema:
-            name = _def_name(schema["$ref"])
-            if (name, ann) in self.met:
-                return
-            self.met.add((name, ann))
-            schema = self.defs[name]
+            schema = self.defs[_def_name(schema["$ref"])]
         if "anyOf" in schema:
             self.union(schema["anyOf"], ann, where)
             return
@@ -1059,3 +1058,32 @@ def _refs(x: Any) -> list[str]:
     if isinstance(x, list):
         return [r for v in x for r in _refs(v)]
     return []
+
+
+def given_later_inlined(schema: JSON_Schema) -> JSON_Schema:
+    """`schema` as a client that cannot take recursion is shown it
+    (PLUGIN_SYSTEM §4): the top-level `children` of every class in
+    `Construct` takes `GIVEN_LATER` alone, its description kept, and every
+    `$ref` is inlined, the site's own keys over the entry; then no cycle is
+    left (PLUGIN_SYSTEM §3).  A schema without `$defs` is returned as is."""
+    if "$defs" not in schema:
+        return schema
+    schema = copy.deepcopy(schema)
+    defs = schema.pop("$defs")
+    for arm in defs[CONSTRUCT]["anyOf"]:
+        properties = defs[_def_name(arm["$ref"])]["properties"]
+        if "children" in properties:
+            children = properties["children"]
+            del children["items"]
+            children.update(type="string", enum=[GIVEN_LATER])
+
+    def inline(x: Any) -> Any:
+        if isinstance(x, dict):
+            if "$ref" in x:
+                site = {k: v for k, v in x.items() if k != "$ref"}
+                return {**inline(defs[_def_name(x["$ref"])]), **site}
+            return {k: inline(v) for k, v in x.items()}
+        if isinstance(x, list):
+            return [inline(v) for v in x]
+        return x
+    return inline(schema)

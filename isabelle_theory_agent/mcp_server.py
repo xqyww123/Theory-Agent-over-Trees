@@ -26,7 +26,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable, Coroutine, Iterable
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal, NamedTuple, NoReturn, TypeVar
@@ -49,12 +49,15 @@ from .guard import ALLOW
 from .jobs import Agent, blocked_reason, deliver, standing, standings, waiting
 from .log import Judged, Learned_From, Log, current_agent, current_call
 from .model import CannotUseWorkingDirectory, Forest, JSON_Schema
+from .plugin import given_later_inlined
 
 HOST = "127.0.0.1"
 PATH = "/mcp"
 HOOK = "/hook"
 SERVER_NAME = "TAT"                     # the client's name for TAT's server entry (CONSTRUCT_INTERACTION §8)
 TOOL_PREFIX = f"mcp__{SERVER_NAME}__"   # a TAT tool's name as the client sees it
+# Codex's bound on a tool schema's bytes, generous beside `edit`'s (CLIENT_HOOKS.md §3)
+CODEX_SCHEMA_MAX_BYTES = 1_000_000
 
 # A call no `PreToolUse` announced (CONSTRUCT_INTERACTION §8): the client's
 # hooks do not reach TAT; the `unannounced` record's message, never shown.
@@ -521,7 +524,8 @@ class TAT_Server:
         self._socket = sock
         self.port: int = sock.getsockname()[1]      # the socket's, bound by `served`
         port = self.port
-        self._tools = {tool.name: tool for tool in tools}
+        self._tools = {tool.name: replace(tool, input_schema=self.advertised_schema(tool.input_schema))
+                       for tool in tools}     # each call still held to the schema `mcp._tool` checks
         self.url = f"http://{HOST}:{port}{PATH}"
 
         self.agents = agents
@@ -592,6 +596,12 @@ class TAT_Server:
         canonical path (CLIENT_HOOKS.md §3); static: nothing of the server's
         goes into them."""
         raise NotImplementedError
+
+    @staticmethod
+    def advertised_schema(schema: JSON_Schema) -> JSON_Schema:
+        """A tool's schema as `tools/list` shows it to the client: by
+        default the one its calls are held to (PLUGIN_SYSTEM §4)."""
+        return schema
 
     def _hook(self, working_directory: Path, script: str, matcher: str | None = None) -> dict[str, Any]:
         """One hook entry as both clients take it: the script run under the
@@ -1358,7 +1368,7 @@ class Claude_Code_Server(TAT_Server):
 class Codex_Server(TAT_Server):
     name = "codex"
     client_name = "codex-mcp-client"
-    measured_version = "0.156.1"
+    measured_version = "0.163.0"
     call_key = "callId"
     announcement_answer = None              # Codex rejects a bare `allow`; nothing is needed
     interrupting_tool = "collaborationinterrupt_agent"
@@ -1435,6 +1445,7 @@ class Codex_Server(TAT_Server):
             f"[mcp_servers.{SERVER_NAME}]",
             f"url = {toml_string(self.url)}",
             "tool_timeout_sec = 43200",
+            f"tool_input_schema_max_bytes = {CODEX_SCHEMA_MAX_BYTES}",
             'default_tools_approval_mode = "approve"',
             ""]
         hook = self._hook(working_directory, "hook.py")
@@ -1452,6 +1463,13 @@ class Codex_Server(TAT_Server):
         trusted project, so the agent directory is trusted at launch."""
         trust = f'projects={{{toml_string(str(agent_directory))}={{trust_level="trusted"}}}}'
         return ["--dangerously-bypass-hook-trust", "-c", trust]
+
+    @staticmethod
+    def advertised_schema(schema: JSON_Schema) -> JSON_Schema:
+        """Codex renders a schema for its model under a fixed bound on
+        `$ref` expansions (CLIENT_HOOKS.md §3), so it is shown one without
+        recursion or references."""
+        return given_later_inlined(schema)
 
 
 def _json(value: Any) -> str:
