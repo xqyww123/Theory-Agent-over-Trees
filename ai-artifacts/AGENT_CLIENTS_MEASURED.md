@@ -548,7 +548,14 @@ evidence. Every private login was refreshed from `~/.codex/auth.json`.
   `codex exec --json` reports `SessionEnd` and `Interrupt` hook timeouts
   clamped to 3 s. In a scratch project, `codex exec resume` and `fork`
   loaded its hooks only with the trust written in `config.toml`, not with
-  a `-c projects=…` trust alone.
+  a `-c projects=…` trust alone; under TAT's own files and arguments they
+  do (the next item but two).
+- *measured* (`codex_schema/resume_check.py`) — under the `.codex/` files
+  TAT writes and `launch_arguments` before `exec`, as the launcher orders
+  them: a fresh session, `exec resume <id>` (same session id, the earlier
+  turns in its input) and `exec fork <id>` (a new id, the earlier turns
+  in its input) each run `PreToolUse` before their `edit` call, and TAT
+  serves all three as announced.
 - *measured* (`codex_schema/capture.py <port> call`) — under the `.codex/`
   files TAT writes and its `launch_arguments` (the `-c` trust), a fresh
   `codex exec` runs TAT's `PreToolUse` before the `edit` call, the call is
