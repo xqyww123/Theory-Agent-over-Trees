@@ -597,9 +597,9 @@ recorded `overloaded` with it, each after one run of its command with
 the option. A test pins both answers: `{x :: 'a::zero. x = 0}` true,
 `{n :: nat. n > 0}` false.
 
-Three helpers of `common.py` with no definition of their own, which
-`QuotientType` brings and `Typedef` and `Datatype` switch to
-(QUOTIENT_TYPE.md §4–§5), each class's switch its own change. The
+Four helpers of `common.py` with no definition of their own, each
+landing with the first class that needs it (QUOTIENT_TYPE.md §4–§5),
+the other classes switching to it in their own change. The
 type-parameter check above takes the field's path: `type_parameters_of`
 runs it under `type_parameters[i].name`, and `type_variables_of(raw)`,
 over type variables written bare, under `type_parameters[i]`, answering
@@ -623,7 +623,18 @@ and the `morphisms` clause, none when neither name was given. And
 the commands write it: `type_parameters_text` over the parameters, the
 name through `print_name` against the keywords, and `mixfix_text`'s
 annotation in parentheses when a syntax is given — `'a fset`, `('a, 'b)
-t (infixr "+" 10)`.
+t (infixr "+" 10)`. And the check that every declared type parameter is
+used, for every class that declares type parameters (`Datatype`,
+`Record`, `Typedef`, `QuotientType`): a lexical scan of the class's
+Isabelle text in `ascii` — a datatype's constructor argument types, a
+record's field types, a typedef's set, a quotient type's
+`representation_type` — for type-variable tokens, the first parameter
+not found refused on its path with the one `InvalidField` sentence,
+pinned here:
+
+```
+The field `type_parameters[1]` declares `'b`, which is not used.
+```
 
 ## 5. Conventions
 

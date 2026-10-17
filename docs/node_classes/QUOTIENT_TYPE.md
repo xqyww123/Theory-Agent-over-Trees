@@ -4,8 +4,7 @@ Status: proposed 2026-10-17 and revised the same day after its review
 (ai-artifacts/review/quotient_type/QUOTIENT_TYPE_REVIEW.md); the
 agent-facing wording below is the owner's (his rulings of 2026-10-16
 and 2026-10-17) or COMMON.md's shared sentences under this class's
-paths, except §4's sentence for a type parameter declared and not used,
-which awaits his word. The framework's `job_operation`, which
+paths. The framework's `job_operation`, which
 the class rests on, is committed (16c864e); the class, `Lifting_Closing`
 (COMMON.md §6) and the shared checks and writers of COMMON.md §4 it
 uses are implemented after `LiftDefinition` (LIFT_DEFINITION.md) and
@@ -274,8 +273,8 @@ variable on its `ascii`, a prime, then an Isabelle identifier
 declared and not used, shared by every class that declares type
 parameters: a lexical scan of the field's `ascii` for type-variable
 tokens, refusing the first parameter it does not find on the path
-`type_parameters[i]` (its sentence, and with it whether the refusal is
-an `InvalidField`, awaits the owner's word); `rep_function_name` and
+`type_parameters[i]` (`InvalidField`, COMMON.md §4); `rep_function_name`
+and
 `abs_function_name` through the plugin's shared check of a pair of
 function names (COMMON.md §4; `Typedef`'s with `Rep_` and `Abs_`),
 with `rep_` and `abs_` as its prefixes — each given name an Isabelle
@@ -313,16 +312,16 @@ The `InvalidField` sentences:
 ```
 The field `type_parameters[0]` must be a type variable, such as 'a.
 The field `type_parameters[1]` binds `'a` a second time.
-The type parameter `'b` is declared but not used.
+The field `type_parameters[1]` declares `'b`, which is not used.
 ```
 
 The first two are this class's, their path its own,
 `type_parameters[i]`; their words are COMMON.md §4's type-parameter
 sentences, rendered by `type_variables_of` (COMMON.md §4). The third is
-the sentence proposed for a type parameter declared and not used, on
-the path `type_parameters[i]` too, one sentence for every class that
-declares type parameters, pending the owner's word. The function
-names' sentences are the shared check's, pinned in COMMON.md §4.
+COMMON.md §4's sentence for a type parameter declared and not used, the
+one sentence of every class that declares type parameters, on the path
+`type_parameters[i]` too. The function names' sentences are the shared
+check's, pinned in COMMON.md §4.
 
 A parent outside a theory is refused with the plugin's
 `NotInsideTheory`, whose sentence COMMON.md §1 pins.
