@@ -4,7 +4,9 @@ Status: proposed 2026-10-17 and revised the same day after its review
 (ai-artifacts/review/quotient_type/QUOTIENT_TYPE_REVIEW.md); the
 agent-facing wording below is the owner's (his rulings of 2026-10-16
 and 2026-10-17) or COMMON.md's shared sentences under this class's
-paths. The framework's `job_operation`, which
+paths; the mark's three words and the state line (§7) are his ruling
+of 2026-10-17 for every class that defines (COMMON.md §3). The
+framework's `job_operation`, which
 the class rests on, is committed (16c864e); the class, `Lifting_Closing`
 (COMMON.md §6) and the shared checks and writers of COMMON.md §4 it
 uses are implemented after `LiftDefinition` (LIFT_DEFINITION.md) and
@@ -36,8 +38,8 @@ leaves the proof standing. Its Python half is
 `Isabelle_Std/ML/TAT_Quotient_Type.ML`; the ending's two halves are
 `Lifting_Closing`'s (COMMON.md §6). Its agent-facing wording lives here
 — the `description` texts of its construct schema (§3), the sentences
-its `gen` renders, and the words on its line — pinned by the baseline
-tests the way TYPEDEF.md's are.
+its `gen` renders, the words on its line and its state line (§7) —
+pinned by the baseline tests the way TYPEDEF.md's are.
 
 One kind, `quotient_type`, which heads the id component:
 `quotient_type_fset`; a child's id carries it, `quotient_type_fset.lift_definition_fmember`
@@ -55,13 +57,12 @@ One kind, `quotient_type`, which heads the id component:
 | `representation_type` | `IsaTerm`, the representation type, `'a list` for `fset` | authored |
 | `equiv_relation` | `IsaTerm`, the equivalence relation on the representation type | authored |
 | `partial` | `bool`: whether the relation is only a partial equivalence, the command's `partial:`; false when left out | authored |
-| `rep_function_name` | `IsaTerm`, optional; `rep_` before `type_name` when left out, and a given name equal to that is stored as left out (§4) | authored |
-| `abs_function_name` | `IsaTerm`, optional; `abs_` before `type_name` when left out, and a given name equal to that is stored as left out (§4) | authored |
-| `overloaded` | `bool`: whether the command carries `(overloaded)`, decided by the evaluation (§6); false until one has recorded it; stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equiv_relation` is — the class is born with the row | recorded |
+| `rep_function_name` | `IsaTerm`, optional; `rep_` before `type_name` when left out | authored |
+| `abs_function_name` | `IsaTerm`, optional; `abs_` before `type_name` when left out | authored |
+| `overloaded` | `bool`, or none until an evaluation has recorded one: whether the command carries `(overloaded)`, decided by the first evaluation that goes through and run as recorded by every later one (§6; COMMON.md §5); stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equiv_relation` is — the class is born with the row, None-valued | recorded |
 | `children` | the nodes inside the block, the framework's row (PLUGIN_SYSTEM §3; ARCHITECTURE §4.1) | — |
 
-`syntax`, `rep_function_name` and `abs_function_name` left out — a
-function name given as its default counting as left out (§4) — are
+`syntax`, `rep_function_name` and `abs_function_name` left out are
 stored as a None-valued row and `partial` left out as false, so that
 every row of the class is read with `rows.get` and any row missing is
 refused at start.
@@ -137,8 +138,7 @@ the block:
 `equiv_relation` are required; `type_parameters` is optional and empty
 when left out; `syntax`, `rep_function_name` and `abs_function_name` are
 optional and absent when left out — a function name left out is
-Isabelle's default, `rep_fset` or `abs_fset`, and one given as that
-default is stored as left out (§4); `partial` is optional and false
+Isabelle's default, `rep_fset` or `abs_fset`; `partial` is optional and false
 when left out; `children` is optional, as for every nesting class
 (PLUGIN_SYSTEM §3), and contents come later through `edit` as well. The
 node's name is `type_name`. The type parameters take no sort: the
@@ -279,11 +279,11 @@ and
 function names (COMMON.md §4; `Typedef`'s with `Rep_` and `Abs_`),
 with `rep_` and `abs_` as its prefixes — each given name an Isabelle
 identifier (COMMON.md §5) not ending with an underscore (COMMON.md §5's
-clause on internal names), and the two given names not the same
-(`InvalidField`); a given name equal to the field's default, `rep_fset`
-or `abs_fset` (§2), is stored as the field left out — so that a field's
-default is stored only as the field left out. A given name that clashes
-with another — `abs_fset` as `rep_function_name` with
+clause on internal names), and the two given names, as given, not the
+same (`InvalidField`); a given name equal to the field's default,
+`rep_fset` or `abs_fset` (§2), is a given name like any other, written
+into the `morphisms` clause as given (§5). A given name that clashes
+with the other field's default — `abs_fset` as `rep_function_name` with
 `abs_function_name` left out — is Isabelle's refusal at the admission
 (§6). A sibling already bearing the node's id component is the
 framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of
@@ -430,13 +430,15 @@ the beginning's resulting slot — the first child's input, or the slot
 before the ending when there is no child (MODULE_STRUCTURE §4.1) — and
 its `message()`: `type_name`, the type parameters, the syntax (absent
 when left out), the two function names with the defaults filled in,
-then `goal_structure()` — `representation_type`, `partial` and
-`equiv_relation` — whole, as its goal part (§4), each `IsaTerm` as its
-`ascii`; a test pins the order, as THEOREM.md's does. The callback is
-built by `TAT_Proof_Obligation` (COMMON.md §3) from `QuotientType`'s two
-steps: `open_goal`, the `quotient_type` command's transition, yielding
-nothing; `after_admission`, the identity on the state, yielding
-`overloaded`.
+the recorded `overloaded` — none until an evaluation has recorded one
+(COMMON.md §5) —, then `goal_structure()` — `representation_type`,
+`partial` and `equiv_relation` — whole, as its goal part (§4), each
+`IsaTerm` as its `ascii`; a test pins the order, as THEOREM.md's does.
+The callback is built by `TAT_Proof_Obligation` (COMMON.md §3) from
+`QuotientType`'s two steps: `open_goal`, the `quotient_type` command's
+transition with the option decided as below, yielding `overloaded`, the
+option it ran with; `after_admission`, the identity on the state,
+yielding nothing.
 
 `QuotientType`'s `open_goal` builds the command's transition and runs it
 — the shape of `begin_theory`, through `apply_transition` — no proof
@@ -444,7 +446,7 @@ step:
 
 ```
 Toplevel.local_theory_to_proof NONE NONE (fn lthy =>
-  Quotient_Type.quotient_type_cmd {overloaded = true}
+  Quotient_Type.quotient_type_cmd {overloaded = overloaded}
     ((((((parameters, name), mixfix), representation_type), (partial, equiv_relation)), SOME (rep, abs)), NONE) lthy)
 ```
 
@@ -479,8 +481,7 @@ The admission — the half of `sorry` that ends a toplevel goal, applied
 by `Proof_Obligation`'s callback between the two steps — runs the
 command's own ending (quotient_type.ML, `add_quotient_type`): the
 `typedef` of the representation type's equivalence classes under the
-relation, run with `{overloaded = true}` as a `Typedef`'s is (TYPEDEF.md
-§6); the two
+relation, run with the option the command runs with (below); the two
 functions `rep_fset` and `abs_fset`, or the names given, defined on it;
 the theorems `fset_equivp` and `Quotient3_fset` noted; and the Lifting
 setup of the type (quotient_type.ML, `setup_lifting_package`, through
@@ -495,21 +496,31 @@ declares already taken, `Duplicate constant declaration
 "theory_X.rep_fset" vs. "theory_X.rep_fset"`; a Lifting setup the
 package cannot make, which a `Typedef` turns into its notice and a
 `QuotientType` does not, the setup being the command's own work and not
-a step after it. `after_admission` then reads, on the admitted state,
-whether the type needs `(overloaded)`: the plugin's
-`TAT_Overloaded.needed` (COMMON.md §4) asked of the state's theory on
-the type's full name — the name `Typedecl` declared, read off the
-admitted state's generic theory (`Toplevel.generic_theory_of`) by
-`Context.cases Sign.full_name Local_Theory.full_name` on `type_name`'s
-binding: the theory's naming at theory level, where the admission
-leaves no local theory, and the local theory's inside a `Context` or
-`Locale`, which carries its qualifier —, true exactly when Isabelle
-would have refused the typedef inside the command without the option;
-the state is the admitted one,
-untouched. The option is read after the admission because the typedef
-happens there, not where the goal opens. The configuration option
-`typedef_overloaded` is not consulted: where a theory sets it, the file
-carries an `(overloaded)` Isabelle does not need. At theory level these
+a step after it. `overloaded`, the option the command runs with, is a
+choice the evaluation makes once per set of authored fields (COMMON.md
+§5). With no recorded value — until an evaluation of the node goes
+through; an amend gives a fresh node — `open_goal` first runs the
+command with `{overloaded = true}` and its admission —
+`TAT_Proof_Obligation.admit`, the one the callback applies (COMMON.md
+§3) — on the input state as a probe, on `Toplevel.state` values in ML
+and into no slot, and asks the
+plugin's `TAT_Overloaded.needed` (COMMON.md §4) of the probe's theory
+on the type's full name — the name `Typedecl` declared, read off the
+probe's generic theory (`Toplevel.generic_theory_of`) by `Context.cases
+Sign.full_name Local_Theory.full_name` on `type_name`'s binding: the
+theory's naming at theory level, where the admission leaves no local
+theory, and the local theory's inside a `Context` or `Locale`, which
+carries its qualifier —, true exactly when Isabelle refuses the
+`typedef` inside the command without the option; the probe is
+discarded, and the goal is opened with the option so decided, which
+the class records. The probe reaches the admission because the
+`typedef` happens there, not where the goal opens; a probe Isabelle
+refuses is the step's failure with its messages. With a recorded value,
+`open_goal` runs the command with it, once, and a refusal is the
+definition's failure, never a switch; the file carries the option the
+run ran with (§5). The configuration option `typedef_overloaded` is not
+consulted: where a theory sets it, the file carries an `(overloaded)`
+Isabelle does not need. At theory level these
 are the steps the hand-written text takes; inside a `Context` or
 `Locale` the definition is made in that context — the type and the two
 functions global all the same.
@@ -521,11 +532,11 @@ beginning's status is `CannotEvaluate` with them: the node is an
 obstacle, its children have no context and are `not_evaluated`, the
 ending is `Ready` by the framework's copy of the block's input to its
 result when the walk goes on past the block (ARCHITECTURE §3.3), and
-`overloaded` stays what the last successful evaluation recorded, which
-`can_emit` keeps out of a file (ARCHITECTURE §6.1). Otherwise the status
-is `Ready` with no messages: `QuotientType`'s `record_from_evaluation`
-sets `overloaded` to what `after_admission` yielded and answers no
-message (COMMON.md §3). The proof check and the proof construction, with
+`overloaded` stays what the last successful evaluation recorded, or
+none, which `can_emit` keeps out of a file (ARCHITECTURE §6.1).
+Otherwise the status is `Ready` with no messages: `QuotientType`'s
+`record_from_evaluation` sets `overloaded` to what `open_goal` yielded
+and answers no message (COMMON.md §3). The proof check and the proof construction, with
 their callbacks `TAT.Proof_Obligation.check` and
 `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s (COMMON.md
 §3): the goal they work on has one subgoal, always.
@@ -555,21 +566,40 @@ The proof construction, `Proof_Job`, the proof check, `Proof_Check`,
 their callbacks, their sentences, and the two-slot mark `(<status>,
 <proof>)` are `Proof_Obligation`'s (COMMON.md §3), reading the
 beginning's status, the one the jobs depend on (`job_operation_status()`,
-CONSTRUCT_INTERACTION §3.1). `QuotientType`'s own are `valid_word` and
-`invalid_word`: `valid definition` (`ready`) and `invalid definition`
-(`cannot_evaluate`). Its line reads one of eleven ways, plus the tags of
-CONSTRUCT_INTERACTION §6:
+CONSTRUCT_INTERACTION §3.1). `QuotientType`'s own are `valid_word`,
+`unverified_word` and `invalid_word`, the three words of a class that
+defines (COMMON.md §3): `valid definition`, alone, when the node owes no
+proof — the proof `SUCCEEDED` and the check `PASSED`; `unverified
+definition` with the proof slot's word while it does, under `ready`;
+`invalid definition` under `cannot_evaluate`. Its line reads one of
+eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
 
 ```
-(valid definition, proof not started)  (valid definition, proving)         (valid definition, failed to prove)
-(valid definition, unchecked proof)    (valid definition, proof checking)  (valid definition, proven)
-(valid definition, bad proof)
+(valid definition)
+(unverified definition, proof not started)  (unverified definition, proving)         (unverified definition, failed to prove)
+(unverified definition, unchecked proof)    (unverified definition, proof checking)  (unverified definition, bad proof)
 (invalid definition)
-(not evaluated)                        (not evaluated, proof not started)  (not evaluated, failed to prove)
+(not evaluated)                             (not evaluated, proof not started)       (not evaluated, failed to prove)
+```
+
+While the line reads `unverified definition`, `state_line()` answers
+the sentence the framework prints under the line, after the fields and
+the messages and before the jobs' blocks, wherever the node is detailed
+(COMMON.md §3; PRINT.md §2):
+
+```
+The definition is unverified until the relation is proven an equivalence.
+```
+
+and, when `partial` is true:
+
+```
+The definition is unverified until the relation is proven a partial equivalence.
 ```
 
 The ending's status is not on the line: a refused ending shows as its
-`Error:` block under a line that reads the valid word (PRINT.md §1),
+`Error:` block under a line whose first slot is `valid definition` or
+`unverified definition` (PRINT.md §1),
 and the jobs run as before, the beginning being the one operation they
 depend on (CONSTRUCT_INTERACTION §3.1). In an ancestor's Recall summary
 (PRINT.md §2) the node is counted by its own operations, not by its
@@ -582,7 +612,8 @@ once it is proven.
 
 `print_fields` (PRINT.md §3) writes the definition, and only under
 `Recall`; wherever it is called the framework writes the two operations'
-messages after it, then the failure blocks, then the children (PRINT.md
+messages after it, then the state line while the definition is
+unverified (§7), then the failure blocks, then the children (PRINT.md
 §2):
 
 | mode | `print_fields` writes |
@@ -635,28 +666,29 @@ A node under `recall` whose definition went through, its proof found,
 and whose ending was refused:
 
 ```
-- quotient_type_fset (valid definition, proven)
+- quotient_type_fset (valid definition)
   'a fset = "'a list" / "λxs ys. set xs = set ys" morphisms list_of_fset fset_of_list
   Finite sets, as lists up to order and repetition
   Error:
     Interrupt
-  - lift_definition_fempty (valid definition, proven)
+  - lift_definition_fempty (valid definition)
     fempty :: "'a fset" is "[]"
-  - lift_definition_fmember (valid definition, proven)
+  - lift_definition_fmember (valid definition)
     fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
 ```
 
-The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under
-`recall` whose stored proof failed its check:
+The state line and the jobs' blocks are `Proof_Obligation`'s (COMMON.md
+§3); a node under `recall` whose stored proof failed its check:
 
 ```
-- quotient_type_fset (valid definition, bad proof)
+- quotient_type_fset (unverified definition, bad proof)
   'a fset = "'a list" / "λxs ys. set xs = set ys" morphisms list_of_fset fset_of_list
   Finite sets, as lists up to order and repetition
+  The definition is unverified until the relation is proven an equivalence.
   The proof no longer holds.
-  - lift_definition_fempty (valid definition, proven)
+  - lift_definition_fempty (valid definition)
     fempty :: "'a fset" is "[]"
-  - lift_definition_fmember (valid definition, proven)
+  - lift_definition_fmember (valid definition)
     fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
 ```
 

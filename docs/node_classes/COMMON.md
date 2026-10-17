@@ -607,8 +607,8 @@ over type variables written bare, under `type_parameters[i]`, answering
 check, the defaults and the `morphisms` writer of a pair of function
 names, parameterised by the class's two default prefixes (`Rep_` and
 `Abs_`, `rep_` and `abs_`): each given name an Isabelle identifier (§5)
-not ending with an underscore, a given name equal to its default stored
-as the field left out, the two given names different — its two
+not ending with an underscore, the two given names, as given, different
+— a name equal to its default is a given name like any other — its two
 `InvalidField` sentences, pinned here, the second naming the later of
 two given names that are the same:
 
