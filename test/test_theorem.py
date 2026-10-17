@@ -58,7 +58,7 @@ def test_the_schema_and_the_descriptions_are_the_documents(monkeypatch):
     assert list(theorem.KINDS) == ["lemma", "theorem", "corollary", "proposition"]
     monkeypatch.setitem(plugin.imports, "Other.Thy", __name__)        # another package's: not the plugin's
     loaded = plugin.load(["isabelle_theory_agent.std"])
-    assert loaded.imports == ("Minilang_AoA.Minilang_AoA",) and loaded.kinds["lemma"] is Theorem
+    assert loaded.imports == ("TAT_Std.TAT_Std",) and loaded.kinds["lemma"] is Theorem
     long = fenced_lines(TH, "3.")
     assert sorted(descriptions(Theorem.construct_schema)) == sorted(long + [long[-1]])   # the last twice (§3)
 
@@ -260,7 +260,7 @@ def test_the_jobs_sentences_are_common_section_3_s():
     assert (Proof_Check.title(), Proof_Check.title(plural=True)) == ("proof check", "proof checks")
     assert job.finished_notification(PROVED) == f"`{f.id_of(p)}` is proven."
     assert job.finished_notification(Failed("no proof")) == f"No proof of `{f.id_of(p)}` was found:\n  no proof"
-    assert Proof_Job.failure_header(Failed("no proof")) == "No proof was found:"
+    assert job.failure_header(Failed("no proof")) == "No proof was found:"
     assert jobs.with_message(Proof_Check.failure_header(BAD), "") == sentences[0]
     one, three = ["theory_X.lemma_P"], ["theory_X.lemma_P", "theory_X.lemma_Q", "theory_X.lemma_R"]
     four = three + ["theory_Y.lemma_S"]
@@ -443,8 +443,8 @@ def test_the_store_mirror_catches_a_proof_text_read_off_an_instant_status(monkey
 # --- the evaluation, in the plugin's run of the harness (§6, §8) -----------------
 
 def over_the_wire(*theorems):
-    """session_TAT_Std > theory_TAT_Std_A > the theorems, as the `edit` tool takes them."""
-    return ts.session("TAT_Std", ts.theory("TAT_Std_A") | {"children": list(theorems)})
+    """session_TAT_Suite > theory_TAT_Std_A > the theorems, as the `edit` tool takes them."""
+    return ts.session("TAT_Suite", ts.theory("TAT_Std_A") | {"children": list(theorems)})
 
 
 async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversation):
@@ -473,7 +473,7 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
         (s,) = forest.sub_nodes
         (x,) = s.sub_nodes
         p, q, r = x.sub_nodes
-        assert x.import_sessions == ["HOL", "Minilang_AoA"]                 # the declared import ran
+        assert x.import_sessions == ["HOL", "TAT_Std"]                 # the declared import ran
         for node in (p, q):
             assert isinstance(node._status, M.Ready) and node._status.messages == ()
             assert await node.goal_state.is_initialized() and await node.resulting_state().is_initialized()
@@ -628,7 +628,7 @@ async def test_isabelle_tat_compile_writes_the_theory_and_isabelle_reads_it(std_
     -P`, which the tool reads the plugin from) that a conversation of the
     plugin's run left, a theory of one theorem admitted: the file holds
     §5's text with `sorry` under the header carrying the declared import,
-    the ROOT's `sessions` clause names `Minilang_AoA`, the package's hook
+    the ROOT's `sessions` clause names `TAT_Std`, the package's hook
     ran in the tool's process — a proof store of no tree is gone —, and
     the tool's Isabelle read the ROOT and the header, the import resolved:
     exit 0."""
@@ -644,8 +644,8 @@ async def test_isabelle_tat_compile_writes_the_theory_and_isabelle_reads_it(std_
         "TAT_Std_C/TAT_Std_C_A.thy written", "ROOT written", "removed TAT_Std_C/Gone.proof-store"]
     [lines] = fenced_blocks(TH, "5.")
     assert (wd / "TAT_Std_C" / "TAT_Std_C_A.thy").read_text() == (
-        'theory "TAT_Std_C_A"\n  imports "Main" "Minilang_AoA.Minilang_AoA"\nbegin\n'
+        'theory "TAT_Std_C_A"\n  imports "Main" "TAT_Std.TAT_Std"\nbegin\n'
         + "".join(ascii_of_unicode(line) + "\n" for line in lines[:-1]) + "  sorry\nend\n")
     assert (wd / "ROOT").read_text() == (
         'session "TAT_Std_C" in "TAT_Std_C" = "HOL" +\n'
-        '  sessions\n    "Minilang_AoA"\n  theories\n    "TAT_Std_C_A"\n')
+        '  sessions\n    "TAT_Std"\n  theories\n    "TAT_Std_C_A"\n')

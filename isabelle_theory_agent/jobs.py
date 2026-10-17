@@ -382,11 +382,11 @@ class Construction_Job(ABC):
     def title(cls, plural: bool = False) -> str:
         """The words for the work: `proof construction`."""
 
-    @classmethod
     @abstractmethod
-    def failure_header(cls, failure: Failed) -> str | None:
+    def failure_header(self, failure: Failed) -> str | None:
         """The header of the job's failure block (§6), printed while the
-        outcome is `FAILED`; None prints nothing."""
+        outcome is `FAILED`; None prints nothing.  Asked of the job, so
+        that a class may name what its node owes."""
 
     @abstractmethod
     async def _run(self) -> Settled:

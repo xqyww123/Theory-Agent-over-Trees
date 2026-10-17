@@ -7,21 +7,25 @@ keywords: what the file carries is what the command receives.
 
 signature TAT_MIXFIX =
 sig
+  val read_text : 'a parser -> string -> Proof.context -> string -> 'a
+    (*Isar text read whole by the parser under the context's keywords; a text
+      it does not read whole is an error, "Malformed <what>: <text>", the
+      operation's messages*)
   val read : Proof.context -> string option -> mixfix
     (*NoSyn for none; otherwise the annotation text in its ascii, parentheses
-      included, as `mixfix_text` writes it, through Parse.mixfix -- a text it
-      does not read whole is an error, the operation's messages*)
+      included, as `mixfix_text` writes it, through Parse.mixfix*)
 end
 
 structure TAT_Mixfix : TAT_MIXFIX =
 struct
 
+fun read_text parser what ctxt text =
+  (case Scan.read Token.stopper parser
+          (filter Token.is_proper (Token.explode (Thy_Header.get_keywords' ctxt) Position.none text)) of
+    SOME x => x
+  | NONE => error ("Malformed " ^ what ^ ": " ^ quote text))
+
 fun read _ NONE = NoSyn
-  | read ctxt (SOME text) =
-      let val tokens = filter Token.is_proper (Token.explode (Thy_Header.get_keywords' ctxt) Position.none text) in
-        (case Scan.read Token.stopper Parse.mixfix tokens of
-          SOME mixfix => mixfix
-        | NONE => error ("Malformed mixfix annotation: " ^ quote text))
-      end
+  | read ctxt (SOME text) = read_text Parse.mixfix "mixfix annotation" ctxt text
 
 end

@@ -35,8 +35,7 @@ class Note_Construction(jobs.Construction_Job):
     def title(cls, plural=False):
         return "note constructions" if plural else "note construction"
 
-    @classmethod
-    def failure_header(cls, failure):
+    def failure_header(self, failure):
         return "The note was rejected:"
 
     async def _run(self):

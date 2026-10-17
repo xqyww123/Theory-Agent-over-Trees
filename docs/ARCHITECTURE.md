@@ -161,31 +161,15 @@ This is honest only because the jobs are tracked: such a node evaluates
 without error and is still not `finished` (§3.2), so TAT never mistakes an
 admitted fact for a proved one.
 
-**`Define`**
-
-| Field | Type | |
-| --- | --- | --- |
-| `auto_reduction` | `bool` | authored |
-| `equations` | the defining equations | authored |
-| `form` | `definition` \| `fun` \| `function` | recorded |
-
-With `auto_reduction` true the resulting definitional equations carry
-`[simp]`; with it false they are removed again with
-`note f.simps[simp del]`. A single equation is a
-`definition`; several are a `fun`, or a `function` with its proof obligations
-discharged by `aoa` when `fun` cannot establish termination on its own. Which of
-the three was used is decided during evaluation and recorded on the node, so
-emission needs no further enquiry.
-
-A `Define` emits several commands, each able to fail on its own, and its
-evaluator reports each separately.
-
-| command | emitted | when |
-| --- | --- | --- |
-| `function` | the defining command, in whichever `form` | always |
-| `pat-completeness` | the completeness proof | `form = function` |
-| `termination` | `termination by …` | `form = function` |
-| `simp-del` | `note f.simps[simp del]` | `auto_reduction` is false |
+**`Define`** is specified in [node_classes/DEFINE.md](node_classes/DEFINE.md).
+Its constants and equations are authored; which command defines them —
+`definition`, `fun`, or `function (sequential, no_partials)` or plain
+`function` with `termination` — is
+decided during evaluation and recorded on the node as `form`, so emission
+needs no further enquiry. Under `function` the goals `fun`'s own methods
+could not close, pattern completeness and termination, are proof
+obligations: the evaluation admits them, the proof construction proves
+each by its own `aoa` call, and the file carries `by aoa` for each.
 
 **`Session`** and **`Theory`**, the two classes that carry the forest's
 structure, are specified in

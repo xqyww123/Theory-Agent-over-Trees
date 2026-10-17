@@ -1,10 +1,11 @@
 """What the classes of the plugin `Isabelle_Std` share
 (node_classes/COMMON.md): `Theory_Member`, the base every class derives
 from, with the plugin's one parent exception `NotInsideTheory` (§1); the
-`text` line (§2); `Proof_Obligation`, the base of the classes whose
-command opens a proof obligation — a `Leaf`'s one operation, or a
-block's beginning through `Beginning_Proof_Obligation` — with its two
-job classes (§3); the
+`text` line (§2); `With_Proof_Obligations`, the base of the classes
+whose commands open proof obligations, and under it `Proof_Obligation`,
+the base of those whose one command opens one goal — a `Leaf`'s one
+operation, or a block's beginning through `Beginning_Proof_Obligation`
+— with its two job classes (§3); the
 shared `$defs` — the type parameter and the two mixfix annotations —
 with their checks and writers, and the checks of a name (§4, §5); the
 package's compile hook for AoA's proof stores (§3; COMPILATION.md §5);
@@ -31,7 +32,7 @@ from ..model import (
     cartouche, print_name, status_of_errors, string_token)
 from ..plugin import TAT_compile_hook, TAT_import
 
-TAT_import("Minilang_AoA.Minilang_AoA")      # the `aoa` method's theory, for every theory of the forest (§3)
+TAT_import("TAT_Std.TAT_Std")      # the `aoa` method and the plugin's AoA tasks, for every theory of the forest (§3)
 
 
 class NotInsideTheory(BadEdit):
@@ -110,7 +111,7 @@ def layout_normalised(text: str) -> str:
 _ID_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_']*")      # the id grammar without hyphens (§5)
 
 
-def require_id_name(name: str, grammar: Literal["fact name", "type name"]) -> None:
+def require_id_name(name: str, grammar: Literal["fact name", "type name", "constant name"]) -> None:
     """`InvalidName` unless `name` is in the id grammar without hyphens and
     does not end with an underscore (§5): a node's own name, and each
     authored field a class computes it from."""
@@ -358,6 +359,25 @@ def mixfix_wire(syntax: Mixfix | None) -> str | None:
 
 _PRODUCT = ("text", "thread_cpu", "wall")    # the proof as stored (§3); on the wire, a triple in this order
 
+# The setup of one call of `TAT.Proof_Obligation.construct` (§3; DEFINE.md
+# §7), a triple on the wire: the task — its name and its payload — or None
+# for AoA's `usual`; the goal hint — its text and its `whole_prop` patterns
+# — or None; the tactic whitelist, each a method name and its
+# interpretation.  The hint and the whitelist are declared in the goal's
+# proof context for the call alone.
+Construction_Setup = tuple[tuple[str, Any] | None, tuple[str, list[str]] | None, list[tuple[str, str]]]
+NO_SETUP: Construction_Setup = (None, None, [])
+
+
+def proof_wire(product: Any) -> tuple[Any, ...]:
+    """A stored proof as `TAT.Proof_Obligation.check` reads it (§3)."""
+    return tuple(product[k] for k in _PRODUCT)
+
+
+def proof_from_wire(product: Any) -> dict[str, Any]:
+    """A proof as `TAT.Proof_Obligation.construct` reports it, stored (§3)."""
+    return dict(zip(_PRODUCT, product))
+
 
 class Proof_Job(jobs.Construction_Job):
     """`Proof_Obligation`'s proof construction (§3): one call of AoA's
@@ -370,14 +390,24 @@ class Proof_Job(jobs.Construction_Job):
     def title(cls, plural=False):
         return "proof constructions" if plural else "proof construction"
 
-    @classmethod
-    def failure_header(cls, failure):
-        return "No proof was found:"
+    def _failed_assertion(self) -> str | None:
+        """What the run that failed was to prove, for the two failure
+        sentences (§3), ` that <assertion>` after `was found`; None, the
+        default, names nothing.  `Define_Proof_Job` names the obligation
+        (DEFINE.md §7)."""
+        return None
+
+    def _that(self) -> str:
+        assertion = self._failed_assertion()
+        return f" that {assertion}" if assertion is not None else ""
+
+    def failure_header(self, failure) -> str | None:
+        return f"No proof was found{self._that()}:"
 
     def finished_notification(self, outcome):
         if isinstance(outcome, Succeeded):
             return f"`{self.shown_id}` is proven."
-        return with_message(f"No proof of `{self.shown_id}` was found:", outcome.message)
+        return with_message(f"No proof of `{self.shown_id}` was found{self._that()}:", outcome.message)
 
     def _check(self):
         """§3's table: a proof is constructed where none stands, or where
@@ -390,18 +420,19 @@ class Proof_Job(jobs.Construction_Job):
     async def _run(self):
         node = self.node
         assert isinstance(node, Proof_Obligation)
-        errors, product = await self.forked("TAT.Proof_Obligation.construct", node.goal_state.to_msgpack())
+        errors, product = await self.forked("TAT.Proof_Obligation.construct", (node.goal_state.to_msgpack(), NO_SETUP))
         if errors:
             return Failed("\n".join(errors))
         node.attach_evaluation_job(Proof_Check.passed(node))
-        return Succeeded(dict(zip(_PRODUCT, product)))
+        return Succeeded(proof_from_wire(product))
 
 
 class Proof_Check(jobs.Evaluation_Job):
     """`Proof_Obligation`'s proof check (§3): the stored product replayed on
     the goal `goal_state` holds, through the function AoA exports, forked
-    by `TAT.Proof_Obligation.check`; no theorem out is `FAILED` with an
-    empty message."""
+    by `TAT.Proof_Obligation.check` — which replays a list of goals, each
+    with its proof, one here; no theorem out is `FAILED` with an empty
+    message."""
 
     @classmethod
     def title(cls, plural=False):
@@ -438,42 +469,83 @@ class Proof_Check(jobs.Evaluation_Job):
         job = node.job()
         assert job is not None and isinstance(job.outcome, Succeeded)   # a check runs on a node whose proof
                                                                         # SUCCEEDED (CONSTRUCT_INTERACTION §3.3)
-        product = job.outcome.product
         await isabelle_driver.call(self.conversation, "TAT.Proof_Obligation.check",
-                                   (node.goal_state.to_msgpack(), tuple(product[k] for k in _PRODUCT), self.id))
+                                   ([(node.goal_state.to_msgpack(), proof_wire(job.outcome.product))], self.id))
 
 
-class Proof_Obligation(Node):
-    """The base of a class whose command opens exactly one goal, which is
-    admitted, the class's `after_admission` step following in the same
-    operation (§3): the operation the goal opens on, the class's
-    `job_operation` — a `Leaf`'s one operation here, a block's beginning
-    in `Beginning_Proof_Obligation`.  Taken before the framework base: `class
-    Theorem(Theory_Member, Proof_Obligation, Leaf)`.  The tree holds no
-    proof: every evaluation admits the goal, the proof construction finds
-    the proof, the proof check replays it, and the file carries `by aoa`.
+# --- the words of the mark (§3), one computation for every class whose line
+#     reads `(<status>, <proof>)`, `With_Proof_Obligations.mark`
+
+def proven(node: Node) -> bool:
+    """Whether the node's proof stands: `proof` `SUCCEEDED` and the proof
+    check `PASSED` (§3) — what `by aoa` and `valid definition` need."""
+    job = node.job()
+    assert job is not None
+    return isinstance(job.outcome, Succeeded) and node.check_outcome() is PASSED
+
+
+def unverified(node: With_Proof_Obligations) -> bool:
+    """Whether a class that defines reads `unverified definition` (§3):
+    under `ready`, while it owes a proof — `owes_proof()` — that does not
+    stand."""
+    return node.owes_proof() and isinstance(node.job_operation_status(), Ready) and not proven(node)
+
+
+def proof_mark(node: With_Proof_Obligations) -> str:
+    """The two slots, `(<status>, <proof>)` (§3): the first the class's word
+    for `job_operation_status()`; the second from the job's outcome and
+    the check, left out under the invalid word, a stored proof left out
+    under `not evaluated`.  A class that defines sets `unverified_word`:
+    then under `ready` the line is `valid_word` alone when the node owes
+    nothing — `owes_proof()` false, or the proof standing — and
+    `unverified_word` with the proof's word otherwise; `proven` never
+    appears."""
+    status = node.job_operation_status()       # what `can_start` and the failure blocks read too
+    if isinstance(status, CannotEvaluate):
+        return node.invalid_word
+    evaluated = isinstance(status, Ready)
+    if evaluated and node.unverified_word is not None:
+        if not unverified(node):
+            return node.valid_word
+        first = node.unverified_word
+    else:
+        first = node.valid_word if evaluated else "not evaluated"
+    job = node.job()
+    assert job is not None
+    outcome = job.outcome
+    if outcome is RUNNING:
+        proof = "proving"
+    elif isinstance(outcome, Failed):
+        proof = "failed to prove"
+    elif isinstance(outcome, Succeeded):
+        if not evaluated:
+            return first
+        check = node.check_outcome()
+        proof = ("unchecked proof" if check is None else "proof checking" if check is RUNNING
+                 else "proven" if check is PASSED else "bad proof")
+    else:
+        proof = "proof not started"
+    return f"{first}, {proof}"
+
+
+class With_Proof_Obligations(Node):
+    """The base of a class whose commands open proof obligations (§3):
+    `Proof_Obligation` below, one command opening one goal, and `Define`,
+    up to two goals on two commands (DEFINE.md).  What the proofs'
+    standing decides for every such class: the mark's three words and the
+    two-slot `mark`, the terminal proof `proof_text()`, the amend's carry
+    by `goal_structure()`, and `owes_proof()`.  Taken before the framework
+    base: `class Define(Theory_Member, With_Proof_Obligations, Leaf)`.
     Derives from `Node`, so that the abstract methods are enforced at the
     class's first instantiation."""
 
-    construction_job_class = Proof_Job
-    evaluation_job_class = Proof_Check
-    job_operation = None                    # a Leaf's one operation, which `_eval_opr` runs
-
-    evaluation_callback: ClassVar[str]      # the class's callback, built by `TAT_Proof_Obligation.register`
-                                            # from its two steps, `open_goal` and `after_admission` (§3)
     valid_word: ClassVar[str]               # the mark's first slot under `ready` ...
     invalid_word: ClassVar[str]             # ... and under `cannot_evaluate`
-
-    goal_state: Isar_State_Slot             # the state with the goal open and no step taken, held
-                                            # exactly while `job_operation_status()` is `Ready`; never stored
-
-    def __init__(self, parent: NonLeaf_Node, state: Isar_State_Slot, *base: Any):
-        super().__init__(parent, state, *base)      # a block's `sub_nodes` and slot before its ending
-        self.goal_state = Isar_State_Slot.assign(parent.forest().conversation)
+    unverified_word: ClassVar[str | None] = None    # a class that defines: its word while it owes a proof
 
     @abstractmethod
     def goal_structure(self) -> Any:
-        """The fields that determine the goal, `english` aside, each
+        """The fields that determine the goals, `english` aside, each
         `IsaTerm` as its `ascii`: what an amend compares with `==` (§3)."""
 
     @abstractmethod
@@ -481,8 +553,50 @@ class Proof_Obligation(Node):
         """What the evaluation sends the class's callback: its fields as
         structure, `goal_structure()` its goal part (§3)."""
 
+    def owes_proof(self) -> bool:
+        """Whether the node has a proof to owe (§3): always, the default —
+        `Proof_Obligation`'s one goal —; `Define` answers whether an
+        obligation is open (DEFINE.md §7)."""
+        return True
+
     def _carries_job_from(self, old):
-        return old.goal_structure() == self.goal_structure()    # the proof stands when the goal does (§3)
+        return old.goal_structure() == self.goal_structure()    # the proofs stand when the goals do (§3)
+
+    def mark(self, mode, depth):
+        """Two slots, `(<status>, <proof>)`, by `proof_mark` with the class's
+        words (§3)."""
+        return proof_mark(self)
+
+    def proof_text(self) -> str:
+        """The terminal proof after the class's command (§3): `by aoa` when
+        the proof stands, `sorry` otherwise; a build finds the proof in the
+        theory's proof store."""
+        return "by aoa" if proven(self) else "sorry"
+
+
+class Proof_Obligation(With_Proof_Obligations):
+    """The base of a class whose command opens exactly one goal, which is
+    admitted, the class's `after_admission` step following in the same
+    operation (§3): the operation the goal opens on, the class's
+    `job_operation` — a `Leaf`'s one operation here, a block's beginning
+    in `Beginning_Proof_Obligation`.  Taken before the framework base: `class
+    Theorem(Theory_Member, Proof_Obligation, Leaf)`.  The tree holds no
+    proof: every evaluation admits the goal, the proof construction finds
+    the proof, the proof check replays it, and the file carries `by aoa`."""
+
+    construction_job_class = Proof_Job
+    evaluation_job_class = Proof_Check
+    job_operation = None                    # a Leaf's one operation, which `_eval_opr` runs
+
+    evaluation_callback: ClassVar[str]      # the class's callback, built by `TAT_Proof_Obligation.register`
+                                            # from its two steps, `open_goal` and `after_admission` (§3)
+
+    goal_state: Isar_State_Slot             # the state with the goal open and no step taken, held
+                                            # exactly while `job_operation_status()` is `Ready`; never stored
+
+    def __init__(self, parent: NonLeaf_Node, state: Isar_State_Slot, *base: Any):
+        super().__init__(parent, state, *base)      # a block's `sub_nodes` and slot before its ending
+        self.goal_state = Isar_State_Slot.assign(parent.forest().conversation)
 
     def _states_inside(self, out=None):
         out = super()._states_inside(out)
@@ -519,41 +633,6 @@ class Proof_Obligation(Node):
     @final
     async def _eval_opr(self):
         return await self._eval_goal()
-
-    def mark(self, mode, depth):
-        """Two slots, `(<status>, <proof>)` (§3): the class's word for
-        `job_operation_status()`; the proof's from the job's outcome and
-        the check, left out under the invalid word, a stored proof left out
-        under `not evaluated`."""
-        status = self.job_operation_status()       # what `can_start` and the failure blocks read too
-        if isinstance(status, CannotEvaluate):
-            return self.invalid_word
-        evaluated = isinstance(status, Ready)
-        first = self.valid_word if evaluated else "not evaluated"
-        job = self.job()
-        assert job is not None
-        outcome = job.outcome
-        if outcome is RUNNING:
-            proof = "proving"
-        elif isinstance(outcome, Failed):
-            proof = "failed to prove"
-        elif isinstance(outcome, Succeeded):
-            if not evaluated:
-                return first
-            check = self.check_outcome()
-            proof = ("unchecked proof" if check is None else "proof checking" if check is RUNNING
-                     else "proven" if check is PASSED else "bad proof")
-        else:
-            proof = "proof not started"
-        return f"{first}, {proof}"
-
-    def proof_text(self) -> str:
-        """The terminal proof after the class's command (§3): `by aoa` when
-        the proof is `SUCCEEDED` and its stored check `PASSED`, `sorry`
-        otherwise; a build finds the proof in the theory's proof store."""
-        job = self.job()
-        assert job is not None
-        return "by aoa" if isinstance(job.outcome, Succeeded) and self.check_outcome() is PASSED else "sorry"
 
 
 class Beginning_Proof_Obligation(Proof_Obligation):

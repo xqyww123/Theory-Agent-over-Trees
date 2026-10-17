@@ -215,7 +215,7 @@ not.
 | `forked(name, args)` | framework, for a `_run` whose work is ML's | the class's callback `name` called with `(args, id)`, `id` fresh, under which the callback forks the work through `fork_job` (§3.3); returns the report's errors — none when the work passed — and its product, None when it yielded none; a cancellation meanwhile takes the id out of the table and cancels the work |
 | `cancel(reason)` | framework, synchronous | detaches the run, drains its question queue (§3.4), sets `NOT_STARTED`, cancels the task; `reason` is `NODE_DELETED`, `NODE_AMENDED` or `CONTEXT_CHANGED` when the framework cancels, and the owner is then told, even when the owner deleted or amended the node itself; `cancel_construct` passes `None`, and nothing is told |
 | wording | class, overridable defaults from `title` | `starting_notice(ids)`, `cancelling_notice(ids)` — `ids` the nodes' ids in their shortest form (§5) —, `answered_notice`, `owned_by_another_refusal`, `finished_notification(outcome)`, `cancelled_notification(reason)` |
-| `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed when the outcome is `FAILED`; `None` prints nothing |
+| `failure_header(failure)` | method, abstract | the header of its failure block (§6), printed when the outcome is `FAILED`; asked of the job, so that a class may name what its node owes; `None` prints nothing |
 
 The defaults, for the title `proof construction`: `Started the proof
 construction on \`X\`; call \`check_construct\` before you exit.` /
@@ -768,8 +768,9 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
   `job_operation_status()` `cannot_evaluate` (§3.1) —, the framework
   prints after the class's
   `print_fields`, for the construction job when its outcome is `FAILED`
-  and for the check when `check_outcome()` is `FAILED`, in that order, the job class's
-  `failure_header(failure)` — `failure` the `FAILED` outcome — and
+  and for the check when `check_outcome()` is `FAILED`, in that order, the
+  construction job's `failure_header(failure)` and the check's class's —
+  `failure` the `FAILED` outcome — and
   the message on the lines below, one level (two spaces) deeper; a `None` header
   prints nothing. A header ends in a colon; when the message is empty
   the colon is written as a period and nothing follows — `The proof no

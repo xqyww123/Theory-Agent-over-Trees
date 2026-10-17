@@ -164,12 +164,15 @@ def test_invalid_name():
           " letter and continues with letters, digits, underscores and"
           " interior hyphens, and does not end with a hyphen or an"
           " underscore.")
-    # The fact name's and the type name's grammars share one text.
+    # The fact name's, the type name's and the constant name's grammars share one text.
     check(InvalidName("rev-length", "fact name"),
           "`rev-length` is not a valid fact name: a fact name starts with a letter and continues with"
           " letters, digits, underscores and primes ('), and does not end with an underscore.")
     check(InvalidName("my-list", "type name"),
           "`my-list` is not a valid type name: a type name starts with a letter and continues with"
+          " letters, digits, underscores and primes ('), and does not end with an underscore.")
+    check(InvalidName("dl-rev", "constant name"),
+          "`dl-rev` is not a valid constant name: a constant name starts with a letter and continues with"
           " letters, digits, underscores and primes ('), and does not end with an underscore.")
 
 def test_duplicate_theory_short_name():

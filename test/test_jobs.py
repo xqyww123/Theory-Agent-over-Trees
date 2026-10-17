@@ -84,8 +84,7 @@ class Proof(jobs.Construction_Job):
     def title(cls, plural=False):
         return "proof constructions" if plural else "proof construction"
 
-    @classmethod
-    def failure_header(cls, failure):
+    def failure_header(self, failure):
         return "No proof was found:"
 
     def __init__(self, node):

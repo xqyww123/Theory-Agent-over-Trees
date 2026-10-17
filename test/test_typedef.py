@@ -26,7 +26,7 @@ from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, Invali
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed
 from isabelle_theory_agent.std import common, typedef
 from isabelle_theory_agent.std.common import NotInsideTheory, Template, Type_Parameter
-from isabelle_theory_agent.std.typedef import LIFTING_NOTICE, Typedef
+from isabelle_theory_agent.std.typedef import LIFTING_NOTICE, OWING_LINE, Typedef
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import ml_process, ml_string
 from std_forest import KINDS, forest, insert, inv, refused
@@ -267,7 +267,7 @@ def test_eval_opr_sends_the_definition_and_records_what_the_steps_yielded(monkey
     assert (q.overloaded, q.lifting) == (True, False)
     assert isinstance(r._status, M.CannotEvaluate) and (r.overloaded, r.lifting) == (True, True)    # untouched by a failure
     assert [m.unicode for m in r._status.messages] == ['Not a set type: "\'b list ⇒ bool"\nThe error(s) above occurred in typedef "bad"']
-    assert p.mark(M.BRIEFING, 0) == "valid definition, proof not started" and r.mark(M.BRIEFING, 0) == "invalid definition"
+    assert p.mark(M.BRIEFING, 0) == "unverified definition, proof not started" and r.mark(M.BRIEFING, 0) == "invalid definition"
     assert not p.is_finished() and not r.is_finished()                     # the proof is compulsory (COMMON §3)
     t, z = insert(f, x, 3, [ERRORABLE, ZERO_ONLY])
     assert t.message() == ("errorable", '("_\\<^sub>\\<bottom>" [21] 21)', "Rep_errorable", "Abs_errorable", [("'a", None)],
@@ -308,28 +308,34 @@ def test_the_recorded_fields_reach_the_store_and_the_mirror_catches_an_emit_off_
         assert_store_mirrors(f, KINDS, shape=ts.shape)
 
 
-def test_the_mark_reads_one_of_eleven_ways():
-    """§7's mark, state by state — COMMON §3's table with `Typedef`'s two
-    words; the eleven, and no other, are the document's block."""
-    [block] = fenced_blocks(TD, "7.")
+def test_the_mark_reads_one_of_eleven_ways_and_the_owing_line_stands_while_unverified():
+    """§7's mark, state by state — COMMON §3's table with the three words of
+    a class that defines: `valid definition` alone once the proof stands,
+    `unverified definition` with the proof's word before; the eleven, and
+    no other, are the document's first block; the owing line, its second,
+    exactly while the line reads `unverified definition`."""
+    [block, state] = fenced_blocks(TD, "7.")
+    assert [OWING_LINE] == state
     f, x = forest(DLIST)
     (p,) = x.sub_nodes
-    assert p.mark(M.BRIEFING, 0) == "not evaluated, proof not started"
+    assert p.mark(M.BRIEFING, 0) == "not evaluated, proof not started" and p.owing_line() is None
     proof = [(NOT_STARTED, None, "proof not started"), (RUNNING, None, "proving"), (Failed("no"), None, "failed to prove"),
-             (PROVED, None, "unchecked proof"), (PROVED, RUNNING, "proof checking"), (PROVED, PASSED, "proven"),
+             (PROVED, None, "unchecked proof"), (PROVED, RUNNING, "proof checking"), (PROVED, PASSED, None),
              (PROVED, BAD, "bad proof")]
     marks = set()
     for outcome, check, word in proof:
         with_proof(p, M.READY_CLEAN, outcome, check)
-        assert p.mark(M.BRIEFING, 0) == f"valid definition, {word}", (outcome, check)
-        marks.add(f"(valid definition, {word})")
+        expected = "valid definition" if word is None else f"unverified definition, {word}"
+        assert p.mark(M.BRIEFING, 0) == expected, (outcome, check)
+        assert p.owing_line() == (None if word is None else OWING_LINE), (outcome, check)
+        marks.add(f"({expected})")
         with_proof(p, INVALID, outcome, check)
-        assert p.mark(M.BRIEFING, 0) == "invalid definition", (outcome, check)
+        assert p.mark(M.BRIEFING, 0) == "invalid definition" and p.owing_line() is None, (outcome, check)
         marks.add("(invalid definition)")
         if outcome is not RUNNING and check is None:    # no run and no check live under `not evaluated`
             with_proof(p, M.NOT_EVALUATED, outcome, check)
             expected = "not evaluated" if outcome is PROVED else f"not evaluated, {word}"
-            assert p.mark(M.BRIEFING, 0) == expected, (outcome, check)
+            assert p.mark(M.BRIEFING, 0) == expected and p.owing_line() is None, (outcome, check)
             marks.add(f"({expected})")
     assert len(marks) == 11 and marks == set(re.findall(r"\([^)]*\)", "\n".join(block)))
 
@@ -461,7 +467,7 @@ async def test_a_subtype_is_defined_and_lifting_set_up(std_conversation, std_har
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
-            "constructs": [ts.session("TAT_Std", ts.theory("TAT_Std_A") | {"children": [
+            "constructs": [ts.session("TAT_Suite", ts.theory("TAT_Std_A") | {"children": [
                 DLIST, POLY, ERRORABLE,
                 definition("t2", "UNIV :: nat set", "A copy of the naturals", type_parameters=(), rep_function_name="domain"),
                 ZERO_ONLY,
@@ -487,24 +493,25 @@ async def test_a_subtype_is_defined_and_lifting_set_up(std_conversation, std_har
         recalled = await session.call_tool("recall", {"node_id": "typedef_t2"})                          # §8's notice
         lines = text_of(recalled).splitlines()
         assert not recalled.isError and lines == [
-            "- typedef_t2 (valid definition, proof not started)", '  t2 = "UNIV :: nat set" morphisms domain Abs_t2',
-            "  A copy of the naturals", *notice[3:5]], lines
+            "- typedef_t2 (unverified definition, proof not started)", '  t2 = "UNIV :: nat set" morphisms domain Abs_t2',
+            "  A copy of the naturals", *notice[3:5], "  " + OWING_LINE], lines
         recalled = await session.call_tool("recall", {"node_id": "theory_TAT_Std_A"})      # the nodes at depth 1: no `english`
         shown = text_of(recalled).splitlines()
-        assert not recalled.isError and shown[:15] == [
+        assert not recalled.isError and shown[:20] == [
             "- theory_TAT_Std_A (incomplete)", "  imports: Main",
-            "  - typedef_dlist (valid definition, proof not started)", "    " + one[0],
-            "  - typedef_poly (valid definition, proof not started)",
-            '    \'a poly = "{f :: nat ⇒ \'a::zero. ∀⇩∞ n. f n = 0}" morphisms coeff Abs_poly',
-            "  - typedef_errorable (valid definition, proof not started)",
-            '    \'a errorable ("_⇩⊥" [21] 21) = "UNIV :: \'a option set"',
-            "  - typedef_t2 (valid definition, proof not started)", '    t2 = "UNIV :: nat set" morphisms domain Abs_t2',
-            "    Notice:", "      " + LIFTING_NOTICE,
-            "  - typedef_zero_only (valid definition, proof not started)", '    (\'a :: zero) zero_only = "{x :: \'a. x = 0}"',
+            "  - typedef_dlist (unverified definition, proof not started)", "    " + one[0], "    " + OWING_LINE,
+            "  - typedef_poly (unverified definition, proof not started)",
+            '    \'a poly = "{f :: nat ⇒ \'a::zero. ∀⇩∞ n. f n = 0}" morphisms coeff Abs_poly', "    " + OWING_LINE,
+            "  - typedef_errorable (unverified definition, proof not started)",
+            '    \'a errorable ("_⇩⊥" [21] 21) = "UNIV :: \'a option set"', "    " + OWING_LINE,
+            "  - typedef_t2 (unverified definition, proof not started)", '    t2 = "UNIV :: nat set" morphisms domain Abs_t2',
+            "    Notice:", "      " + LIFTING_NOTICE, "    " + OWING_LINE,
+            "  - typedef_zero_only (unverified definition, proof not started)", '    (\'a :: zero) zero_only = "{x :: \'a. x = 0}"',
+            "    " + OWING_LINE,
             "  - lemma_uses_the_definitions (valid statement, proof not started)"], shown
     rendered = C.render(forest)
-    file = rendered.files[C.Path("TAT_Std/TAT_Std_A.thy")]
-    assert file.startswith('theory "TAT_Std_A"\n  imports "Main" "Minilang_AoA.Minilang_AoA"\nbegin\n') and file.endswith("end\n")
+    file = rendered.files[C.Path("TAT_Suite/TAT_Std_A.thy")]
+    assert file.startswith('theory "TAT_Std_A"\n  imports "Main" "TAT_Std.TAT_Std"\nbegin\n') and file.endswith("end\n")
     [one, two, three] = fenced_blocks(TD, "5.")
     blocks = [[*one[:3], "  sorry", one[4]], [*two[:3], "  sorry", two[4]], [*three[:2], "  sorry", three[3]],
               ["text ‹A copy of the naturals.›", 'typedef t2 = "UNIV :: nat set"', "  morphisms domain Abs_t2", "  sorry"],
@@ -541,7 +548,7 @@ async def test_a_refused_definition_and_a_refused_admission_are_obstacles(std_co
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
-            "constructs": [ts.session("TAT_Std",
+            "constructs": [ts.session("TAT_Suite",
                                       ts.theory("TAT_Std_B") | {"children": [
                                           definition(set="distinct", rep_function_name="list_of_dlist",
                                                      abs_function_name="dlist_of_list")]},
@@ -565,4 +572,4 @@ async def test_a_refused_definition_and_a_refused_admission_are_obstacles(std_co
         assert not await g.goal_state.is_initialized()      # emptied; after the walk the resulting slot holds the framework's
                                                             # copy of the input, so it says nothing of the callback
     rendered = C.render(forest)
-    assert not any(C.Path(f"TAT_Std/TAT_Std_{t}.thy") in rendered.files for t in "BC")   # an obstacle: not written
+    assert not any(C.Path(f"TAT_Suite/TAT_Std_{t}.thy") in rendered.files for t in "BC")   # an obstacle: not written

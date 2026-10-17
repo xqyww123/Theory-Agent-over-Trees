@@ -15,8 +15,8 @@ classes `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s. Its
 Python half is `isabelle_theory_agent/std/typedef.py`, its ML half
 `Isabelle_Std/ML/TAT_Typedef.ML`. Its agent-facing wording lives here —
 the `description` texts of its construct schema (§3), the sentences its
-`gen` renders, the notice of §6, and the words on its line — pinned by
-the baseline tests the way DATATYPE.md's are.
+`gen` renders, the notice of §6, the words on its line and its owing
+line (§7) — pinned by the baseline tests the way DATATYPE.md's are.
 
 One kind, `typedef`, which heads the id component: `typedef_dlist`.
 
@@ -394,16 +394,25 @@ and `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s
 The proof construction, `Proof_Job`, the proof check, `Proof_Check`,
 their callbacks, their sentences, and the two-slot mark `(<status>,
 <proof>)` are `Proof_Obligation`'s (COMMON.md §3). `Typedef`'s own are
-`valid_word` and `invalid_word`: `valid definition` (`ready`) and
-`invalid definition` (`cannot_evaluate`). Its line reads one of eleven
-ways, plus the tags of CONSTRUCT_INTERACTION §6:
+the three words of a class that defines: `valid_word`, `valid
+definition`, alone when the proof stands; `unverified_word`, `unverified
+definition`, with the proof's word while the node owes it; and
+`invalid_word`, `invalid definition`, under `cannot_evaluate`. Its line
+reads one of eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
 
 ```
-(valid definition, proof not started)  (valid definition, proving)         (valid definition, failed to prove)
-(valid definition, unchecked proof)    (valid definition, proof checking)  (valid definition, proven)
-(valid definition, bad proof)
+(valid definition)
+(unverified definition, proof not started)  (unverified definition, proving)         (unverified definition, failed to prove)
+(unverified definition, unchecked proof)    (unverified definition, proof checking)  (unverified definition, bad proof)
 (invalid definition)
-(not evaluated)                        (not evaluated, proof not started)  (not evaluated, failed to prove)
+(not evaluated)                             (not evaluated, proof not started)       (not evaluated, failed to prove)
+```
+
+While the line reads `unverified definition`, the node's owing line
+(PRINT.md §2) says what it owes:
+
+```
+The definition is unverified until the set is proven non-empty.
 ```
 
 ## 8. What it prints
@@ -439,7 +448,8 @@ Lists without repetition
 
 The evaluation's messages are the framework's to print (PRINT.md
 §3–§4): an `Error:` block while the node is an obstacle, a `Notice:`
-block when its `Ready` carries the notice of §6. A node under `recall`
+block when its `Ready` carries the notice of §6; after them, while the
+node is unverified, its owing line (§7). A node under `recall`
 whose definition Isabelle refused — a `set` that is a predicate, not a
 set:
 
@@ -452,11 +462,11 @@ set:
     The error(s) above occurred in typedef "dlist"
 ```
 
-A node under `recall` whose definition went through but for which
-Isabelle could not set lifting up (§6):
+A node under `recall` whose definition went through, its proof found
+and checked, but for which Isabelle could not set lifting up (§6):
 
 ```
-- typedef_fm (valid definition, proven)
+- typedef_fm (valid definition)
   fm = "UNIV :: (nat, nat) fmap set"
   Finite maps from naturals to naturals, as a type of their own
   Notice:
@@ -467,9 +477,10 @@ The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under
 `recall` whose stored proof failed its check:
 
 ```
-- typedef_dlist (valid definition, bad proof)
+- typedef_dlist (unverified definition, bad proof)
   'a dlist = "{xs :: 'a list. distinct xs}" morphisms list_of_dlist dlist_of_list
   Lists without repetition
+  The definition is unverified until the set is proven non-empty.
   The proof no longer holds.
 ```
 

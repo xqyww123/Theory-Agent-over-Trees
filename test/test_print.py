@@ -38,9 +38,10 @@ def slot(): return Isar_State_Slot.assign(stand_ins.conversation(CONN))
 
 # --- the node classes of the examples --------------------------------------
 # `Session` and `Theory` are the real ones; a lemma owes its proof until its
-# construction job succeeds, as `Theorem` will, and a definition prints its
-# errors in every mode but the briefing — a stand-in for `Define`, whose
-# rule is undecided (PRINT.md §8), shaped by §7's example.
+# construction job succeeds, as `Theorem` does; a definition reads `invalid
+# definition` where Isabelle refused it, as `Define` does (node_classes/
+# DEFINE.md §7), and prints its errors in every mode but the briefing, §7's
+# example; a datatype keeps the framework's default marks.
 
 class Stub:
     name: str
@@ -54,8 +55,7 @@ class Stub:
 class Proof_Construction(jobs.Construction_Job):
     @classmethod
     def title(cls, plural=False): return "proof constructions" if plural else "proof construction"
-    @classmethod
-    def failure_header(cls, failure): return "No proof was found:"
+    def failure_header(self, failure): return "No proof was found:"
     async def _run(self): raise NotImplementedError
 
 
@@ -105,6 +105,13 @@ def proven(lemma) -> None:
 
 
 class Definition(Stub, M.Leaf):          # its messages are the framework's (PRINT.md §3)
+    def mark(self, mode, depth):
+        invalid = isinstance(self.job_operation_status(), M.CannotEvaluate)
+        return "invalid definition" if invalid else super().mark(mode, depth)
+    def emit(self, indent, out): raise NotImplementedError
+
+
+class Datatype(Stub, M.Leaf):            # the default marks (PRINT.md §1)
     def emit(self, indent, out): raise NotImplementedError
 
 
@@ -115,7 +122,7 @@ class Section(Stub, M.StdBlock):
 
 
 KINDS = {"session": M.Session, "theory": M.Theory, "lemma": Lemma,
-         "definition": Definition, "section": Section}
+         "definition": Definition, "datatype": Datatype, "section": Section}
 
 
 def enter(parent, n, kind):
@@ -243,12 +250,14 @@ def test_the_lines_of_render_baselines_section_5():
     a = session(f, "A")
     x = theory(a, "X", beginning=READY, ending=READY)
     basics = section(x, "Basics")
-    g = leaf(Definition, x, "definition", "g")
-    f_ = leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=["e"])
+    tree = leaf(Datatype, x, "datatype", "tree")
+    color = leaf(Datatype, x, "datatype", "color", status=CANNOT_EVALUATE, errors=["e"])
     lines = [render(f, basics, OUT_FOCUS)[0]]
     basics.evaluation_status_ending = NOT_EVALUATED
-    lines += [render(f, n, OUT_FOCUS)[0] for n in (basics, g, f_)]
+    lines += [render(f, n, OUT_FOCUS)[0] for n in (basics, tree, color)]
     assert lines == node_lines
+    f_ = leaf(Definition, x, "definition", "f", status=CANNOT_EVALUATE, errors=["e"])
+    assert render(f, f_, OUT_FOCUS)[0] == "- definition_f (invalid definition)"     # the class's word, not `failed`
     q = leaf(Lemma, x, "lemma", "Q", status=READY)
     proven(q)
     q.job().auto_construct = True
@@ -848,3 +857,45 @@ def test_the_summary_counts_a_nesting_node_whose_jobs_can_start_under_its_job_s_
     rendered = render(f, f, RECALL)
     at = rendered.index("  - section_S (incomplete)")
     assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_P", "    1 node failed: section_U"]
+
+
+# --- the owing line (PRINT.md §2; node_classes/COMMON.md §3) -----------------
+
+class Standing(Lemma):
+    """A leaf answering a owing line while `ready`, as a class that defines
+    does (node_classes/COMMON.md §3)."""
+    def owing_line(self):
+        (status,) = self.evaluation_statuses()
+        return "The definition is unverified until termination is proven." if isinstance(status, M.Ready) else None
+
+
+def test_the_owing_line_stands_after_the_messages_and_before_the_failure_blocks_where_detailed():
+    """PRINT.md §2: the class's `owing_line()` is written under the line
+    after the messages and before the failure blocks, wherever the node is
+    detailed — `Recall` below depth 2, a focus — and nowhere else; `None`,
+    `Node`'s default, writes nothing."""
+    from Isabelle_RPC_Host.unicode import IsaTerm
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY)
+    p = leaf(Standing, x, "lemma", "P", status=M.Ready((IsaTerm.from_agent("Lifting is off."),)))
+    p.job().outcome = jobs.Failed("Sledgehammer timed out.")
+    q = leaf(Standing, x, "lemma", "Q", status=NOT_EVALUATED)
+    s = section(x, "S")
+    r = leaf(Standing, s, "lemma", "R", status=READY)
+    line = "The definition is unverified until termination is proven."
+    assert render(f, p, RECALL) == ["- lemma_P (valid statement, failed to prove)", "  Notice:", "    Lifting is off.",
+                                    "  " + line, "  No proof was found:", "    Sledgehammer timed out."]
+    assert render(f, q, RECALL) == ["- lemma_Q (not evaluated, proof not started)"]
+    assert M.Node.owing_line(p) is None and leaf(Lemma, x, "lemma", "T", status=READY).owing_line() is None
+    whole = render(f, x, RECALL)
+    assert whole.count("    " + line) == 1 and "      " + line not in whole        # P at depth 1; R at depth 2 is not detailed
+    assert whole.index("    " + line) == whole.index("      Lifting is off.") + 1 == whole.index("    No proof was found:") - 1
+    assert all(line not in l for l in render(f, x, focus(x)))                     # the children in Out_Focus: lines only
+    quickview = render(f, x, focus(p))                              # P a focus; its notice was seen in the recall above
+    assert [l.strip() for l in quickview].count(line) == 1
+    assert quickview[quickview.index("  - lemma_P (valid statement, failed to prove)") + 1] == "    " + line
+    deep = render(f, x, focus(r))                                                   # R a focus at depth 2: detailed
+    assert "      " + line in deep and "    " + line not in deep
+    assert all(line not in l for l in render(f, x, M.BRIEFING))
+    assert all(line not in l for l in render(f, a, focus(a, depth=0)))

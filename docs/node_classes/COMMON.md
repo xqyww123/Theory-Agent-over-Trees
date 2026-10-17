@@ -104,9 +104,16 @@ Lifting_Closing)`, `Lifting_Closing` being the plugin's `StdBlock` (§6)
 registered class pins the rule, as §1's pins `Theory_Member`, and the
 loader refuses `Proof_Obligation` bare on a block, `None` being no
 operation of a block, as it refuses `Beginning_Proof_Obligation` on a
-leaf (PLUGIN_SYSTEM §5). `Proof_Obligation` derives from `Node`, so
-that its abstract methods, `goal_structure()` and `message()`, are
-enforced. `Theorem`, `Typedef` and `LiftDefinition` derive from it
+leaf (PLUGIN_SYSTEM §5). `Proof_Obligation` derives from
+`With_Proof_Obligations`, the base of every class whose commands open
+proof obligations — `Define`'s open up to two, on two commands
+(DEFINE.md) —, which holds what the proofs' standing decides for every
+such class: the mark's three words and `mark` (the mark, below),
+`proof_text()` (the emission, below), `_carries_job_from` (the amend,
+below) and the hook `owes_proof()` — true by default, `Define`'s whether
+an obligation is open —; it derives from `Node`, so that its abstract
+methods, `goal_structure()` and `message()`, are enforced. `Theorem`,
+`Typedef` and `LiftDefinition` derive from `Proof_Obligation`
 (THEOREM.md, TYPEDEF.md, LIFT_DEFINITION.md) and `QuotientType` from
 `Beginning_Proof_Obligation` (INDEX.md); `Interpretation` and
 `Sublocale` are expected to derive from it, each confirming it in its
@@ -241,8 +248,10 @@ identity (THEOREM.md §6).
 `proof constructions`; `compulsory` is true, so the node is finished
 only when `proof` is `SUCCEEDED` and the proof check `PASSED`
 (ARCHITECTURE §3.2, the framework's `_unfinished`). Its `_run` calls
-`TAT.Proof_Obligation.construct` with `goal_state` and the id of the
-run's fork (CONSTRUCT_INTERACTION §3.2), and waits for the report. The
+`TAT.Proof_Obligation.construct` with `goal_state`, an empty setup — the
+call's task, goal hint and tactic whitelist, which `Define`'s calls fill
+(DEFINE.md §7) — and the id of the run's fork (CONSTRUCT_INTERACTION
+§3.2), and waits for the report. The
 callback takes the slot's `Proof.state` (`Toplevel.proof_of`), its
 context and goal (`Proof.goal`), and forks through the framework's
 `fork_job` (MODULE_STRUCTURE §2.4) one call of AoA's `hammer_or_AoA'`
@@ -298,12 +307,19 @@ from `title`):
 | `finished_notification`, failure | `` No proof of `theory_X.lemma_P` was found: `` + the message |
 | `failure_header` | `No proof was found:` |
 
+The two failure sentences take the clause ` that <assertion>` after
+`was found` from the hook `_failed_assertion()`, `None` by default;
+`Define_Proof_Job` answers the failed obligation's assertion (DEFINE.md
+§7).
+
 `Proof_Check`: `title()` is `proof check`, `title(plural=True)` `proof
 checks`. `make` is the default; `_start` calls
-`TAT.Proof_Obligation.check` with `goal_state`, the stored `product`
-and the job's `id`, once the framework has put the job on the node
-(CONSTRUCT_INTERACTION §3.3). Its work, the Future task the callback
-forks: the goal is `Proof.goal` of the `Proof.state` `goal_state` holds
+`TAT.Proof_Obligation.check` with the one pair of `goal_state` and the
+stored `product` — the callback takes a list of goals, each with its
+proof, and replays them in order, `Define`'s one per open obligation
+(DEFINE.md §7) — and the job's `id`, once the framework has put the job
+on the node (CONSTRUCT_INTERACTION §3.3). Its work, the Future task the
+callback forks: the goal is `Proof.goal` of the `Proof.state` `goal_state` holds
 — the goal the construction worked on; no Toplevel transition — and the
 stored `product`, the text with its times, is replayed on it through a
 function exported from AoA: the part of
@@ -375,7 +391,7 @@ proof by a hash of its goal. The framework's question
 of the replaced node's own class, before anything moves, and answered
 true to have the old job's image copied, the replay times with it
 (CONSTRUCT_INTERACTION §3.1; MODULE_STRUCTURE §4.1, §4.2) —
-`Proof_Obligation` answers with `old.goal_structure() ==
+`With_Proof_Obligations` answers with `old.goal_structure() ==
 self.goal_structure()`; a class may override the answer, saying in its
 own document why its goal is not decided by those fields alone. No
 class's `gen` reads the replaced node for it. `Theorem`'s is its
@@ -383,13 +399,13 @@ statement, names included (THEOREM.md §4); `Typedef`'s is
 `type_parameters` and `set` (TYPEDEF.md §4); `LiftDefinition`'s is
 `type` and `is` (LIFT_DEFINITION.md §4).
 
-**The mark.** `Proof_Obligation` overrides `mark` with two slots, `(<status>,
-<proof>)`; the framework's `complete` never appears on the line. The
-first slot is the class's two words for `job_operation_status()`
+**The mark.** `With_Proof_Obligations` overrides `mark` with two slots,
+`(<status>, <proof>)`; the framework's `complete` never appears on the line. The
+first slot is the class's word for `job_operation_status()`
 (CONSTRUCT_INTERACTION §3.1), its
 class attributes `valid_word` and `invalid_word` — `valid statement`
 and `invalid statement` for `Theorem`, `valid definition` and `invalid
-definition` for a class that defines, `Typedef` (TYPEDEF.md §7) — and
+definition` for a class that defines (below) — and
 `not evaluated`. The second, from `proof` and the proof
 check:
 
@@ -405,11 +421,28 @@ check:
 
 Under the invalid word the proof slot is left out. Under `not
 evaluated` a stored proof is left out and the other two words written.
-A running proof check exists only under the valid word — a stored check
+A running proof check exists only under `ready` — a stored check
 survives under `not evaluated`, where the proof slot is left out — and a
-running proof construction only there too, so the line reads one of
-eleven ways, plus the tags of CONSTRUCT_INTERACTION §6; `Theorem`'s
-eleven are THEOREM.md §7.
+running proof construction only there too, so `Theorem`'s line reads
+one of eleven ways, plus the tags of CONSTRUCT_INTERACTION §6
+(THEOREM.md §7).
+
+A class that defines — `Typedef`, `LiftDefinition`, `QuotientType`,
+`Define` — sets a third word, `unverified_word`, `unverified
+definition`: its definition is valid only once its obligation is
+discharged, so under `ready` the first slot is `valid_word` alone, the
+proof slot left out, when the node owes no proof — its `owes_proof()`
+false, `Define`'s with no open obligation (DEFINE.md §7), or `proof`
+`SUCCEEDED` and the proof check `PASSED` — and `unverified_word` with
+the proof slot's word while it does; `proven` never stands on such a
+line, `valid definition` saying it. Such a line reads one of eleven
+ways too, listed in the class's document. While it reads
+`unverified_word`, the class's `owing_line()` — the framework's hook,
+`None` on `Node` and so on `Theorem`; printed under the line after the
+fields and the messages, before the jobs' blocks, wherever the node is
+detailed (PRINT.md §2) — names what the node owes, in the sentence the
+class's document gives: `Define`'s `The definition is unverified until
+termination is proven.` (DEFINE.md §7).
 
 **The emission.** `proof_text()` is the terminal proof the class writes
 after its command: `by aoa` when `proof` is `SUCCEEDED` and the proof
@@ -419,9 +452,11 @@ theory's proof store, `<short name>.proof-store` beside the file, where
 the construction's AoA call recorded it — or, on a goal with no
 subgoal, for which nothing is recorded, passes through `async_prove`'s
 short circuit (above) — and replays it without
-searching; the `aoa` method is `Minilang_AoA.Minilang_AoA`'s, which the
-plugin has every theory import (PLUGIN_SYSTEM §1; SESSION_AND_THEORY
-§2). The plugin's compile hook for AoA's proof stores,
+searching; the `aoa` method is `Minilang_AoA.Minilang_AoA`'s, which
+`TAT_Std.TAT_Std` imports, the theory the plugin has every theory of the
+forest import — it also registers the AoA tasks `Define`'s
+constructions run under (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2;
+DEFINE.md §7). The plugin's compile hook for AoA's proof stores,
 `remove_proof_stores_of_no_tree` (COMPILATION.md §5), is `common.py`'s.
 
 **The blocks.** The jobs' blocks — the framework prints them after
@@ -434,7 +469,8 @@ What stays the class's: its two steps, `open_goal` and
 `after_admission`; `record_from_evaluation` and the recorded fields it
 sets; what the agent authors; `evaluation_callback`, the name of its
 callback; `message()`; `goal_structure()`; `valid_word` and
-`invalid_word`; its own `print_fields`; and, on a block, its other
+`invalid_word`, and for a class that defines `unverified_word` and
+`owing_line()`; its own `print_fields`; and, on a block, its other
 operation, unless a base of the plugin gives it — `QuotientType`'s
 ending is `Lifting_Closing`'s (§6). `Proof_Obligation`
 stores no row of its own: `proof` and the check are the framework's
@@ -676,6 +712,23 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   test pin there; a class document lists its own sentences alone and
   names that home for the rest. `NotInsideTheory`'s sentence is §1's.
   A framework exception's whole rendering is RENDER_BASELINES §2's own.
+- A choice the evaluation makes between commands, or between a
+  command's options — `Define`'s `definition`, `function (sequential,
+  no_partials)` or `function` (DEFINE.md §6), `QuotientType`'s and `Typedef`'s
+  `(overloaded)` (QUOTIENT_TYPE.md §6) — is decided once per set of the
+  authored fields it depends on, and recorded: the class's message
+  carries the recorded choice, `None` until an evaluation has recorded
+  one — on a fresh node, on the one an amend makes, after evaluations
+  that all failed —; under `None` the
+  evaluation decides — a first form tried and a second on its refusal,
+  or a probe run whose result decides — and records the choice; under a
+  recorded choice it runs that alone, and a refusal is the operation's
+  failure, never a switch. So the text the evaluation ran is the text
+  the file carries, a re-evaluation under a changed context never
+  changes it, and a decision that costs failed trials or a probe costs
+  them once. A proof attempt whose success depends on the context —
+  `Define`'s `pat_completeness auto` and `lexicographic_order` — is no
+  such choice: it runs at every evaluation.
 
 ## 6. `Lifting_Closing`
 

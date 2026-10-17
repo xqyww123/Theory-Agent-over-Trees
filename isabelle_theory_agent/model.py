@@ -859,12 +859,12 @@ class Node(ABC):
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The line at `indent` — the mark and the framework's tags inside
         the parentheses — then `print_fields` (never in the briefing), the
-        messages, the failure blocks, the children one level deeper — for
-        a nesting node with none, where they would be shown, the empty
-        node's line — and under `Recall` the summary below an `incomplete` nesting node at the
-        last printed depth (PRINT.md §1, §2).  The root's only child,
-        reached from the root, writes its line without the dash and its
-        body at the same indent (§6)."""
+        messages, the owing line, the failure blocks, the children one level
+        deeper — for a nesting node with none, where they would be shown,
+        the empty node's line — and under `Recall` the summary below an
+        `incomplete` nesting node at the last printed depth (PRINT.md §1,
+        §2).  The root's only child, reached from the root, writes its line
+        without the dash and its body at the same indent (§6)."""
         forest = self.forest()
         mark = self.mark(mode, depth)
         inside = [part for part in (mark, *self._tags(forest.agent)) if part]
@@ -875,6 +875,7 @@ class Node(ABC):
         if mode is not BRIEFING:
             self.print_fields(below, out, mode, depth)
         self._print_messages(below, out, mode, depth)
+        self._print_owing_line(below, out, mode, depth)
         self._print_failures(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
@@ -897,28 +898,45 @@ class Node(ABC):
             tags.append("needs your answer, call `check_construct` to see it")
         return tags
 
+    def owing_line(self) -> str | None:
+        """The class's: one sentence on what the node still owes, written
+        under the line wherever the node is detailed, after the messages
+        and before the failure blocks (PRINT.md §2); None, the default,
+        writes nothing.  A class that defines answers one while its
+        definition is unverified (node_classes/COMMON.md §3)."""
+        return None
+
+    @final
+    def _print_owing_line(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+        if mode is BRIEFING or not self.detailed(mode, depth):
+            return
+        line = self.owing_line()
+        if line is not None:
+            out.write(INDENT * indent + line + "\n")
+
     @final
     def _print_failures(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The failure blocks (PRINT.md §2; CONSTRUCT_INTERACTION §6): where
-        the node is detailed, the job class's `failure_header` over the
-        message for the construction job whose outcome is `FAILED` and for
-        the check whose outcome is `FAILED` — unless an operation the node's
-        jobs depend on is an obstacle, which makes the failure stale; a None
-        header prints nothing; the seen set does not apply."""
+        the node is detailed, the construction job's `failure_header` over
+        its message while its outcome is `FAILED`, and the check's class's
+        over the check's while `check_outcome()` is `FAILED` — unless an
+        operation the node's jobs depend on is an obstacle, which makes the
+        failure stale; a None header prints nothing; the seen set does not
+        apply."""
         if mode is BRIEFING or not self.detailed(mode, depth):
             return
-        failures: list[tuple[Any, Failed]] = []
+        failures: list[tuple[Any, Failed]] = []        # the header's bearer: the job, or the check's class
         job = self.job()
         if job is not None and isinstance(job.outcome, Failed):
-            failures.append((type(job), job.outcome))
+            failures.append((job, job.outcome))
         check, job_class = self.check_outcome(), type(self).evaluation_job_class
         if isinstance(check, Failed) and job_class is not None:
             failures.append((job_class, check))
         # an Unchained_Node has no failure (its class names no job class) and no job_operation_status()
         if not failures or isinstance(self.job_operation_status(), CannotEvaluate):
             return
-        for cls, failure in failures:
-            header = cls.failure_header(failure)
+        for bearer, failure in failures:
+            header = bearer.failure_header(failure)
             if header is not None:
                 for line in with_message(header, failure.message).splitlines():
                     out.write(INDENT * indent + line + "\n")

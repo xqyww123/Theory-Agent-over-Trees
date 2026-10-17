@@ -55,19 +55,3 @@ of a build of the emitted files, where `by aoa` proves the theorems again
 Isabelle there whether any theorem carries the oracle is an account of
 completeness independent of TAT's own, and the two disagreeing would mean
 TAT has a bug.
-
-## 4. Two loose ends in `Define`
-
-Small enough to be forgotten, big enough to bite.
-
-- **How `Define`'s evaluator discharges `pat-completeness` and `termination`.**
-  ARCHITECTURE §2.2 says `aoa` discharges them, but evaluation never searches
-  (ARCHITECTURE §3.6); `Theorem` has a construction job that finds a proof
-  and an evaluation job that checks it (CONSTRUCT_INTERACTION §3), `Define`
-  has nothing yet. And what it emits for `termination` when the proof
-  failed: it is a proof obligation, so `sorry` would discharge it, but which
-  failures a node class papers over is that class's design and this one is
-  not decided.
-- **The table's `function` row covers all three forms**, `definition`
-  included, so it shares a name with one of the forms it covers. "The `Define`'s
-  `function` command failed" does not say which thing failed.

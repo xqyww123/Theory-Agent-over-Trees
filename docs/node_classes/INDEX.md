@@ -43,7 +43,8 @@ COMMON.md.
 | `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | TYPEDEF.md |
 | `QuotientType` | `quotient_type` | `StdBlock`, beginning and ending | the relation is an equivalence, a partial equivalence under `partial`, on the beginning | QUOTIENT_TYPE.md |
 | `LiftDefinition` | `lift_definition` | `Leaf` | the term respects the representation | LIFT_DEFINITION.md |
-| `Define` | `definition`, `fun`, `function`, the `form` recorded at evaluation; `abbreviation`, a kind of it or a class of its own, decided with it | `Leaf` | pattern completeness and termination, under `function` | ARCHITECTURE §2.2 in part; OPEN_QUESTIONS §4 |
+| `Define` | `definition`, `fun`, `function` with `termination`, the `form` recorded at evaluation | `Leaf` | pattern completeness and termination, under `function` | DEFINE.md |
+| `Abbreviation` | `abbreviation` | `Leaf` | none | not yet |
 | `TypeSynonym` | `type_synonym` | `Leaf` | none | not yet |
 | `Inductive` | `inductive`, `coinductive`, `inductive_set`, `coinductive_set` | `Leaf` | none | not yet |
 | `Theorem` | `lemma`, `theorem`, `corollary`, `proposition` | `Leaf` | the statement | THEOREM.md, which gains an authored field `attributes`, the attributes the fact is declared with |

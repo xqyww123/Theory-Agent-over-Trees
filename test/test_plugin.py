@@ -168,8 +168,7 @@ class Whole(jobs.Construction_Job):
     """A complete construction job class, as the loader accepts one."""
     @classmethod
     def title(cls, plural=False): return "wholes" if plural else "whole"
-    @classmethod
-    def failure_header(cls, failure): return None
+    def failure_header(self, failure): return None
     async def _run(self): return jobs.Succeeded(None)
 
 

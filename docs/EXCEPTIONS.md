@@ -214,8 +214,9 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          name's [Theory.gen]; the session name's
 │  │                          [Session.gen]; the fact name's
 │  │                          [Theorem.gen]; the type name's
-│  │                          [Datatype.gen]; the five grammars are
-│  │                          RENDER_BASELINES §2's
+│  │                          [Datatype.gen, Typedef.gen]; the constant
+│  │                          name's [LiftDefinition.gen, Define.gen];
+│  │                          the six grammars are RENDER_BASELINES §2's
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
 │  │                          (its full path in the call) already uses

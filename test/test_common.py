@@ -21,12 +21,13 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit, InvalidField
-from isabelle_theory_agent.std import common, datatype, theorem, typedef
+from isabelle_theory_agent.std import common, datatype, define, theorem, typedef
 from isabelle_theory_agent.std.common import (
     Binder, Infix, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import AFTER, ml_process, ml_string
 from test_datatype import LIST, definition
+from test_define import SUM_UPTO
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
@@ -39,6 +40,7 @@ COMMON = DOCS / "node_classes" / "COMMON.md"
 # to the registered kinds, so a new class adds its example here.
 EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: definition(LIST, kind=kind) for kind in datatype.KINDS},
+            **{kind: SUM_UPTO for kind in define.KINDS},
             **{kind: DLIST for kind in typedef.KINDS}}
 
 
@@ -409,3 +411,54 @@ async def test_tat_overloaded_needed_answers_section_4_s_two_typedefs(std_harnes
     """)
     r = await ml_process(std_harness, f"val _ = in_theory thy0 [{ml_string(str(OVERLOADED_ML))}, {ml_string(str(probe))}];")
     assert r.returncode == 0 and "needed: true false true" in r.stdout.splitlines(), (r.stdout, r.stderr)
+
+
+# --- the three words of a class that defines (§3), through the stand-in
+
+class Defining_Stand_In(Stand_In):
+    """`Stand_In` as a class that defines: its third word."""
+    unverified_word = "unverified definition"
+
+
+class Owing_Nothing_Stand_In(Defining_Stand_In):
+    """A class that defines with nothing to prove, as a `Define` with no open
+    obligation: `owes_proof()` false."""
+    def owes_proof(self):
+        return False
+
+
+def test_proof_mark_reads_the_three_words_of_a_class_that_defines():
+    """§3: with `unverified_word`, the line is the valid word alone once the
+    proof stands or when the node owes none, the unverified word with the
+    proof's word before, `proven` never; without it, `Theorem`'s table;
+    `proven`, `unverified` and `proof_mark` read the node alone — its
+    words and its `owes_proof()` —, the one computation
+    `With_Proof_Obligations.mark` is; `owing_line()` is `Node`'s `None` on
+    a class that gives none."""
+    from isabelle_theory_agent.jobs import NOT_STARTED, PASSED
+    from test_theorem import BAD, PROVED, with_proof
+    kinds = {**ts.KINDS, "lemma": Defining_Stand_In, "plain": Stand_In, "free": Owing_Nothing_Stand_In}
+    f = Forest_Under_Test(kinds=kinds)
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
+        lemma("p"), lemma("q", kind="plain"), lemma("r", kind="free")]})], kinds)))
+    (x,) = s.sub_nodes
+    p, q, r = x.sub_nodes
+    assert p.mark(M.BRIEFING, 0) == "not evaluated, proof not started" and not common.unverified(p)
+    for n in (p, q, r):
+        with_proof(n, M.READY_CLEAN, NOT_STARTED)
+    assert p.mark(M.BRIEFING, 0) == "unverified definition, proof not started" and common.unverified(p)
+    assert r.mark(M.BRIEFING, 0) == "valid definition" and not common.unverified(r)        # owes nothing
+    assert q.mark(M.BRIEFING, 0) == "valid definition, proof not started"                  # no third word
+    assert common.proof_mark(p) == p.mark(M.BRIEFING, 0) and common.proof_mark(q) == q.mark(M.BRIEFING, 0)
+    for n in (p, q):
+        with_proof(n, M.READY_CLEAN, PROVED, PASSED)
+    assert p.mark(M.BRIEFING, 0) == "valid definition" and common.proven(p) and not common.unverified(p)
+    assert q.mark(M.BRIEFING, 0) == "valid definition, proven"
+    with_proof(p, M.READY_CLEAN, PROVED, BAD)
+    assert p.mark(M.BRIEFING, 0) == "unverified definition, bad proof" and not common.proven(p)
+    with_proof(p, M.NOT_EVALUATED, PROVED, BAD)
+    assert p.mark(M.BRIEFING, 0) == "not evaluated" and not common.unverified(p)
+    assert p.owing_line() is None
+    assert Proof_Obligation.unverified_word is None and theorem.Theorem.unverified_word is None
+    assert typedef.Typedef.unverified_word == "unverified definition"
+    assert common.With_Proof_Obligations.owes_proof(p) and Proof_Obligation.owes_proof(p)      # the default: always

@@ -110,10 +110,13 @@ The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constru
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
 framework's check), against the theory name's grammar (`Theory.gen`'s
 check), against the session name's (`Session.gen`'s check), against
-the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4) and
+the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4),
 against the type name's (`Datatype.gen`'s and `Typedef.gen`'s check,
-node_classes/DATATYPE.md §4, TYPEDEF.md §4); `grammar` selects the rendering, the
-fact name's and the type name's sharing one text:
+node_classes/DATATYPE.md §4, TYPEDEF.md §4) and against the constant
+name's (`LiftDefinition.gen`'s and `Define.gen`'s check,
+node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4); `grammar` selects the
+rendering, the fact name's, the type name's and the constant name's
+sharing one text:
 
 ```
 `Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.
@@ -121,6 +124,7 @@ fact name's and the type name's sharing one text:
 `S'` is not a valid session name: a session name starts with a letter and continues with letters, digits, underscores and interior hyphens, and does not end with a hyphen or an underscore.
 `rev-length` is not a valid fact name: a fact name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 `my-list` is not a valid type name: a type name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+`dl-rev` is not a valid constant name: a constant name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 ```
 
 `DuplicateName` — two siblings would share an id component
@@ -319,8 +323,8 @@ node_classes/THEOREM.md §7's:
 ```
 - section_Basics (complete)
 - section_Basics (incomplete)
-- definition_g (not evaluated)
-- definition_f (failed)
+- datatype_tree (not evaluated)
+- datatype_color (failed)
 ```
 
 The framework's tags, after the class's mark (PRINT.md §1,

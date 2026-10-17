@@ -169,10 +169,11 @@ too many.
 
 ## 5. The `aoa` proof method
 
-The `aoa` proof method is defined in `Minilang_AoA.Minilang_AoA`. §2
-holds only if that theory is in the base heap, so a working directory
-that uses the plugin `Isabelle_Std` is launched on the base heap
-`Minilang_AoA` (node_classes/THEOREM.md).
+The `aoa` proof method is defined in `Minilang_AoA.Minilang_AoA`, which
+the plugin's `TAT_Std.TAT_Std` imports (PLUGIN_SYSTEM §1). §2 holds only
+if that theory is in the base heap, so a working directory that uses the
+plugin `Isabelle_Std` is launched on the base heap `Minilang_AoA`
+(node_classes/THEOREM.md); `TAT_Std` is loaded from source on it.
 
 ## 6. Loading a library theory that is not in the base heap
 

@@ -29,8 +29,8 @@ With an id, `Forest.render` of the node in `Recall` (PRINT.md §5): the
 node at depth 0 and everything under it to depth 3. Each level is the
 framework's line — the id in its shortest form and the mark, PRINT.md §1
 — the class's `print_fields` for that depth, the framework's message
-blocks (PRINT.md §3, §4) and its failure blocks where the node is
-detailed (PRINT.md §2), and, under an
+blocks (PRINT.md §3, §4) and, where the node is detailed, the class's
+owing line and the framework's failure blocks (PRINT.md §2), and, under an
 `incomplete` nesting node at depth 3, the framework's summary of what is
 unfinished below it (PRINT.md §2); under a nesting node with no children
 above depth 3, the empty node's line (PRINT.md §2); below depth 3

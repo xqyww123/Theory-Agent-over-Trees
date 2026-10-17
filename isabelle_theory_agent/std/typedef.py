@@ -19,10 +19,11 @@ from ..plugin import TAT_node
 from .common import (
     TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Proof_Obligation, Theory_Member, Type_Parameter, TypeMixfix,
     TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, mixfix_of, mixfix_text, mixfix_wire, normalised,
-    require_id_name, text_line, type_parameters_of, type_parameters_text, type_parameters_wire)
+    require_id_name, text_line, type_parameters_of, type_parameters_text, type_parameters_wire, unverified)
 
 KINDS = ("typedef",)
 LIFTING_NOTICE = "Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype."   # §6
+OWING_LINE = "The definition is unverified until the set is proven non-empty."                                # §7
 _DEFAULT_PREFIXES = ("Rep_", "Abs_")    # before the type's name: the Rep and the Abs function names left out (§2),
                                         # which a given name may therefore not begin with (§4)
 
@@ -68,7 +69,8 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
     }
     argument_schema = Typedef_RawAST
     evaluation_callback = "TAT.Typedef.evaluate"
-    valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7)
+    valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
+    unverified_word = "unverified definition"                               # ... while the proof is owed
 
     english: str
     type_parameters: tuple[Type_Parameter, ...]
@@ -151,6 +153,11 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         notice exactly when Isabelle could not set lifting up."""
         self.overloaded, self.lifting = what
         return () if self.lifting else (IsaTerm.from_agent(LIFTING_NOTICE),)
+
+    def owing_line(self):
+        """§7: what the node owes, while its line reads `unverified
+        definition`."""
+        return OWING_LINE if unverified(self) else None
 
     # --- what it prints (§8) and emission (§5)
 

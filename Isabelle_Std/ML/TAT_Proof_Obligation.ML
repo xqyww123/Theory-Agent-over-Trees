@@ -35,6 +35,9 @@ sig
       the resulting slot is written only when both answer `Accepted`; a
       proper interrupt is a refusal, its one message `Interrupt`; a Bug and
       every other interrupt are re-raised*)
+  val admit : Toplevel.state -> Toplevel.state TAT_Framework.answer
+    (*the admission, `apply_transition` of the half of `sorry`, which the
+      callback applies and a step may try on a state of its own*)
 end
 
 structure TAT_Proof_Obligation : TAT_PROOF_OBLIGATION =
@@ -48,6 +51,8 @@ local open MessagePackBinIO.Pack MessagePackBinIO.Unpack in
 val admit_transition =
   Toplevel.make "sorry" Position.none |> Toplevel.end_proof Proof.global_skip_proof
 
+val admit = TAT_Framework.apply_transition admit_transition
+
 (*the body of a class's evaluation callback: `register`'s contract; each
   step is applied to the message inside its operation, so that whatever the
   step does on the message is the operation's too*)
@@ -57,7 +62,7 @@ fun evaluate (input, goal, result) open_goal after_admission message =
       (case TAT_Common_Nodes.operation' goal (fn () => open_goal message (#get input ())) of
         Accepted a =>
           TAT_Common_Nodes.operation' result (fn () =>
-            TAT_Framework.apply_transition admit_transition (#get goal ())
+            admit (#get goal ())
             |> TAT_Framework.map_answer (after_admission message))
           |> TAT_Framework.map_answer (pair a)
       | Refused messages => Refused messages)
@@ -84,17 +89,50 @@ fun goal_of get =
   let val {context, goal, ...} = Proof.goal (Toplevel.proof_of (get ()))
    in (context, goal) end
 
+(*the setup of a construction's call (COMMON.md §3; DEFINE.md §7), as the
+  Python side sends it: the task -- its name and its payload, a pair of string
+  lists -- or none for AoA's `usual`; the goal hint -- its text and its
+  whole_prop patterns -- or none; the tactic whitelist, each a method name and
+  its interpretation, every entry shown in the prompt*)
+type setup =
+  (string * (string list * string list)) option * (string * string list) option * (string * string) list
+
+val unpack_setup =
+  unpackTuple3
+    (unpackOption (unpackPair (unpackString, unpackPair (unpackList unpackString, unpackList unpackString))),
+     unpackOption (unpackPair (unpackString, unpackList unpackString)),
+     unpackList (unpackPair (unpackString, unpackString)))
+
+(*the call's declarations on the goal's proof context, for the call alone,
+  through the two ML entries AoA exports for a caller holding a context; the
+  task AoA resolves in the goal's theory, where TAT_Std registers Define's two*)
+fun declared ((_, hint, tactics) : setup) ctxt =
+  ctxt
+  |> (case hint of
+        NONE => I
+      | SOME (text, patterns) =>
+          Context.proof_map (Agent_Hint.add_goal_hint {text = text, whole_prop = patterns, subterm = []}))
+  |> (if null tactics then I
+      else
+        Context.proof_map (MiniLang_Agent_AoA.add_tactics
+          (map (fn (name, interpretation) => (name, {interpretation = interpretation, in_prompt = true})) tactics)))
+
+fun task_of ((task, _, _) : setup) =
+  (case task of
+    NONE => MiniLang_Agent_AoA.usual
+  | SOME (name, payload) => {name = name, payload = packPair (packList packString, packList packString) payload})
+
 (*the proof construction (COMMON.md §3): one call of AoA's standard entry on the
-  goal, the proof store read and written on AoA's own path, forked as the job's
-  work; its product the proof.  The agent's give-up is the failure's message, as
-  the `aoa` method renders it.  AoA's Python half is served by this process: the
-  plugin's package imports it.*)
+  goal, under the call's setup, the proof store read and written on AoA's own
+  path, forked as the job's work; its product the proof.  The agent's give-up is
+  the failure's message, as the `aoa` method renders it.  AoA's Python half is
+  served by this process: the plugin's package imports it.*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Proof_Obligation.construct",
     on_interrupt = Remote_Procedure_Calling.Reraise,
-    arg_schema = unpackPair (#slot_unpacker env, unpackInt),
+    arg_schema = unpackPair (unpackPair (#slot_unpacker env, unpack_setup), unpackInt),    (*`forked`'s (args, id)*)
     ret_schema = packUnit,
-    function = fn (goal, id) =>
+    function = fn ((goal, setup), id) =>
       let val (ctxt, sequent) = goal_of (#get goal) in
         #fork_job env {id = id, work = fn () =>
           let
@@ -108,7 +146,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
                       {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
                        hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
                        read_store = SOME true, write_store = SOME true,
-                       task = MiniLang_Agent_AoA.usual, user_operations = []} ctxt sequent
+                       task = task_of setup, user_operations = []} (declared setup ctxt) sequent
               in Future.join fut end
               handle exn as MiniLang_Agent_AoA.Agent_Give_Up _ => MiniLang_Agent_AoA.method_error exn
                    | exn as Phi_Sledgehammer_Solver.Auto_Fail _ => MiniLang_Agent_AoA.method_error exn
@@ -117,30 +155,33 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
       end,
     timeout = NONE}))
 
-(*the proof check (COMMON.md §3): the stored product replayed on the same goal
-  through the function AoA exports, forked as the job's work; no theorem is one
-  empty error -- the replay says only that it failed; an interrupt is re-raised
-  for fork_job to read -- a proper one TAT did not send the check's failure
-  `Interrupt` (MODULE_STRUCTURE §2.4); anything else the replay raises is a
-  bug, AoA's own classification of it, and ends the conversation*)
+(*one stored proof replayed on its goal through the function AoA exports: a
+  theorem out is true; no theorem -- or no proof -- false, the replay saying only
+  that it failed; an interrupt is re-raised for fork_job to read -- a proper one
+  TAT did not send the check's failure `Interrupt` (MODULE_STRUCTURE §2.4);
+  anything else the replay raises is a bug, AoA's own classification of it, and
+  ends the conversation*)
+fun replays ((ctxt, sequent), SOME (text, cpu, wall)) =
+      (case Exn.capture_body (fn () =>
+              Proof_Store_AoA.replay_record (ctxt, sequent) (Phi_Proof_Store.times_of_ms (cpu, wall), text)) of
+        Exn.Res replayed => is_some replayed
+      | Exn.Exn exn =>
+          if TAT_Framework.interrupted exn then Exn.reraise exn
+          else raise TAT_Framework.Bug ("the proof check's replay raised: " ^ Runtime.exn_message exn))
+  | replays (_, NONE) = false
+
+(*the proof check (COMMON.md §3): the goals, each with its stored proof -- one
+  for a Proof_Obligation, one per open obligation for a Define (DEFINE.md §7)
+  --, replayed in order as the job's work; the first that yields no theorem is
+  one empty error*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Proof_Obligation.check",
     on_interrupt = Remote_Procedure_Calling.Reraise,
-    arg_schema = unpackTuple3 (#slot_unpacker env, unpack_product, unpackInt),
+    arg_schema = unpackPair (unpackList (unpackPair (#slot_unpacker env, unpackOption unpack_product)), unpackInt),
     ret_schema = packUnit,
-    function = fn (goal, (text, cpu, wall), id) =>
-      let val (ctxt, sequent) = goal_of (#get goal) in
-        #fork_job env {id = id, work = fn () =>
-          let
-            val replayed =
-              (case Exn.capture_body (fn () =>
-                      Proof_Store_AoA.replay_record (ctxt, sequent)
-                        (Phi_Proof_Store.times_of_ms (cpu, wall), text)) of
-                Exn.Res replayed => replayed
-              | Exn.Exn exn =>
-                  if TAT_Framework.interrupted exn then Exn.reraise exn
-                  else raise TAT_Framework.Bug ("the proof check's replay raised: " ^ Runtime.exn_message exn))
-          in (case replayed of SOME _ => NONE | NONE => error "") end}
+    function = fn (goals, id) =>
+      let val goals = map (apfst (goal_of o #get)) goals in
+        #fork_job env {id = id, work = fn () => if forall replays goals then NONE else error ""}
       end,
     timeout = NONE}))
 

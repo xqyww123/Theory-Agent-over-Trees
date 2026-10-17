@@ -2,7 +2,8 @@
 
 Status: decided (2026-09-21, after two design reviews; the quickview's
 focus and depth 2026-09-22; the marks, the fields, the blocks and the
-summary 2026-09-30 with CONSTRUCT_INTERACTION.md), except §8.
+summary 2026-09-30 with CONSTRUCT_INTERACTION.md; the owing line
+2026-10-17).
 
 Every node renders itself through one method, in a **print mode** that
 says what the reader is looking at, and at a **depth**, the number of
@@ -18,9 +19,10 @@ class Relative_Focus:                       # the quickview: every node of `node
 class Recall: ...                           # the recalled node and what is under it
 PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 
-def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None         # the framework's: the line, print_fields, the messages, the jobs' blocks, the children, the summary
+def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None         # the framework's: the line, print_fields, the messages, the owing line, the jobs' blocks, the children, the summary
 def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None  # the class's: its fields; nothing by default
 def mark(self, mode: PrintMode, depth: int) -> str                                     # the framework's default (§1); a class may override
+def owing_line(self) -> str | None                                                     # the class's: one sentence on what the node owes, under the line where detailed (§2); None by default
 def detailed(self, mode: PrintMode, depth: int) -> bool                                # a helper: true for a focus and for Recall below depth 2
 ```
 
@@ -69,8 +71,9 @@ reported something, whatever the line reads: under the default mark an
 `complete` or `incomplete` one — `incomplete` when the class still owes
 what the notice is about —; a class whose mark speaks for the
 operations its jobs depend on (CONSTRUCT_INTERACTION §3.1) shows another
-operation's `Error:` block under a line that reads its valid word — a
-`QuotientType` whose ending is refused (node_classes/COMMON.md §3).
+operation's `Error:` block under a line that reads its valid or its
+unverified word — a `QuotientType` whose ending is refused
+(node_classes/COMMON.md §3).
 
 A class overrides `mark` to say more, and reads its instant statuses
 through `evaluation_statuses()` as the default does, or the one status
@@ -90,8 +93,8 @@ own document's.
 ## 2. What each mode prints
 
 The framework writes the line at `indent`, calls `print_fields` at
-`indent + 1`, writes the messages and the blocks (below), then the
-children at `indent + 1` and `depth + 1`. A line
+`indent + 1`, writes the messages, the owing line and the blocks
+(below), then the children at `indent + 1` and `depth + 1`. A line
 that carries no dash is not a list item and opens no level — the forest
 root's header and the lone session's line (§6) — so what a node writes under it,
 its fields and its children alike, stays at `indent` while `depth` still
@@ -115,14 +118,19 @@ empty `nodes`, a node of `nodes` outside the rendered node, and one
 under another node of `nodes`.
 
 The descent is the framework's; what a class writes under its line is
-the class's, by mode and depth (§3). Four more things the framework
+the class's, by mode and depth (§3). Five more things the framework
 writes under a line: after `print_fields`, the operations' messages
-(§3), and then (CONSTRUCT_INTERACTION §6), when the
+(§3); then, when the node is detailed, the **owing line**, the one
+sentence the class's `owing_line()` answers about what the node still
+owes — `None` on `Node`; a class that defines answers one while its
+definition is unverified (node_classes/COMMON.md §3) —; and then
+(CONSTRUCT_INTERACTION §6), when the
 node is detailed, unless an operation the node's jobs depend on is an
 obstacle — its `job_operation_status()` `cannot_evaluate`
 (CONSTRUCT_INTERACTION §3.1) —, one **failure block** for
 the construction job when its outcome is `FAILED` and one for the check
-when `check_outcome()` is `FAILED`, in that order — the job class's `failure_header`, then the
+when `check_outcome()` is `FAILED`, in that order — the construction
+job's `failure_header`, the check's class's, then the
 message one level deeper, the header's colon a period when the message
 is empty; a `None` header prints nothing; on
 every detailed rendering, the seen set aside — and, under `Recall`, below
@@ -145,11 +153,12 @@ the count alone past five; no period:
 ```
 
 The summary appears under `Recall` alone, never in a quickview or the
-briefing; the blocks appear wherever the node is detailed — a focus, or
-`Recall` below depth 2 — and never in the briefing, which writes nothing
-under a line but the empty forest's hint (§6) and the empty node's line.
+briefing; the owing line and the blocks appear wherever the node is
+detailed — a focus, or `Recall` below depth 2 — and never in the
+briefing, which writes nothing under a line but the empty forest's hint
+(§6) and the empty node's line.
 
-The fourth: a nesting node with no children, in a mode that shows its
+The fifth: a nesting node with no children, in a mode that shows its
 children — `Briefing`, `Relative_Focus`, `Recall` while `depth < 3` —
 writes where its children would go the **empty node's line**, its id the
 one its own line prints:
@@ -165,8 +174,8 @@ A class writes its fields in `print_fields`, one per line, and only under
 `Recall`, choosing by the depth what to write — everything at the depths
 its own document names, a short form or nothing deeper; under
 `Relative_Focus` and `Out_Focus` it writes nothing, the framework
-writing the operations' messages (below) and, for a focus, its jobs'
-blocks (§2); `Briefing` calls nothing. What `Session` and `Theory` write
+writing the operations' messages (below) and, for a focus, its owing
+line and its jobs' blocks (§2); `Briefing` calls nothing. What `Session` and `Theory` write
 is node_classes/SESSION_AND_THEORY.md §4, what `Theorem` writes
 node_classes/THEOREM.md §8.
 
@@ -308,7 +317,7 @@ session_A (incomplete)
 - theory_Base (complete)
 - theory_X (incomplete)
   - lemma_A (valid statement, proof not started)
-  - definition_f (failed)
+  - definition_f (invalid definition)
     Error:
       Type unification failed: Clash of types "nat" and "bool"
       Type error in application: incompatible operand type
@@ -317,17 +326,19 @@ session_A (incomplete)
 ```
 
 The lines with a dash, the default marks and the message block are the
-framework's (§3), `Theorem`'s marks the class's. `theory_Base` and `theory_Y` are
+framework's (§3), `Theorem`'s and `Define`'s marks the classes' own.
+`theory_Base` and `theory_Y` are
 in `Out_Focus`; `theory_X` is the focus, and writes no field, since
 fields are `Recall`'s alone (§3) — its beginning ran and the stop inside
 it kept its ending from running, so it is `incomplete`; the call's depth
 is 0, so its children are in `Out_Focus`. `lemma_A` ran and still owes its
-proof: `Proof_Obligation`'s two-slot mark (node_classes/COMMON.md §3).
-`definition_f` is a `Define`, a class not yet designed (§8); the block is
-the framework's `Error:` for its `CannotEvaluate`, and stands here to fix
-the block's place.
+proof: `With_Proof_Obligations`'s two-slot mark (node_classes/COMMON.md
+§3). `definition_f` is a `Define`, whose line reads `invalid definition`
+where Isabelle refused the definition (node_classes/DEFINE.md §7); the
+block is the framework's `Error:` for its `CannotEvaluate`, and stands
+here to fix the block's place.
 
-## 8. Undecided
+## 8. The classes' own marks and fields
 
-`Define`'s `mark` and `print_fields` — decided with the class. `Theorem`'s
-are node_classes/THEOREM.md §7 and §8.
+`Theorem`'s are node_classes/THEOREM.md §7 and §8, `Define`'s
+node_classes/DEFINE.md §7 and §8.

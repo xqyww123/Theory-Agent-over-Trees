@@ -451,9 +451,8 @@ the two are equal; they differ only on a loaded node not yet rerun.
 carry what the run reported *(decided)*. `NotEvaluated` carries nothing,
 its one instance `NOT_EVALUATED`; `CannotEvaluate(messages)` the reason the run
 failed; `Ready(messages)` what the class's callback chose to report of a
-run that went through — a failure it carried on past, a `Define` whose
-`termination` did not go through while its constant was defined
-(ARCHITECTURE §3.2), or a notice of its own — and `Ready()` a clean
+run that went through — a failure it carried on past, or a notice of
+its own — and `Ready()` a clean
 run; nothing Isabelle prints on its warning channel reaches a status
 (MODULE_STRUCTURE §2.4). `Ready` and `CannotEvaluate` are frozen
 dataclasses with one field, `messages: tuple[IsaTerm, ...]`

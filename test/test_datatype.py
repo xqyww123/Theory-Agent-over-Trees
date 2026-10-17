@@ -363,7 +363,7 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
-            "constructs": [ts.session("TAT_Std",
+            "constructs": [ts.session("TAT_Suite",
                                       ts.theory("TAT_Std_A") | {"children": [
                                           definition(LIST),
                                           definition(EXPR, BEXP, english="Arithmetic and boolean expressions", type_parameters=()),
@@ -381,8 +381,8 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
         text = text_of(result)
         assert not result.isError and text.count("Error:") == 1, text
         result = await session.call_tool("edit", {                    # a walk stops at an obstacle: the third theory after it
-            "action": "append", "target_id": "session_TAT_Std", "evaluate": True,
-            "constructs": [ts.theory("TAT_Std_C", "TAT_Std.TAT_Std_A") | {"children": [
+            "action": "append", "target_id": "session_TAT_Suite", "evaluate": True,
+            "constructs": [ts.theory("TAT_Std_C", "TAT_Suite.TAT_Std_A") | {"children": [
                 lemma("sort_broken", english="A sort the argument lacks", premises=(), conclusion="Val y = Val y",
                       for_any=({"name": "y", "type": "bool set"},))]}]})      # `bool set` is no `linorder`
         text = text_of(result)
@@ -412,8 +412,8 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
         recalled = await session.call_tool("recall", {"node_id": "datatype_stream"})       # §8's last example whole
         assert not recalled.isError and text_of(recalled).splitlines() == failed, text_of(recalled)
     rendered = C.render(forest)
-    file = rendered.files[C.Path("TAT_Std/TAT_Std_A.thy")]
-    assert file.startswith('theory "TAT_Std_A"\n  imports "Main" "Minilang_AoA.Minilang_AoA"\nbegin\n') and file.endswith("end\n")
+    file = rendered.files[C.Path("TAT_Suite/TAT_Std_A.thy")]
+    assert file.startswith('theory "TAT_Std_A"\n  imports "Main" "TAT_Std.TAT_Std"\nbegin\n') and file.endswith("end\n")
     blocks = fenced_blocks(DT, "5.") + [
         ["text ‹Sums.›", 'datatype (\'a, \'b) either (infixr "⊕" 60) =', '    L "\'a"', '  | R "\'b"'],
         ["text ‹Lifted.›", 'datatype (\'a :: linorder) bot ("_⇩⊥" [21] 21) =', "    Bot", '  | Val "\'a" ("«_»" [21] 21)'],
@@ -421,7 +421,7 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
         ["text ‹Streams.›", "codatatype 'a stream =", '    SCons "\'a" "\'a stream"']]
     for block in blocks:
         assert "".join(ascii_of_unicode(line) + "\n" for line in block) in file, file
-    assert not any(C.Path(f"TAT_Std/TAT_Std_{t}.thy") in rendered.files for t in "BC")   # an obstacle: not written
+    assert not any(C.Path(f"TAT_Suite/TAT_Std_{t}.thy") in rendered.files for t in "BC")   # an obstacle: not written
     # the file's body read back whole by Isabelle on the heap's Main, through the same commands
     body = tmp_path / "body.thy"
     body.write_text(file[file.index("begin\n") + len("begin\n"):file.rindex("end\n")])
