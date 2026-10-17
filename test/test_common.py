@@ -21,13 +21,14 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit, InvalidField
-from isabelle_theory_agent.std import common, datatype, define, theorem, typedef
+from isabelle_theory_agent.std import common, datatype, define, lift_definition, theorem, typedef
 from isabelle_theory_agent.std.common import (
     Binder, Infix, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import AFTER, ml_process, ml_string
 from test_datatype import LIST, definition
 from test_define import SUM_UPTO
+from test_lift_definition import DL_REV
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
@@ -41,7 +42,8 @@ COMMON = DOCS / "node_classes" / "COMMON.md"
 EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: definition(LIST, kind=kind) for kind in datatype.KINDS},
             **{kind: SUM_UPTO for kind in define.KINDS},
-            **{kind: DLIST for kind in typedef.KINDS}}
+            **{kind: DLIST for kind in typedef.KINDS},
+            **{kind: DL_REV for kind in lift_definition.KINDS}}
 
 
 def test_not_inside_theory_is_section_1_s_sentence():
@@ -297,7 +299,7 @@ def test_a_proof_obligation_takes_its_goal_s_hook_from_the_class_that_sets_its_j
             for hook in ("_eval_opr", "_eval_beginning_opr", "_eval_ending_opr") if hook in vars(setter))
     loaded = plugin.load(["isabelle_theory_agent.std"])
     obligations = {cls for cls in loaded.kinds.values() if issubclass(cls, Proof_Obligation)}
-    assert obligations == {theorem.Theorem, typedef.Typedef}
+    assert obligations == {theorem.Theorem, typedef.Typedef, lift_definition.LiftDefinition}
     assert all(takes_its_hook_from_the_class_that_sets_its_job_operation(cls) for cls in obligations)
     assert takes_its_hook_from_the_class_that_sets_its_job_operation(Block_Stand_In)
 

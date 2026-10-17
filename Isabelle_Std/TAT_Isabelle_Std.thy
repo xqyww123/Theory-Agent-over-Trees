@@ -8,6 +8,8 @@ ML_file "ML/TAT_Overloaded.ML"
 ML_file "ML/TAT_Theorem.ML"
 ML_file "ML/TAT_Datatype.ML"
 ML_file "ML/TAT_Typedef.ML"
+ML_file "ML/TAT_Lift_Definition_Command.ML"
+ML_file "ML/TAT_Lift_Definition.ML"
 ML_file "ML/TAT_Define.ML"
 
 end

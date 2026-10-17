@@ -2,10 +2,11 @@
 
 Status: proposed 2026-10-16, from the design discussion in the session
 `lift definition` (the owner's rulings there); reviewed 2026-10-17
-(ai-artifacts/review/LIFT_DEFINITION_REVIEW.md); every piece of
-agent-facing wording below is the owner's. The class is implemented
-before `QuotientType`, `LiftingContext` and `Typedef`'s block shape,
-which its description and §6's sentence name.
+(ai-artifacts/review/LIFT_DEFINITION_REVIEW.md); committed and
+implemented 2026-10-17; every piece of agent-facing wording below is the
+owner's. The class is implemented before `QuotientType`,
+`LiftingContext` and `Typedef`'s block shape, which its description and
+§6's sentence name.
 
 A `LiftDefinition` defines a function on a subtype or a quotient type
 from a term on its representation type: `lift_definition dl_rev :: "'a
@@ -19,10 +20,14 @@ it discharges the way `Theorem` does: it is a `Leaf` of the plugin
 LiftDefinition(Theory_Member, Proof_Obligation, Leaf)` — whose job
 classes `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s. Its
 Python half is `isabelle_theory_agent/std/lift_definition.py`, its ML
-half `Isabelle_Std/ML/TAT_Lift_Definition.ML`. Its agent-facing wording
-lives here — the `description` texts of its construct schema (§3), the
-sentence of §6, and the words on its line — pinned by the baseline
-tests the way TYPEDEF.md's are.
+halves `Isabelle_Std/ML/TAT_Lift_Definition.ML` and
+`TAT_Lift_Definition_Command.ML`, which runs the command with its two
+refusals at the open goal rendered — the class's sentence, from the
+search for the Lifting setups a refused definition needs, or Isabelle's
+rendering (§6). Its agent-facing wording lives here — the `description`
+texts of its construct schema (§3), the sentence of §6, the words on its
+line, and its owing line (§7) — pinned by the baseline tests the way
+TYPEDEF.md's are.
 
 One kind, `lift_definition`, which heads the id component:
 `lift_definition_dl_rev`.
@@ -46,8 +51,10 @@ any row missing is refused at start.
 
 What the last evaluation reported travels on the status the evaluation
 hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
-(messages)` when the definition failed, `Ready` with no messages when
-it went through. The two jobs' outcomes and the construction job's
+(messages)` when the definition failed — the line reads `invalid
+definition` —, `Ready` with no messages when it went through — the line
+reads `unverified definition` with the proof's word until the proof
+stands, `valid definition` then (§7). The two jobs' outcomes and the construction job's
 automatic-construction setting are recorded by the framework
 (CONSTRUCT_INTERACTION §3.2); `proof`, its product, the proof check's
 outcome, the slot `goal_state` and the compulsory construction job are
@@ -184,10 +191,8 @@ pinned there alone.
 `LiftDefinition.gen` calls `require_inside_theory` first (COMMON.md §1),
 then checks `name` against §1's grammar (`InvalidName` with `grammar` =
 `constant name`, rendered with the fact name's text, RENDER_BASELINES
-§2, a grammar `Define` shares (DEFINE.md §4); whichever of the two
-classes is implemented first adds it to the framework's `GRAMMARS`, to
-`InvalidName`'s grammars in EXCEPTIONS.md §3 and to RENDER_BASELINES §2
-as its sixth line). A sibling already bearing the node's id component
+§2's sixth line, a grammar `Define` shares, DEFINE.md §4). A sibling
+already bearing the node's id component
 is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any other
 clash of the function's name is Isabelle's at evaluation. Whether `type`
 parses and the Lifting setup of its subtype or quotient type is open
@@ -321,8 +326,9 @@ function, where the command's parser catches them
 (`lift_def_cmd_with_err_handling`; past `apply_transition` an exception
 is only its text), and renders as the parser does, by the parser's two
 renderers, `quot_thm_err` and `check_rty_err`, which
-`Lifting_Def_Code_Dt` does not export and TAT_Lift_Definition.ML carries
-verbatim — a term whose type is no representation of the subtype at a
+`Lifting_Def_Code_Dt` does not export and
+TAT_Lift_Definition_Command.ML carries verbatim — a term whose type is
+no representation of the subtype at a
 position where the subtype stands, `dl_suc :: "'a dlist ⇒ nat" is Suc`,
 and a term whose type cannot be instantiated to the representation type
 the declared type asks for, `dl_bad :: "'a dlist ⇒ nat" is id`:
@@ -331,23 +337,22 @@ the declared type asks for, `dl_bad :: "'a dlist ⇒ nat" is id`:
 Lifting failed for the following types:
 Raw type:  nat
 Abstract type:  'a dlist
-Reason:
-  The type nat is not a raw type for the quotient type "X.dlist";
-    the correct raw type must be an instance of ?'a list
+
+Reason:  The type nat is not a raw type for the quotient type "X.dlist"; the correct raw type must be an instance of ?'a list
 ```
 
 ```
 Lifting failed for the following term:
 Term:  id
 Type:  ?'b ⇒ ?'b
-Reason:  The type of the term cannot be instantiated to
-  "'a list ⇒ nat".
+
+Reason:  The type of the term cannot be instantiated to "'a list ⇒ nat".
 ```
 
 — except when a Lifting setup the definition needs is closed where the
 node stands (§2); then the step's failure is the class's sentence in
-place of Isabelle's, a string of TAT_Lift_Definition.ML pinned by an
-Isabelle-backed test.
+place of Isabelle's, a string of TAT_Lift_Definition_Command.ML pinned
+by an Isabelle-backed test.
 
 Which setups the definition needs is computed on the refusal. The
 candidates are the type constructors of `type` whose Lifting setup is
@@ -390,11 +395,14 @@ The sentence names each type of a set — its first occurrence in `type`
 as read, as `Syntax.string_of_typ` prints it in the local theory — and
 its constructor by `Proof_Context.extern_type`. With one set of one type,
 it names the node that defines the type when the type is the forest's —
-declared in a theory descending from the plugin's (`Name_Space.the_entry`
-of the type space gives the declaring theory), by `typedef`
-(`Typedef.get_info`) or by `quotient_type`
-(`Quotient_Info.lookup_quotients`) — and a `LiftingContext`; for a type
-that is not the forest's, a `LiftingContext` alone; with one set of
+declared in a theory `Thy_Info` does not hold (`Thy_Info.defined_theory`
+false of the theory `Name_Space.theory_name {long = true}` gives on the
+type space), since library theories live in `Thy_Info`'s table and the
+forest's in the framework's (EVALUATOR_DESIGN §6), by `quotient_type`
+(`Quotient_Info.lookup_quotients`) or else by `typedef`
+(`Typedef.get_info`, which a `quotient_type` fills too) — and a
+`LiftingContext`; for a type that is not the forest's, a
+`LiftingContext` alone; with one set of
 several types, a `LiftingContext` opening them all; with several sets,
 a `LiftingContext` for each:
 
@@ -406,9 +414,10 @@ The lifting of `'a dlist` and of `natural` is not open here. Place this lift_def
 The lifting of `'a wrap`, or that of `'a dlist`, is not open here. Place this lift_definition under a lifting_context opening `wrap`, or one opening `dlist`.
 ```
 
-The types of a set are joined by `and of`, the sets by `, or that of`;
-the constructors after `opening` by `and`, the alternatives by `, or one
-opening`.
+A set's types, and the sets, are named in the order of the types' first
+occurrence in `type`, sets compared type by type; the types of a set are
+joined by `and of`, the sets by `, or that of`; the constructors after
+`opening` by `and`, the alternatives by `, or one opening`.
 
 Any other refusal of the transition — a type or a term that does not
 parse — is `apply_transition` answering `Refused` with Isabelle's
@@ -465,16 +474,25 @@ with their callbacks `TAT.Proof_Obligation.check` and
 The proof construction, `Proof_Job`, the proof check, `Proof_Check`,
 their callbacks, their sentences, and the two-slot mark `(<status>,
 <proof>)` are `Proof_Obligation`'s (COMMON.md §3). `LiftDefinition`'s
-own are `valid_word` and `invalid_word`: `valid definition` (`ready`)
-and `invalid definition` (`cannot_evaluate`). Its line reads one of
-eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
+own are the three words of a class that defines: `valid_word`, `valid
+definition`, alone when the proof stands; `unverified_word`, `unverified
+definition`, with the proof's word while the node owes it; and
+`invalid_word`, `invalid definition`, under `cannot_evaluate`. Its line
+reads one of eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
 
 ```
-(valid definition, proof not started)  (valid definition, proving)         (valid definition, failed to prove)
-(valid definition, unchecked proof)    (valid definition, proof checking)  (valid definition, proven)
-(valid definition, bad proof)
+(valid definition)
+(unverified definition, proof not started)  (unverified definition, proving)         (unverified definition, failed to prove)
+(unverified definition, unchecked proof)    (unverified definition, proof checking)  (unverified definition, bad proof)
 (invalid definition)
-(not evaluated)                        (not evaluated, proof not started)  (not evaluated, failed to prove)
+(not evaluated)                             (not evaluated, proof not started)       (not evaluated, failed to prove)
+```
+
+While the line reads `unverified definition`, the node's owing line
+(PRINT.md §2) says what it waits for:
+
+```
+The definition is unverified until the term is proven to respect the representation.
 ```
 
 ## 8. What it prints
@@ -514,8 +532,9 @@ The tail of a list without repetition, if any
 ```
 
 The evaluation's messages are the framework's to print (PRINT.md
-§3–§4): an `Error:` block while the node is an obstacle. A node under
-`recall` whose definition Isabelle refused — standing where the
+§3–§4): an `Error:` block while the node is an obstacle; after it, while
+the node is unverified, its owing line (§7). A node under `recall` whose
+definition Isabelle refused — standing where the
 subtype's Lifting setup is closed (§2, §6):
 
 ```
@@ -530,9 +549,10 @@ The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under
 `recall` whose stored proof failed its check:
 
 ```
-- lift_definition_dl_rev (valid definition, bad proof)
+- lift_definition_dl_rev (unverified definition, bad proof)
   dl_rev :: "'a dlist ⇒ 'a dlist" is rev
   Reversal of a list without repetition
+  The definition is unverified until the term is proven to respect the representation.
   The proof no longer holds.
 ```
 

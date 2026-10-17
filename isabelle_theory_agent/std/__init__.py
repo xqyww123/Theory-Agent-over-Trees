@@ -3,4 +3,6 @@ what its classes share (`common`, node_classes/COMMON.md), then the node
 classes of Isabelle's standard commands, one module per class, which
 importing this package registers."""
 
-from . import common as common, datatype as datatype, define as define, theorem as theorem, typedef as typedef
+from . import (
+    common as common, datatype as datatype, define as define, lift_definition as lift_definition, theorem as theorem,
+    typedef as typedef)

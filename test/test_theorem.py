@@ -218,6 +218,35 @@ def with_proof(node, status, outcome, check=None):
     node._check_outcome = check if check in (PASSED, BAD) else None
 
 
+def assert_the_eleven_ways(node, block, owing_line):
+    """§7 of a class that defines, state by state — COMMON §3's table with
+    its three words: `valid definition` alone once the proof stands,
+    `unverified definition` with the proof's word before, `invalid
+    definition`, the three `not evaluated` ways; the eleven, and no other,
+    are the document's `block`; `owing_line()` answers `owing_line` exactly
+    while the line reads `unverified definition`."""
+    assert node.mark(M.BRIEFING, 0) == "not evaluated, proof not started" and node.owing_line() is None
+    proof = [(NOT_STARTED, None, "proof not started"), (RUNNING, None, "proving"), (Failed("no"), None, "failed to prove"),
+             (PROVED, None, "unchecked proof"), (PROVED, RUNNING, "proof checking"), (PROVED, PASSED, None),
+             (PROVED, BAD, "bad proof")]
+    marks = set()
+    for outcome, check, word in proof:
+        with_proof(node, M.READY_CLEAN, outcome, check)
+        expected = "valid definition" if word is None else f"unverified definition, {word}"
+        assert node.mark(M.BRIEFING, 0) == expected, (outcome, check)
+        assert node.owing_line() == (None if word is None else owing_line), (outcome, check)
+        marks.add(f"({expected})")
+        with_proof(node, INVALID, outcome, check)
+        assert node.mark(M.BRIEFING, 0) == "invalid definition" and node.owing_line() is None, (outcome, check)
+        marks.add("(invalid definition)")
+        if outcome is not RUNNING and check is None:    # no run and no check live under `not evaluated`
+            with_proof(node, M.NOT_EVALUATED, outcome, check)
+            expected = "not evaluated" if outcome is PROVED else f"not evaluated, {word}"
+            assert node.mark(M.BRIEFING, 0) == expected and node.owing_line() is None, (outcome, check)
+            marks.add(f"({expected})")
+    assert len(marks) == 11 and marks == set(re.findall(r"\([^)]*\)", "\n".join(block)))
+
+
 def test_the_mark_reads_one_of_eleven_ways():
     """§7's mark, state by state: the statement slot from the status, the
     proof slot from the outcome and the check — COMMON §3's table —, left out
