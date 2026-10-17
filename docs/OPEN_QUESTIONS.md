@@ -9,9 +9,7 @@ Nothing here is settled. Ordered by what it blocks.
 The node classes of the plugin `Isabelle_Std` are listed in
 node_classes/INDEX.md, whose last column says which are specified.
 `Context` and `Locale` also need their two omissibility flags
-(MCP_SPECIFICATION §2.1). Open on `Proof_Obligation`, the base the
-classes with a proof obligation share: a goal that opens with no
-subgoal (node_classes/COMMON.md §3).
+(MCP_SPECIFICATION §2.1).
 
 ## 2. The AoA round
 

@@ -2,7 +2,9 @@
 
 Status: proposed 2026-10-10, revised after the first review, committed
 2026-10-13 (e3eadf3); revised 2026-10-14 with the `Typedef` design
-(TYPEDEF.md; ai-artifacts/review/TYPEDEF_REVIEW.md).
+(TYPEDEF.md; ai-artifacts/review/TYPEDEF_REVIEW.md); revised 2026-10-16
+with the `LiftDefinition` design (LIFT_DEFINITION.md): §3's rule for a
+goal with no subgoal.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -78,16 +80,17 @@ rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5). Evaluat
 one goal, which is admitted, the class's `after_admission` step
 following the admission in the same operation into the resulting slot
 (`Typedef`'s tries `setup_lifting` and keeps the admitted state when
-Isabelle refuses it, TYPEDEF.md §6; `Theorem`'s is the identity). That
-operation is the class's `job_operation`, the operation that writes
-what the node's jobs read (CONSTRUCT_INTERACTION §3.1), in two shapes:
-a `Leaf`'s one operation — `Proof_Obligation` itself sets
-`job_operation = None` — and a `StdBlock`'s beginning, through the
-subclass `Beginning_Proof_Obligation`, which sets `"beginning"`, so
-that the node's jobs depend on the beginning alone. A class of either
-shape whose command opens a proof obligation (INDEX.md) derives from
-the class that sets its `job_operation`, before its framework base —
-`class Theorem(Theory_Member, Proof_Obligation, Leaf)`, `class
+Isabelle refuses it, TYPEDEF.md §6; `Theorem`'s and `LiftDefinition`'s
+are the identity). That operation is the class's `job_operation`, the
+operation that writes what the node's jobs read (CONSTRUCT_INTERACTION
+§3.1), in two shapes: a `Leaf`'s one operation — `Proof_Obligation`
+itself sets `job_operation = None` — and a `StdBlock`'s beginning,
+through the subclass `Beginning_Proof_Obligation`, which sets
+`"beginning"`, so that the node's jobs depend on the beginning alone. A
+class of
+either shape whose command opens a proof obligation (INDEX.md) derives
+from the class that sets its `job_operation`, before its framework base
+— `class Theorem(Theory_Member, Proof_Obligation, Leaf)`, `class
 QuotientType(Theory_Member, Beginning_Proof_Obligation, StdBlock)` —
 and takes its goal's evaluation hook from that class: `_eval_opr` from
 `Proof_Obligation`, `_eval_beginning_opr` from
@@ -98,25 +101,32 @@ loader refuses `Proof_Obligation` bare on a block, `None` being no
 operation of a block, as it refuses `Beginning_Proof_Obligation` on a
 leaf (PLUGIN_SYSTEM §5). `Proof_Obligation` derives from `Node`, so
 that its abstract methods, `goal_structure()` and `message()`, are
-enforced. `Theorem` and `Typedef` derive from it (THEOREM.md,
-TYPEDEF.md) and `QuotientType` from `Beginning_Proof_Obligation`
-(INDEX.md); `LiftDefinition`, `Interpretation` and `Sublocale` are
-expected to derive from it, each confirming it in its own document;
-`Instantiation`, whose goal opens on a `StdBlock`'s ending, decides in
-its own document how it discharges its own, and extends
-`Proof_Obligation` then, if it uses it, with a subclass whose goal
-opens on the ending. Open, `Proof_Obligation`'s own, decided with the first of
-`LiftDefinition`, `Interpretation` and `Sublocale` designed, on a
-measurement of `Proof.global_skip_proof` on such a state, and answered
-by a rule of `Proof_Obligation`, not a field of a class: a goal that
-opens with no subgoal — `lift_definition`'s when Isabelle proves
-respectfulness by itself (LIFT_DEFINITION.md), and `interpretation`'s,
-`global_interpretation`'s and `sublocale`'s of a locale with no
-assumption, which Isabelle's own library closes with `.`. What admitting
-it does, whether a proof construction runs on it and, if none, what
-`_unfinished`, `_check()` and the proof slot answer, and what
-`proof_text()` writes, are the open parts (OPEN_QUESTIONS §1). Until
-then `Proof_Obligation` serves a goal with at least one subgoal.
+enforced. `Theorem`, `Typedef` and `LiftDefinition` derive from it
+(THEOREM.md, TYPEDEF.md, LIFT_DEFINITION.md) and `QuotientType` from
+`Beginning_Proof_Obligation` (INDEX.md); `Interpretation` and
+`Sublocale` are expected to derive from it, each confirming it in its
+own document; `Instantiation`, whose goal opens on a `StdBlock`'s
+ending, decides in its own document how it discharges its own, and
+extends `Proof_Obligation` then, if it uses it, with a subclass whose
+goal opens on the ending.
+
+**A goal with no subgoal.** A command may open its goal with no subgoal
+— `lift_definition`'s when Isabelle proves the respectfulness by itself
+(LIFT_DEFINITION.md §6), `interpretation`'s, `global_interpretation`'s
+and `sublocale`'s of a locale with no assumption —, which Isabelle's own
+library closes with `.`. To `Proof_Obligation` it is a goal like any
+other, and nothing below branches on it: the admission, the half of
+`sorry`, passes on such a state and leaves no `skip_proof` oracle; the
+proof construction's call of AoA answers at once with the product `-`
+and zero times, no search having run — `async_prove`'s short circuit
+for a sequent with no subgoal
+(`contrib/auto_sledgehammer/library/sledgehammer_solver.ML`), on which
+`hammer_or_AoA'` answers `-` (`contrib/Isa-Mini/Agent/agent_server.ML`)
+—; the proof check replays
+`-`, the method that does nothing, and passes; and the file's `by aoa`
+passes in a build through the same short circuit, no driver run. So the
+node is `proven` after one construction that costs no search, and the
+file carries `by aoa` as for every other goal.
 
 The tree holds no proof (ARCHITECTURE §2.1): every evaluation admits
 the goal; the construction job, the proof construction, finds the
@@ -127,8 +137,9 @@ current context, and which the file carries as `by aoa`. What
 **The product.** `proof` is the construction job's outcome
 (CONSTRUCT_INTERACTION §3.1): `NOT_STARTED`, `RUNNING`,
 `SUCCEEDED(product)` or `FAILED(message)`, `product` being the proof:
-the method text AoA writes to its proof store, such as `(simp add: …)`
-or `aoa_replay "…"`, with the two times of its replay — the thread's
+the method text AoA answers, such as `(simp add: …)`, `aoa_replay "…"`
+or, on a goal with no subgoal, `-` (above), with the two times of its
+replay — the thread's
 CPU time and the wall time, in milliseconds, as AoA records them beside
 a proof, in the standard-machine form its store holds — which the proof
 check derives its limits from; it is stored. The proof check's outcome
@@ -187,9 +198,12 @@ propagate — a proper interrupt as far as the operation, which answers it
 as the refusal `Interrupt` (MODULE_STRUCTURE §2.5). `TAT_Proof_Obligation` builds the class's evaluation
 callback from the callback's name, the message's unpacker, the two
 steps and the packer of what they yield, and the class registers
-through the builder, `register`, the structure's one export — the
-body, `evaluate`, is private to it, so the steps cannot touch a slot
-and every class answers one shape. The
+through the builder, `register`. Beside it the structure exports the
+admission, `admit : Toplevel.state -> Toplevel.state answer`,
+`apply_transition` of the half of `sorry` below, which the callback
+applies and a step may try on a state of its own (`LiftDefinition`'s
+trial, LIFT_DEFINITION.md §6); the body, `evaluate`, is private to it,
+so the steps cannot touch a slot and every class answers one shape. The
 callback's arguments are the input slot and the resulting slot of the
 operation the goal opens on, with `goal_state` between them, and the
 message; its `on_interrupt` is `Reraise`, its `timeout`
@@ -361,7 +375,8 @@ self.goal_structure()`; a class may override the answer, saying in its
 own document why its goal is not decided by those fields alone. No
 class's `gen` reads the replaced node for it. `Theorem`'s is its
 statement, names included (THEOREM.md §4); `Typedef`'s is
-`type_parameters` and `set` (TYPEDEF.md §4).
+`type_parameters` and `set` (TYPEDEF.md §4); `LiftDefinition`'s is
+`type` and `is` (LIFT_DEFINITION.md §4).
 
 **The mark.** `Proof_Obligation` overrides `mark` with two slots, `(<status>,
 <proof>)`; the framework's `complete` never appears on the line. The
@@ -396,7 +411,9 @@ after its command: `by aoa` when `proof` is `SUCCEEDED` and the proof
 check's stored outcome is `PASSED`, `sorry` otherwise — an unchecked
 proof is written as `sorry`. A build of the file finds the proof in the
 theory's proof store, `<short name>.proof-store` beside the file, where
-the construction's AoA call recorded it, and replays it without
+the construction's AoA call recorded it — or, on a goal with no
+subgoal, for which nothing is recorded, passes through `async_prove`'s
+short circuit (above) — and replays it without
 searching; the `aoa` method is `Minilang_AoA.Minilang_AoA`'s, which the
 plugin has every theory import (PLUGIN_SYSTEM §1; SESSION_AND_THEORY
 §2). The plugin's compile hook for AoA's proof stores,
@@ -431,7 +448,7 @@ definitions its schema reaches (PLUGIN_SYSTEM §5).
 | `STATEMENT_DEFS` | `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem` |
 | `TYPE_PARAMETER_DEFS` | `TypeParameter` | `Datatype`, `Record`, `Typedef` |
 | `TYPE_MIXFIX_DEFS` | `TypeMixfix` | `Typedef`, and `Datatype` for a type's syntax |
-| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, and `Notation` for a constant's |
+| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, `LiftDefinition` for the function's, and `Notation` for a constant's |
 
 `TypeSynonym`'s and `QuotientType`'s parameters, which take no sort
 (`Parse.type_args`), are decided with those classes. The descriptions

@@ -33,6 +33,7 @@ COMMON.md.
 | `Text` | `text` | `Leaf` | none | not yet |
 | `Locale` | `locale` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
 | `Context` | `context` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
+| `LiftingContext` | `context includes t.lifting … begin … end`, which opens the Lifting setup of one or more types again | `StdBlock`, beginning and ending | none | not yet; named in LIFT_DEFINITION.md §2 |
 | `TypeClass` | `class` | `StdBlock`, beginning and ending | none | not yet |
 | `Instantiation` | `instantiation`, whose ending emits `instance`; whether a lone `instance` is a kind of it is decided with it | `StdBlock`, beginning and ending | the class axioms, on the ending | not yet |
 | `Interpretation` | `interpretation`, `global_interpretation` | `Leaf` | the locale's assumptions | not yet |
@@ -41,7 +42,7 @@ COMMON.md.
 | `Record` | `record` | `Leaf` | none | RECORD.md |
 | `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | TYPEDEF.md |
 | `QuotientType` | `quotient_type` | `StdBlock`, beginning and ending | the relation is an equivalence, on the beginning | not yet |
-| `LiftDefinition` | `lift_definition` | `Leaf` | the function respects the representation | not yet; what is decided ahead of it, LIFT_DEFINITION.md |
+| `LiftDefinition` | `lift_definition` | `Leaf` | the term respects the representation | LIFT_DEFINITION.md |
 | `Define` | `definition`, `fun`, `function`, the `form` recorded at evaluation; `abbreviation`, a kind of it or a class of its own, decided with it | `Leaf` | pattern completeness and termination, under `function` | ARCHITECTURE §2.2 in part; OPEN_QUESTIONS §4 |
 | `TypeSynonym` | `type_synonym` | `Leaf` | none | not yet |
 | `Inductive` | `inductive`, `coinductive`, `inductive_set`, `coinductive_set` | `Leaf` | none | not yet |
