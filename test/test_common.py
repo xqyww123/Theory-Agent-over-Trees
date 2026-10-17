@@ -183,6 +183,10 @@ class Block_Stand_In(Theory_Member, common.Beginning_Proof_Obligation, tm.Block)
     evaluation_callback = "TAT.Block_Stand_In.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"
 
+    def __init__(self, parent, state, name):
+        super().__init__(parent, state)
+        self.name = name
+
     def goal_structure(self):
         return ("R",)
 
@@ -196,8 +200,8 @@ BLOCK_KINDS = {**tm.KINDS, "block_stand_in": Block_Stand_In}
 def block_forest(children=1):
     """Theory > [Q > [C1, …]] over the fake block, Q the stand-in."""
     f = tm.OneTreeForest(tm.CONN, kinds=BLOCK_KINDS)
-    thy = tm.add(f, tm.Block(f, tm.slot(), "Theory", tm.slot()))
-    q = tm.add(thy, Block_Stand_In(thy, tm.slot(), "Q", tm.slot()), "block_stand_in")
+    thy = tm.add(f, tm.Block(f, tm.slot(), "Theory"))
+    q = tm.add(thy, Block_Stand_In(thy, tm.slot(), "Q"), "block_stand_in")
     cs = [tm.add(q, tm.T(q, tm.slot(), f"C{i + 1}")) for i in range(children)]
     return f, thy, q, cs
 
@@ -224,9 +228,11 @@ def test_beginning_proof_obligation_opens_the_goal_on_the_beginning_s_two_slots(
     `_slots_written_by` names `goal_state` for the beginning alone; the
     mark's first slot reads `job_operation_status()`: the valid word on
     `(Ready, NOT_EVALUATED)` and on `(Ready, CannotEvaluate)`, the invalid
-    word on `(CannotEvaluate, Ready)`, `not evaluated` before any run."""
+    word on `(CannotEvaluate, Ready)`, `not evaluated` before any run.
+    `goal_state` lies on the conversation of the node's own `state`."""
     calls = goal_call(monkeypatch)
     f, thy, q, (c1,) = block_forest()
+    assert q.goal_state.conversation is q.state.conversation
     assert q.mark(M.BRIEFING, 0) == "not evaluated, proof not started"
     run(q.evaluate_to(None, False))
     [(name, args)] = calls

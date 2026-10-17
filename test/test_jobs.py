@@ -230,7 +230,7 @@ def build(lemma=Lemma):
     start does (MODULE_STRUCTURE §4.6)."""
     f = tm.OneTreeForest(CONN, kinds=KINDS)
     f.conversation.ending.forest = f
-    thy = add(f, Block(f, slot(), "Theory", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
     t1 = add(thy, T(thy, slot(), "T1"))
     kind = {Carrying: "carrying", Checked: "checked"}.get(lemma, "lemma")
     p = add(thy, lemma(thy, slot(), "P"), kind)
@@ -842,7 +842,7 @@ def test_the_bound_holds_a_run_which_is_running_meanwhile():
     async def scenario():
         f = Bounded(CONN)
         f.conversation.ending.forest = f
-        thy = add(f, Block(f, slot(), "Theory", slot()))
+        thy = add(f, Block(f, slot(), "Theory"))
         p = add(thy, Lemma(thy, slot(), "P"), "lemma")
         q = add(thy, Lemma(thy, slot(), "Q"), "lemma")
         owner = stand_ins.agent(f.conversation)
@@ -866,7 +866,7 @@ def test_the_bound_holds_a_run_s_place_while_it_waits_for_an_answer():
     async def scenario():
         f = Bounded(CONN)
         f.conversation.ending.forest = f
-        thy = add(f, Block(f, slot(), "Theory", slot()))
+        thy = add(f, Block(f, slot(), "Theory"))
         p = add(thy, Lemma(thy, slot(), "P"), "lemma")
         q = add(thy, Lemma(thy, slot(), "Q"), "lemma")
         owner = stand_ins.agent(f.conversation)
@@ -1749,7 +1749,7 @@ def test_the_check_row_of_a_node_with_no_construction_job_is_restored():
     async def scenario():
         f = tm.OneTreeForest(CONN, kinds=kinds)
         f.conversation.ending.forest = f
-        thy = add(f, tm.Block(f, slot(), "Theory", slot()))
+        thy = add(f, tm.Block(f, slot(), "Theory"))
         o = add(thy, Only_Checked(thy, slot(), "O"), "only")
         await o.start_evaluation_job(stand_ins.agent(f.conversation))
         await report(o.evaluation_job(), ["no"])
@@ -2000,9 +2000,9 @@ def build_block(cls, kind):
     """Theory > [T1, Q > [C1]], Q of `cls`, the ending knowing the forest."""
     f = tm.OneTreeForest(CONN, kinds=BLOCK_KINDS)
     f.conversation.ending.forest = f
-    thy = add(f, Block(f, slot(), "Theory", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
     t1 = add(thy, T(thy, slot(), "T1"))
-    q = add(thy, cls(thy, slot(), "Q", slot()), kind)
+    q = add(thy, cls(thy, slot(), "Q"), kind)
     c1 = add(q, T(q, slot(), "C1"))
     return f, thy, t1, q, c1
 

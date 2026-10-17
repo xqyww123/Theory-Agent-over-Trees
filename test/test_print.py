@@ -145,7 +145,7 @@ def session(forest, name, parent_session="HOL", options=(), description=""):
 
 def theory(sess, name, imports=("Main",), beginning: M.EvaluationStatus = NOT_EVALUATED,
            ending: M.EvaluationStatus = NOT_EVALUATED, description=""):
-    t = enter(sess, M.Theory(sess, slot(), name, list(imports), slot(), slot(), description), "theory")
+    t = enter(sess, M.Theory(sess, slot(), name, list(imports), description), "theory")
     t.evaluation_status_beginning, t.evaluation_status_ending = beginning, ending
     return t
 
@@ -158,7 +158,7 @@ def leaf(cls, parent, kind, name, status: M.EvaluationStatus = NOT_EVALUATED, er
 
 def section(parent, name, beginning: M.EvaluationStatus = READY,
             ending: M.EvaluationStatus = READY):
-    s = Section(parent, slot(), [], slot()); s.name = name
+    s = Section(parent, slot()); s.name = name
     s.evaluation_status_beginning, s.evaluation_status_ending = beginning, ending
     return enter(parent, s, "section")
 
@@ -769,7 +769,7 @@ def test_the_summary_reads_a_nesting_node_stopped_inside_as_in_no_group():
     x = theory(a, "X", beginning=READY, ending=READY)
     s = section(x, "S")
     section(s, "T", ending=NOT_EVALUATED)
-    u = Constructed_Section(s, slot(), [], slot()); u.name = "U"
+    u = Constructed_Section(s, slot()); u.name = "U"
     u.evaluation_status_beginning, u.evaluation_status_ending = READY, NOT_EVALUATED
     enter(s, u, "section")
     leaf(Lemma, s, "lemma", "P", status=READY)
@@ -817,7 +817,7 @@ def test_the_failure_block_is_printed_unless_an_operation_the_jobs_depend_on_is_
     f = new_forest()
     a = session(f, "A")
     x = theory(a, "X", beginning=READY, ending=READY)
-    u = Goal_Section(x, slot(), [], slot()); u.name = "U"
+    u = Goal_Section(x, slot()); u.name = "U"
     u.evaluation_status_beginning, u.evaluation_status_ending = READY, failing("end broke")
     enter(x, u, "section")
     u.job().outcome = jobs.Failed("no proof")
@@ -846,7 +846,7 @@ def test_the_summary_counts_a_nesting_node_whose_jobs_can_start_under_its_job_s_
     x = theory(a, "X", beginning=READY, ending=READY)
     s = section(x, "S")
     section(s, "T", ending=NOT_EVALUATED)
-    u = Constructed_Goal_Section(s, slot(), [], slot()); u.name = "U"
+    u = Constructed_Goal_Section(s, slot()); u.name = "U"
     u.evaluation_status_beginning, u.evaluation_status_ending = READY, NOT_EVALUATED
     enter(s, u, "section")
     leaf(Lemma, s, "lemma", "P", status=READY)

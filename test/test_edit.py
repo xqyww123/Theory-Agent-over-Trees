@@ -96,8 +96,8 @@ class Nesting_RawAST(TypedDict):             # a declaration that nests itself, 
 def rbuild():
     """Theory > [Section > [a, b], c], every class recording."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, RBlock(f, slot(), "Theory", slot()))
-    sec = add(thy, RBlock(thy, slot(), "Section", slot()))
+    thy = add(f, RBlock(f, slot(), "Theory"))
+    sec = add(thy, RBlock(thy, slot(), "Section"))
     a = add(sec, RT(sec, slot(), "a")); b = add(sec, RT(sec, slot(), "b"))
     c = add(thy, RT(thy, slot(), "c"))
     return f, thy, sec, a, b, c
@@ -932,9 +932,9 @@ def test_on_invalidated_fires_once_per_operation():
 
 def test_blocked_beginning_reruns_when_unblocked():
     f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
     d = add(thy, T(thy, slot(), "d", fail=True))
-    sec = add(thy, Block(thy, slot(), "Sec", slot()))
+    sec = add(thy, Block(thy, slot(), "Sec"))
     a = add(sec, T(sec, slot(), "a"))
     r = run(a.evaluate_to(None, False))                # strict: d stops, sec blocked
     assert r.stopped_at is d
@@ -957,9 +957,9 @@ def test_failed_opening_repeated_pass_keeps_the_result():
 def build_x_sec_c():
     """Theory > [x, Section > [a, b], c]: a nesting node right after x."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
     x = add(thy, T(thy, slot(), "x"))
-    sec = add(thy, Block(thy, slot(), "Section", slot()))
+    sec = add(thy, Block(thy, slot(), "Section"))
     a = add(sec, T(sec, slot(), "a")); b = add(sec, T(sec, slot(), "b"))
     c = add(thy, T(thy, slot(), "c"))
     return f, thy, x, sec, a, b, c
@@ -986,9 +986,9 @@ def test_move_past_a_nesting_successor_invalidates_it_whole():
 
 def test_amend_with_a_nesting_first_child_invalidates_it_whole():
     f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
-    sec = add(thy, Block(thy, slot(), "Section", slot()))
-    inner = add(sec, Block(sec, slot(), "Inner", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
+    sec = add(thy, Block(thy, slot(), "Section"))
+    inner = add(sec, Block(sec, slot(), "Inner"))
     a = add(inner, T(inner, slot(), "a"))
     b = add(sec, T(sec, slot(), "b"))
     run(b.evaluate_to(None, False)); inv(f)
@@ -1003,9 +1003,9 @@ def test_a_beginning_failing_after_its_block_was_invalidated_copies_the_input_th
     invalidates B whole; B's beginning then fails on its second run, and
     the block's input stands as its result."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
     a = add(thy, T(thy, slot(), "A", fail=True))
-    b = add(thy, Block(thy, slot(), "B", slot(), fail_ending=True))
+    b = add(thy, Block(thy, slot(), "B", fail_ending=True))
     z = add(b, T(b, slot(), "z"))
     y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(None, True)); inv(f)
@@ -1023,7 +1023,7 @@ def test_an_obstacle_after_a_strict_stop_runs_again_when_a_walk_reaches_it():
     invalidates everything after it, the obstacle X included; the next walk
     that goes past A runs P and X again."""
     f = tm.OneTreeForest(tm.CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
     a = add(thy, T(thy, slot(), "A", fail=True)); p = add(thy, T(thy, slot(), "P"))
     x = add(thy, T(thy, slot(), "X", fail=True)); y = add(thy, T(thy, slot(), "Y"))
     run(y.evaluate_to(None, True)); inv(f)

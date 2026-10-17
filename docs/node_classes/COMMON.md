@@ -168,16 +168,15 @@ by nothing else
 (ARCHITECTURE §3.1, MODULE_STRUCTURE §4.1), holds the `Toplevel.state`
 in which the goal stands open and no proof step has been taken. It
 holds a state exactly while `job_operation_status()` is `ready`.
-`Proof_Obligation` mints it in its `__init__`, from the parent's
-`forest().conversation`, so that no class's `gen` or `from_store` mints
-it and a loaded node's is empty, like its `state`; appends it in
-`_states_inside()`, so that it is deleted with the node; and names it
-in `_slots_written_by` for `job_operation`, so that the framework
-releases it with that operation's resulting slot when the operation
-goes from written to unwritten (MODULE_STRUCTURE §4.1). Only the
-evaluation writes it, and empties it itself when a run fails: the
-framework releases it only when the operation goes from written to
-unwritten, which a failed run, a leaf's or a beginning's, is not.
+`Proof_Obligation` mints it in its constructor, so a loaded node's is
+empty, like its `state`; appends it in `_states_inside()`, so that it is
+deleted with the node; and names it in `_slots_written_by` for
+`job_operation`, so that the framework releases it with that
+operation's resulting slot when the operation goes from written to
+unwritten (MODULE_STRUCTURE §4.1). Only the evaluation writes it, and
+empties it itself when a run fails: the framework releases it only when
+the operation goes from written to unwritten, which a failed run, a
+leaf's or a beginning's, is not.
 
 **The evaluation.** `Proof_Obligation`'s `_eval_goal`, `final`, run by
 the hook of the class that sets `job_operation` — `_eval_opr` on

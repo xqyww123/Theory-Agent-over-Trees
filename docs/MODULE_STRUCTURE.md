@@ -660,15 +660,19 @@ each a round trip; nothing about the table is mirrored on
 the Python side. Persistence keeps neither the name nor the connection: a
 loaded forest is reassigned its slots.
 
-Every node holds one, `state`, the state before it. A class may own
-further slots — the plugin's `goal_state` (node_classes/COMMON.md §3) —
-and does so itself: it mints each where the node is built, in `gen` and
-`from_store`, or once in a constructor both reach, as `Proof_Obligation`
-does; appends it in `_states_inside()`, so that it is deleted
-with the node; and names it in `_slots_written_by(operation)`, empty by
-default, which answers the further slots an operation writes besides
-its resulting state — `operation` as `on_invalidated` is told it. The
-framework releases them with the operation's resulting state, in the
+Every node holds one, `state`, the state before it, which the framework
+assigns (§4.2). Every base a class derives from — `Leaf`, `StdBlock`,
+`Unchained_Node`, and a plugin's own, such as `Proof_Obligation` —
+constructs from the parent and `state` alone, so a class's constructor
+takes the two and the class's own fields and passes the two on. A class
+may own further slots — the plugin's `goal_state` (node_classes/COMMON.md
+§3) — and does so itself: it mints each on `state.conversation` in its
+constructor, which `gen` and `from_store` both reach, as
+`Proof_Obligation` does; appends it in `_states_inside()`, so that it is
+deleted with the node; and names it in `_slots_written_by(operation)`,
+empty by default, which answers the further slots an operation writes
+besides its resulting state — `operation` as `on_invalidated` is told it.
+The framework releases them with the operation's resulting state, in the
 setter that takes the operation from written to unwritten; only the
 class's evaluation callback writes them. `operation_slots(operation)`,
 public, answers an operation's input slot and resulting slot — a
@@ -753,13 +757,15 @@ the same `Evaluation` (the invalidation functions, below).
   returning the status the run leaves, its messages on it; and `emit`
   (COMPILATION.md §3). Its `job_operation` is `None`, its one
   operation (CONSTRUCT_INTERACTION §3.1).
-- `NonLeaf_Node(Node)` — `sub_nodes`, `_resulting_state_of_child`, and the
-  children loop of the recursion.
+- `NonLeaf_Node(Node)` — `sub_nodes`, which its constructor starts empty —
+  the framework places every child (§4.2) —, `_resulting_state_of_child`,
+  and the children loop of the recursion.
 - `StdBlock(NonLeaf_Node)` — keeps `_state_before_ending`, the slot after all
-  its children; a class overrides `_eval_beginning_opr() -> Ready |
-  CannotEvaluate` (from `state` into the first child's `state`) and, if
-  it has an ending command, `_eval_ending_opr() -> Ready |
-  CannotEvaluate` (from `_state_before_ending` into `resulting_state()`);
+  its children, which its constructor mints; a class overrides
+  `_eval_beginning_opr() -> Ready | CannotEvaluate` (from `state` into the
+  first child's `state`) and, if it has an ending command,
+  `_eval_ending_opr() -> Ready | CannotEvaluate` (from
+  `_state_before_ending` into `resulting_state()`);
   the default ending copies. Its `emit` is the framework's, `final`; a
   class overrides `emit_beginning` and, exactly when `_eval_ending_opr`,
   `emit_ending` (COMPILATION.md §3). Its `job_operation` is `"ending"`,
@@ -777,9 +783,10 @@ the same `Evaluation` (the invalidation functions, below).
   and a walk reaching a `Session` is a framework bug; emits nothing,
   `compile` writing its entry (COMPILATION.md §2).
 - `Theory(StdBlock)` — the root of a tree (node_classes/SESSION_AND_THEORY.md
-  §2); owns its resulting slot, `_state_after_ending`, which nothing
-  reads; `file_path()`, `<Session name>/<short name>.thy`, which the
-  header's `master_dir`, the compile and the compile hooks share;
+  §2); owns its resulting slot, `_state_after_ending`, which its
+  constructor mints and nothing reads; `file_path()`,
+  `<Session name>/<short name>.thy`, which the header's `master_dir`, the
+  compile and the compile hooks share;
   `import_sessions` and `keywords`, recorded when the header runs
   (COMPILATION.md §2; node_classes/SESSION_AND_THEORY.md §2); and
   `print_name(text)`, which writes a piece of Isabelle text — a name, a

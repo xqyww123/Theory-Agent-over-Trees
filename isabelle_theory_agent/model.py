@@ -501,11 +501,9 @@ class Node(ABC):
     def _slots_written_by(self, operation: Any) -> Sequence[Isar_State_Slot]:
         """The further slots the operation writes besides its resulting
         state (MODULE_STRUCTURE §4.1, "States"): slots of the class's own,
-        which it mints where the node is built — in `gen` and `from_store`,
-        or once in a constructor both reach — and appends in
-        `_states_inside`.  The framework releases them with the operation's
-        result.  `operation` is what `on_invalidated` is told.  None by
-        default."""
+        which it mints in its constructor and appends in `_states_inside`.
+        The framework releases them with the operation's result.
+        `operation` is what `on_invalidated` is told.  None by default."""
         return ()
 
     def _release(self, ev: Evaluation, index: int) -> None:
@@ -1264,9 +1262,9 @@ class NonLeaf_Node(Node):
 
     sub_nodes: list[Node]
 
-    def __init__(self, parent, state, sub_nodes: list[Node]):
+    def __init__(self, parent, state):
         super().__init__(parent, state)
-        self.sub_nodes = sub_nodes
+        self.sub_nodes = []                    # the framework places every child
 
     def _tree_order(self, out=None):
         out = super()._tree_order(out)
@@ -1388,9 +1386,9 @@ class StdBlock(NonLeaf_Node):
     evaluation_status_ending: EvaluationStatus
     job_operation = "ending"                   # the jobs depend on both operations unless the class names the beginning
 
-    def __init__(self, parent, state, sub_nodes, state_before_ending: Isar_State_Slot):
-        super().__init__(parent, state, sub_nodes)
-        self._state_before_ending = state_before_ending
+    def __init__(self, parent, state):
+        super().__init__(parent, state)
+        self._state_before_ending = Isar_State_Slot.assign(state.conversation)
         self.evaluation_status_beginning = NOT_EVALUATED
         self.evaluation_status_ending = NOT_EVALUATED
 
@@ -1740,7 +1738,7 @@ class Forest(Unchained_Node):
         A database TAT could not have written is refused (`TAT_StartupError`).
         `imports` are the theories the loaded plugins declare, which
         `Theory.header` writes (PLUGIN_SYSTEM §1)."""
-        super().__init__(None, Isar_State_Slot.assign(conversation), [])
+        super().__init__(None, Isar_State_Slot.assign(conversation))
         self.conversation = conversation
         self.imports = tuple(imports)
         self.identity = self.ROOT_IDENTITY
@@ -2498,7 +2496,7 @@ class Session(Unchained_Node):
 
     def __init__(self, parent, state, name: str, parent_session: str,
                  options: list[Session_Option], description: str):
-        super().__init__(parent, state, [])
+        super().__init__(parent, state)
         self.name = name
         self.parent_session = parent_session
         self.options = options
@@ -2646,16 +2644,14 @@ class Theory(StdBlock):
     _state_after_ending: Isar_State_Slot    # the resulting slot: owned, since no successor's
                                             # input is (`Unchained_Node`); nothing reads it
 
-    def __init__(self, parent, state, name: str, imports: list[str],
-                 state_before_ending: Isar_State_Slot, state_after_ending: Isar_State_Slot,
-                 description: str = ""):
-        super().__init__(parent, state, [], state_before_ending)
+    def __init__(self, parent, state, name: str, imports: list[str], description: str = ""):
+        super().__init__(parent, state)
         self.name = name
         self.imports = imports
         self.description = description
         self.import_sessions = []
         self.keywords = None
-        self._state_after_ending = state_after_ending
+        self._state_after_ending = Isar_State_Slot.assign(state.conversation)
 
     @classmethod
     async def gen(cls, config, raw: Theory_RawAST):
@@ -2682,9 +2678,7 @@ class Theory(StdBlock):
             if not is_theory_name_item(item):
                 raise InvalidField(f"imports[{i}]",
                                    "must be a theory name without quotes; a path is not allowed")
-        return cls(config.parent, config.state, name, list(raw["imports"]),
-                   Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation),
-                   raw.get("description", ""))
+        return cls(config.parent, config.state, name, list(raw["imports"]), raw.get("description", ""))
 
     def on_moving(self, new_location):
         if not isinstance(new_location.parent, Session):
@@ -2700,10 +2694,8 @@ class Theory(StdBlock):
 
     @classmethod
     def from_store(cls, config, rows):
-        conversation = config.parent.forest().conversation
         # a missing row reads as empty, `keywords` as None (COMPILATION.md §4, "Storage")
         node = cls(config.parent, config.state, rows.get("name"), rows.get("imports"),
-                   Isar_State_Slot.assign(conversation), Isar_State_Slot.assign(conversation),
                    rows.fields().get("description", ""))
         node.import_sessions = rows.fields().get("import_sessions", [])
         keywords = rows.fields().get("keywords")

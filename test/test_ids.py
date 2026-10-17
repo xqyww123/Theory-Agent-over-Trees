@@ -38,7 +38,7 @@ class Sec(Stub, M.StdBlock):
     drop_priority = 0
     @classmethod
     def from_store(cls, config, rows):
-        n = cls(config.parent, config.state, [], slot()); n.name = rows.get("name"); return n
+        n = cls(config.parent, config.state); n.name = rows.get("name"); return n
     async def _eval_beginning_opr(self): raise NotImplementedError
     def emit_beginning(self, indent, out): raise NotImplementedError
 
@@ -67,7 +67,7 @@ def mk_leaf(parent, name):
     return enter(parent, n, "lemma")
 
 def mk_block(cls, parent, name):
-    n = cls(parent, slot(), [], slot()); n.name = name
+    n = cls(parent, slot()); n.name = name
     return enter(parent, n, KIND_OF[cls])
 
 

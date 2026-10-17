@@ -1056,7 +1056,7 @@ def lemmas(*names: str):
     """theory_X > lemmas of `names`, each carrying both jobs (test_jobs's
     `Checked`); the forest and the lemmas."""
     f = forest({"theory": Block, "lemma": Checked})
-    x = add(f, Block(f, slot(), "X", slot()), "theory")
+    x = add(f, Block(f, slot(), "X"), "theory")
     return f, [add(x, Checked(x, slot(), name), "lemma") for name in names]
 
 

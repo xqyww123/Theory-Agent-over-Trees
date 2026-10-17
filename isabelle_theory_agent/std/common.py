@@ -594,9 +594,9 @@ class Proof_Obligation(With_Proof_Obligations):
     goal_state: Isar_State_Slot             # the state with the goal open and no step taken, held
                                             # exactly while `job_operation_status()` is `Ready`; never stored
 
-    def __init__(self, parent: NonLeaf_Node, state: Isar_State_Slot, *base: Any):
-        super().__init__(parent, state, *base)      # a block's `sub_nodes` and slot before its ending
-        self.goal_state = Isar_State_Slot.assign(parent.forest().conversation)
+    def __init__(self, parent: NonLeaf_Node, state: Isar_State_Slot):
+        super().__init__(parent, state)
+        self.goal_state = Isar_State_Slot.assign(state.conversation)
 
     def _states_inside(self, out=None):
         out = super()._states_inside(out)

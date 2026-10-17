@@ -83,16 +83,16 @@ process — the imported modules are the process's (ARCHITECTURE §9).
 A node class derives from `Leaf`, `StdBlock` or `Unchained_Node`
 (MODULE_STRUCTURE §4.1) and is registered with `@TAT_node`, which takes no
 arguments. An `Unchained_Node` chains no children, so a child class that
-has a result owns the slot for it, as `Theory` does: it mints the slot in
-`gen` and `from_store`, returns it from `resulting_state()`, and appends it
-in `_states_inside()`, so it is released when the node leaves.
+has a result owns the slot for it, as `Theory` does: it mints the slot
+on `state.conversation` in its constructor, which `gen` and `from_store`
+both reach, returns it from `resulting_state()`, and appends it in
+`_states_inside()`, so it is released when the node leaves.
 A class may own a further slot besides, as `Proof_Obligation` does with
-`goal_state`: it mints it where the node is built — in `gen` and
-`from_store`, or once in a constructor both reach — appends it the same
-way, and names it in `_slots_written_by(operation)`, so that the
-framework releases it with the result of the operation that writes it
-(MODULE_STRUCTURE §4.1, "States") — `goal_state` with the result of the
-node's `job_operation`, a block's beginning for `QuotientType`.
+`goal_state`: it mints and appends it the same way, and names it in
+`_slots_written_by(operation)`, so that the framework releases it with
+the result of the operation that writes it (MODULE_STRUCTURE §4.1,
+"States") — `goal_state` with the result of the node's `job_operation`,
+a block's beginning for `QuotientType`.
 Besides its hooks a class declares, as class attributes:
 
 | attribute | what it is |

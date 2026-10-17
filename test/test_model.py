@@ -148,8 +148,8 @@ class T(M.Leaf):                    # a leaf whose operation succeeds unless tol
 class Block(M.StdBlock):
     construct_schema = BLOCK_SCHEMA
     argument_schema = T_RawAST
-    def __init__(self, parent, state, name, sbe, fail_beginning=False, fail_ending=False):
-        super().__init__(parent, state, [], sbe)
+    def __init__(self, parent, state, name="", fail_beginning=False, fail_ending=False):
+        super().__init__(parent, state)
         self.name, self.fail_beginning, self.fail_ending = name, fail_beginning, fail_ending
         self.begin_runs = self.end_runs = 0
         self.consumed_begin = self.consumed_end = NOT_RUN
@@ -157,7 +157,6 @@ class Block(M.StdBlock):
     @classmethod
     async def gen(cls, config, raw: T_RawAST):
         return cls(config.parent, config.state, raw["name"],
-                   Isar_State_Slot.assign(config.state.conversation),
                    fail_beginning=raw.get("fail", False))
     def to_store(self, rows):
         rows.put("name", self.name)
@@ -166,7 +165,6 @@ class Block(M.StdBlock):
     @classmethod
     def from_store(cls, config, rows):
         return cls(config.parent, config.state, rows.get("name"),
-                   Isar_State_Slot.assign(config.state.conversation),
                    fail_beginning=rows.get("fail_beginning"),
                    fail_ending=rows.get("fail_ending"))
     async def _eval_beginning_opr(self):
@@ -268,8 +266,8 @@ def build(section=Block, **flags):
     """Theory > [Section > [T1, T2], T3, T4]; flags name a node and a failure;
     `section` is the Section's class."""
     f = OneTreeForest(CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
-    sec = add(thy, section(thy, slot(), "Section", slot(),
+    thy = add(f, Block(f, slot(), "Theory"))
+    sec = add(thy, section(thy, slot(), "Section",
                            fail_beginning=flags.get("Section") == "begin",
                            fail_ending=flags.get("Section") == "end"))
     t1 = add(sec, T(sec, slot(), "T1", fail=flags.get("T1", False)))
@@ -453,6 +451,22 @@ def test_states_inside_gathers_the_subtree_into_the_accumulator():
     assert t1._states_inside(out) is out and out == ["x", t1.state]   # extended in place
 
 
+def test_a_block_starts_empty_with_its_own_slots_on_its_state_s_conversation():
+    """A constructor alone, with nothing above the node, builds a block with
+    no children and with the slots it owns minted on `state.conversation`,
+    each fresh: two blocks and a theory on one slot share nothing but it."""
+    s = slot()
+    a, b, thy = Block(None, s, "A"), Block(None, s, "B"), M.Theory(None, s, "X", ["Main"])
+    names = [s.name]
+    for node in (a, b, thy):
+        assert node.sub_nodes == []
+        inside = node._states_inside()
+        assert inside[0] is s and all(x.conversation is s.conversation for x in inside)
+        names += [x.name for x in inside[1:]]
+    assert len(set(names)) == len(names)
+    assert a.sub_nodes is not b.sub_nodes
+
+
 def test_finished_is_derived_and_owes_nothing_is_the_classes_part():
     f, thy, sec, t1, t2, t3, t4 = build()
     assert not thy.is_finished() and not f.is_finished()
@@ -490,7 +504,7 @@ def test_a_tat_error_from_an_evaluation_hook_is_the_classes_bug():
     for cls, raised, cause in ((Raising, TAT_InternalError, InvalidName),
                                (Crashing, ZeroDivisionError, None)):
         f = OneTreeForest(CONN)
-        thy = add(f, Block(f, slot(), "Theory", slot()))
+        thy = add(f, Block(f, slot(), "Theory"))
         x = add(thy, cls(thy, slot(), "x"))
         with pytest.raises(raised) as e:
             run(x.evaluate_to(None, False))
@@ -523,8 +537,8 @@ def test_on_invalidated_sees_both_fields_written():
         def on_invalidated(self, operation):
             seen.append((self.name, operation, self._own_statuses(), self.last_evaluation_statuses()))
     f = OneTreeForest(CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
-    blk = add(thy, Looking_Block(thy, slot(), "B", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
+    blk = add(thy, Looking_Block(thy, slot(), "B"))
     x = add(blk, Looking_T(blk, slot(), "x"))
     run(thy.evaluate_to(None, False))
     invalidate(blk)
@@ -572,8 +586,8 @@ class Owning(T):
 class Owning_Block(Block):
     """A nesting node whose beginning writes a slot of the class's own,
     which its ending reads."""
-    def __init__(self, parent, state, name, sbe, fail_beginning=False, fail_ending=False):
-        super().__init__(parent, state, name, sbe, fail_beginning, fail_ending)
+    def __init__(self, parent, state, name, fail_beginning=False, fail_ending=False):
+        super().__init__(parent, state, name, fail_beginning, fail_ending)
         self.scratch = Isar_State_Slot.assign(state.conversation)
         self.read_at_the_ending = NOT_RUN
     def _states_inside(self, out=None):
@@ -1110,7 +1124,7 @@ def test_operation_slots_answers_each_operation_s_input_and_resulting_slot():
     assert t2.operation_slots(None) == (t2.state, sec._state_before_ending)
     assert sec.operation_slots("beginning") == (sec.state, t1.state)
     assert sec.operation_slots("ending") == (sec._state_before_ending, t3.state)
-    empty = add(thy, Block(thy, slot(), "Empty", slot()))
+    empty = add(thy, Block(thy, slot(), "Empty"))
     assert empty.operation_slots("beginning") == (empty.state, empty._state_before_ending)
     for node, operation in ((t1, "beginning"), (sec, None), (sec, "middle"), (f, None)):
         with pytest.raises(TAT_InternalError, match="runs no operation"):
@@ -1129,9 +1143,9 @@ def test_job_operation_status_is_the_one_status_the_jobs_see():
     NOT_EVALUATED)` and `(Ready, CannotEvaluate)` answer the beginning's
     `Ready`.  A leaf's is its one status."""
     f = OneTreeForest(CONN)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
-    ending = add(thy, Block(thy, slot(), "E", slot()))
-    beginning = add(thy, Beginning_Block(thy, slot(), "B", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
+    ending = add(thy, Block(thy, slot(), "E"))
+    beginning = add(thy, Beginning_Block(thy, slot(), "B"))
     failed, warned = M.CannotEvaluate(), M.Ready()
 
     def status(node, b, e):

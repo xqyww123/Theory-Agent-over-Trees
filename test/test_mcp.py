@@ -106,8 +106,8 @@ def build(kinds=KINDS):
     """Theory > [Section > [a, b], c]; the tools over it, by name — the
     construct tools among them when `kinds` names job classes."""
     f = forest(kinds)
-    thy = add(f, Block(f, slot(), "Theory", slot()))
-    sec = add(thy, Block(thy, slot(), "Section", slot()))
+    thy = add(f, Block(f, slot(), "Theory"))
+    sec = add(thy, Block(thy, slot(), "Section"))
     a = add(sec, T(sec, slot(), "a")); b = add(sec, T(sec, slot(), "b"))
     c = add(thy, T(thy, slot(), "c"))
     tools = {t.name: t for t in mcp.tools(f, loaded(kinds))}
@@ -257,7 +257,7 @@ def test_a_tool_renders_for_the_agent_that_called_it():
 
     kinds = {**KINDS, "loud": Loud}
     f = tm.OneTreeForest(tm.CONN, kinds=kinds)
-    add(f, Block(f, slot(), "Theory", slot()))
+    add(f, Block(f, slot(), "Theory"))
     edit = {t.name: t for t in mcp.tools(f, plugin.Loaded(kinds, EDIT_SCHEMA))}["edit"]
     one, other = Agent("main", True), Agent("a9f3c2d1e4b5", False)
 
@@ -291,10 +291,10 @@ def test_the_success_lines_of_render_baselines_section_6():
     kinds = {"theory": Block, "section": Block, "lemma": Lemma, "definition": T}
     done, evaluation, construction = fenced_blocks(RB, "6.")
     f = forest(kinds)
-    x = add(f, Block(f, slot(), "X", slot()), "theory")
-    add(x, Block(x, slot(), "Basics", slot()), "section")
+    x = add(f, Block(f, slot(), "X"), "theory")
+    add(x, Block(x, slot(), "Basics"), "section")
     add(x, Lemma(x, slot(), "P"), "lemma")
-    add(f, Block(f, slot(), "Sorting", slot()), "theory")
+    add(f, Block(f, slot(), "Sorting"), "theory")
     tools = {t.name: t for t in mcp.tools(f, loaded(kinds))}
     assert done == [
         call(tools["edit"], action="append", target_id="theory_X",
@@ -308,7 +308,7 @@ def test_the_success_lines_of_render_baselines_section_6():
     assert evaluation == ["Evaluation reached theory_X.", "Evaluation stopped at definition_f."]
 
     add(x, Lemma(x, slot(), "R"), "lemma")
-    y = add(f, Block(f, slot(), "Y", slot()), "theory")
+    y = add(f, Block(f, slot(), "Y"), "theory")
     add(y, Lemma(y, slot(), "S"), "lemma")
     ready(f.resolve("theory_X.lemma_P"), f.resolve("theory_X.lemma_Q"))   # invalidated by the move and the delete
     automatic, *forms = entries(construction)
@@ -362,10 +362,10 @@ def test_evaluate_to_s_result_the_background_line_and_blocking():
     starter."""
     kinds = {"theory": Block, "lemma": Checked, "searched": Searched_Checked}
     f = forest(kinds)
-    x = add(f, Block(f, slot(), "X", slot()), "theory")
+    x = add(f, Block(f, slot(), "X"), "theory")
     for name in "PQR":
         add(x, Checked(x, slot(), name), "lemma")
-    y = add(f, Block(f, slot(), "Y", slot()), "theory")
+    y = add(f, Block(f, slot(), "Y"), "theory")
     add(y, Checked(y, slot(), "S"), "lemma")
     add(y, Searched_Checked(y, slot(), "W"), "searched")
     for node in f._tree_order():
@@ -709,7 +709,7 @@ def test_recall_renders_the_node_in_recall_and_the_briefing_without_an_id():
     renders the root in `Recall`; a read takes no lock (MCP_SPECIFICATION
     §5)."""
     f, thy, sec, *_, tools = build()
-    inner = add(sec, Block(sec, slot(), "Inner", slot()))
+    inner = add(sec, Block(sec, slot(), "Inner"))
     add(inner, T(inner, slot(), "x"))
     sessions = ["block_Theory (not evaluated)", "- block_Section (not evaluated)",
                 "  - t_a (not evaluated)", "  - t_b (not evaluated)",
@@ -733,7 +733,7 @@ def test_recall_refusals_render_the_cause_alone():
     own.  Every refusal by class and fields, one line, no opening line,
     the forest untouched."""
     f, thy, sec, *_, tools = build()
-    other = add(thy, Block(thy, slot(), "Other", slot()))
+    other = add(thy, Block(thy, slot(), "Other"))
     add(other, T(other, slot(), "a"))                       # a second `a`: `t_a` is ambiguous
     recall = tools["recall"]
     _, [not_found, ambiguous, unexpected] = fenced_blocks(RECALL, "3.")
@@ -776,12 +776,12 @@ def theories():
     both jobs, titled as `Theorem`'s; the tools over it, by name; and the
     forest's node by its id."""
     f = forest(THEORIES)
-    x = add(f, Block(f, slot(), "X", slot()), "theory")
-    add(x, Block(x, slot(), "Basics", slot()), "section")
+    x = add(f, Block(f, slot(), "X"), "theory")
+    add(x, Block(x, slot(), "Basics"), "section")
     add(x, T(x, slot(), "f"), "definition")
     for name in "PQR":
         add(x, Checked(x, slot(), name), "lemma")
-    y = add(f, Block(f, slot(), "Y", slot()), "theory")
+    y = add(f, Block(f, slot(), "Y"), "theory")
     for name in "ST":
         add(y, Checked(y, slot(), name), "lemma")
     add(y, Unready_Lemma(y, slot(), "U"), "unready")
