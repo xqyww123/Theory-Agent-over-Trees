@@ -4,18 +4,22 @@ Status: proposed 2026-10-10, revised after the first review, committed
 2026-10-13 (e3eadf3); revised 2026-10-14 with the `Typedef` design
 (TYPEDEF.md; ai-artifacts/review/TYPEDEF_REVIEW.md); revised 2026-10-16
 with the `LiftDefinition` design (LIFT_DEFINITION.md): §3's rule for a
-goal with no subgoal.
+goal with no subgoal; revised 2026-10-17 with the `QuotientType` design
+(QUOTIENT_TYPE.md; ai-artifacts/review/quotient_type/QUOTIENT_TYPE_REVIEW.md):
+§6, and §4's helpers for type parameters without a sort, a pair of
+function names and a type's head, which land with that class.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
 this document's: the base every class derives from (§1), the `english`
 field and its `text` line (§2), the base of the classes whose command
 opens a proof obligation (§3), the `$defs` several classes merge (§4),
-and the conventions their schemas and sentences follow (§5). Its
-Python half is `isabelle_theory_agent/std/common.py`, its ML halves
+the conventions their schemas and sentences follow (§5), and the
+ending of a block that closes a type's Lifting setup (§6). Its Python
+half is `isabelle_theory_agent/std/common.py`, its ML halves
 `Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` and
-`TAT_Overloaded.ML` (§4). What a class makes of it is that
-class's own document's.
+`TAT_Overloaded.ML` (§4), and `TAT_Lifting_Closing.ML` (§6). What a
+class makes of it is that class's own document's.
 
 ## 1. `Theory_Member`
 
@@ -91,8 +95,9 @@ class of
 either shape whose command opens a proof obligation (INDEX.md) derives
 from the class that sets its `job_operation`, before its framework base
 — `class Theorem(Theory_Member, Proof_Obligation, Leaf)`, `class
-QuotientType(Theory_Member, Beginning_Proof_Obligation, StdBlock)` —
-and takes its goal's evaluation hook from that class: `_eval_opr` from
+QuotientType(Theory_Member, Beginning_Proof_Obligation,
+Lifting_Closing)`, `Lifting_Closing` being the plugin's `StdBlock` (§6)
+— and takes its goal's evaluation hook from that class: `_eval_opr` from
 `Proof_Obligation`, `_eval_beginning_opr` from
 `Beginning_Proof_Obligation`, each `final` and each running
 `_eval_goal` (the evaluation, below); the plugin's test over every
@@ -430,8 +435,8 @@ What stays the class's: its two steps, `open_goal` and
 sets; what the agent authors; `evaluation_callback`, the name of its
 callback; `message()`; `goal_structure()`; `valid_word` and
 `invalid_word`; its own `print_fields`; and, on a block, its other
-operation — a `QuotientType`'s ending, its evaluation hook and its
-emission. `Proof_Obligation`
+operation, unless a base of the plugin gives it — `QuotientType`'s
+ending is `Lifting_Closing`'s (§6). `Proof_Obligation`
 stores no row of its own: `proof` and the check are the framework's
 (CONSTRUCT_INTERACTION §3.1, ARCHITECTURE §4.1).
 
@@ -447,11 +452,14 @@ definitions its schema reaches (PLUGIN_SYSTEM §5).
 | --- | --- | --- |
 | `STATEMENT_DEFS` | `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem` |
 | `TYPE_PARAMETER_DEFS` | `TypeParameter` | `Datatype`, `Record`, `Typedef` |
-| `TYPE_MIXFIX_DEFS` | `TypeMixfix` | `Typedef`, and `Datatype` for a type's syntax |
+| `TYPE_MIXFIX_DEFS` | `TypeMixfix` | `Typedef`, `QuotientType`, and `Datatype` for a type's syntax |
 | `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, `LiftDefinition` for the function's, and `Notation` for a constant's |
 
-`TypeSynonym`'s and `QuotientType`'s parameters, which take no sort
-(`Parse.type_args`), are decided with those classes. The descriptions
+`QuotientType`'s parameters take no sort (`Parse.type_args`): type
+variables written bare, read by `type_variables_of`, which runs the
+check below under the path `type_parameters[i]` (QUOTIENT_TYPE.md §4);
+`TypeSynonym`'s, which `type_synonym` reads the same way, take the same
+shape. The descriptions
 the definitions below carry and the shared refusal sentences have
 their one home here (§5): a test of the plugin pins the schema text
 below against `common.py`'s constants, and the sentences against its
@@ -589,6 +597,34 @@ recorded `overloaded` with it, each after one run of its command with
 the option. A test pins both answers: `{x :: 'a::zero. x = 0}` true,
 `{n :: nat. n > 0}` false.
 
+Three helpers of `common.py` with no definition of their own, which
+`QuotientType` brings and `Typedef` and `Datatype` switch to
+(QUOTIENT_TYPE.md §4–§5), each class's switch its own change. The
+type-parameter check above takes the field's path: `type_parameters_of`
+runs it under `type_parameters[i].name`, and `type_variables_of(raw)`,
+over type variables written bare, under `type_parameters[i]`, answering
+`Type_Parameter`s without a sort and reading a stored image back. The
+check, the defaults and the `morphisms` writer of a pair of function
+names, parameterised by the class's two default prefixes (`Rep_` and
+`Abs_`, `rep_` and `abs_`): each given name an Isabelle identifier (§5)
+not ending with an underscore, a given name equal to its default stored
+as the field left out, the two given names different — its two
+`InvalidField` sentences, pinned here, the second naming the later of
+two given names that are the same:
+
+```
+The field `rep_function_name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+The field `abs_function_name` binds `list_of_fset` a second time.
+```
+
+— the names with the defaults filled in, for the class's `message()`;
+and the `morphisms` clause, none when neither name was given. And
+`type_head_text(parameters, name, syntax, keywords)`, a type's head as
+the commands write it: `type_parameters_text` over the parameters, the
+name through `print_name` against the keywords, and `mixfix_text`'s
+annotation in parentheses when a syntax is given — `'a fset`, `('a, 'b)
+t (infixr "+" 10)`.
+
 ## 5. Conventions
 
 - Whether a field carries a description is decided field by field, by
@@ -629,3 +665,68 @@ the option. A test pins both answers: `{x :: 'a::zero. x = 0}` true,
   test pin there; a class document lists its own sentences alone and
   names that home for the rest. `NotInsideTheory`'s sentence is §1's.
   A framework exception's whole rendering is RENDER_BASELINES §2's own.
+
+## 6. `Lifting_Closing`
+
+`Lifting_Closing` is the plugin's `StdBlock` whose ending closes the
+Lifting setup its beginning made: the base of a block whose beginning,
+whenever it is `Ready`, has defined a type and made its Lifting setup,
+the bundle `t.lifting` with it — `QuotientType` (QUOTIENT_TYPE.md).
+`Typedef` takes it when it takes the block shape; what the ending does
+for a `Typedef` whose `setup_lifting` Isabelle refused, `lifting` false
+and no bundle made (TYPEDEF.md §6), is decided with that conversion.
+`t` is the node's `name`, the type's name. The ending is the two
+commands `lifting_update t.lifting` and `lifting_forget t.lifting`,
+Isabelle's own discipline for a type whose construction is finished
+(HOL's `Multiset.thy` and `FSet.thy` end so): `lifting_update` stores
+into the type's lifting bundle every transfer rule of the context whose
+relation is the type's, the setup's own and those `lift_definition`
+declared inside the block, so that `context includes t.lifting`, which
+`LiftingContext` is for, restores them all; `lifting_forget` deletes
+those rules from the context and the type's Quotient registration,
+after which a `lift_definition` on the type is refused
+(LIFT_DEFINITION.md §6) and `transfer` leaves the type alone. A class
+takes it as its framework base, after the class that sets its
+`job_operation`: `class QuotientType(Theory_Member,
+Beginning_Proof_Obligation, Lifting_Closing)`; listed before that
+class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
+the class cannot be instantiated.
+
+It defines the ending's two hooks together, as PLUGIN_SYSTEM §5
+requires: `_eval_ending_opr` and `emit_ending`; a class on it writes
+neither.
+
+**The evaluation.** `_eval_ending_opr` calls the callback
+`TAT.Lifting_Closing.close` with the ending's two slots —
+`operation_slots("ending")`, the slot after the last child and the
+block's resulting slot (MODULE_STRUCTURE §4.1) — and the type's name.
+The callback runs, as one operation into the resulting slot
+(`TAT_Common_Nodes.operation`, MODULE_STRUCTURE §2.5), the two
+transitions the commands make, each `Toplevel.local_theory NONE NONE`:
+`Lifting_Setup.update_transfer_rules` then `Lifting_Setup.lifting_forget`
+on the bundle's pointer, `Lifting_Setup.pointer_of_bundle_binding` of
+the binding `lifting_bundle` gives the bundle, `Binding.qualify_name
+true (Binding.name t) "lifting"` (lifting_setup.ML): the pointer the
+bundle's attribute holds, at theory level and inside a `Context` or
+`Locale` alike, the target morphism leaving the full name unchanged. It
+answers the operation's messages: none, and the ending is `Ready`;
+some, and it is `CannotEvaluate` with them, the framework copying the
+ending's input through — in practice a proper interrupt's `Interrupt`
+(MODULE_STRUCTURE §2.5), the bundle being the one the block's beginning
+made. Inside a `Context` or `Locale` the two commands name the bundle as
+the hand-written text does, `t.lifting`.
+
+**The emission.** `emit_ending` writes one empty line, then
+`lifting_update t.lifting` and `lifting_forget t.lifting`, each on its
+own line at the block's indent, the bundle's name bare: `t`, in the id
+grammar, is an identifier, so `t.lifting` is a long identifier, which
+Isabelle's outer lexer reads as one token even where `t` alone is a
+keyword of the theory (token.ML, `scan_token`, the longest match) —
+after `quotient_type "term"`, `lifting_update term.lifting`; it returns
+the block's indent.
+
+Its Python half is `common.py`'s, its ML half
+`Isabelle_Std/ML/TAT_Lifting_Closing.ML`, loaded by
+`TAT_Isabelle_Std.thy` before the class files; the callback takes the
+ending's two slots and `t` and answers the operation's messages, a list
+of strings, as `TAT.Theory.end` answers its own (MODULE_STRUCTURE §3).

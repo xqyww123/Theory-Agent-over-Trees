@@ -18,7 +18,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
-Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Overloaded.ML — and one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
+Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Overloaded.ML, TAT_Lifting_Closing.ML — and one file per node class; TAT's own ROOT declares its session `TAT_Isabelle_Std in Isabelle_Std`
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -414,7 +414,7 @@ the plugin `Isabelle_Std`'s, one structure per class in a file of its
 own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem` —
 after the plugin's shared structures, `TAT_Proof_Obligation`
 (node_classes/COMMON.md §3), `TAT_Mixfix` and `TAT_Overloaded`
-(COMMON.md §4).
+(COMMON.md §4), and `TAT_Lifting_Closing` (COMMON.md §6).
 
 | section | what it runs |
 | --- | --- |
@@ -425,6 +425,8 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 | `Define` | the commands of ARCHITECTURE §2.2's table, each reported on its own; records `form` |
 | `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure built inside the local theory's function, each mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), under `operation` (DATATYPE.md §6) |
 | `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition with `{overloaded = true}`, its structure built inside the local theory's function and the type's mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), then `TAT_Overloaded.needed` on the open goal's theory, yielding `overloaded` — and `after_admission` — the `setup_lifting` transition, its state kept when Isabelle accepts it and the admitted one otherwise, yielding `lifting` (node_classes/TYPEDEF.md §6) |
+| `Lifting_Closing` | the plugin's shared base of a block whose ending closes a type's Lifting setup, `TAT_Lifting_Closing` (§4.5; node_classes/COMMON.md §6): `TAT.Lifting_Closing.close`, the two transitions of `lifting_update` and `lifting_forget` on the bundle's pointer, `Lifting_Setup.pointer_of_bundle_binding`, as one `operation` from the slot after the last child into the block's resulting slot, answering its messages |
+| `QuotientType` | `TAT.QuotientType.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `quotient_type` transition with `{overloaded = true}`, its mixfix read through `TAT_Mixfix`, yielding nothing — and `after_admission` — the identity, yielding `overloaded` from `TAT_Overloaded.needed` on the type's full name read off the admitted state (node_classes/QUOTIENT_TYPE.md §6); its ending is `Lifting_Closing`'s |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
 `Theory`'s evaluator is registered like every other class's. `Session`
@@ -1276,7 +1278,7 @@ nothing (EVALUATOR_DESIGN §5). Its theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and
 `Minilang_AoA.Minilang_AoA` and loads from `Isabelle_Std/ML/` the
 plugin's shared ML — `TAT_Proof_Obligation.ML`, `TAT_Mixfix.ML`,
-`TAT_Overloaded.ML` — then one ML file per node class; the Python half is the subpackage `isabelle_theory_agent.std`,
+`TAT_Overloaded.ML`, `TAT_Lifting_Closing.ML` — then one ML file per node class; the Python half is the subpackage `isabelle_theory_agent.std`,
 which the theory's registrations name (§2.5), `common.py` and one
 module per class (node_classes/COMMON.md). A working directory takes the plugin with
 `-P TAT_Isabelle_Std.TAT_Isabelle_Std` to `isabelle TAT_new` or

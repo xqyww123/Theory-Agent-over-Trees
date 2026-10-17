@@ -41,7 +41,7 @@ COMMON.md.
 | `Datatype` | `datatype`, `codatatype` | `Leaf` | none | DATATYPE.md |
 | `Record` | `record` | `Leaf` | none | RECORD.md |
 | `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | TYPEDEF.md |
-| `QuotientType` | `quotient_type` | `StdBlock`, beginning and ending | the relation is an equivalence, on the beginning | not yet |
+| `QuotientType` | `quotient_type` | `StdBlock`, beginning and ending | the relation is an equivalence, a partial equivalence under `partial`, on the beginning | QUOTIENT_TYPE.md |
 | `LiftDefinition` | `lift_definition` | `Leaf` | the term respects the representation | LIFT_DEFINITION.md |
 | `Define` | `definition`, `fun`, `function`, the `form` recorded at evaluation; `abbreviation`, a kind of it or a class of its own, decided with it | `Leaf` | pattern completeness and termination, under `function` | ARCHITECTURE §2.2 in part; OPEN_QUESTIONS §4 |
 | `TypeSynonym` | `type_synonym` | `Leaf` | none | not yet |
@@ -54,8 +54,9 @@ COMMON.md.
 
 Commands no row covers whose fate is settled when the named class is
 designed: `text_raw` with `Text`; `termination`, which `Define` emits
-(ARCHITECTURE §2.2), and `setup_lifting`, which `Typedef` emits
-(TYPEDEF.md §5).
+(ARCHITECTURE §2.2); `setup_lifting`, which `Typedef` emits
+(TYPEDEF.md §5); and `lifting_update` and `lifting_forget`, which
+`QuotientType`'s ending emits (QUOTIENT_TYPE.md §5).
 
 ## 3. Not in the plugin
 
@@ -76,11 +77,7 @@ Every command inside a proof, since a tree holds no proof (ARCHITECTURE
   `bundle`, `open_bundle`, `unbundle`, `named_theorems`,
   `adhoc_overloading`, `no_adhoc_overloading`, `alias`, `type_alias`,
   `hide_class`, `hide_type`, `hide_const`, `hide_fact`, `default_sort`,
-  `judgment`, `lifting_forget`, `lifting_update`. The last two delete a
-  type's lifting setup and transfer rules to hide a library type's
-  construction, which an agent's theory has no use for; after them a
-  later theory's `lift_definition` on the type needs `including
-  t.lifting`.
+  `judgment`.
 - **Isabelle's own machinery**: `bnf`, `lift_bnf`, `copy_bnf`, `functor`,
   `free_constructors`, `datatype_compat`, `old_rep_datatype`,
   `primcorecursive`, `quotient_definition`, `syntax`, `no_syntax`,

@@ -125,7 +125,8 @@ What the class does not take: `(overloaded)`, which is recorded (§6),
 and the configuration option `typedef_overloaded`; the name of the
 theorem `type_definition_dlist`, which Isabelle fixes; `setup_lifting`'s
 optional reflexivity and parametricity theorems; `lifting_forget` and
-`lifting_update`, which are not in the plugin (INDEX.md §3).
+`lifting_update`, which a block's ending emits (COMMON.md §6; INDEX.md
+§2).
 
 ## 3. Descriptions
 
