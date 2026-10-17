@@ -2,7 +2,9 @@
 (node_classes/COMMON.md): `Theory_Member`, the base every class derives
 from, with the plugin's one parent exception `NotInsideTheory` (§1); the
 `text` line (§2); `Proof_Obligation`, the base of the classes whose
-command opens a proof obligation, with its two job classes (§3); the
+command opens a proof obligation — a `Leaf`'s one operation, or a
+block's beginning through `Beginning_Proof_Obligation` — with its two
+job classes (§3); the
 shared `$defs` — the type parameter and the two mixfix annotations —
 with their checks and writers, and the checks of a name (§4, §5); the
 package's compile hook for AoA's proof stores (§3; COMPILATION.md §5);
@@ -15,7 +17,7 @@ import re
 from abc import abstractmethod
 from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, NotRequired, TypedDict, overload
+from typing import Any, ClassVar, Literal, NotRequired, TypedDict, final, overload
 
 import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§3)
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
@@ -442,9 +444,11 @@ class Proof_Check(jobs.Evaluation_Job):
 
 
 class Proof_Obligation(Node):
-    """The base of a `Leaf` whose one command opens exactly one goal,
-    which is admitted, the class's `after_admission` step following in
-    the same operation (§3), taken before the framework base: `class
+    """The base of a class whose command opens exactly one goal, which is
+    admitted, the class's `after_admission` step following in the same
+    operation (§3): the operation the goal opens on, the class's
+    `job_operation` — a `Leaf`'s one operation here, a block's beginning
+    in `Beginning_Proof_Obligation`.  Taken before the framework base: `class
     Theorem(Theory_Member, Proof_Obligation, Leaf)`.  The tree holds no
     proof: every evaluation admits the goal, the proof construction finds
     the proof, the proof check replays it, and the file carries `by aoa`.
@@ -453,6 +457,7 @@ class Proof_Obligation(Node):
 
     construction_job_class = Proof_Job
     evaluation_job_class = Proof_Check
+    job_operation = None                    # a Leaf's one operation, which `_eval_opr` runs
 
     evaluation_callback: ClassVar[str]      # the class's callback, built by `TAT_Proof_Obligation.register`
                                             # from its two steps, `open_goal` and `after_admission` (§3)
@@ -460,10 +465,10 @@ class Proof_Obligation(Node):
     invalid_word: ClassVar[str]             # ... and under `cannot_evaluate`
 
     goal_state: Isar_State_Slot             # the state with the goal open and no step taken, held
-                                            # exactly while the node is `ready`; never stored
+                                            # exactly while `job_operation_status()` is `Ready`; never stored
 
-    def __init__(self, parent: NonLeaf_Node, state: Isar_State_Slot):
-        super().__init__(parent, state)
+    def __init__(self, parent: NonLeaf_Node, state: Isar_State_Slot, *base: Any):
+        super().__init__(parent, state, *base)      # a block's `sub_nodes` and slot before its ending
         self.goal_state = Isar_State_Slot.assign(parent.forest().conversation)
 
     @abstractmethod
@@ -485,7 +490,7 @@ class Proof_Obligation(Node):
         return out
 
     def _slots_written_by(self, operation):
-        return (self.goal_state,)
+        return (self.goal_state,) if operation == type(self).job_operation else ()
 
     def record_from_evaluation(self, what: Any) -> tuple[IsaTerm, ...]:
         """What the two steps yielded, `[a, b]` on the wire, recorded on the
@@ -493,28 +498,34 @@ class Proof_Obligation(Node):
         records nothing and answers `()`."""
         return ()
 
-    async def _eval_opr(self):
-        """The class's callback (§3) with the input slot, `goal_state`, the
-        resulting slot and `message()`: the goal opened into `goal_state`,
-        admitted into the resulting slot with the class's commands after
-        the admission.  Its answer is the messages and, when there are
-        none, what the two steps yielded: the messages make the node an
-        obstacle; none is `Ready` carrying what `record_from_evaluation`
-        answers."""
+    @final
+    async def _eval_goal(self) -> Ready | CannotEvaluate:
+        """The class's callback (§3) with `job_operation`'s input slot,
+        `goal_state`, its resulting slot and `message()`: the goal opened
+        into `goal_state`, admitted into the resulting slot with the
+        class's commands after the admission.  Its answer is the messages
+        and, when there are none, what the two steps yielded: the messages
+        make the operation an obstacle; none is `Ready` carrying what
+        `record_from_evaluation` answers.  What the hook of the class that
+        sets `job_operation` runs."""
+        input_slot, resulting_slot = self.operation_slots(type(self).job_operation)
         messages, what = await isabelle_driver.call(
             self.forest().conversation, type(self).evaluation_callback,
-            (self.state.to_msgpack(), self.goal_state.to_msgpack(), self.resulting_state().to_msgpack(),
-             self.message()))
+            (input_slot.to_msgpack(), self.goal_state.to_msgpack(), resulting_slot.to_msgpack(), self.message()))
         if messages:
             return status_of_errors(messages)
         return Ready(self.record_from_evaluation(what))
 
+    @final
+    async def _eval_opr(self):
+        return await self._eval_goal()
+
     def mark(self, mode, depth):
-        """Two slots, `(<status>, <proof>)` (§3): the class's word for the
-        evaluation status; the proof's from the job's outcome and the
-        check, left out under the invalid word, a stored proof left out
+        """Two slots, `(<status>, <proof>)` (§3): the class's word for
+        `job_operation_status()`; the proof's from the job's outcome and
+        the check, left out under the invalid word, a stored proof left out
         under `not evaluated`."""
-        (status,) = self.evaluation_statuses()
+        status = self.job_operation_status()       # what `can_start` and the failure blocks read too
         if isinstance(status, CannotEvaluate):
             return self.invalid_word
         evaluated = isinstance(status, Ready)
@@ -543,6 +554,19 @@ class Proof_Obligation(Node):
         job = self.job()
         assert job is not None
         return "by aoa" if isinstance(job.outcome, Succeeded) and self.check_outcome() is PASSED else "sorry"
+
+
+class Beginning_Proof_Obligation(Proof_Obligation):
+    """`Proof_Obligation` whose goal opens on a `StdBlock`'s beginning (§3):
+    `class QuotientType(Theory_Member, Beginning_Proof_Obligation,
+    StdBlock)`.  The jobs depend on the beginning alone, so the children
+    and the class's own ending leave the proof standing."""
+
+    job_operation = "beginning"
+
+    @final
+    async def _eval_beginning_opr(self):
+        return await self._eval_goal()
 
 
 # --- the compile hook (§3; COMPILATION.md §5)

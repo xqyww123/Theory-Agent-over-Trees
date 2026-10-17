@@ -264,13 +264,14 @@ def add(parent, node: _N, kind: str | None = None) -> _N:
     return node
 
 
-def build(**flags):
-    """Theory > [Section > [T1, T2], T3, T4]; flags name a node and a failure."""
+def build(section=Block, **flags):
+    """Theory > [Section > [T1, T2], T3, T4]; flags name a node and a failure;
+    `section` is the Section's class."""
     f = OneTreeForest(CONN)
     thy = add(f, Block(f, slot(), "Theory", slot()))
-    sec = add(thy, Block(thy, slot(), "Section", slot(),
-                         fail_beginning=flags.get("Section") == "begin",
-                         fail_ending=flags.get("Section") == "end"))
+    sec = add(thy, section(thy, slot(), "Section", slot(),
+                           fail_beginning=flags.get("Section") == "begin",
+                           fail_ending=flags.get("Section") == "end"))
     t1 = add(sec, T(sec, slot(), "T1", fail=flags.get("T1", False)))
     t2 = add(sec, T(sec, slot(), "T2", fail=flags.get("T2", False)))
     t3 = add(thy, T(thy, slot(), "T3", fail=flags.get("T3", False)))
@@ -309,6 +310,22 @@ async def _invalidate(node):
 
 
 def invalidate(node): run(_invalidate(node))
+
+
+async def walked(f, destination, *args):
+    """A walk to `destination` as the tool entries drive it, through
+    `Forest._run` under the lock; `args` the `Evaluation`'s starter and
+    `checks`.  Returns the `Evaluation`: what the walk passed and
+    started, and where it stopped."""
+    ev = M.Evaluation(destination, False, *args)
+    await locked(f, f._run(ev))
+    return ev
+
+
+def passed(f, destination):
+    """What a walk to `destination` passed, and where it stopped."""
+    ev = run(walked(f, destination))
+    return ev.passed, ev.stopped_at
 
 
 @pytest.fixture(autouse=True)
@@ -482,22 +499,16 @@ def test_a_tat_error_from_an_evaluation_hook_is_the_classes_bug():
 
 def test_the_nodes_a_walk_passes():
     """`Evaluation.passed` (MODULE_STRUCTURE §4.1): the nodes the walk
-    reached, a leaf when reached and a nesting node at its ending — one
+    passed, each at its `job_operation` — a leaf at its operation and a
+    nesting node whose jobs depend on both operations at its ending — one
     whose beginning failed when the walk goes on after it, and not when the
     destination lies under it."""
-    async def passed(f, destination):
-        async with f.lock:
-            ev = M.Evaluation(destination, False)
-            await f._evaluate(ev, M.Evaluating())
-            f._store_written(ev)
-            await ev.flush(f.conversation)
-            return ev.passed
     f, thy, sec, t1, t2, t3, t4 = build()
-    assert run(passed(f, t4)) == [t1, t2, sec, t3, t4]
-    assert run(passed(f, sec)) == [t1, t2, sec]       # reached, though nothing ran again
+    assert passed(f, t4) == ([t1, t2, sec, t3, t4], None)
+    assert passed(f, sec) == ([t1, t2, sec], None)    # passed, though nothing ran again
     f, thy, sec, t1, t2, t3, t4 = build(Section="begin")
-    assert run(passed(f, t4)) == [sec, t3, t4]
-    assert run(passed(f, t2)) == []
+    assert passed(f, t4) == ([sec, t3, t4], None)
+    assert passed(f, t2) == ([], sec)
 
 
 def test_on_invalidated_sees_both_fields_written():
@@ -1076,5 +1087,83 @@ def test_from_store_may_not_return_children():
     run(locked(f, edit.insert(f,0, [{"kind": "block", "name": "B"}], KINDS)))
     with pytest.raises(TAT_InternalError, match="returned children"):
         OneTreeForest(CONN, store, kinds={"block": Greedy, "t": T})
+
+
+# --- the operations the node's jobs depend on (CONSTRUCT_INTERACTION §3.1, §3.3) --
+
+class Beginning_Block(Block):
+    """A block whose jobs read what its beginning wrote, the shape of
+    node_classes/COMMON.md §3's `Beginning_Proof_Obligation`: passed right
+    after its beginning."""
+    job_operation = "beginning"
+
+
+def test_operation_slots_answers_each_operation_s_input_and_resulting_slot():
+    """MODULE_STRUCTURE §4.1, "States": a leaf's `(state, resulting_state())`;
+    a block's beginning's `(state, the first child's state)` — the slot
+    after all children when there is none, and following the first child
+    across an insert at position 0 — and its ending's `(that slot,
+    resulting_state())`; an `Unchained_Node` runs no operation; an
+    operation the class does not run is a framework bug."""
+    f, thy, sec, t1, t2, t3, t4 = build()
+    assert t1.operation_slots(None) == (t1.state, t2.state)
+    assert t2.operation_slots(None) == (t2.state, sec._state_before_ending)
+    assert sec.operation_slots("beginning") == (sec.state, t1.state)
+    assert sec.operation_slots("ending") == (sec._state_before_ending, t3.state)
+    empty = add(thy, Block(thy, slot(), "Empty", slot()))
+    assert empty.operation_slots("beginning") == (empty.state, empty._state_before_ending)
+    for node, operation in ((t1, "beginning"), (sec, None), (sec, "middle"), (f, None)):
+        with pytest.raises(TAT_InternalError, match="runs no operation"):
+            node.operation_slots(operation)
+    (t0,) = run(locked(f, edit.insert(sec, 0, [{"kind": "t", "name": "T0"}], KINDS)))
+    assert sec.operation_slots("beginning") == (sec.state, t0.state) and t0.state is not t1.state
+
+
+def test_job_operation_status_is_the_one_status_the_jobs_see():
+    """CONSTRUCT_INTERACTION §3.1: among the operations the node's jobs
+    depend on, an obstacle, else one not evaluated, else `job_operation`'s
+    `Ready`.  On a block whose jobs read its ending both operations count:
+    `(CannotEvaluate, Ready)` and `(CannotEvaluate, NOT_EVALUATED)` answer
+    the obstacle, `(Ready, NOT_EVALUATED)` not evaluated; on one whose
+    jobs read its beginning the ending is not seen: `(Ready,
+    NOT_EVALUATED)` and `(Ready, CannotEvaluate)` answer the beginning's
+    `Ready`.  A leaf's is its one status."""
+    f = OneTreeForest(CONN)
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    ending = add(thy, Block(thy, slot(), "E", slot()))
+    beginning = add(thy, Beginning_Block(thy, slot(), "B", slot()))
+    failed, warned = M.CannotEvaluate(), M.Ready()
+
+    def status(node, b, e):
+        node.evaluation_status_beginning, node.evaluation_status_ending = b, e
+        return node.job_operation_status()
+    assert status(ending, failed, READY) is failed and status(ending, failed, NOT_EVALUATED) is failed
+    assert status(ending, NOT_EVALUATED, failed) is failed and status(ending, READY, failed) is failed
+    assert status(ending, READY, NOT_EVALUATED) is NOT_EVALUATED and not ending._job_operation_ready()
+    assert status(ending, warned, READY) is READY and ending._job_operation_ready()
+    assert status(beginning, READY, NOT_EVALUATED) is READY and beginning._job_operation_ready()
+    assert status(beginning, warned, failed) is warned
+    assert status(beginning, failed, READY) is failed and status(beginning, NOT_EVALUATED, READY) is NOT_EVALUATED
+    t = add(thy, T(thy, slot(), "t"))
+    for s in (failed, NOT_EVALUATED, warned):
+        t._status = s
+        assert t.job_operation_status() is s
+
+
+def test_the_nodes_a_walk_passes_at_a_block_whose_jobs_read_its_beginning():
+    """`Evaluation.passed` with the Section a `Beginning_Block`
+    (CONSTRUCT_INTERACTION §3.3): the block is passed right after its
+    beginning, before its children — rerun, or `ready` and left as it
+    stands, a failed beginning included — and not at its ending, whose
+    failure is still the walk's stop."""
+    f, thy, sec, t1, t2, t3, t4 = build(section=Beginning_Block)
+    assert passed(f, t4) == ([sec, t1, t2, t3, t4], None)
+    invalidate(t1)
+    assert passed(f, t2) == ([sec, t1, t2], None) and sec.begin_runs == 1   # `ready`, left as it stands
+    f, thy, sec, t1, t2, t3, t4 = build(section=Beginning_Block, Section="begin")
+    assert passed(f, t4) == ([sec, t3, t4], None)
+    assert passed(f, t2) == ([sec], sec)
+    f, thy, sec, t1, t2, t3, t4 = build(section=Beginning_Block, Section="end")
+    assert passed(f, t4) == ([sec, t1, t2], sec)
 
 

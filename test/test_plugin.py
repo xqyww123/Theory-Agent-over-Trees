@@ -164,6 +164,26 @@ def refused_at_assembly(cls, match):
     assert (e.value.package, e.value.node_class) == (__name__, cls.__name__)
 
 
+class Whole(jobs.Construction_Job):
+    """A complete construction job class, as the loader accepts one."""
+    @classmethod
+    def title(cls, plural=False): return "wholes" if plural else "whole"
+    @classmethod
+    def failure_header(cls, failure): return None
+    async def _run(self): return jobs.Succeeded(None)
+
+
+class Check(jobs.Evaluation_Job):
+    """A complete evaluation job class, as the loader accepts one."""
+    @classmethod
+    def title(cls, plural=False): return "checks" if plural else "check"
+    @classmethod
+    def failure_header(cls, failure): return None
+    @classmethod
+    def failure_notification(cls, ids, automatic): return "failed"
+    async def _start(self): pass
+
+
 # --- registration ------------------------------------------------------------
 
 def test_a_class_registers_every_kind_its_schema_names_in_order():
@@ -273,6 +293,9 @@ def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchron
     refused(leaf("Ready", ["ready"], _operations_ready=lambda self: True),
             "overrides `_operations_ready`")
     refused(leaf("Own", ["own"], _own_statuses=lambda self: []), "overrides `_own_statuses`")
+    misbased = type("Misbased", (Persisted, M.NonLeaf_Node), {      # none of the three bases: `Node`'s `_own_statuses`
+        "construct_schema": leaf_schema(["misbased"]), "argument_schema": Empty, "__module__": __name__})
+    refused(misbased, "overrides `_own_statuses`")
     refused(leaf("Liner", ["liner"], print=lambda self, i, o, m, d: None), "overrides `print`")
 
     async def fields(self, indent, out, mode, depth): ...
@@ -281,6 +304,37 @@ def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchron
     refused(leaf("Slower", ["slower"], mark=mark), "`mark` is a coroutine")
     plugin.TAT_node(leaf("Marked", ["marked"], mark=lambda self, m, d: "marked",
                          print_fields=lambda self, i, o, m, d: None))
+
+
+def test_job_operation_is_an_operation_of_the_class_and_a_container_names_no_job_class():
+    """PLUGIN_SYSTEM §5 (CONSTRUCT_INTERACTION §3.1): a `Leaf` or `StdBlock`
+    class's `job_operation` is among its `_operation_names()`; an
+    `Unchained_Node` class names no job class; `job_operation_status` is
+    the framework's."""
+    children = {"type": "array", "items": {"$ref": "#/$defs/Construct"}}
+    refused(leaf("Opening_Leaf", ["opening_leaf"], job_operation="beginning"),
+            "`job_operation` is 'beginning', not an operation of the class: None")
+    bare = block("Bare", children)
+    bare.job_operation = None
+    refused(bare, "`job_operation` is None, not an operation of the class: 'beginning', 'ending'")
+    middle = block("Middle", children)
+    middle.job_operation = "middle"
+    refused(middle, "`job_operation` is 'middle', not an operation of the class: 'beginning', 'ending'")
+    opening = block("Opening", children)
+    opening.job_operation = "beginning"
+    plugin.TAT_node(opening)
+    plugin.TAT_node(leaf("Closing", ["closing"], job_operation=None))
+
+    def container(name, **body):
+        schema = dict(Sec.construct_schema)
+        schema["properties"] = dict(schema["properties"]) | {"kind": {"const": name.lower()}}
+        return type(name, (Persisted, M.Unchained_Node), {
+            "construct_schema": schema, "argument_schema": Sec_RawAST, "__module__": __name__, **body})
+    for body in ({"construction_job_class": Whole}, {"evaluation_job_class": Check}):
+        refused(container("Jobbed", **body), "names a job class, but runs no operation to write what a job reads")
+    plugin.TAT_node(container("Plain_Container"))
+    refused(leaf("Seeing", ["seeing"], job_operation_status=lambda self: M.READY_CLEAN),
+            "overrides `job_operation_status`, which is the framework's")
 
 
 def test_the_descent_is_the_frameworks_for_leaves_and_nesting_classes_alike():
@@ -1169,11 +1223,6 @@ def test_a_construction_job_class_is_checked():
         @classmethod
         def title(cls, plural=False): return "halves" if plural else "half"
 
-    class Whole(Half):
-        @classmethod
-        def failure_header(cls, failure): return None
-        async def _run(self): return jobs.Succeeded(None)
-
     class Overriding(Whole):
         def start(self, owner): pass
 
@@ -1188,12 +1237,6 @@ def test_a_construction_job_class_is_checked():
         @classmethod
         def title(cls, plural=False): return "checks" if plural else "check"
         async def _start(self): pass
-
-    class Check(Half_Check):
-        @classmethod
-        def failure_header(cls, failure): return None
-        @classmethod
-        def failure_notification(cls, ids, automatic): return "failed"
 
     class Reporting(Check):
         def _report(self, errors, product=None): pass
@@ -1210,13 +1253,6 @@ def test_edit_takes_auto_construct_when_a_class_names_a_construction_job_class_i
     """TOOL_SCHEMAS §1: `edit`'s `auto_construct` is there when a loaded
     class names a construction job class — one it inherits included — and
     absent otherwise."""
-    class Whole(jobs.Construction_Job):
-        @classmethod
-        def title(cls, plural=False): return "wholes" if plural else "whole"
-        @classmethod
-        def failure_header(cls, failure): return None
-        async def _run(self): return jobs.Succeeded(None)
-
     plain = leaf("Plain", ["plain"])
     constructed = leaf("Constructed", ["constructed"], construction_job_class=Whole)
     inheriting = type("Inheriting", (constructed,), {"construct_schema": leaf_schema(["inheriting"]),

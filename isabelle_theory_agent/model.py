@@ -204,10 +204,11 @@ class Evaluation:
         self.ignore_error = ignore_error
         self.starter = starter               # the caller: the starter of the jobs the walk starts; None starts none
         self.checks = checks                 # "no" | "quick" | "blocking" (CONSTRUCT_INTERACTION §5)
-        self.passed: list[Node] = []         # reached in `Evaluating`: a leaf when reached, a nesting node at its ending
+        self.passed: list[Node] = []         # the nodes the walk passed, each at its `job_operation` (`Node._passes`)
         self.stopped_at: Node | None = None  # where the walk stopped, once it ended (`Forest._run`)
         self.started: list[Construction_Job] = []   # the constructions the walk started automatically (§3.3)
-        self.was_not_ready: set[Node] = set()       # a stored status of these was not `ready` before the walk wrote it
+        self.was_not_ready: set[Node] = set()       # the stored status of an operation these nodes' jobs depend on
+                                                    # was not `ready` before the walk wrote it
         self.stored: set[Node] = set()       # the nodes whose status the walk wrote (COMPILATION.md §4)
         self.dropped: list[int] = []         # the evaluation jobs dropped, their ids sent as cancel(ids) at flush
         self._released: set[str] = set()
@@ -420,6 +421,14 @@ class Node(ABC):
     construction_job_class: ClassVar[type[Construction_Job] | None] = None
     evaluation_job_class: ClassVar[type[Evaluation_Job] | None] = None
 
+    # The operation that writes what the node's jobs read (CONSTRUCT_INTERACTION
+    # §3.1), named as `_operation_names()` names it; the jobs depend on it and
+    # on every own operation before it — the operations the node's jobs
+    # depend on.  A `Leaf`'s is its one operation, a `StdBlock`'s its ending
+    # unless the class names its beginning: a class that declares nothing has
+    # jobs depending on every operation.
+    job_operation: ClassVar[Any]
+
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
         """Semantic construction from the agent's construct — `raw`, the
@@ -499,12 +508,13 @@ class Node(ABC):
         default."""
         return ()
 
-    def _release(self, ev: Evaluation, index: int, slot: Isar_State_Slot) -> None:
-        """Operation `index` went from written to unwritten: `slot`, its
-        resulting state, is released, and with it the further slots the
-        class says the operation wrote."""
-        ev.release(slot)
-        for further in self._slots_written_by(self._operation_names()[index]):
+    def _release(self, ev: Evaluation, index: int) -> None:
+        """Operation `index` went from written to unwritten: its resulting
+        slot is released, and with it the further slots the class says the
+        operation wrote."""
+        operation = self._operation_names()[index]
+        ev.release(self.operation_slots(operation)[1])
+        for further in self._slots_written_by(operation):
             ev.release(further)
 
     def _written(self, ev: Evaluation, index: int, old: EvaluationStatus,
@@ -513,11 +523,12 @@ class Node(ABC):
         assigned (COMPILATION.md §4): the stored entry, the seen set's key
         of the operation's messages, the walk's store, and the `operation`
         record (LOGGING.md §4) — `duration` is how long the evaluation hook
-        ran, None when no run produced the write; the node's evaluation
-        job dropped, and the stored check cleared when the stored status
-        leaves `Ready` (CONSTRUCT_INTERACTION §3.3); and last, both fields
-        written, `on_invalidated` when the instant status, `old` before the
-        write, left `Ready`."""
+        ran, None when no run produced the write; when the node's jobs
+        depend on the operation, the node's evaluation job dropped, the
+        stored check cleared when the stored status leaves `Ready`
+        (CONSTRUCT_INTERACTION §3.3), and the running construction job told
+        (§3.2); and, both fields written, `on_invalidated` when the instant
+        status, `old` before the write, left `Ready`."""
         new = self.evaluation_statuses()[index]
         stored_before = self._last_evaluation_statuses[index]
         self._last_evaluation_statuses[index] = new
@@ -525,21 +536,24 @@ class Node(ABC):
         forest = self.forest()
         forest.conversation.forget((self.identity, operation))
         ev.stored.add(self)
-        self.drop_evaluation_job("status_write", ev)
-        if isinstance(stored_before, Ready) and not isinstance(new, Ready):
-            self._clear_check()
-        if not isinstance(stored_before, Ready) and isinstance(new, Ready):
-            ev.was_not_ready.add(self)
+        jobs_depend = self._jobs_depend_on(index)     # another operation's write leaves the jobs alone
+        if jobs_depend:
+            self.drop_evaluation_job("status_write", ev)
+            if isinstance(stored_before, Ready) and not isinstance(new, Ready):
+                self._clear_check()
+            if not isinstance(stored_before, Ready) and isinstance(new, Ready):
+                ev.was_not_ready.add(self)
         kind, messages = _status_to_store(new)
         forest.conversation.log.evaluation.operation(
             node=forest.full_id(self), operation=operation or "own", ran=duration is not None,
             status=kind, messages=messages if duration is not None else None, duration=duration)
         if isinstance(old, Ready) and not isinstance(new, Ready):
             _completed(self.on_invalidated, operation)
-        # a running construction job is told of every write, a rerun's
-        # rewrite of `ready` included (CONSTRUCT_INTERACTION §3.2)
+        # a running construction job is told of every write of an operation
+        # its node's jobs depend on, a rerun's rewrite of `ready` included
+        # (CONSTRUCT_INTERACTION §3.2)
         job = self.job()
-        if job is not None and job.outcome is RUNNING:
+        if jobs_depend and job is not None and job.outcome is RUNNING:
             _completed(job._on_context_change)
 
     def id_component(self) -> Id_Component:
@@ -706,9 +720,9 @@ class Node(ABC):
             self._clear_check()
 
     def _clear_check(self) -> None:
-        """The stored check cleared (§3.3): when the stored status leaves
-        `Ready`, when a construction starts, when a running job is attached
-        in its place."""
+        """The stored check cleared (§3.3): when the stored status of an
+        operation the node's jobs depend on leaves `Ready`, when a
+        construction starts, when a running job is attached in its place."""
         self._check_outcome = None
 
     @final
@@ -790,17 +804,53 @@ class Node(ABC):
         returns; the three base classes answer, no class of its own
         (PLUGIN_SYSTEM §5)."""
 
+    @classmethod
     @abstractmethod
-    def _operation_names(self) -> list[Any]:
+    def _operation_names(cls) -> list[Any]:
         """The name of each own operation, in `_own_statuses()`'s order —
-        what `on_invalidated` is told and the seen set's keys carry
-        (PRINT.md §4)."""
+        what `on_invalidated` is told, the seen set's keys carry (PRINT.md
+        §4) and `job_operation` is one of."""
+
+    @abstractmethod
+    def operation_slots(self, operation: Any) -> tuple[Isar_State_Slot, Isar_State_Slot]:
+        """An operation's input slot and resulting slot (MODULE_STRUCTURE
+        §4.1, "States"): what its evaluation hook runs from and into; the
+        framework releases the resulting slot with the operation.  The
+        three base classes answer; a class reads it for the operation its
+        hook runs."""
 
     @final
     def _operations_ready(self) -> bool:
         """Whether every operation of this node — not its subtree — is
         `Ready`."""
         return all(isinstance(s, Ready) for s in self.evaluation_statuses())
+
+    @final
+    def _jobs_depend_on(self, index: int) -> bool:
+        """Whether the node's jobs depend on own operation `index`: it is
+        `job_operation` or comes before it."""
+        return index <= self._operation_names().index(type(self).job_operation)
+
+    @final
+    def job_operation_status(self) -> EvaluationStatus:
+        """The one status the node's jobs see, of the operations they depend
+        on, in PRINT.md §1's order of rows: an obstacle among them, else one
+        not evaluated, else `job_operation`'s `Ready` — `Ready` exactly when
+        every slot the jobs read is filled.  What `can_start`,
+        `_jobs_of_passing`, the failure blocks and the summary read; a
+        class's mark may read it too."""
+        statuses = [s for i, s in enumerate(self.evaluation_statuses()) if self._jobs_depend_on(i)]
+        for kind in (CannotEvaluate, NotEvaluated):
+            found = next((s for s in statuses if isinstance(s, kind)), None)
+            if found is not None:
+                return found
+        return statuses[-1]
+
+    @final
+    def _job_operation_ready(self) -> bool:
+        """Whether the node's jobs can run as far as its operations go:
+        `job_operation_status()` is `Ready`."""
+        return isinstance(self.job_operation_status(), Ready)
 
     # --- Rendering (PRINT.md).  The framework writes the line, the
     # operations' messages and descends; a class writes its fields, and
@@ -850,11 +900,12 @@ class Node(ABC):
     @final
     def _print_failures(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The failure blocks (PRINT.md §2; CONSTRUCT_INTERACTION §6): where
-        the node is detailed and is not itself an obstacle, the job class's
-        `failure_header` over the message for the construction job whose
-        outcome is `FAILED` and for the check whose outcome is `FAILED`; a
-        None header prints nothing; the seen set does not apply."""
-        if mode is BRIEFING or not self.detailed(mode, depth) or self._own_row() == "failed":
+        the node is detailed, the job class's `failure_header` over the
+        message for the construction job whose outcome is `FAILED` and for
+        the check whose outcome is `FAILED` — unless an operation the node's
+        jobs depend on is an obstacle, which makes the failure stale; a None
+        header prints nothing; the seen set does not apply."""
+        if mode is BRIEFING or not self.detailed(mode, depth):
             return
         failures: list[tuple[Any, Failed]] = []
         job = self.job()
@@ -863,6 +914,9 @@ class Node(ABC):
         check, job_class = self.check_outcome(), type(self).evaluation_job_class
         if isinstance(check, Failed) and job_class is not None:
             failures.append((job_class, check))
+        # an Unchained_Node has no failure (its class names no job class) and no job_operation_status()
+        if not failures or isinstance(self.job_operation_status(), CannotEvaluate):
+            return
         for cls, failure in failures:
             header = cls.failure_header(failure)
             if header is not None:
@@ -872,11 +926,12 @@ class Node(ABC):
     @final
     def _print_summary(self, indent: int, out: TextIO) -> None:
         """The summary under a cut-off `incomplete` nesting node (PRINT.md
-        §2): one line per group with members — the nodes below that are
-        `ready`, by the title their `Unfinished` carries, construction
-        titles first, then evaluation titles, alphabetical within; then the
-        nodes `failed`, then the nodes `not evaluated` — ids in tree order,
-        relative to this node, up to five, the count alone past five."""
+        §2): one line per group with members — the nodes below that are not
+        `failed` and whose `job_operation_status()` is `ready`, by the
+        title their `Unfinished` carries, construction titles first, then
+        evaluation titles, alphabetical within; then the nodes `failed`,
+        then the nodes `not evaluated` — ids in tree order, relative to
+        this node, up to five, the count alone past five."""
         owed: dict[str, tuple[Unfinished, list[Node]]] = {}
         failed: list[Node] = []
         not_evaluated: list[Node] = []
@@ -886,7 +941,7 @@ class Node(ABC):
                 failed.append(node)
             elif row == "not evaluated":
                 not_evaluated.append(node)
-            elif node._operations_ready() and (unfinished := node._unfinished()) is not None:
+            elif (unfinished := node._unfinished()) is not None and node._job_operation_ready():
                 owed.setdefault(unfinished.title(plural=True), (unfinished, []))[1].append(node)
         groups = [(f"{unfinished.title()} incomplete", f"{unfinished.title(plural=True)} incomplete", nodes)
                   for unfinished, nodes in sorted(owed.values(), key=lambda owing: (
@@ -953,8 +1008,8 @@ class Node(ABC):
     @final
     def _default_mark(self) -> str:
         """PRINT.md §1's four rows — the framework's classification of the
-        node, which the default `mark`, the failure blocks and the summary
-        read: `complete`, else the own operations' row, else `incomplete`."""
+        node, which the default `mark` and the summary read: `complete`,
+        else the own operations' row, else `incomplete`."""
         if self.is_finished():
             return "complete"
         return self._own_row() or "incomplete"
@@ -1004,9 +1059,10 @@ class Node(ABC):
     def on_invalidated(self, operation: Any) -> None:
         """Completed: an operation's status truly left `ready`
         (ARCHITECTURE §3.6).  `operation` says which — a `StdBlock` passes
-        "beginning" or "ending", a `Leaf` passes None, a class with its own
-        statuses passes its own value.  A class with work in flight
-        overrides it."""
+        "beginning" or "ending", a `Leaf` passes None.  A class with work in
+        flight overrides it; a running construction job is told by
+        `_on_context_change`, of an operation the node's jobs depend on
+        alone."""
 
     def on_deleting(self, reason: Literal["delete", "amend"]) -> None:
         """Gate: the node is to leave for good — `delete` takes the whole
@@ -1073,26 +1129,36 @@ class Node(ABC):
             return None
         return Evaluating()
 
+    @final
+    async def _passes(self, ev: Evaluation, operation: Any) -> None:
+        """The walk settled `operation` of the node — rerun, or `ready` and
+        left as it stands.  When it is `job_operation`, the node is passed:
+        it joins `ev.passed` and its jobs start (`_jobs_of_passing`); any
+        other operation passes nothing.  The one place a node is passed; the
+        walk settles each operation once, so no node is passed twice."""
+        if operation == type(self).job_operation:
+            ev.passed.append(self)
+            await self._jobs_of_passing(ev)
+
     async def _reached(self, ev: Evaluation) -> EvaluationResult:
-        """The walk reached the node, its last operation settled: the node
-        joins `ev.passed`, its jobs start (`_jobs_of_passing`), and it is
-        the walk's stop when that operation is not `Ready` and
-        `ignore_error` is unset."""
-        ev.passed.append(self)
-        await self._jobs_of_passing(ev)
+        """The walk reached the node, its last operation settled: the node is
+        passed when that operation is its `job_operation`, and it is the
+        walk's stop when that operation is not `Ready` and `ignore_error`
+        is unset."""
+        await self._passes(ev, self._operation_names()[-1])
         stop = self if not isinstance(self._resulting_status(), Ready) and not ev.ignore_error else None
         return EvaluationResult(stop, self._mode_after(ev, stop))
 
     async def _jobs_of_passing(self, ev: Evaluation) -> None:
         """What an evaluation starts on a node it passes (CONSTRUCT_INTERACTION
-        §3.3), the node `ready`: the evaluation job — its class naming one,
-        none on the node, `_unfinished()` answering `Unchecked`, `checks`
-        allowing — and, under automatic construction, the construction job
-        — `can_start()`, and the node holding no result worth keeping: the
-        job `NOT_STARTED`, `FAILED` with an invalidation since, or
-        `SUCCEEDED` with its check `FAILED`.  A walk with no caller starts
-        nothing."""
-        if ev.starter is None or not self._operations_ready():
+        §3.3), `job_operation_status()` `ready`: the evaluation job — its
+        class naming one, none on the node, `_unfinished()` answering
+        `Unchecked`, `checks` allowing — and, under automatic construction,
+        the construction job — `can_start()`, and the node holding no result
+        worth keeping: the job `NOT_STARTED`, `FAILED` with an invalidation
+        since, or `SUCCEEDED` with its check `FAILED`.  A walk with no
+        caller starts nothing."""
+        if ev.starter is None or not self._job_operation_ready():
             return
         # the class and the empty node follow from `Unchecked` under the
         # default `_unfinished()`; an override may answer it otherwise
@@ -1120,6 +1186,7 @@ class Node(ABC):
 class Leaf(Node):
 
     _status: EvaluationStatus
+    job_operation = None                      # the one operation
 
     def __init__(self, parent, state):
         super().__init__(parent, state)
@@ -1134,8 +1201,15 @@ class Leaf(Node):
         return [self._status]
 
     @final
-    def _operation_names(self):
+    @classmethod
+    def _operation_names(cls):
         return [None]
+
+    @final
+    def operation_slots(self, operation):
+        if operation is not None:
+            raise TAT_InternalError(f"{type(self).__name__} runs no operation {operation!r}")
+        return self.state, self.resulting_state()
 
     def _set_status(self, ev: Evaluation, new: EvaluationStatus, duration: float | None) -> None:
         """The operation's one setter: the instant status and its stored
@@ -1144,7 +1218,7 @@ class Leaf(Node):
             return
         old = self._status
         if _wrote(old) and not _wrote(new):       # written -> unwritten; a rewrite releases nothing
-            self._release(ev, 0, self.resulting_state())
+            self._release(ev, 0)
         self._status = new
         self._written(ev, 0, old, duration)
 
@@ -1162,7 +1236,8 @@ class Leaf(Node):
         if not _wrote(self._status):              # a Ready operation, or an obstacle, is not rerun
             status, duration = await _timed(self._eval_opr())
             if isinstance(status, CannotEvaluate):
-                await self.state.copy_to(self.resulting_state())
+                input_slot, resulting_slot = self.operation_slots(None)
+                await input_slot.copy_to(resulting_slot)
             self._set_status(ev, status, duration)
         return await self._reached(ev)
 
@@ -1293,6 +1368,7 @@ class StdBlock(NonLeaf_Node):
     _state_before_ending: Isar_State_Slot      # after all children; the ending runs from it
     evaluation_status_beginning: EvaluationStatus
     evaluation_status_ending: EvaluationStatus
+    job_operation = "ending"                   # the jobs depend on both operations unless the class names the beginning
 
     def __init__(self, parent, state, sub_nodes, state_before_ending: Isar_State_Slot):
         super().__init__(parent, state, sub_nodes)
@@ -1315,8 +1391,17 @@ class StdBlock(NonLeaf_Node):
         return [self.evaluation_status_beginning, self.evaluation_status_ending]
 
     @final
-    def _operation_names(self):
+    @classmethod
+    def _operation_names(cls):
         return ["beginning", "ending"]
+
+    @final
+    def operation_slots(self, operation):
+        if operation == "beginning":
+            return self.state, self._state_after_beginning()
+        if operation == "ending":
+            return self._state_before_ending, self.resulting_state()
+        raise TAT_InternalError(f"{type(self).__name__} runs no operation {operation!r}")
 
     def _state_after_beginning(self) -> Isar_State_Slot:
         if self.sub_nodes:
@@ -1335,7 +1420,7 @@ class StdBlock(NonLeaf_Node):
             return
         old = self.evaluation_status_beginning
         if isinstance(old, Ready) and not isinstance(new, Ready):   # written -> unwritten: a failed beginning writes nothing
-            self._release(ev, 0, self._state_after_beginning())
+            self._release(ev, 0)
         self.evaluation_status_beginning = new
         self._written(ev, 0, old, duration)
 
@@ -1346,7 +1431,7 @@ class StdBlock(NonLeaf_Node):
             return
         old = self.evaluation_status_ending
         if _wrote(old) and not _wrote(new):       # written -> unwritten; a rewrite releases nothing
-            self._release(ev, 1, self.resulting_state())
+            self._release(ev, 1)
         self.evaluation_status_ending = new
         self._written(ev, 1, old, duration)
 
@@ -1371,7 +1456,8 @@ class StdBlock(NonLeaf_Node):
         Return the status the run leaves; on a `CannotEvaluate` the
         framework copies `_state_before_ending` into `resulting_state()`.
         Default: no closing command, the copy is the whole operation."""
-        await self._state_before_ending.copy_to(self.resulting_state())
+        input_slot, resulting_slot = self.operation_slots("ending")
+        await input_slot.copy_to(resulting_slot)
         return READY_CLEAN
 
     @final
@@ -1402,6 +1488,7 @@ class StdBlock(NonLeaf_Node):
         if self.evaluation_status_beginning is NOT_EVALUATED:          # an obstacle is not rerun
             status, duration = await _timed(self._eval_beginning_opr())
             self._set_beginning(ev, status, duration)
+        await self._passes(ev, "beginning")       # settled, a failed beginning included: passed before the children
         if isinstance(self.evaluation_status_beginning, CannotEvaluate):   # the children have no context
             for child in self.sub_nodes:
                 child._invalidate(ev)
@@ -1409,6 +1496,7 @@ class StdBlock(NonLeaf_Node):
                 # the tree's walk ends here: a stop to this call alone (ARCHITECTURE §3.3)
                 return EvaluationResult(None if ev.ignore_error else self, None)
             # The input stands as the result; a standing copy is left alone.
+            # The copy is no operation's pair: the beginning's result is unwritten.
             if not isinstance(self.evaluation_status_ending, Ready):
                 await self.state.copy_to(self.resulting_state())
                 self._set_ending(ev, READY_CLEAN, None)
@@ -1420,7 +1508,8 @@ class StdBlock(NonLeaf_Node):
         if not _wrote(self.evaluation_status_ending):
             status, duration = await _timed(self._eval_ending_opr())
             if isinstance(status, CannotEvaluate):
-                await self._state_before_ending.copy_to(self.resulting_state())
+                input_slot, resulting_slot = self.operation_slots("ending")
+                await input_slot.copy_to(resulting_slot)
             self._set_ending(ev, status, duration)
         return await self._reached(ev)
 
@@ -1449,8 +1538,13 @@ class Unchained_Node(NonLeaf_Node):
         return []                                # no operation: nothing owed
 
     @final
-    def _operation_names(self):
+    @classmethod
+    def _operation_names(cls):
         return []
+
+    @final
+    def operation_slots(self, operation):
+        raise TAT_InternalError(f"{type(self).__name__} runs no operation: nothing has slots")
 
     def _predecessor_wrote(self, index) -> bool:
         return False                             # no child writes another's input

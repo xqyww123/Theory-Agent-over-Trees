@@ -18,8 +18,9 @@ sig
     (*registers a class's evaluation callback (COMMON.md §3), built from the
       callback's name, the message's unpacker, the class's two steps -- each a
       function of the message -- and the packer of what they yield.  The
-      arguments are the input slot, `goal_state`, the resulting slot and the
-      message.  `open_goal`, from the input state to the state with the goal
+      arguments are the input slot and the resulting slot of the operation the
+      goal opens on, with `goal_state` between them, and the message.
+      `open_goal`, from the input state to the state with the goal
       open and what the class records -- refused with messages when the
       command, or a check the class makes on the open goal, refuses the input
       -- runs under `operation'` into `goal_state`; then, as one operation
@@ -28,8 +29,9 @@ sig
       `Refused` with the messages, or `Accepted` with the pair of what the
       two steps yielded, packed by TAT_Framework.pack_answer: on the wire
       [[msgs], nil] or [[], [a, b]].  When either operation answers
-      `Refused`, `goal_state` is emptied -- a rerun of a `ready` node
-      releases nothing, so an earlier run's goal would stand there -- and
+      `Refused`, `goal_state` is emptied -- the framework releases it only
+      when the operation goes from written to unwritten, which a failed run
+      is not, so the goal `open_goal` opened would stand there -- and
       the resulting slot is written only when both answer `Accepted`; a
       proper interrupt is a refusal, its one message `Interrupt`; a Bug and
       every other interrupt are re-raised*)

@@ -400,11 +400,11 @@ class Construction_Job(ABC):
         return True
 
     def _on_context_change(self) -> None:
-        """The node's own evaluation status was written by the walk while
-        the job runs — a rerun's rewrite of `ready` included; called as a
-        completed hook is (MODULE_STRUCTURE §4.1).  Cancels the job by
-        default; a class that can carry on overrides it and reads the
-        node's status itself."""
+        """The status of an operation the node's jobs depend on was written
+        by the walk while the job runs — a rerun's rewrite of `ready`
+        included; called as a completed hook is (MODULE_STRUCTURE §4.1).
+        Cancels the job by default; a class that can carry on overrides it
+        and reads the node's `job_operation_status()` itself."""
         self.cancel("CONTEXT_CHANGED")
 
     # --- the wording, composed from `title` unless the class says otherwise
@@ -446,9 +446,9 @@ class Construction_Job(ABC):
 
     @final
     def can_start(self) -> bool:
-        """Not `RUNNING`, the node `ready` — no class reads a slot the walk
-        has not filled — and `_check()` (§3.2)."""
-        return self.outcome is not RUNNING and self.node._operations_ready() and self._check()
+        """Not `RUNNING`, the node's `job_operation_status()` `ready` — no
+        class reads a slot the walk has not filled — and `_check()` (§3.2)."""
+        return self.outcome is not RUNNING and self.node._job_operation_ready() and self._check()
 
     @final
     def start(self, owner: Agent) -> None:

@@ -74,22 +74,38 @@ rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5). Evaluat
 
 ## 3. `Proof_Obligation`
 
-`Proof_Obligation` serves one shape: a `Leaf` whose one command opens
-exactly one goal, which is admitted, the class's `after_admission` step
+`Proof_Obligation` serves a class one command of which opens exactly
+one goal, which is admitted, the class's `after_admission` step
 following the admission in the same operation into the resulting slot
 (`Typedef`'s tries `setup_lifting` and keeps the admitted state when
-Isabelle refuses it, TYPEDEF.md §6; `Theorem`'s is the identity). A class
-of that shape whose command opens a proof obligation (INDEX.md) derives
-from it before its framework base — `class Theorem(Theory_Member,
-Proof_Obligation, Leaf)` — and `Proof_Obligation` derives from `Node`,
-so that its abstract methods, `goal_structure()` and `message()`, are
+Isabelle refuses it, TYPEDEF.md §6; `Theorem`'s is the identity). That
+operation is the class's `job_operation`, the operation that writes
+what the node's jobs read (CONSTRUCT_INTERACTION §3.1), in two shapes:
+a `Leaf`'s one operation — `Proof_Obligation` itself sets
+`job_operation = None` — and a `StdBlock`'s beginning, through the
+subclass `Beginning_Proof_Obligation`, which sets `"beginning"`, so
+that the node's jobs depend on the beginning alone. A class of either
+shape whose command opens a proof obligation (INDEX.md) derives from
+the class that sets its `job_operation`, before its framework base —
+`class Theorem(Theory_Member, Proof_Obligation, Leaf)`, `class
+QuotientType(Theory_Member, Beginning_Proof_Obligation, StdBlock)` —
+and takes its goal's evaluation hook from that class: `_eval_opr` from
+`Proof_Obligation`, `_eval_beginning_opr` from
+`Beginning_Proof_Obligation`, each `final` and each running
+`_eval_goal` (the evaluation, below); the plugin's test over every
+registered class pins the rule, as §1's pins `Theory_Member`, and the
+loader refuses `Proof_Obligation` bare on a block, `None` being no
+operation of a block, as it refuses `Beginning_Proof_Obligation` on a
+leaf (PLUGIN_SYSTEM §5). `Proof_Obligation` derives from `Node`, so
+that its abstract methods, `goal_structure()` and `message()`, are
 enforced. `Theorem` and `Typedef` derive from it (THEOREM.md,
-TYPEDEF.md); `QuotientType`, `LiftDefinition`, `Interpretation` and
-`Sublocale` are expected to, each confirming it in its own document;
-`Instantiation`,
-whose goal opens on a `StdBlock`'s ending, decides in its own document
-how it discharges its own, and extends `Proof_Obligation` then if it
-uses it. Open, `Proof_Obligation`'s own, decided with the first of
+TYPEDEF.md) and `QuotientType` from `Beginning_Proof_Obligation`
+(INDEX.md); `LiftDefinition`, `Interpretation` and `Sublocale` are
+expected to derive from it, each confirming it in its own document;
+`Instantiation`, whose goal opens on a `StdBlock`'s ending, decides in
+its own document how it discharges its own, and extends
+`Proof_Obligation` then, if it uses it, with a subclass whose goal
+opens on the ending. Open, `Proof_Obligation`'s own, decided with the first of
 `LiftDefinition`, `Interpretation` and `Sublocale` designed, on a
 measurement of `Proof.global_skip_proof` on such a state, and answered
 by a rule of `Proof_Obligation`, not a field of a class: a goal that
@@ -118,29 +134,36 @@ a proof, in the standard-machine form its store holds — which the proof
 check derives its limits from; it is stored. The proof check's outcome
 — `RUNNING`, `PASSED`, `FAILED` — is read through the framework's
 `check_outcome()`: `RUNNING` while a running proof check is on the
-node, the stored check otherwise, which is cleared when a stored status
-of the node leaves `ready`, when a proof construction starts, or when
-another check takes its place, and by nothing else
+node, the stored check otherwise, which is cleared when the stored
+status of an operation the node's jobs depend on leaves `ready`, when a
+proof construction starts, or when another check takes its place, and
+by nothing else
 (CONSTRUCT_INTERACTION §3.3, ARCHITECTURE §4.1). The mark, `_check()`,
 `proof_text()` and the failure block read it there.
 
 **The slot.** `goal_state`, a state slot beside the node's own
 (ARCHITECTURE §3.1, MODULE_STRUCTURE §4.1), holds the `Toplevel.state`
 in which the goal stands open and no proof step has been taken. It
-holds a state exactly while the node's instant status is `ready`.
+holds a state exactly while `job_operation_status()` is `ready`.
 `Proof_Obligation` mints it in its `__init__`, from the parent's
 `forest().conversation`, so that no class's `gen` or `from_store` mints
 it and a loaded node's is empty, like its `state`; appends it in
 `_states_inside()`, so that it is deleted with the node; and names it
-in `_slots_written_by`, so that the framework releases it with the
-node's resulting state when the status goes to `not_evaluated`. Only
-the evaluation writes it, and empties it when a rerun of a `ready` node
-fails, a rewrite that releases nothing.
+in `_slots_written_by` for `job_operation`, so that the framework
+releases it with that operation's resulting slot when the operation
+goes from written to unwritten (MODULE_STRUCTURE §4.1). Only the
+evaluation writes it, and empties it itself when a run fails: the
+framework releases it only when the operation goes from written to
+unwritten, which a failed run, a leaf's or a beginning's, is not.
 
-**The evaluation.** `Proof_Obligation`'s `_eval_opr` calls the class's
-own callback, named by its class attribute `evaluation_callback` —
-`TAT.Theorem.evaluate` for `Theorem` — with the input slot,
-`goal_state`, the resulting slot and the class's message, the result of
+**The evaluation.** `Proof_Obligation`'s `_eval_goal`, `final`, run by
+the hook of the class that sets `job_operation` — `_eval_opr` on
+`Proof_Obligation`, `_eval_beginning_opr` on
+`Beginning_Proof_Obligation` —, calls the class's own callback, named
+by its class attribute `evaluation_callback` — `TAT.Theorem.evaluate`
+for `Theorem` — with `job_operation`'s input slot, `goal_state`, its
+resulting slot (`operation_slots`, MODULE_STRUCTURE §4.1) and the
+class's message, the result of
 its `message()`: a public, synchronous hook returning its fields as
 structure, each `IsaTerm` as its `ascii`, with `goal_structure()` as
 its goal part (the amend, below). On the ML side the class gives two
@@ -167,8 +190,9 @@ steps and the packer of what they yield, and the class registers
 through the builder, `register`, the structure's one export — the
 body, `evaluate`, is private to it, so the steps cannot touch a slot
 and every class answers one shape. The
-callback's arguments are the input slot, `goal_state`, the resulting
-slot and the message; its `on_interrupt` is `Reraise`, its `timeout`
+callback's arguments are the input slot and the resulting slot of the
+operation the goal opens on, with `goal_state` between them, and the
+message; its `on_interrupt` is `Reraise`, its `timeout`
 `NONE`. It runs `open_goal` under `operation'` (MODULE_STRUCTURE §2.5)
 into `goal_state`; then, as one operation into the resulting slot, the
 half of `sorry` that ends a toplevel goal — `Toplevel.end_proof
@@ -177,9 +201,9 @@ empties `goal_state`, and the resulting slot is written only when
 everything passed. The answer is `Refused` with the messages or
 `Accepted (a, b)`, packed by `TAT_Framework.pack_answer` — on the wire
 `[[msgs], nil]` or `[[], [a, b]]`: the messages, and when there are
-none the pair of what the two steps yielded. `_eval_opr` returns
-`CannotEvaluate(messages)` when there are messages — the node is an
-obstacle — and `Ready(self.record_from_evaluation(what))` otherwise.
+none the pair of what the two steps yielded. `_eval_goal` returns
+`CannotEvaluate(messages)` when there are messages — the operation is
+an obstacle — and `Ready(self.record_from_evaluation(what))` otherwise.
 `record_from_evaluation(what)`, a member beside `evaluation_callback`
 and `message()`, records what the two steps yielded and answers the
 tuple of `IsaTerm` messages the `Ready` carries; the default records
@@ -227,7 +251,8 @@ change (the default `_on_context_change` below), so the proof AoA
 verified holds in the current context and the node is `proven` from
 the run's settlement on. `_check()` answers whether a proof can be
 constructed on the node as it stands — the framework's `can_start()`
-having answered false off `ready` (CONSTRUCT_INTERACTION §3.2); a node
+having answered false while `job_operation_status()` is not `ready`
+(CONSTRUCT_INTERACTION §3.2); a node
 answered false for is skipped by `construct` and by automatic
 construction, with no sentence of its own:
 
@@ -239,8 +264,10 @@ construction, with no sentence of its own:
 | `SUCCEEDED`, the proof check `FAILED` | true |
 
 `_on_context_change` is the default: the job is cancelled with
-`CONTEXT_CHANGED` whenever the walk writes the node's status while it
-runs — leaving `ready`, or rewriting it on a rerun. Overriding it to
+`CONTEXT_CHANGED` whenever the walk writes the status of an operation
+the node's jobs depend on while it runs — leaving `ready`, or rewriting
+it on a rerun; a block's ending, written after a child edit, is no such
+operation when the goal opens on the beginning. Overriding it to
 continue on the new context and repair the stored proof is the AoA
 round's (OPEN_QUESTIONS §2). Its sentences name the node by its id and
 so read the same for every class (the rest are the framework's defaults
@@ -338,7 +365,8 @@ statement, names included (THEOREM.md §4); `Typedef`'s is
 
 **The mark.** `Proof_Obligation` overrides `mark` with two slots, `(<status>,
 <proof>)`; the framework's `complete` never appears on the line. The
-first slot is the class's two words for its evaluation status, its
+first slot is the class's two words for `job_operation_status()`
+(CONSTRUCT_INTERACTION §3.1), its
 class attributes `valid_word` and `invalid_word` — `valid statement`
 and `invalid statement` for `Theorem`, `valid definition` and `invalid
 definition` for a class that defines, `Typedef` (TYPEDEF.md §7) — and
@@ -375,16 +403,18 @@ plugin has every theory import (PLUGIN_SYSTEM §1; SESSION_AND_THEORY
 `remove_proof_stores_of_no_tree` (COMPILATION.md §5), is `common.py`'s.
 
 **The blocks.** The jobs' blocks — the framework prints them after
-`print_fields`, when detailed, while the outcome is `FAILED` and the
-node is not an obstacle (CONSTRUCT_INTERACTION §6) — are the failure
-blocks alone: the header above and the message one level deeper (for
-example THEOREM.md §8).
+`print_fields`, when detailed, while the outcome is `FAILED`, unless an
+operation the node's jobs depend on is an obstacle
+(CONSTRUCT_INTERACTION §6) — are the failure blocks alone: the header
+above and the message one level deeper (for example THEOREM.md §8).
 
 What stays the class's: its two steps, `open_goal` and
 `after_admission`; `record_from_evaluation` and the recorded fields it
 sets; what the agent authors; `evaluation_callback`, the name of its
 callback; `message()`; `goal_structure()`; `valid_word` and
-`invalid_word`; and its own `print_fields`. `Proof_Obligation`
+`invalid_word`; its own `print_fields`; and, on a block, its other
+operation — a `QuotientType`'s ending, its evaluation hook and its
+emission. `Proof_Obligation`
 stores no row of its own: `proof` and the check are the framework's
 (CONSTRUCT_INTERACTION §3.1, ARCHITECTURE §4.1).
 

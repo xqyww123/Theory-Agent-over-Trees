@@ -116,6 +116,33 @@ when a loaded class names a construction job class, `checks` (§5) only
 when one names an evaluation job class, and `check_construct` when one
 names a job class of either kind.
 
+**The operations the node's jobs depend on.** A node's jobs read what
+one of its own operations wrote — a `Theorem`'s proof construction and
+proof check the goal its one operation opened, a `QuotientType`'s the
+goal its beginning opened (node_classes/COMMON.md §3). The class names
+that operation in the class attribute `job_operation`, as
+`_operation_names()` names it (PLUGIN_SYSTEM §2): `None` for a `Leaf`'s
+one operation, `"beginning"` or `"ending"` for a `StdBlock`'s; the
+base's default is its last operation. The jobs depend on
+`job_operation` and on every own operation before it: these are **the
+operations the node's jobs depend on**. A write of one of them drops the
+node's evaluation job, clears the stored check when the stored status
+leaves `Ready`, calls a running construction job's
+`_on_context_change`, and, when it writes `ready` over a stored status
+that was not `ready`, counts as the invalidation since a failed run
+that automatic construction asks for (§3.2, §3.3); a write of any other
+operation of the node does none of these. `job_operation_status()`, the
+framework's, is the one status the jobs see, made from those operations
+in PRINT.md §1's order of rows: an obstacle among them, else one not
+evaluated, else `job_operation`'s `ready` — `ready` exactly when every
+slot the jobs read is filled. `can_start()`, the start of the jobs
+where the walk passes the node (§3.3), and the failure blocks and the
+summary of §6 read it; a class's mark may read it too, as
+`Proof_Obligation`'s does (node_classes/COMMON.md §3). When the jobs
+depend on every operation of the node — a `Leaf`'s one, or both of a
+`StdBlock`'s whose `job_operation` is its ending — it is `ready`
+exactly when every own operation is.
+
 **The outcome.** The construction job's `outcome` is `NOT_STARTED`,
 `RUNNING`, `SUCCEEDED(product)` or `FAILED(message)`. `start` sets
 `RUNNING`, the run's settlement `SUCCEEDED` or `FAILED`, `cancel`
@@ -180,8 +207,8 @@ not.
 | `_run()` | class, hook | the work; returns the outcome; a cancellation propagates out of it: its `try/finally` is its cleanup, which never starts a round trip on the ending's path (MODULE_STRUCTURE §4.3) |
 | `_check() -> bool` | class, hook, default true | the class's own condition for a start: whether the job can be started on the node as it stands |
 | `auto_construct` | framework, a boolean, false by default | automatic construction, on or off; written by `edit`, `construct` and `cancel_construct` on every node of the call that has a construction job (§5); persisted in a reserved framework field of its own, which the call that writes it stores at once, in a transaction of its own, on every node it wrote — started, cancelled or skipped — and read back at load; no class reads or writes it |
-| `can_start() -> bool` | framework | not `RUNNING`, the node `ready` — no class reads a slot the walk has not filled —, and `_check()` |
-| `_on_context_change()` | class, hook | called from the status setter on every write of the node's own evaluation status by the walk while the job runs — a rewrite of `ready` on a rerun included — independently of the node's `on_invalidated`, through `_completed` as a completed hook is, after the write; whatever it raises, a `TAT_Error` included, is its class's bug — `TAT_InternalError`, the conversation ends (EXCEPTIONS.md §1); default: cancel with `CONTEXT_CHANGED` |
+| `can_start() -> bool` | framework | not `RUNNING`, the node's `job_operation_status()` `ready` (§3.1) — no class reads a slot the walk has not filled —, and `_check()` |
+| `_on_context_change()` | class, hook | called from the status setter on every write by the walk, while the job runs, of the status of an operation the node's jobs depend on (§3.1) — a rewrite of `ready` on a rerun included — independently of the node's `on_invalidated`, through `_completed` as a completed hook is, after the write; whatever it raises, a `TAT_Error` included, is its class's bug — `TAT_InternalError`, the conversation ends (EXCEPTIONS.md §1); default: cancel with `CONTEXT_CHANGED` |
 | `ask(question) -> None` | framework, for `_run` | enqueues an `Interactive_Question` on the job's FIFO queue, posts it to the owner's mailbox when it is the front, and suspends until an answer to it is accepted (§3.4); a cancellation while it waits withdraws that question |
 | `repeat_question()` | framework | posts the front question to the owner again when the mailbox no longer holds it — `check_construct`'s delivery of a question again (§5) |
 | `start(owner)` | framework, synchronous | called only when `can_start()`: records the owner; drops the node's evaluation job, clearing the stored check; sets `RUNNING`; stores the node in a transaction of its own; spawns the run |
@@ -236,14 +263,17 @@ its own end or never. A settlement has no `await` in it, so it is atomic
 against every other coroutine; it may land between two awaits of a
 locked call, which then sees it as a settlement made just before (§9).
 
-**The context.** The job runs against the node's input context as it was
-when the run began. A rerun of the node writes its status again in one
-step — `ready` over `ready` when the node was `ready`; it does not pass
-through `not_evaluated` — and every write of the status by the walk,
-that rewrite included, calls `_on_context_change` and drops the node's
-evaluation job; the default hook cancels the job. A class that can
-carry on overrides the hook and reads the node's status itself: `ready`
-means the node's `state` is the new context.
+**The context.** The job runs against the inputs of the operations the
+node's jobs depend on (§3.1) as they were when the run began. A rerun of
+such an operation writes its status again in one step — `ready` over
+`ready` when it was `ready`; it does not pass through `not_evaluated` —
+and every write of its status by the walk, that rewrite included, calls
+`_on_context_change` and drops the node's evaluation job; the default
+hook cancels the job. A write of any other operation of the node — a
+`QuotientType`'s ending after a child edit — does neither. A class that
+can carry on overrides the hook and reads the node's
+`job_operation_status()` itself: `ready` means the slots the jobs read
+hold the new context.
 
 ### 3.3 `Evaluation_Job`
 
@@ -254,7 +284,7 @@ the instance, does the work, and writes the outcome.
 | member | who | what |
 | --- | --- | --- |
 | `__init__(node, starter)` | base | sets `node`, `starter` (`None` when never started), `id` (the framework's counter, unique across the process, for matching the ML report) and `outcome = RUNNING` |
-| `outcome` | the class writes, the framework reads | `RUNNING`, `PASSED`, `FAILED(message)`. A settled outcome is also kept on the node, as the **stored check**: a framework attribute beside the node's stored statuses, persisted in the reserved field `check` and restored at load (ARCHITECTURE §4.1, COMPILATION.md §4). It is written when the `finished` report's body, or an attach applied at a run's settlement, settles the job, and each such step stores the node in a transaction of its own. It is cleared exactly when a stored status of the node leaves `Ready` — in the status setter —, when a construction job starts on the node, and when another evaluation job is attached in its place; a rerun that confirms `Ready` over `Ready` does not clear it, whatever its messages, nor does a drop by itself, nor the conversation's ending. `Node.check_outcome()` is its one accessor: `RUNNING` while a running evaluation job is on the node, the stored check otherwise; every reader goes through it — `_unfinished()` (§3.1), emission, a class's mark and `_check()`, the failure blocks and the summary of §6. A loaded forest re-attaches no job |
+| `outcome` | the class writes, the framework reads | `RUNNING`, `PASSED`, `FAILED(message)`. A settled outcome is also kept on the node, as the **stored check**: a framework attribute beside the node's stored statuses, persisted in the reserved field `check` and restored at load (ARCHITECTURE §4.1, COMPILATION.md §4). It is written when the `finished` report's body, or an attach applied at a run's settlement, settles the job, and each such step stores the node in a transaction of its own. It is cleared exactly when the stored status of an operation the node's jobs depend on (§3.1) leaves `Ready` — in the status setter —, when a construction job starts on the node, and when another evaluation job is attached in its place; a rerun that confirms `Ready` over `Ready` does not clear it, whatever its messages, nor does a drop by itself, nor the conversation's ending, nor a write of an operation the jobs do not depend on. `Node.check_outcome()` is its one accessor: `RUNNING` while a running evaluation job is on the node, the stored check otherwise; every reader goes through it — `_unfinished()` (§3.1), emission, a class's mark and `_check()`, the failure blocks and the summary of §6. A loaded forest re-attaches no job |
 | `title(plural=False)` | class method, abstract | the words for the work |
 | `make(node, starter) -> Self` | class method, synchronous, default `cls(node, starter)` | builds the instance and begins nothing; a class whose constructor takes more overrides it; what a class needs from Isabelle to set its job up it fetches in `_start` |
 | `_start()` | hook, async, abstract | begins the work through the class's own ML callback, passing `self.id`, and returns at once; called by the framework once the job is on its node |
@@ -262,22 +292,27 @@ the instance, does the work, and writes the outcome.
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed from a `FAILED` check's outcome whether or not a job is on the node; `None` prints nothing |
 | `failure_notification(ids, automatic)` | class, abstract | the sentence its failure sends (§3.4) for the nodes these ids name, in their shortest form — one, two or three, or more, in the forms of §5 — `automatic` saying that the failure started their construction |
 
-**Where a job starts.** A node the walk **passes** is one it reaches in
-the `Evaluating` mode (MODULE_STRUCTURE §4.1) — rerun, or `ready` and
-left as it stands; no node past the destination is passed. An
-evaluation starts a job on every node it passes, at the node's last
-operation, when the node is `ready`, its class names an evaluation job,
-no evaluation job is on it, `_unfinished()` would answer `Unchecked`,
-and the evaluation's `checks` argument says so (§5); no other node gets
-one. The framework's `Node.start_evaluation_job()` does it, in this
-order: `job = cls.make(node, caller)`, `cls` the node class's
-`evaluation_job_class`; `attach_evaluation_job(job)`; `await
-job._start()`. Nothing runs between the test and the attach, so no
-`construct` can slip in and start a construction beside the check; and
-the job is on its node, with its id, before any work begins, so a report
-can never arrive for a job the framework does not hold. `make` and
-`_start` run after the node's evaluation is committed, like a completed
-hook, and follow its rule (EXCEPTIONS.md §1): anything either raises, a
+**Where a job starts.** A node the walk **passes** is one whose
+`job_operation` (§3.1) it settles in the `Evaluating` mode
+(MODULE_STRUCTURE §4.1) — rerun, or `ready` and left as it stands —: a
+`Leaf` at its operation, a nesting node at its ending, and a nesting
+node whose `job_operation` is its beginning right after the beginning,
+before its children; no node past the destination is passed, and a
+nesting node the destination lies under is passed only when its
+`job_operation` is its beginning. An evaluation starts a job on every
+node it passes, there, when the node's `job_operation_status()` is
+`ready`, its class names an evaluation job, no evaluation job is on it,
+`_unfinished()` would answer `Unchecked`, and the evaluation's `checks`
+argument says so (§5); no other node gets one. The framework's
+`Node.start_evaluation_job()` does it, in this order: `job =
+cls.make(node, caller)`, `cls` the node class's `evaluation_job_class`;
+`attach_evaluation_job(job)`; `await job._start()`. Nothing runs
+between the test and the attach, so no `construct` can slip in and
+start a construction beside the check; and the job is on its node, with
+its id, before any work begins, so a report can never arrive for a job
+the framework does not hold. `make` and `_start` run once the status of
+the node's `job_operation` is written, like a completed hook, and follow
+its rule (EXCEPTIONS.md §1): anything either raises, a
 `TAT_Error` included, is its class's bug — `start_evaluation_job()`
 turns a `TAT_Error` into a `TAT_InternalError` as `_completed` does —
 and the conversation ends, the ending dropping the job.
@@ -291,11 +326,12 @@ a cancelled run.
 
 **Automatic construction.** On a node it passes, after the test above,
 an evaluation also starts the node's construction job — `start(caller)`,
-the caller its owner — when the node is `ready`, the job's
-`auto_construct` is on, `can_start()` holds, and the node holds no
-result worth keeping: the job is `NOT_STARTED`; or its last run ended
-`FAILED` and the node was invalidated since — its stored status was not
-`ready` before this evaluation wrote it; or it ended `SUCCEEDED` and the
+the caller its owner — when the node's `job_operation_status()` is
+`ready`, the job's `auto_construct` is on, `can_start()` holds, and the
+node holds no result worth keeping: the job is `NOT_STARTED`; or its
+last run ended `FAILED` and an operation the node's jobs depend on was
+invalidated since — its stored status was not `ready` before this
+evaluation wrote it; or it ended `SUCCEEDED` and the
 check on the node is `FAILED`. A `SUCCEEDED` job whose check is
 `PASSED`, `RUNNING` or not yet run is left alone: the result stands, or
 is checked first by the test above. When a check's report is `FAILED`
@@ -366,10 +402,11 @@ settlement, a report may land between two awaits of a locked call (§9).
 lines, the background line and `blocking` all read this one definition.
 A node's evaluation job is **dropped** — one synchronous step: taken off
 the node, marked ended, its starter woken — when the walk writes the
-node's status (an invalidation, or a rerun, which rewrites `ready` in one
-step), on a delete or an amend, when a construction job
-starts on the node, and when another job is attached in its place;
-nothing else drops it. The status setter does both: the drop at every write by the walk, the
+status of an operation the node's jobs depend on (§3.1; an
+invalidation, or a rerun, which rewrites `ready` in one step), on a
+delete or an amend, when a construction job starts on the node, and
+when another job is attached in its place; nothing else drops it. The
+status setter does both: the drop at every such write by the walk, the
 clearing when the stored status leaves `Ready` (COMPILATION.md §4). Cancelling the task is a separate,
 best-effort step: a walk collects the ids it dropped and sends one
 `cancel(ids)` at its `flush`; an edit collects the ids its commit block
@@ -592,8 +629,9 @@ started, so every job waited for belongs to a current context.
   standing for every tree —, those without a construction job left out;
   no class arguments. On each, `auto_construct` is written
   as the call gives it; each whose job `can_start()` is started, the
-  caller its owner; a node that cannot be started now — not `ready`,
-  already constructed, running — is skipped, not refused, and its mark
+  caller its owner; a node that cannot be started now — its
+  `job_operation_status()` not `ready` (§3.1), already constructed,
+  running — is skipped, not refused, and its mark
   says how it stands. Result: the `Started …` line below, naming every
   node the call started, over the quickview, its focuses at depth 0 the
   nodes the call named, an id under another named id left out. Refused only when no node of the call has a
@@ -725,8 +763,10 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
   that, `needs your answer, call \`check_construct\` to see it` — in
   every rendering, the briefing included, to the owner only, until the
   answer is accepted.
-- **The failure blocks.** When a node is detailed (PRINT.md §2) and is
-  not itself an obstacle, the framework prints after the class's
+- **The failure blocks.** When a node is detailed (PRINT.md §2), unless
+  an operation the node's jobs depend on is an obstacle — its
+  `job_operation_status()` `cannot_evaluate` (§3.1) —, the framework
+  prints after the class's
   `print_fields`, for the construction job when its outcome is `FAILED`
   and for the check when `check_outcome()` is `FAILED`, in that order, the job class's
   `failure_header(failure)` — `failure` the `FAILED` outcome — and
@@ -739,7 +779,8 @@ framework's `ConstructNotSupported`, `ConstructOwnedByAnother`,
   the node.
 - **The summary under a cut-off nesting node.** Under `Recall`, an
   `incomplete` nesting node at the last printed depth (3) writes one
-  line per group: the nodes below it that are `ready` grouped by the
+  line per group: the nodes below it that are not `failed` and whose
+  `job_operation_status()` is `ready` (§3.1) grouped by the
   title their `Unfinished` carries — the construction job's, or the
   evaluation job class's; one group per title, construction titles
   first, then evaluation titles, alphabetical within —, then the nodes `failed`, then the

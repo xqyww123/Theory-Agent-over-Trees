@@ -299,10 +299,17 @@ def _check_class(cls: type[Node]) -> list[str]:
     if _defined_by(cls, "is_finished") is not Node:
         raise _refuse(cls, "overrides `is_finished`; `_unfinished` is the override point")
     _check_job_class(cls)
-    if _defined_by(cls, "_operations_ready") is not Node:
-        raise _refuse(cls, "overrides `_operations_ready`, which is the framework's")
+    for member in ("_operations_ready", "job_operation_status"):
+        if _defined_by(cls, member) is not Node:
+            raise _refuse(cls, f"overrides `{member}`, which is the framework's")
     if _defined_by(cls, "_own_statuses") not in (Leaf, StdBlock, Unchained_Node):
         raise _refuse(cls, "overrides `_own_statuses`; a node's operations are its base class's")
+    if issubclass(cls, Unchained_Node):                 # one of the three bases, by the check above
+        if cls.construction_job_class is not None or cls.evaluation_job_class is not None:
+            raise _refuse(cls, "names a job class, but runs no operation to write what a job reads")
+    elif cls.job_operation not in cls._operation_names():
+        raise _refuse(cls, f"`job_operation` is {cls.job_operation!r}, not an operation of the class:"
+                           f" {', '.join(repr(name) for name in cls._operation_names())}")
     if _defined_by(cls, "print") is not Node:
         raise _refuse(cls, "overrides `print`; `print_fields` and `mark` are the override points")
     if _defined_by(cls, "_children_to_print") not in (Node, NonLeaf_Node):

@@ -628,9 +628,10 @@ the node's own `on_inserted` or `on_moved`. `on_invalidated` fires in the
 status setter, so before all of these: in an edit, during the commit's
 in-memory invalidation (§4.2 step 3); in an evaluation, during its walk.
 A running construction job has a hook of its own,
-`_on_context_change`, called by the status setters on every
-write of the node's own evaluation status by the walk while the job runs
-— a rerun's rewrite of `ready` included — independently of
+`_on_context_change`, called by the status setters on every write by
+the walk, while the job runs, of the status of an operation the node's
+jobs depend on (CONSTRUCT_INTERACTION §3.1) — a rerun's rewrite of
+`ready` included — independently of
 `on_invalidated`, and called as a completed hook is: after the write,
 through `_completed`, so whatever it raises, a `TAT_Error` included, is
 its class's bug (EXCEPTIONS.md §1). Its default cancels the job
@@ -666,7 +667,17 @@ default, which answers the further slots an operation writes besides
 its resulting state — `operation` as `on_invalidated` is told it. The
 framework releases them with the operation's resulting state, in the
 setter that takes the operation from written to unwritten; only the
-class's evaluation callback writes them. The
+class's evaluation callback writes them. `operation_slots(operation)`,
+public, answers an operation's input slot and resulting slot — a
+`Leaf`'s `state` and `resulting_state()`; a `StdBlock`'s beginning's
+`state` and the first child's `state`, or the slot after all children
+when there is none, its ending's that slot and `resulting_state()`; an
+`Unchained_Node` runs none —: what the operation's evaluation hook runs
+from and into, and what a class reads for the operation its hook runs
+(node_classes/COMMON.md §3); the framework releases the resulting slot
+with the operation, and on a `CannotEvaluate` of a `Leaf`'s operation
+or a `StdBlock`'s ending copies the input slot into the resulting slot
+(a failed beginning's copy is below). The
 state after a node,
 `resulting_state()`, is computed, as in AoA
 (`contrib/Isa-Mini/IsaMini/AoA/model.py`'s `Node.resulting_state`): under a chaining parent it
@@ -701,7 +712,6 @@ unwritten — never on a rewrite; a loaded forest's
 instant statuses are all `NOT_EVALUATED`, its stored ones what the last
 run left. Each setter writes the instant status
 and its stored status, and is a plain method (COMPILATION.md §4); it also
-clears the node's stored check when the stored status leaves `Ready`,
 discards the seen set's keys for the operation's messages, adds the
 node to the walk's `stored` (below), and writes the `evaluation` log
 event `operation` (LOGGING.md §4) — for which it takes one argument
@@ -709,11 +719,15 @@ besides the status: how long the evaluation hook ran, or `None` when no
 hook ran, so that every write says whether a run produced it. Given
 `not_evaluated` for an operation whose stored status is already
 `not_evaluated`, the setter does nothing, so a repeated marking stores
-and logs nothing again. At every write by the walk, a
-rerun's rewrite of `ready` included, it calls a running construction
-job's `_on_context_change`, through `_completed` as it fires
-`on_invalidated`, and drops the node's evaluation job
-(CONSTRUCT_INTERACTION §3.2, §3.3). Beside the instant statuses, which
+and logs nothing again. When the operation is one the node's jobs
+depend on (CONSTRUCT_INTERACTION §3.1) — every operation of a `Leaf`,
+and of a `StdBlock` unless its class names its beginning — the setter
+also, at every write by the walk, a rerun's rewrite of `ready`
+included, calls a running construction job's `_on_context_change`,
+through `_completed` as it fires `on_invalidated`, and drops the node's
+evaluation job, and clears the node's stored check when the stored
+status leaves `Ready` (CONSTRUCT_INTERACTION §3.2, §3.3); a write of
+any other operation leaves the jobs and the check alone. Beside the instant statuses, which
 a class reads through `evaluation_statuses()`, a tuple, a node holds
 `_last_evaluation_statuses`, one list in `_own_statuses()`'s order,
 read through `last_evaluation_statuses()` and stored as the
@@ -734,7 +748,8 @@ the same `Evaluation` (the invalidation functions, below).
 - `Leaf(Node)` — a class overrides `_eval_opr() -> Ready |
   CannotEvaluate`: run the node from `state` into `resulting_state()`,
   returning the status the run leaves, its messages on it; and `emit`
-  (COMPILATION.md §3).
+  (COMPILATION.md §3). Its `job_operation` is `None`, its one
+  operation (CONSTRUCT_INTERACTION §3.1).
 - `NonLeaf_Node(Node)` — `sub_nodes`, `_resulting_state_of_child`, and the
   children loop of the recursion.
 - `StdBlock(NonLeaf_Node)` — keeps `_state_before_ending`, the slot after all
@@ -744,7 +759,11 @@ the same `Evaluation` (the invalidation functions, below).
   CannotEvaluate` (from `_state_before_ending` into `resulting_state()`);
   the default ending copies. Its `emit` is the framework's, `final`; a
   class overrides `emit_beginning` and, exactly when `_eval_ending_opr`,
-  `emit_ending` (COMPILATION.md §3).
+  `emit_ending` (COMPILATION.md §3). Its `job_operation` is `"ending"`,
+  so the jobs depend on both operations, unless the class declares
+  `"beginning"` (CONSTRUCT_INTERACTION §3.1); the walk passes it at that
+  operation: at its ending, or right after its beginning, before its
+  children, when that is its `job_operation`.
 - `Unchained_Node(NonLeaf_Node)` — a container whose children are not
   chained: no child's result is the next child's input, it mints no slot
   and runs no operation of its own; a child that has a result owns the
@@ -835,12 +854,14 @@ class Evaluation:                    # one walk: made by the walk's entry for `F
     ignore_error: bool
     starter: Agent | None            # the caller, starter of the jobs the walk starts; None starts none
     checks: str                      # "no" | "quick" | "blocking" (CONSTRUCT_INTERACTION §5)
-    passed: list[Node]               # the nodes reached in Evaluating, for `blocking` to wait on
+    passed: list[Node]               # the nodes the walk passed, each at its `job_operation`
+                                     # (CONSTRUCT_INTERACTION §3.3), for `blocking` to wait on
     stopped_at: Node | None          # where the walk stopped, written by `_run` when it ends
     started: list[Construction_Job]  # the constructions the walk started automatically, for the
                                      # result's `Automatically started …` line (CONSTRUCT_INTERACTION §5)
-    was_not_ready: set[Node]         # a stored status of these was not `ready` before the walk wrote it:
-                                     # the invalidation since a failure that automatic construction asks for
+    was_not_ready: set[Node]         # the stored status of an operation these nodes' jobs depend on was not
+                                     # `ready` before the walk wrote it: the invalidation since a failure
+                                     # that automatic construction asks for
     dropped: list[int]               # the evaluation jobs dropped, their ids sent as cancel(ids) at flush
     stored: set[Node]                # the nodes whose status the walk wrote — a setter adds each —
                                      # stored whole at each tree's end and when the walk ends
@@ -1019,9 +1040,11 @@ and its resolved imports, the `Theory` nodes themselves
    invalidation, `Forest._invalidate_from(position, ev)` (§4.1; `move`
    calls it at two positions, below), a plain
    function on the edit's `Evaluation` — the statuses written
-   `not_evaluated` through the setters, which release the slots, drop
-   the evaluation jobs and mark the nodes for the store onto it, and fire
-   `on_invalidated`; the cascade to the importers through `Theory`'s
+   `not_evaluated` through the setters, which release the slots, drop a
+   node's evaluation job when the operation written is one the node's
+   jobs depend on (§4.1, "Status") and mark the nodes for the store onto
+   it, and fire `on_invalidated`; the cascade to the importers through
+   `Theory`'s
    ending setter, and through the comparison of the record with the
    trees as they now are (`Forest._invalidate_changed_trees`, plain: a
    tree present in both whose record changed is invalidated whole,

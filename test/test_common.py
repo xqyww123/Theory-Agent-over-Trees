@@ -16,6 +16,7 @@ from pathlib import Path
 import jsoncomment
 import pytest
 
+import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
@@ -99,22 +100,21 @@ def test_the_text_line_is_section_2_s():
     assert text_line("‹Quoted› \\<open>here\\<close>") == 'text ‹"Quoted" "here".›'
 
 
-def test_proof_obligation_enforces_its_abstract_methods():
+@pytest.mark.parametrize("shape", ["leaf", "block"])
+def test_proof_obligation_enforces_its_abstract_methods(shape):
     """§3: `Proof_Obligation` derives from `Node`, so a class that leaves
-    `goal_structure()` or `message()` out fails at its first instantiation;
-    `Theorem` has both."""
-    class Without_Goal_Structure(Theory_Member, Proof_Obligation, M.Leaf):
-        def message(self): return ()
-        def emit(self, indent, out): return indent
-
-    class Without_Message(Theory_Member, Proof_Obligation, M.Leaf):
-        def goal_structure(self): return ()
-        def emit(self, indent, out): return indent
-
-    for cls, missing in ((Without_Goal_Structure, "goal_structure"), (Without_Message, "message")):
+    `goal_structure()` or `message()` out fails at its first instantiation,
+    on a leaf and on a block whose goal opens on its beginning alike;
+    `Theorem` and the block stand-in have both."""
+    bases, complete, body = {
+        "leaf": ((Proof_Obligation, M.Leaf), theorem.Theorem, {"emit": lambda self, indent, out: indent}),
+        "block": ((common.Beginning_Proof_Obligation, tm.Block), Block_Stand_In, {})}[shape]
+    without_goal_structure = type("Without_Goal_Structure", (Theory_Member, *bases), {**body, "message": lambda self: ()})
+    without_message = type("Without_Message", (Theory_Member, *bases), {**body, "goal_structure": lambda self: ()})
+    for cls, missing in ((without_goal_structure, "goal_structure"), (without_message, "message")):
         with pytest.raises(TypeError, match=missing):
             cls(None, None)
-    assert issubclass(theorem.Theorem, Proof_Obligation) and theorem.Theorem.__abstractmethods__ == frozenset()
+    assert issubclass(complete, Proof_Obligation) and complete.__abstractmethods__ == frozenset()
 
 
 class Stand_In(theorem.Theorem):
@@ -167,6 +167,142 @@ def test_proof_obligation_reads_the_class_s_own_words_callback_message_and_recor
     assert q.mark(M.BRIEFING, 0) == "invalid definition"
     assert "record_from_evaluation" not in vars(theorem.Theorem)
     assert Proof_Obligation.record_from_evaluation(p, [None, None]) == ()
+
+
+# --- Beginning_Proof_Obligation (§3): the goal on a block's beginning, through a stand-in over test_model's fake block
+
+class Block_Stand_In(Theory_Member, common.Beginning_Proof_Obligation, tm.Block):
+    """A `Proof_Obligation` whose goal opens on the beginning of test_model's
+    fake block, the shape of `QuotientType` (§3): its own words, callback
+    and message; the fake's ending."""
+    construct_schema = {**tm.BLOCK_SCHEMA, "properties": {**tm.BLOCK_SCHEMA["properties"], "kind": {"const": "block_stand_in"}}}
+    evaluation_callback = "TAT.Block_Stand_In.evaluate"
+    valid_word, invalid_word = "valid definition", "invalid definition"
+
+    def goal_structure(self):
+        return ("R",)
+
+    def message(self):
+        return ("block_stand_in", self.name)
+
+
+BLOCK_KINDS = {**tm.KINDS, "block_stand_in": Block_Stand_In}
+
+
+def block_forest(children=1):
+    """Theory > [Q > [C1, …]] over the fake block, Q the stand-in."""
+    f = tm.OneTreeForest(tm.CONN, kinds=BLOCK_KINDS)
+    thy = tm.add(f, tm.Block(f, tm.slot(), "Theory", tm.slot()))
+    q = tm.add(thy, Block_Stand_In(thy, tm.slot(), "Q", tm.slot()), "block_stand_in")
+    cs = [tm.add(q, tm.T(q, tm.slot(), f"C{i + 1}")) for i in range(children)]
+    return f, thy, q, cs
+
+
+def goal_call(monkeypatch):
+    """The fake wire's answer to the stand-in's callback: the goal opened and
+    admitted, nothing recorded; every call kept."""
+    calls = []
+
+    async def call(conversation, name, args):
+        calls.append((name, args))
+        _, goal, result, _ = args
+        tm.TABLE.values[goal] = "goal"
+        tm.TABLE.values[result] = "admitted"
+        return [[], [None, None]]
+    monkeypatch.setattr(isabelle_driver, "call", call)
+    return calls
+
+
+def test_beginning_proof_obligation_opens_the_goal_on_the_beginning_s_two_slots(monkeypatch):
+    """§3: the callback is called with the beginning's input slot,
+    `goal_state`, the beginning's resulting slot — the first child's state,
+    the slot after all children with no child — and `message()`;
+    `_slots_written_by` names `goal_state` for the beginning alone; the
+    mark's first slot reads `job_operation_status()`: the valid word on
+    `(Ready, NOT_EVALUATED)` and on `(Ready, CannotEvaluate)`, the invalid
+    word on `(CannotEvaluate, Ready)`, `not evaluated` before any run."""
+    calls = goal_call(monkeypatch)
+    f, thy, q, (c1,) = block_forest()
+    assert q.mark(M.BRIEFING, 0) == "not evaluated, proof not started"
+    run(q.evaluate_to(None, False))
+    [(name, args)] = calls
+    assert name == "TAT.Block_Stand_In.evaluate"
+    assert args == (q.state.to_msgpack(), q.goal_state.to_msgpack(), c1.state.to_msgpack(), ("block_stand_in", "Q"))
+    assert tm.st(q) == (tm.READY, tm.READY)
+    assert q._slots_written_by("beginning") == (q.goal_state,) and q._slots_written_by("ending") == ()
+    assert q.mark(M.BRIEFING, 0) == "valid definition, proof not started"
+    q.evaluation_status_ending = M.NOT_EVALUATED
+    assert q.mark(M.BRIEFING, 0) == "valid definition, proof not started"
+    q.evaluation_status_ending = M.CannotEvaluate()
+    assert q.mark(M.BRIEFING, 0) == "valid definition, proof not started"    # the jobs depend on the beginning alone
+    q.evaluation_status_beginning, q.evaluation_status_ending = M.CannotEvaluate(), tm.READY
+    assert q.mark(M.BRIEFING, 0) == "invalid definition"
+    calls.clear()
+    f, thy, q, _ = block_forest(children=0)
+    run(q.evaluate_to(None, False))
+    [(_, args)] = calls
+    assert args[2] == q._state_before_ending.to_msgpack()
+
+
+def test_the_goal_state_of_a_block_is_held_across_a_child_edit_and_released_with_its_beginning(monkeypatch):
+    """§3 "The slot": `goal_state` is released with the beginning's resulting
+    slot — an insert before the block —, not with the ending's: a child
+    insert leaves it held, `job_operation_status()` `ready`."""
+    goal_call(monkeypatch)
+    f, thy, q, (c1,) = block_forest()
+    run(q.evaluate_to(None, False))
+    assert tm.TABLE.values[q.goal_state.name] == "goal"
+    run(locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS)))
+    assert tm.TABLE.values[q.goal_state.name] == "goal" and tm.st(q) == (tm.READY, M.NOT_EVALUATED)
+    assert isinstance(q.job_operation_status(), M.Ready)
+    run(locked(f, edit.insert(thy, 0, [{"kind": "t", "name": "T0"}], BLOCK_KINDS)))
+    assert q.goal_state.name not in tm.TABLE.values and q.goal_state.name in tm.TABLE.deleted
+    assert tm.st(q) == (M.NOT_EVALUATED, M.NOT_EVALUATED)
+
+
+def test_the_loader_refuses_a_bare_proof_obligation_on_a_block_and_beginning_proof_obligation_on_a_leaf(monkeypatch):
+    """§3: the loader refuses `Proof_Obligation` bare on a block, `None`
+    being no operation of a block, and `Beginning_Proof_Obligation` on a
+    leaf (PLUGIN_SYSTEM §5)."""
+    monkeypatch.setattr(plugin, "registry", {})
+
+    class Bare(Theory_Member, Proof_Obligation, tm.Block):
+        construct_schema = {**tm.BLOCK_SCHEMA, "properties": {**tm.BLOCK_SCHEMA["properties"], "kind": {"const": "bare"}}}
+        evaluation_callback = "TAT.Bare.evaluate"
+        def goal_structure(self): return ()
+        def message(self): return ()
+
+    with pytest.raises(plugin.CannotLoadPlugin, match="`job_operation` is None, not an operation of the class"):
+        plugin.TAT_node(Bare)
+
+    class Opening_Lemma(common.Beginning_Proof_Obligation, theorem.Theorem):
+        pass
+
+    with pytest.raises(plugin.CannotLoadPlugin, match="`job_operation` is 'beginning', not an operation of the class"):
+        plugin.TAT_node(Opening_Lemma)
+
+
+def test_a_proof_obligation_takes_its_goal_s_hook_from_the_class_that_sets_its_job_operation():
+    """§3: the class that sets a registered `Proof_Obligation` class's
+    `job_operation` is `Proof_Obligation` or `Beginning_Proof_Obligation`,
+    and each evaluation hook that class defines reaches the registered
+    class from it — `Theorem` and `Typedef`, the registered ones, and the
+    block stand-in; a subclass overriding the hook fails the rule."""
+    def takes_its_hook_from_the_class_that_sets_its_job_operation(cls):
+        setter = plugin._defined_by(cls, "job_operation")
+        return setter in (Proof_Obligation, common.Beginning_Proof_Obligation) and all(
+            plugin._defined_by(cls, hook) is setter
+            for hook in ("_eval_opr", "_eval_beginning_opr", "_eval_ending_opr") if hook in vars(setter))
+    loaded = plugin.load(["isabelle_theory_agent.std"])
+    obligations = {cls for cls in loaded.kinds.values() if issubclass(cls, Proof_Obligation)}
+    assert obligations == {theorem.Theorem, typedef.Typedef}
+    assert all(takes_its_hook_from_the_class_that_sets_its_job_operation(cls) for cls in obligations)
+    assert takes_its_hook_from_the_class_that_sets_its_job_operation(Block_Stand_In)
+
+    class Overriding(Block_Stand_In):
+        async def _eval_beginning_opr(self): return M.READY_CLEAN   # type: ignore[override]
+
+    assert not takes_its_hook_from_the_class_that_sets_its_job_operation(Overriding)
 
 
 # --- the shared `$defs` (§4): the schema text, the type parameters' check and writer, the mixfix writers

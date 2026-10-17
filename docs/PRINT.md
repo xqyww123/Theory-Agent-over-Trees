@@ -63,12 +63,19 @@ or `incomplete` by its trees. What blocks a `not evaluated` node is not on
 its line: the `failed` marks say where the obstacles are, and the tool
 that ran the evaluation names the first stop in its answer
 (RENDER_BASELINES §6; MCP_SPECIFICATION §4). An `Error:` block (§3)
-accompanies a `failed` line, a `Notice:` block a `complete` or
-`incomplete` one — `incomplete` when the class still owes what the
-notice is about.
+follows an operation that is an obstacle and a `Notice:` block one that
+reported something, whatever the line reads: under the default mark an
+`Error:` block stands beside a `failed` line, a `Notice:` block beside a
+`complete` or `incomplete` one — `incomplete` when the class still owes
+what the notice is about —; a class whose mark speaks for the
+operations its jobs depend on (CONSTRUCT_INTERACTION §3.1) shows another
+operation's `Error:` block under a line that reads its valid word — a
+`QuotientType` whose ending is refused (node_classes/COMMON.md §3).
 
 A class overrides `mark` to say more, and reads its instant statuses
-through `evaluation_statuses()` as the default does. `Proof_Obligation`
+through `evaluation_statuses()` as the default does, or the one status
+its jobs see through `job_operation_status()` (CONSTRUCT_INTERACTION
+§3.1). `Proof_Obligation`
 answers two slots, the class's status and its proof's
 (node_classes/COMMON.md §3; `Theorem`'s words, node_classes/THEOREM.md
 §7). Inside the parentheses, after the mark, the framework adds its
@@ -111,16 +118,20 @@ The descent is the framework's; what a class writes under its line is
 the class's, by mode and depth (§3). Four more things the framework
 writes under a line: after `print_fields`, the operations' messages
 (§3), and then (CONSTRUCT_INTERACTION §6), when the
-node is detailed and not itself an obstacle, one **failure block** for
+node is detailed, unless an operation the node's jobs depend on is an
+obstacle — its `job_operation_status()` `cannot_evaluate`
+(CONSTRUCT_INTERACTION §3.1) —, one **failure block** for
 the construction job when its outcome is `FAILED` and one for the check
 when `check_outcome()` is `FAILED`, in that order — the job class's `failure_header`, then the
 message one level deeper, the header's colon a period when the message
 is empty; a `None` header prints nothing; on
 every detailed rendering, the seen set aside — and, under `Recall`, below
 an `incomplete` nesting node at the last printed depth, the **summary**:
-one line per group that has members — the nodes below it that are
-`ready`, grouped by the title their `Unfinished` carries, construction
-titles first, then evaluation titles, alphabetical within;
+one line per group that has members — the nodes below it that are not
+`failed` and whose `job_operation_status()` is `ready`
+(CONSTRUCT_INTERACTION §3.1), grouped by the title their `Unfinished`
+carries, construction titles first, then evaluation titles,
+alphabetical within;
 then the nodes `failed`, then the nodes `not evaluated`, nesting nodes
 counted among them; ids in tree order, relative to the node, up to five,
 the count alone past five; no period:

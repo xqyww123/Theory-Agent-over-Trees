@@ -88,7 +88,8 @@ A class may own a further slot besides, as `Proof_Obligation` does with
 `from_store`, or once in a constructor both reach — appends it the same
 way, and names it in `_slots_written_by(operation)`, so that the
 framework releases it with the result of the operation that writes it
-(MODULE_STRUCTURE §4.1, "States").
+(MODULE_STRUCTURE §4.1, "States") — `goal_state` with the result of the
+node's `job_operation`, a block's beginning for `QuotientType`.
 Besides its hooks a class declares, as class attributes:
 
 | attribute | what it is |
@@ -98,6 +99,7 @@ Besides its hooks a class declares, as class attributes:
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1; compulsory in both directions and priority 0 by default, so an omissible class declares them and a leaf declares none |
 | `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.2), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
 | `construction_job_class`, `evaluation_job_class`, optional | the class's job classes, `None` by default: the `Construction_Job` subclass `construct` starts on the node, the `Evaluation_Job` subclass an evaluation starts on it (CONSTRUCT_INTERACTION §3) |
+| `job_operation`, optional | the operation that writes what the node's jobs read, named as `_operation_names()` names it — `None` for a `Leaf`'s one operation, `"beginning"` or `"ending"` for a `StdBlock`'s; the jobs depend on it and on every own operation before it (CONSTRUCT_INTERACTION §3.1). The base's default is its last operation, so a class that declares nothing has jobs depending on every operation; a `StdBlock` class whose jobs read what its beginning wrote declares `"beginning"`, as the plugin's `Beginning_Proof_Obligation` does (node_classes/COMMON.md §3) |
 
 The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5). Isabelle
@@ -113,7 +115,11 @@ MODULE_STRUCTURE §4.1 lists; of its log a class writes `note` records
 alone, the named events being the framework's (LOGGING.md §3, §5) —,
 `forest().id_of` for a node's id as the agent sees it, and its
 `Theory`'s `print_name` over the stored `keywords`
-(node_classes/SESSION_AND_THEORY.md §2), and
+(node_classes/SESSION_AND_THEORY.md §2), its own
+`operation_slots(operation)` — an operation's input slot and resulting
+slot, what the operation's evaluation hook runs from and into
+(MODULE_STRUCTURE §4.1, "States") — and `job_operation_status()`, the
+one status the node's jobs see (CONSTRUCT_INTERACTION §3.1), and
 nothing with a leading underscore, except the hooks it is
 meant to override: `_unfinished` and `_carries_job_from` on the node, `_states_inside` and
 `_slots_written_by` for a slot the class owns, and on its job classes
@@ -236,8 +242,15 @@ registration, per class:
   `evaluation_job_class` an `Evaluation_Job` subclass that implements
   `title`, `_start`, `failure_header` and `failure_notification`, and
   overrides neither `_report` nor `dropped_for` (§3.3);
+- a `Leaf` or `StdBlock` class's `job_operation` is among its
+  `_operation_names()` (§2; CONSTRUCT_INTERACTION §3.1): the plugin's
+  `Proof_Obligation` bare on a block, whose `job_operation` is `None`,
+  is refused, and so is `Beginning_Proof_Obligation` on a leaf; an
+  `Unchained_Node` class names no job class, since it runs no operation
+  to write what a job reads;
 - the class does not override `is_finished` — `_unfinished` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
+  `job_operation_status` nor
   `_own_statuses` (MODULE_STRUCTURE §4.1), nor `print` nor
   `_children_to_print` — `print_fields` and `mark` are (PRINT.md); the
   methods a class never overrides carry `typing.final` as well, so the

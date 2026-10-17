@@ -752,7 +752,8 @@ class Constructed_Section(Section):     # a nesting node that owes a constructio
 
 def test_the_summary_reads_a_nesting_node_stopped_inside_as_in_no_group():
     """PRINT.md §1, §2: a nesting node whose beginning ran and whose ending
-    did not is `incomplete`, not `not evaluated`, and is not `ready`, so it
+    did not is `incomplete`, not `not evaluated`, and, its jobs depending
+    on both operations, its `job_operation_status()` is not `ready`, so it
     is counted in no group, whatever it owes."""
     f = new_forest()
     a = session(f, "A")
@@ -787,3 +788,63 @@ def test_the_checks_failure_block_under_its_own_header_after_the_constructions()
         "  No proof was found:", "    Sledgehammer timed out.", "  The proof no longer holds:", "    the replay broke"]
     with pytest.raises(TAT_InternalError, match="a failure header ends in a colon"):
         jobs.with_message("No proof was found", "Sledgehammer timed out.")
+
+
+# --- a nesting node whose jobs read its beginning (CONSTRUCT_INTERACTION §3.1) --
+
+class Goal_Section(Section):
+    """A nesting node whose jobs read what its beginning wrote, with both
+    job classes."""
+    construction_job_class = Proof_Construction
+    evaluation_job_class = Proof_Check
+    job_operation = "beginning"
+
+
+def test_the_failure_block_is_printed_unless_an_operation_the_jobs_depend_on_is_an_obstacle():
+    """PRINT.md §2, CONSTRUCT_INTERACTION §6: under a nesting node whose jobs
+    read its beginning, the `FAILED` construction's block is printed below
+    the ending's `Error:` block when the ending is the obstacle, and on
+    the node not evaluated, and not when the beginning is the obstacle."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    u = Goal_Section(x, slot(), [], slot()); u.name = "U"
+    u.evaluation_status_beginning, u.evaluation_status_ending = READY, failing("end broke")
+    enter(x, u, "section")
+    u.job().outcome = jobs.Failed("no proof")
+    assert render(f, u, focus(u)) == ["- section_U (failed)", "  Error:", "    end broke",
+                                      "  No proof was found:", "    no proof", empty("section_U")]
+    u.evaluation_status_beginning, u.evaluation_status_ending = NOT_EVALUATED, NOT_EVALUATED
+    assert render(f, u, focus(u)) == ["- section_U (not evaluated)", "  No proof was found:", "    no proof",
+                                      empty("section_U")]
+    u.evaluation_status_beginning, u.evaluation_status_ending = failing("begin broke"), READY
+    assert render(f, u, focus(u)) == ["- section_U (failed)", "  Error:", "    begin broke", empty("section_U")]
+
+
+class Constructed_Goal_Section(Constructed_Section):
+    job_operation = "beginning"
+
+
+def test_the_summary_counts_a_nesting_node_whose_jobs_can_start_under_its_job_s_title():
+    """PRINT.md §2: the twin of
+    `test_the_summary_reads_a_nesting_node_stopped_inside_as_in_no_group`
+    with `U` declaring `job_operation = "beginning"`: `incomplete` still,
+    but its `job_operation_status()` is `ready`, so it is counted under the
+    title of what it owes, beside the leaf; with its ending refused it is
+    `failed`, and counted there alone."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    s = section(x, "S")
+    section(s, "T", ending=NOT_EVALUATED)
+    u = Constructed_Goal_Section(s, slot(), [], slot()); u.name = "U"
+    u.evaluation_status_beginning, u.evaluation_status_ending = READY, NOT_EVALUATED
+    enter(s, u, "section")
+    leaf(Lemma, s, "lemma", "P", status=READY)
+    rendered = render(f, f, RECALL)
+    at = rendered.index("  - section_S (incomplete)")
+    assert rendered[at + 1:] == ["    2 proof constructions incomplete: section_U, lemma_P"]
+    u.evaluation_status_ending = failing("end broke")
+    rendered = render(f, f, RECALL)
+    at = rendered.index("  - section_S (incomplete)")
+    assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_P", "    1 node failed: section_U"]

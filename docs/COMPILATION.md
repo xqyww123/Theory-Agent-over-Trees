@@ -473,9 +473,8 @@ Rendering is the framework's: wherever `print_fields` is called
 (PRINT.md §2–§3, `Recall` included), the framework writes each own
 operation's messages with `print_error`'s block, under the header
 `Error:` for a `CannotEvaluate` and `Notice:` for a `Ready` *(decided)*.
-The mark is PRINT.md §1's table unchanged — `failed` beside an `Error:`,
-`complete` or `incomplete` beside a `Notice:`, `incomplete` when the
-class still owes what the notice is about. The seen set's keys for an
+The mark is PRINT.md §1's table unchanged, and each block follows its
+operation's status, not the line's words (PRINT.md §1). The seen set's keys for an
 operation's messages are the framework's, discarded by the setter at
 every write (below), so that PRINT.md §4's rule stands: a run's
 messages show again after every run, identical or not.
@@ -490,13 +489,14 @@ every function one calls, is a plain method *(decided)*. What it does:
 it releases the operation's slot
 when the status goes from written to unwritten (ARCHITECTURE §3.4),
 fires `on_invalidated` when the instant status leaves `ready`
-(MODULE_STRUCTURE §4.1), and, at every write by the walk, a rerun's
-rewrite of `ready` included, tells a running construction job through
-`_on_context_change` — fired through `_completed` as `on_invalidated`
-is, so that whatever it raises is its class's bug (EXCEPTIONS.md §1) —
-and drops the attached evaluation job
-(CONSTRUCT_INTERACTION §3.2, §3.3) *(decided)*. It clears the node's
-stored check when the stored status leaves `Ready` (below), discards
+(MODULE_STRUCTURE §4.1), and, when the operation is one the node's jobs
+depend on (CONSTRUCT_INTERACTION §3.1), at every write by the walk, a
+rerun's rewrite of `ready` included, tells a running construction job
+through `_on_context_change` — fired through `_completed` as
+`on_invalidated` is, so that whatever it raises is its class's bug
+(EXCEPTIONS.md §1) — drops the attached evaluation job, and clears the
+node's stored check when the stored status leaves `Ready` (below;
+CONSTRUCT_INTERACTION §3.2, §3.3) *(decided)*. It discards
 the seen set's keys for the operation's messages, and adds the node to
 the set of nodes the walk stores at the tree's end (below)
 *(decided)*. It also writes the operation's `evaluation` log record,
@@ -555,15 +555,18 @@ or `FAILED(message)`, `RUNNING` as none (ARCHITECTURE §4.1,
 CONSTRUCT_INTERACTION §3.3) *(decided)*. It lives on `Node` as one
 framework attribute beside `_last_evaluation_statuses` — its name §7 —
 restored at load from the `check` row and written by `_store_node`. It
-is cleared exactly when a stored status of the node leaves `Ready`, and
+is cleared exactly when the stored status of an operation the node's
+jobs depend on (CONSTRUCT_INTERACTION §3.1) leaves `Ready`, and
 when a construction job starts on the node — which stores the node,
 below — or another evaluation job is attached in its place; a rerun
 that confirms a `Ready` over a `Ready` does not clear it, whatever its
-messages, nor does the conversation's ending *(decided)*. The clearing
+messages, nor does the conversation's ending, nor a write of an
+operation the jobs do not depend on *(decided)*. The clearing
 on a status leaving `Ready` sits in the setter, so no status write can
 skip it, a construction start and an attach clearing it themselves
-(CONSTRUCT_INTERACTION §3.2, §3.3); on a nesting node either
-operation's stored status counts. The check's outcome has one accessor on `Node`
+(CONSTRUCT_INTERACTION §3.2, §3.3); on a nesting node the stored status
+of each operation its jobs depend on counts — both unless the class
+names its beginning. The check's outcome has one accessor on `Node`
 (§7 for its name): `RUNNING` while a running evaluation job is on the
 node, the stored value otherwise — a settled attached job's outcome
 equals the stored one — and every reader goes through it.

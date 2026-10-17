@@ -503,10 +503,14 @@ invalidated too. Where the two overlap, an operation already
 `not_evaluated` is not written again (MODULE_STRUCTURE §4.1).
 
 `checks` says whether the walk starts evaluation jobs (CONSTRUCT_INTERACTION
-§3.3, §5): on every node it passes — reached in the `Evaluating` mode, up to
-and including the destination — whose class names an evaluation job class,
-which is `ready`, has no evaluation job, and whose `_unfinished()`
-would answer `Unchecked`, it starts one at the node's last operation;
+§3.3, §5): on every node it passes — one whose `job_operation`, the
+operation that writes what its jobs read (CONSTRUCT_INTERACTION §3.1),
+it settles in the `Evaluating` mode, up to and including the
+destination — whose class names an evaluation job class, whose
+`job_operation_status()` is `ready`, which has no evaluation job, and
+whose `_unfinished()` would answer `Unchecked`, it starts one where it
+passes the node: a leaf at its operation, a nesting node at its ending,
+or right after its beginning when that is its `job_operation`;
 `"no"` starts none,
 `"quick"` leaves them running in the background, `"blocking"` keeps the lock
 after the walk until every evaluation job running on a passed node has
@@ -544,7 +548,8 @@ line means.
 
 A construction job is told when its context changes under it through the
 framework hook `_on_context_change`, called from the status setters on every
-write of the node's own evaluation status by the walk while the job runs —
+write by the walk, while the job runs, of the status of an operation the
+node's jobs depend on (CONSTRUCT_INTERACTION §3.1) —
 a rerun rewrites `ready` in one step, and that rewrite counts; the setter
 fires it as it fires a completed hook, after the write, so anything it
 raises is its class's bug (EXCEPTIONS.md §1); the default
@@ -625,7 +630,8 @@ Work in flight is not stored, only its results: a construction job's
 outcome is stored with `RUNNING` read as `NOT_STARTED`, so a loaded forest
 holds no run, and an evaluation job's outcome is stored the same way —
 `PASSED` or `FAILED(message)`, `RUNNING` as none — kept on the node as
-the stored check, cleared when a stored status of the node leaves
+the stored check, cleared when the stored status of an operation the
+node's jobs depend on (CONSTRUCT_INTERACTION §3.1) leaves
 `Ready`, when a construction job starts on it or another evaluation job
 takes its place, and by nothing else; each synchronous step of a job
 that changes the job or the check on its node — a construction's start,

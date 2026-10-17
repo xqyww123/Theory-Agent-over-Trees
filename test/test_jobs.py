@@ -241,7 +241,8 @@ def build(lemma=Lemma):
 
 def ready(*nodes):
     """The nodes evaluated `ready` through the setter and stored, as a walk
-    leaves them: a job starts on a `ready` node alone (§3.2)."""
+    leaves them: a job starts only on a node whose `job_operation_status()`
+    is `ready` (§3.2)."""
     ev = M.Evaluation(None, False)
     for node in nodes:
         node._set_status(ev, READY, None)
@@ -647,8 +648,9 @@ def test_a_runs_own_notification_is_dropped_once_the_run_is_cancelled():
 # --- the context (§3.2; MODULE_STRUCTURE §4.1) ------------------------------
 
 def test_a_write_of_the_status_by_the_walk_tells_the_running_job():
-    """Every write of the node's own status while the job runs — a rerun's
-    rewrite of `ready` included — calls `_on_context_change`, which cancels
+    """Every write by the walk of the status of an operation the node's
+    jobs depend on while the job runs — a rerun's rewrite of `ready`
+    included — calls `_on_context_change`, which cancels
     by default with `CONTEXT_CHANGED`; a class that can carry on overrides
     it; one that raises a `TAT_Error` is the class's bug, under an edit as
     under a walk."""
@@ -969,14 +971,15 @@ def test_failures_of_one_class_merge_at_delivery():
 
 
 def test_the_drops_and_the_stored_checks_clearings():
-    """§3.3: a job is dropped by a status write (a rerun's rewrite of
-    `ready` included), a delete, an amend, a construction starting, another
-    job attached, the ending — one synchronous step each, `evaluation_dropped`,
-    the starter woken; the walk and the edit send one `cancel(ids)` at
-    their flush, any other drop sends at once, the ending none.  The
-    stored check is cleared when the stored status leaves `Ready`, when a
-    construction starts and when another job is attached — not by a rerun
-    confirming `Ready`, nor by a drop by itself."""
+    """§3.3: a job is dropped by a write of the status of an operation the
+    node's jobs depend on (a rerun's rewrite of `ready` included), a
+    delete, an amend, a construction starting, another job attached, the
+    ending — one synchronous step each, `evaluation_dropped`, the starter
+    woken; the walk and the edit send one `cancel(ids)` at their flush,
+    any other drop sends at once, the ending none.  The stored check is
+    cleared when the stored status of such an operation leaves `Ready`,
+    when a construction starts and when another job is attached — not by
+    a rerun confirming `Ready`, nor by a drop by itself."""
     async def scenario():
         f, thy, t1, p, q = build(Checked)
         starter = stand_ins.agent(f.conversation)
@@ -1799,11 +1802,12 @@ async def walk(node, agent, checks="no", ignore_error=False):
 
 
 def test_the_walk_starts_a_check_where_unchecked_and_none_under_no():
-    """§3.3 "Where a job starts": on a node the walk passes that is ready,
-    whose class names an evaluation job, with none on it and
-    `_unfinished()` answering `Unchecked`, when `checks` allows — once;
-    none under `"no"`, on an unproven node, on a node not ready, on a
-    `PASSED` one, or for a walk with no caller."""
+    """§3.3 "Where a job starts": on a node the walk passes whose
+    `job_operation_status()` is `ready`, whose class names an evaluation
+    job, with none on it and `_unfinished()` answering `Unchecked`, when
+    `checks` allows — once; none under `"no"`, on an unproven node, on a
+    node whose `job_operation_status()` is not `ready`, on a `PASSED` one,
+    or for a walk with no caller."""
     async def scenario():
         f, thy, t1, p, q = build(Careful_Lemma)
         me = stand_ins.agent(f.conversation)
@@ -1833,11 +1837,13 @@ def test_the_walk_starts_a_check_where_unchecked_and_none_under_no():
 
 
 def test_automatic_construction_at_a_passed_node():
-    """§3.3 "Automatic construction": at a ready node whose `auto_construct`
-    is on and whose job `can_start()`, the walk starts the construction,
-    the caller its owner, whatever `checks` says; a job that failed is
-    started again only after an invalidation since; nothing with the
-    setting off or on a node that is not ready."""
+    """§3.3 "Automatic construction": at a passed node whose
+    `job_operation_status()` is `ready`, whose `auto_construct` is on and
+    whose job `can_start()`, the walk starts the construction, the caller
+    its owner, whatever `checks` says; a job that failed is started again
+    only after an operation the node's jobs depend on was invalidated
+    since; nothing with the setting off or on a node whose
+    `job_operation_status()` is not `ready`."""
     async def scenario():
         f, thy, t1, p, q = build()
         me = stand_ins.agent(f.conversation)
@@ -1968,4 +1974,184 @@ def test_blocking_waits_for_the_passed_nodes_checks_whoever_started_them():
         assert not f.lock.locked()
         assert deliver(f, me) == [f"The proof on `{Q}` no longer holds. Call `construct` to prove it again."]
         assert deliver(f, other) == []
+    run(scenario())
+
+
+# --- the operations the node's jobs depend on (CONSTRUCT_INTERACTION §3.1) --
+
+class Goal_Block(Block):
+    """A block whose jobs read what its beginning wrote, as a
+    `QuotientType`'s do (node_classes/COMMON.md §3)."""
+    construction_job_class = Proof
+    evaluation_job_class = Check
+    job_operation = "beginning"
+
+
+class Default_Block(Block):
+    """A block with jobs that declares nothing: its jobs depend on both
+    operations."""
+    construction_job_class = Proof
+    evaluation_job_class = Check
+
+
+BLOCK_KINDS = {**KINDS, "goal_block": Goal_Block, "default_block": Default_Block}
+
+
+def build_block(cls, kind):
+    """Theory > [T1, Q > [C1]], Q of `cls`, the ending knowing the forest."""
+    f = tm.OneTreeForest(CONN, kinds=BLOCK_KINDS)
+    f.conversation.ending.forest = f
+    thy = add(f, Block(f, slot(), "Theory", slot()))
+    t1 = add(thy, T(thy, slot(), "T1"))
+    q = add(thy, cls(thy, slot(), "Q", slot()), kind)
+    c1 = add(q, T(q, slot(), "C1"))
+    return f, thy, t1, q, c1
+
+
+def test_a_child_edit_leaves_the_jobs_of_a_block_whose_jobs_read_its_beginning():
+    """§3.1–§3.3: on a block whose `job_operation` is its beginning, a child
+    insert writes the ending — the stored entry, the seen set's key
+    forgotten, the walk's store, logged and told to `on_invalidated` — and
+    leaves the running construction, the settled evaluation job and the
+    stored `PASSED` check in place; `can_start()` holds with the ending
+    not evaluated; an insert before the block, which writes the beginning,
+    drops the evaluation job, clears the stored check, and cancels the
+    construction with `CONTEXT_CHANGED`."""
+    async def scenario():
+        f, thy, t1, q, c1 = build_block(Goal_Block, "goal_block")
+        me = stand_ins.agent(f.conversation)
+        await thy.evaluate_to(None, False)
+        assert tm.st(q) == (READY, READY)
+        job = q.job()
+        job.start(me)
+        me.seen.add((q.identity, "ending"))
+        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS))
+        assert job.outcome is RUNNING and records("construction_cancelled") == []
+        assert tm.st(q) == (READY, M.NOT_EVALUATED) and q.last_evaluation_statuses() == (READY, M.NOT_EVALUATED)
+        assert q.consumed_end is tm.NOT_RUN and (q.identity, "ending") not in me.seen   # told; the key forgotten
+        written = [r["data"] for r in stand_ins.records("evaluation")
+                   if r["event"] == "operation" and r["data"]["node"] == f.full_id(q)]
+        assert (written[-1]["operation"], written[-1]["status"]) == ("ending", "not_evaluated")
+        job.cancel(None)
+        assert job.can_start()                                              # the ending not evaluated
+        await thy.evaluate_to(None, False)
+        invariants.assert_store_mirrors(f, BLOCK_KINDS)                     # the ending's rerun stored by the walk
+        await q.start_evaluation_job(me)
+        check = q.evaluation_job()
+        await report(check)
+        assert q.check_outcome() is PASSED
+        await locked(f, edit.insert(q, 2, [{"kind": "t", "name": "C3"}], BLOCK_KINDS))
+        assert q.evaluation_job() is check and q.check_outcome() is PASSED and records("evaluation_dropped") == []
+        assert tm.st(q) == (READY, M.NOT_EVALUATED)
+        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T2"}], BLOCK_KINDS))   # before the block
+        assert q.evaluation_job() is None and q.check_outcome() is None
+        assert records("evaluation_dropped") == [{"id": check.id, "dropped_by": "status_write"}]
+        await thy.evaluate_to(None, False)
+        job.start(me)
+        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T3"}], BLOCK_KINDS))
+        assert job.outcome is NOT_STARTED
+        assert records("construction_cancelled")[-1] == {"node": f.full_id(q), "reason": "CONTEXT_CHANGED"}
+        assert deliver(f, me) == [f"The proof construction on `{f.full_id(q)}` was cancelled: its context changed."]
+    run(scenario())
+
+
+def test_the_walk_passes_a_block_whose_jobs_read_its_beginning_before_its_children():
+    """§3.3 "Where a job starts": a walk whose destination is under such a
+    block passes the block right after its beginning, the ending not
+    evaluated — its construction started under automatic construction, in
+    `started`; on a `SUCCEEDED` job its check, which a `blocking` walk
+    waits for."""
+    async def scenario():
+        f, thy, t1, q, c1 = build_block(Goal_Block, "goal_block")
+        me = stand_ins.agent(f.conversation)
+        q.job().auto_construct = True
+        ev = await tm.walked(f, c1, me, "quick")
+        assert ev.passed == [t1, q, c1] and ev.started == [q.job()]
+        assert q.job().outcome is RUNNING and tm.st(q) == (READY, M.NOT_EVALUATED)
+        q.job().cancel(None)
+        q.job().outcome = Succeeded("by simp")
+        q.job().auto_construct = False
+        ev = await tm.walked(f, c1, me, "quick")
+        check = q.evaluation_job()
+        assert ev.passed == [t1, q, c1] and ev.started == []
+        assert isinstance(check, Check) and check.began and check.outcome is RUNNING
+        assert tm.st(q) == (READY, M.NOT_EVALUATED)
+        task = asyncio.ensure_future(walk(c1, me, "blocking"))
+        await asyncio.sleep(0.05)
+        assert not task.done() and f.lock.locked()
+        await report(check)
+        await asyncio.wait_for(task, 2.0)
+        assert q.check_outcome() is PASSED and q.evaluation_job() is check
+    run(scenario())
+
+
+def test_a_failed_construction_on_a_block_whose_jobs_read_its_beginning_is_started_again_after_its_beginning_s_invalidation_alone():
+    """§3.3 "Automatic construction": a `FAILED` job is started again only
+    after an invalidation of an operation the node's jobs depend on — on a
+    block whose jobs read its beginning, an insert before the block, not a
+    child insert, which writes the ending alone."""
+    async def scenario():
+        f, thy, t1, q, c1 = build_block(Goal_Block, "goal_block")
+        me = stand_ins.agent(f.conversation)
+        await thy.evaluate_to(None, False)
+        q.job().outcome = Failed("no proof")
+        q.job().auto_construct = True
+        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS))
+        await walk(thy, me)
+        assert q.job().outcome == Failed("no proof")
+        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T2"}], BLOCK_KINDS))
+        await walk(c1, me)
+        assert q.job().outcome is RUNNING and q.job().owner is me
+        q.job().cancel(None)
+    run(scenario())
+
+
+def test_a_block_that_declares_no_job_operation_has_jobs_depending_on_every_operation():
+    """§3.1: a `StdBlock` class's default `job_operation` is its ending, so a
+    child insert, which writes the ending, cancels the running construction
+    with `CONTEXT_CHANGED`, drops the settled evaluation job and clears the
+    stored `PASSED` check, and `can_start()` is false while the ending is
+    not evaluated."""
+    async def scenario():
+        f, thy, t1, q, c1 = build_block(Default_Block, "default_block")
+        me = stand_ins.agent(f.conversation)
+        await thy.evaluate_to(None, False)
+        job = q.job()
+        job.start(me)
+        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS))
+        assert job.outcome is NOT_STARTED and not job.can_start() and tm.st(q) == (READY, M.NOT_EVALUATED)
+        assert records("construction_cancelled") == [{"node": f.full_id(q), "reason": "CONTEXT_CHANGED"}]
+        await thy.evaluate_to(None, False)
+        await q.start_evaluation_job(me)
+        check = q.evaluation_job()
+        await report(check)
+        assert q.check_outcome() is PASSED
+        await locked(f, edit.insert(q, 2, [{"kind": "t", "name": "C3"}], BLOCK_KINDS))
+        assert q.evaluation_job() is None and q.check_outcome() is None
+        assert records("evaluation_dropped") == [{"id": check.id, "dropped_by": "status_write"}]
+    run(scenario())
+
+
+def test_a_failing_beginning_clears_the_check_a_reload_restored_on_a_block_whose_jobs_read_its_ending():
+    """§3.3: the stored check is cleared when the stored status of any
+    operation the jobs depend on leaves `Ready` — on a block whose jobs read
+    its ending, the beginning's too.  Reloaded with `(Ready, Ready)` and a
+    stored `PASSED` check, the block's beginning then fails: the check is
+    cleared, though the ending, `Ready` by the copy, never left `Ready`."""
+    async def scenario():
+        f, thy, t1, q, c1 = build_block(Default_Block, "default_block")
+        me = stand_ins.agent(f.conversation)
+        await thy.evaluate_to(None, False)
+        await q.start_evaluation_job(me)
+        await report(q.evaluation_job())
+        assert q.check_outcome() is PASSED
+        twin = tm.OneTreeForest(CONN, f.store, BLOCK_KINDS)
+        twin.conversation.ending.forest = twin
+        loaded = twin.sub_nodes[0].sub_nodes[1]
+        assert isinstance(loaded, Default_Block) and loaded.check_outcome() is PASSED
+        assert loaded.last_evaluation_statuses() == (READY, READY)
+        assert tm.st(loaded) == (M.NOT_EVALUATED, M.NOT_EVALUATED)
+        loaded.fail_beginning = True
+        await twin.sub_nodes[0].evaluate_to(None, True)
+        assert tm.st(loaded) == (tm.CANNOT_EVALUATE, READY) and loaded.check_outcome() is None
     run(scenario())
