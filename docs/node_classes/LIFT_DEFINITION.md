@@ -114,9 +114,8 @@ finished, and which `QuotientType`'s block closes at its end
 §5), so a `LiftDefinition` on its type stands after the `Typedef`, in
 its theory or in a theory importing it; one on a quotient type stands
 inside the `QuotientType`'s block; where a closed setup is wanted again
-a `LiftingContext` opens it — the class, to be designed, standing for
-`context includes t.lifting begin … end` — and the `LiftDefinition`
-stands inside it. `gen` does not check the place: a `LiftDefinition`
+a `LiftingContext` opens it (LIFTING_CONTEXT.md) and the
+`LiftDefinition` stands inside it. `gen` does not check the place: a `LiftDefinition`
 standing where a setup it needs is closed is refused at evaluation,
 with the sentence of §6, as everything Isabelle judges is; a term whose
 type Isabelle can take at the closed type itself, `id` at `'a dlist ⇒

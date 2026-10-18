@@ -159,9 +159,8 @@ What stands inside the block: any theory member — the framework checks
 no containment (PLUGIN_SYSTEM §3), and each class's `gen` judges its own
 parent (COMMON.md §1). The type's Lifting setup is open inside the block
 and closed at its end (§6), so a `LiftDefinition` on the type stands
-here or inside a `LiftingContext`, the class, to be designed, for
-`context includes fset.lifting begin … end`, which opens the setup again
-(LIFT_DEFINITION.md §2); lemmas about the type proved by `transfer`
+here or inside a `LiftingContext`, which opens the setup again
+(LIFTING_CONTEXT.md); lemmas about the type proved by `transfer`
 likewise, since `lifting_forget` deletes the type's transfer rules. A
 member that uses the type by name alone — a `Datatype` with an `'a
 fset` field, a `Theorem` proved without `transfer` — stands anywhere

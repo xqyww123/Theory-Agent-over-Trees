@@ -33,7 +33,7 @@ COMMON.md.
 | `Text` | `text` | `Leaf` | none | not yet |
 | `Locale` | `locale` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
 | `Context` | `context` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
-| `LiftingContext` | `context includes t.lifting … begin … end`, which opens the Lifting setup of one or more types again | `StdBlock`, beginning and ending | none | not yet; named in LIFT_DEFINITION.md §2 |
+| `LiftingContext` | `context includes t.lifting … begin … end`, which opens the Lifting setup of one or more types again; its ending emits `lifting_update` and `lifting_forget` for each type it opened | `StdBlock`, beginning and ending | none | LIFTING_CONTEXT.md |
 | `TypeClass` | `class` | `StdBlock`, beginning and ending | none | not yet |
 | `Instantiation` | `instantiation`, whose ending emits `instance`; whether a lone `instance` is a kind of it is decided with it | `StdBlock`, beginning and ending | the class axioms, on the ending | not yet |
 | `Interpretation` | `interpretation`, `global_interpretation` | `Leaf` | the locale's assumptions | not yet |
@@ -57,7 +57,8 @@ Commands no row covers whose fate is settled when the named class is
 designed: `text_raw` with `Text`; `termination`, which `Define` emits
 (ARCHITECTURE §2.2); `setup_lifting`, which `Typedef` emits
 (TYPEDEF.md §5); and `lifting_update` and `lifting_forget`, which
-`QuotientType`'s ending emits (QUOTIENT_TYPE.md §5).
+`QuotientType`'s ending emits (QUOTIENT_TYPE.md §5) and
+`LiftingContext`'s (LIFTING_CONTEXT.md §5).
 
 ## 3. Not in the plugin
 

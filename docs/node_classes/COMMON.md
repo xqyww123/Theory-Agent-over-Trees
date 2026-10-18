@@ -713,10 +713,15 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   The node's own name, and each authored field a class computes it from
   — `Datatype`'s `type_name`s — is `str` in the id grammar without
   hyphens — a letter, then letters, digits, underscores and primes, not
-  ending in an underscore (MCP_SPECIFICATION §2); a type parameter's
-  name is a type variable, shown in its refusal by Isabelle's own
-  example, `such as 'a`, since it has no grammar text of its own; every
-  other name is an Isabelle identifier: on the `ascii` form of its
+  ending in an underscore (MCP_SPECIFICATION §2), except
+  `LiftingContext`'s `name`, written into no command, which is in the
+  framework's name grammar and judged by the framework
+  (LIFTING_CONTEXT.md §4); a type parameter's name is a type variable,
+  shown in its refusal by Isabelle's own example, `such as 'a`, since
+  it has no grammar text of its own; a `LiftingContext`'s `types` entry
+  is an Isabelle identifier or identifiers joined by dots, each part
+  judged as one (LIFTING_CONTEXT.md §4); every other name is an
+  Isabelle identifier: on the `ascii` form of its
   normalised text, a letter or
   one of Isabelle's letter symbols, then letters, digits, underscores,
   primes, and `\<^sub>` before one of those — `Symbol_Pos.scan_ident`'s
@@ -775,9 +780,9 @@ commands `lifting_update t.lifting` and `lifting_forget t.lifting`,
 Isabelle's own discipline for a type whose construction is finished
 (HOL's `Multiset.thy` and `FSet.thy` end so): `lifting_update` stores
 into the type's lifting bundle every transfer rule of the context whose
-relation is the type's, the setup's own and those `lift_definition`
+relation mentions the type's, the setup's own and those `lift_definition`
 declared inside the block, so that `context includes t.lifting`, which
-`LiftingContext` is for, restores them all; `lifting_forget` deletes
+`LiftingContext` is for (LIFTING_CONTEXT.md), restores them all; `lifting_forget` deletes
 those rules from the context and the type's Quotient registration,
 after which a `lift_definition` on the type is refused
 (LIFT_DEFINITION.md §6) and `transfer` leaves the type alone. A class
@@ -789,7 +794,10 @@ the class cannot be instantiated.
 
 It defines the ending's two hooks together, as PLUGIN_SYSTEM §5
 requires: `_eval_ending_opr` and `emit_ending`; a class on it writes
-neither.
+neither. The two commands' transitions and their two lines are one
+function each of its two halves, which `LiftingContext`'s ending — `end`,
+then the two commands for each type it opened — runs and writes too
+(LIFTING_CONTEXT.md §5, §6).
 
 **The evaluation.** `_eval_ending_opr` calls the callback
 `TAT.Lifting_Closing.close` with the ending's two slots —
@@ -799,11 +807,14 @@ The callback runs, as one operation into the resulting slot
 (`TAT_Common_Nodes.operation`, MODULE_STRUCTURE §2.5), the two
 transitions the commands make, each `Toplevel.local_theory NONE NONE`:
 `Lifting_Setup.update_transfer_rules` then `Lifting_Setup.lifting_forget`
-on the bundle's pointer, `Lifting_Setup.pointer_of_bundle_binding` of
-the binding `lifting_bundle` gives the bundle, `Binding.qualify_name
-true (Binding.name t) "lifting"` (lifting_setup.ML): the pointer the
-bundle's attribute holds, at theory level and inside a `Context` or
-`Locale` alike, the target morphism leaving the full name unchanged. It
+on the bundle's pointer — the key of the setup's restore data, which
+the bundle's one attribute holds (lifting_setup.ML, `lifting_bundle`)
+— read as the two commands read it (`pointer_of_bundle_name`, which
+Isabelle does not export): the bundle `t.lifting` by its name in the
+context, its attribute's argument read back; one function of
+TAT_Lifting_Closing.ML answers the pointer, or none for a name no
+bundle bears or a bundle that is no Lifting bundle, and
+`LiftingContext`'s beginning asks it too (LIFTING_CONTEXT.md §6). It
 answers the operation's messages: none, and the ending is `Ready`;
 some, and it is `CannotEvaluate` with them, the framework copying the
 ending's input through — in practice a proper interrupt's `Interrupt`
