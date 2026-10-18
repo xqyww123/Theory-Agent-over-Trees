@@ -94,20 +94,26 @@ fun goal_of get =
   Python side sends it: the task -- its name and its payload, a pair of string
   lists -- or none for AoA's `usual`; the goal hint -- its text and its
   whole_prop patterns -- or none; the tactic whitelist, each a method name and
-  its interpretation, every entry shown in the prompt*)
+  its interpretation, every entry shown in the prompt; whether the goal is kept
+  as it stands, AoA's automatic Intro not inserted on it*)
 type setup =
-  (string * (string list * string list)) option * (string * string list) option * (string * string) list
+  (string * (string list * string list)) option * (string * string list) option * (string * string) list * bool
 
 val unpack_setup =
-  unpackTuple3
+  unpackTuple4
     (unpackOption (unpackPair (unpackString, unpackPair (unpackList unpackString, unpackList unpackString))),
      unpackOption (unpackPair (unpackString, unpackList unpackString)),
-     unpackList (unpackPair (unpackString, unpackString)))
+     unpackList (unpackPair (unpackString, unpackString)),
+     unpackBool)
 
 (*the call's declarations on the goal's proof context, for the call alone,
-  through the two ML entries AoA exports for a caller holding a context; the
-  task AoA resolves in the goal's theory, where TAT_Std registers Define's two*)
-fun declared ((_, hint, tactics) : setup) ctxt =
+  through the ML entries AoA exports for a caller holding a context; the task
+  AoA resolves in the goal's theory, where TAT_Std registers Define's two.  The
+  goal kept as it stands is an auto-Intro hook answering No_Intro on exactly the
+  call's leading goal -- the sequent's first premise, the term the decision
+  compares (AUTO_INTRO_DECISION.md §2) -- so that the goals a method derives
+  keep their automatic Intro*)
+fun declared ((_, hint, tactics, kept) : setup) (ctxt, sequent) =
   ctxt
   |> (case hint of
         NONE => I
@@ -117,8 +123,13 @@ fun declared ((_, hint, tactics) : setup) ctxt =
       else
         Context.proof_map (MiniLang_Agent_AoA.add_tactics
           (map (fn (name, interpretation) => (name, {interpretation = interpretation, in_prompt = true})) tactics)))
+  |> (case (kept, Thm.prems_of sequent) of
+        (true, goal :: _) =>
+          Context.proof_map (Auto_Intro.add_hook ("TAT.Proof_Obligation.construct", fn _ => fn g =>
+            if g aconv goal then SOME Auto_Intro.No_Intro else NONE))
+      | _ => I)
 
-fun task_of ((task, _, _) : setup) =
+fun task_of ((task, _, _, _) : setup) =
   (case task of
     NONE => MiniLang_Agent_AoA.usual
   | SOME (name, payload) => {name = name, payload = packPair (packList packString, packList packString) payload})
@@ -147,7 +158,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
                       {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
                        hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
                        read_store = SOME true, write_store = SOME true,
-                       task = task_of setup, user_operations = []} (declared setup ctxt) sequent
+                       task = task_of setup, user_operations = []} (declared setup (ctxt, sequent)) sequent
               in Future.join fut end
               handle exn as MiniLang_Agent_AoA.Agent_Give_Up _ => MiniLang_Agent_AoA.method_error exn
                    | exn as Phi_Sledgehammer_Solver.Auto_Fail _ => MiniLang_Agent_AoA.method_error exn

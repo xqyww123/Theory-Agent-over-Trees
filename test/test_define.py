@@ -341,7 +341,8 @@ def test_the_recorded_fields_reach_the_store_and_the_mirror_catches_an_emit_off_
 def test_the_construction_calls_once_per_open_obligation_under_its_setup():
     """§7: `_run` calls `TAT.Proof_Obligation.construct` per open
     obligation in command order, with the slot and the setup — the task
-    with its payload, the goal hint for termination, the whitelist —; a
+    with its payload, the goal hint for termination, the whitelist, the goal
+    kept as it stands —; a
     failing call ends the run, `failed_obligation` recorded, the earlier
     proofs dropped; all passing, the product holds one proof per
     obligation under its name, `failed_obligation` cleared and a `PASSED`
@@ -353,10 +354,11 @@ def test_the_construction_calls_once_per_open_obligation_under_its_setup():
     assert isinstance(job, Define_Proof_Job)
     names, equations = ["sum_upto"], SUM_UPTO["equations"]
     assert p.construction_setup(PATTERN_COMPLETENESS) == (
-        ("TAT.pattern_completeness", (names, equations)), None, [("pat_completeness", INTERPRETATIONS["pat_completeness"])])
+        ("TAT.pattern_completeness", (names, equations)), None, [("pat_completeness", INTERPRETATIONS["pat_completeness"])],
+        True)
     assert p.construction_setup(TERMINATION) == (
         ("TAT.termination", (names, equations)), (goal_hint(names), ["Wellfounded.accp _ _"]),
-        [("relation", INTERPRETATIONS["relation"]), ("size_change", INTERPRETATIONS["size_change"])])
+        [("relation", INTERPRETATIONS["relation"]), ("size_change", INTERPRETATIONS["size_change"])], True)
     calls = []
     outcomes = {PATTERN_COMPLETENESS: (["no completeness"], None), TERMINATION: (["The agent gave up."], None)}
 
@@ -387,8 +389,8 @@ def test_the_construction_calls_once_per_open_obligation_under_its_setup():
     evaluated(p, SEQUENTIAL, "pat_completeness auto", None)
     assert run(job._run()) == Succeeded({TERMINATION: {"text": "by (relation \"measure id\") auto", "thread_cpu": 3, "wall": 5}})
     assert [args[1][0][0] for _, args in calls] == ["TAT.termination"]
-    # `Proof_Job`'s call carries the empty setup
-    assert NO_SETUP == (None, None, [])
+    # `Proof_Job`'s call carries the empty setup: no task, no hint, no whitelist, the goal's automatic Intro kept
+    assert NO_SETUP == (None, None, [], False)
 
 
 def test_the_check_replays_every_open_obligation_s_stored_proof_in_one_call(monkeypatch):
@@ -868,10 +870,7 @@ async def test_a_termination_proof_is_constructed_by_a_scripted_agent_checked_an
             out = io.StringIO()
             root.print(0, MyIO(out))
             seen[label] = out.getvalue()
-        # AoA opens the goal's `∀` with an automatic `Intro` at step 1, on which `relation` has nothing to resolve
-        # (the termination rule concludes `All sum_upto_dom`): the agent deletes it and applies the tactic to the goal
-        seen["deleted"] = await root.delete(["1"])
-        picture("after the delete")
+        # the goal is kept as it stands (§7): no automatic `Intro` opens its `∀`, and `relation` applies at step 1
         outcome = await root.fill("1", [Tactic.gen_single({"thought": "the gap to N shrinks", "tactic": "relation",
                                                            "arguments": '"measure (λ(i, N). N + 1 - i)"'})])
         seen["relation"] = (len(outcome.committed), str(outcome.failure))
@@ -919,7 +918,7 @@ async def test_a_termination_proof_is_constructed_by_a_scripted_agent_checked_an
                 assert seen["tactics"] == ["relation", "size_change"]
                 assert seen["initial"].startswith(task_text(TERMINATION, ["sum_upto"], SUM_UPTO["equations"]))
                 assert goal_hint(["sum_upto"]) in seen["shown"], seen["shown"]          # the hint, a `notice:` under the goal
-                assert "operation: Intro" in seen["shown"] and "proof: empty" in seen["after the delete"]
+                assert "operation: Intro" not in seen["shown"], seen["shown"]      # the goal kept as it stands (§7)
                 assert seen["relation"] == (1, "None") and "derived subgoals:" in seen["after relation"]
                 assert seen["subgoals"] == [("1.1.1", 1, "None"), ("1.2.2", 1, "None")] and seen["unfinished"] == 0
                 product = job.outcome.product

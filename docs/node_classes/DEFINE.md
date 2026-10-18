@@ -486,13 +486,14 @@ form, the proof `Proof_Job` returns for its one goal (COMMON.md §3).
 
 The setup is `TAT.Proof_Obligation.construct`'s argument beside the slot
 and the fork id — the call's task with its payload, its goal hint, its
-tactic whitelist —, empty for `Theorem` and `Typedef`, whose call stays
-`task = usual` with no declaration (COMMON.md §3); the body makes the
-declarations on the goal's proof context through the two ML entries AoA
-exports for it, `Agent_Hint.add_goal_hint` (GOAL_HINTS.md §1) and
-`MiniLang_Agent_AoA.add_tactics` (TACTIC_DESIGN.md §5.1), for this call
-alone, so that neither reaches the theory, its file, or any other call.
-The setup's three parts, a call carrying up to three:
+tactic whitelist, and whether its goal is kept as it stands —, empty for
+`Theorem` and `Typedef`, whose call stays `task = usual` with no
+declaration (COMMON.md §3); the body makes the declarations on the goal's
+proof context through the three ML entries AoA exports for it,
+`Agent_Hint.add_goal_hint` (GOAL_HINTS.md §1), `MiniLang_Agent_AoA.add_tactics`
+(TACTIC_DESIGN.md §5.1) and `Auto_Intro.add_hook` (AUTO_INTRO_DECISION.md
+§2), for this call alone, so that none reaches the theory, its file, or
+any other call. The setup's four parts, a call carrying up to four:
 
 - *The task*, what the proof agent is told it is doing
   (contrib/Isa-Mini/IsaMini/AoA/docs/USER_OPERATIONS.md §4.2): one of
@@ -521,6 +522,20 @@ The setup's three parts, a call carrying up to three:
   pattern completeness call, each with its interpretation below, all
   shown in the prompt. The `Tactic` operation exists in the call because
   the whitelist is non-empty, and in no other call of the conversation.
+- *The goal kept as it stands* (AUTO_INTRO_DECISION.md), for both calls.
+  Before the agent sees a goal that opens with a binder or a premise, AoA
+  inserts an `Intro` step of its own, and on these two goals that step
+  breaks the method each is for: `relation` and `size_change` resolve the
+  goal against the termination rule, whose conclusion is `All <name>_dom`,
+  and `pat_completeness` reads the cases from the goal's own premises.
+  The call declares an auto-Intro hook that answers `No_Intro` on exactly
+  the call's goal, compared with `aconv`, so that the goals the method
+  derives — the recursive-call subgoal of `relation`, the compatibility
+  goals of the completeness call — keep their automatic Intro. Nothing is
+  shown for it: the agent sees the goal with its binders in place. One
+  limit: a compatibility goal large enough to set off AoA's split segment
+  (AUTO_INTRO_DECISION.md §8) may rewrite the completeness goal before the
+  decision sees it, and the hook then passes.
 
 The texts the proof agent reads. The task's part of the initial
 message, written for the major agent only — a worker's is the

@@ -249,7 +249,8 @@ identity (THEOREM.md §6).
 only when `proof` is `SUCCEEDED` and the proof check `PASSED`
 (ARCHITECTURE §3.2, the framework's `_unfinished`). Its `_run` calls
 `TAT.Proof_Obligation.construct` with `goal_state`, an empty setup — the
-call's task, goal hint and tactic whitelist, which `Define`'s calls fill
+call's task, goal hint, tactic whitelist and whether its goal is kept as
+it stands, which `Define`'s calls fill
 (DEFINE.md §7) — and the id of the run's fork (CONSTRUCT_INTERACTION
 §3.2), and waits for the report. The
 callback takes the slot's `Proof.state` (`Toplevel.proof_of`), its

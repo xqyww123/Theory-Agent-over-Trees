@@ -351,10 +351,13 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
 
     def construction_setup(self, obligation: Obligation) -> Construction_Setup:
         """The call's setup (§7): the task with its payload, the goal hint for
-        termination, the whitelist."""
+        termination, the whitelist, and the goal kept as it stands — both
+        goals open with a binder, and AoA's automatic Intro on it breaks the
+        method each is for."""
         names, equations = self.constant_names(), [e.unicode for e in self.equations]
         hint = (goal_hint(names), _GOAL_HINT_PATTERNS) if obligation == TERMINATION else None
-        return ((f"TAT.{obligation}", (names, equations)), hint, [(t, INTERPRETATIONS[t]) for t in _TACTICS[obligation]])
+        return ((f"TAT.{obligation}", (names, equations)), hint, [(t, INTERPRETATIONS[t]) for t in _TACTICS[obligation]],
+                True)
 
     def _unfinished(self):
         return super()._unfinished() if self.open_obligations() else None

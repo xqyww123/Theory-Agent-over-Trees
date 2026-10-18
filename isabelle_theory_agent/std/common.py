@@ -360,13 +360,14 @@ def mixfix_wire(syntax: Mixfix | None) -> str | None:
 _PRODUCT = ("text", "thread_cpu", "wall")    # the proof as stored (§3); on the wire, a triple in this order
 
 # The setup of one call of `TAT.Proof_Obligation.construct` (§3; DEFINE.md
-# §7), a triple on the wire: the task — its name and its payload — or None
-# for AoA's `usual`; the goal hint — its text and its `whole_prop` patterns
-# — or None; the tactic whitelist, each a method name and its
-# interpretation.  The hint and the whitelist are declared in the goal's
-# proof context for the call alone.
-Construction_Setup = tuple[tuple[str, Any] | None, tuple[str, list[str]] | None, list[tuple[str, str]]]
-NO_SETUP: Construction_Setup = (None, None, [])
+# §7), a quadruple on the wire: the task — its name and its payload — or
+# None for AoA's `usual`; the goal hint — its text and its `whole_prop`
+# patterns — or None; the tactic whitelist, each a method name and its
+# interpretation; whether the goal is kept as it stands, AoA's automatic
+# Intro not inserted on it.  The hint, the whitelist and the goal kept are
+# declared in the goal's proof context for the call alone.
+Construction_Setup = tuple[tuple[str, Any] | None, tuple[str, list[str]] | None, list[tuple[str, str]], bool]
+NO_SETUP: Construction_Setup = (None, None, [], False)
 
 
 def proof_wire(product: Any) -> tuple[Any, ...]:
