@@ -3,8 +3,9 @@
 Status: proposed 2026-10-16, from the design discussion in the session
 `lift definition` (the owner's rulings there); reviewed 2026-10-17
 (ai-artifacts/review/LIFT_DEFINITION_REVIEW.md); committed and
-implemented 2026-10-17; every piece of agent-facing wording below is the
-owner's. The class is implemented before `QuotientType`,
+implemented 2026-10-17; `(code_dt)` judged by §6's heuristic first and
+the choice recorded once, 2026-10-18 (017326a); every piece of
+agent-facing wording below is the owner's. The class is implemented before `QuotientType`,
 `LiftingContext` and `Typedef`'s block shape, which its description and
 §6's sentence name.
 
