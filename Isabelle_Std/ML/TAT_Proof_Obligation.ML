@@ -79,13 +79,11 @@ fun decide {recorded, command, needed} st =
 fun evaluate (input, goal, result) open_goal after_admission message =
   let
     val answer =
-      (case TAT_Common_Nodes.operation' goal (fn () => open_goal message (#get input ())) of
-        Accepted a =>
+      TAT_Common_Nodes.operation' goal (fn () => open_goal message (#get input ()))
+      |> TAT_Framework.bind_answer (fn a =>
           TAT_Common_Nodes.operation' result (fn () =>
-            admit (#get goal ())
-            |> TAT_Framework.bind_answer (after_admission message))
-          |> TAT_Framework.map_answer (pair a)
-      | Refused messages => Refused messages)
+            admit (#get goal ()) |> TAT_Framework.bind_answer (after_admission message))
+          |> TAT_Framework.map_answer (pair a))
     val _ = (case answer of Refused _ => #put goal NONE | Accepted _ => ())
   in answer end
 

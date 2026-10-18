@@ -61,12 +61,11 @@ fun undeclared_sentence names =
   input state to the state with the goal open, refused -- one message --
   when a variable is undeclared; yields nothing*)
 fun open_goal statement st =
-  (case TAT_Framework.apply_transition (statement_transition statement) st of
-    Accepted st' =>
+  TAT_Framework.apply_transition (statement_transition statement) st
+  |> TAT_Framework.bind_answer (fn st' =>
       (case undeclared statement st' of
         [] => Accepted (st', ())
-      | names => Refused [undeclared_sentence names])
-  | Refused messages => Refused messages)
+      | names => Refused [undeclared_sentence names]))
 
 (*`after_admission` the identity, `Accepted` with the state and nothing*)
 val _ = Theory.setup (TAT_Proof_Obligation.register

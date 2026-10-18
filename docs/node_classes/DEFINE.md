@@ -53,7 +53,7 @@ is updated with this document).
 | `constants` | `list[Constant]` (§2), non-empty: each a `name`, `str`, in the id grammar without hyphens — a letter, then letters, digits, underscores and primes, not ending in an underscore (MCP_SPECIFICATION §2); one outside it is refused with the grammar's own sentence, as a `Typedef`'s `type_name` is —, an optional `type`, `IsaTerm`, and an optional `syntax`, `Mixfix` (COMMON.md §4) | authored |
 | `equations` | `list[IsaTerm]`, non-empty: the defining equations, each one Isabelle equation | authored |
 | `auto_reduction` | `bool`, required, no default: whether to add the defining equations to the system simplification set | authored |
-| `form` | `definition` \| `function (sequential, no_partials)` \| `function`: the command the definition is made with — decided by the node's first evaluation and run again as recorded by every later one (§6); `None` until an evaluation has recorded one; stored, since the commands are written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equations` is. The file writes `fun` for `function (sequential, no_partials)` when no obligation is open (§5) | recorded |
+| `form` | `definition` \| `function (sequential, no_partials)` \| `function`, or none until an evaluation has recorded one: the command the definition is made with — decided by the first evaluation that goes through and run again as recorded by every later one (§6); stored, since the commands are written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equations` is. The file writes `fun` for `function (sequential, no_partials)` when no obligation is open (§5) | recorded |
 | `completeness_method` | `str \| None`: under `form = function (sequential, no_partials)` or `function`, the method text that closed the pattern-completeness goal when the evaluation closed it by itself (§6), `None` when the goal stands open and its proof is the construction job's; `None` under `definition` | recorded |
 | `termination_method` | `str \| None`: the same for the termination goal | recorded |
 | `failed_obligation` | `pattern_completeness` \| `termination` \| `None`: the obligation the last proof construction did not prove, for the construction's sentences (§7); `None` until a run fails, and again when one succeeds; stored | recorded by the construction |
@@ -353,7 +353,8 @@ interrupt, and a Bug raised by the step's own code, propagate.
 
 **The form.** The message carries the recorded `form`: `None` before
 any evaluation, and on the node an amend makes — so the command is
-decided once per set of equations, at the first evaluation, and a
+decided once per set of equations, at the first evaluation that goes
+through, and a
 re-evaluation under a changed context never switches it. With `None`
 the callback decides: it reads the equations in the input state's
 context with the constants fixed at their types and syntax —
@@ -529,13 +530,17 @@ any other call. The setup's four parts, a call carrying up to four:
   goal against the termination rule, whose conclusion is `All <name>_dom`,
   and `pat_completeness` reads the cases from the goal's own premises.
   The call declares an auto-Intro hook that answers `No_Intro` on exactly
-  the call's goal, compared with `aconv`, so that the goals the method
-  derives — the recursive-call subgoal of `relation`, the compatibility
-  goals of the completeness call — keep their automatic Intro. Nothing is
-  shown for it: the agent sees the goal with its binders in place. One
-  limit: a compatibility goal large enough to set off AoA's split segment
-  (AUTO_INTRO_DECISION.md §8) may rewrite the completeness goal before the
-  decision sees it, and the hook then passes.
+  one goal — the completeness goal in the pattern completeness call, the
+  termination goal in the termination call —, compared with `aconv`, so
+  that every other goal keeps its automatic Intro: the compatibility
+  goals, which stand beside the completeness goal in the same call, and
+  the goals a method derives, such as the recursive-call subgoal of
+  `relation`. Nothing is shown for it: the agent sees the goal with its
+  binders in place. One limit: when the largest goal of the call — a
+  compatibility goal, or the completeness goal itself, which has one
+  premise per equation — is large enough to set off AoA's split segment
+  (AUTO_INTRO_DECISION.md §8), the segment may rewrite the completeness
+  goal before the decision sees it, and the hook then passes.
 
 The texts the proof agent reads. The task's part of the initial
 message, written for the major agent only — a worker's is the

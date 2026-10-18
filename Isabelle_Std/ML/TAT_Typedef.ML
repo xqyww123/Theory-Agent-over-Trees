@@ -69,11 +69,15 @@ fun lifting_transition name =
   refuses, its messages dropped; with true, run, a refusal the definition's
   failure; with false, not run, the admitted state and false*)
 fun after_admission (((name, _, _, _, _, _), recorded) : definition * bool option) admitted =
-  if recorded = SOME false then Accepted (admitted, false)
-  else
-    (case TAT_Framework.apply_transition (lifting_transition name) admitted of
-      Accepted st => Accepted (st, true)
-    | Refused messages => if is_some recorded then Refused messages else Accepted (admitted, false))
+  let
+    fun set_up () =
+      TAT_Framework.apply_transition (lifting_transition name) admitted |> TAT_Framework.map_answer (rpair true)
+  in
+    (case recorded of
+      SOME false => Accepted (admitted, false)
+    | SOME true => set_up ()
+    | NONE => (case set_up () of Refused _ => Accepted (admitted, false) | accepted => accepted))
+  end
 
 val _ = Theory.setup (TAT_Proof_Obligation.register
   {name = "TAT.Typedef.evaluate",

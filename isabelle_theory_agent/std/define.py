@@ -268,7 +268,8 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
     constants: tuple[Constant, ...]
     equations: tuple[IsaTerm, ...]
     auto_reduction: bool
-    form: Form | None                       # recorded by the first evaluation, run again by the later ones (§1, §6)
+    form: Form | None                       # recorded by the first evaluation that goes through, run again by the
+                                            # later ones (§1, §6)
     completeness_method: str | None         # under a function command, the method that closed the goal; None: open
     termination_method: str | None
     failed_obligation: str | None           # recorded by the construction (§7): the obligation its last run did not prove
@@ -352,8 +353,8 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
     def construction_setup(self, obligation: Obligation) -> Construction_Setup:
         """The call's setup (§7): the task with its payload, the goal hint for
         termination, the whitelist, and the goal kept as it stands — both
-        goals open with a binder, and AoA's automatic Intro on it breaks the
-        method each is for."""
+        goals open with a binder, and AoA's automatic Intro on either breaks
+        the method it is for."""
         names, equations = self.constant_names(), [e.unicode for e in self.equations]
         hint = (goal_hint(names), _GOAL_HINT_PATTERNS) if obligation == TERMINATION else None
         return ((f"TAT.{obligation}", (names, equations)), hint, [(t, INTERPRETATIONS[t]) for t in _TACTICS[obligation]],

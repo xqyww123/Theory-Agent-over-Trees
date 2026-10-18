@@ -49,12 +49,11 @@ fun open_goal ((name, syntax, code_dt, typ, is) : definition) st =
   in
     if not code_dt then without_option ()
     else
-      (case TAT_Framework.apply_transition (transition ["code_dt"] definition) st of
-        Accepted st' =>
+      TAT_Framework.apply_transition (transition ["code_dt"] definition) st
+      |> TAT_Framework.bind_answer (fn st' =>
           (case TAT_Proof_Obligation.admit st' of
             Accepted _ => Accepted (st', true)
-          | Refused _ => without_option ())
-      | Refused messages => Refused messages)
+          | Refused _ => without_option ()))
   end
 
 val _ = Theory.setup (TAT_Proof_Obligation.register
