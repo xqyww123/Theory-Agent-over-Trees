@@ -10,13 +10,16 @@ a theory has, the heap's structures visible, as the plugin's theory
 loads its files; a case appends its own ML.  A file evaluated inside the
 context sees neither the program's bindings nor the raw toplevel's:
 `AFTER` is the same two functions for such a file, on the context's
-theory.  The logic and the base theory default to `HOL` and `Main`."""
+theory.  The logic and the base theory default to `HOL` and `Main`.
+`read_back(harness, file, tmp_path)` reads an emitted file back whole
+under what it imports."""
 
 from pathlib import Path
 
 from isabelle_theory_agent.model import string_token
 
 ROOT = Path(__file__).resolve().parent.parent
+TAT_STD = ROOT / "Isabelle_Std" / "TAT_Std" / "TAT_Std.thy"
 
 AFTER = """
   fun state_after thy text =
@@ -44,3 +47,20 @@ async def ml_process(harness, ml: str, logic: str = "HOL", base: str = "Main"):
     """The probe on `base` and `ml` run on a raw ML process of `logic`; the
     completed process."""
     return await harness.run_tool(["isabelle", "ML_process", "-l", logic, "-e", probe(base) + ml])
+
+
+def body_of(theory: str) -> str:
+    """A theory's text between its `begin` line and its `end` line."""
+    return theory[theory.index("begin\n") + len("begin\n"):theory.rindex("end\n")]
+
+
+async def read_back(harness, file: str, tmp_path) -> None:
+    """An emitted file read back whole by Isabelle under what it imports:
+    TAT_Std.thy's body, then the file's, run as one text on a raw process
+    of the base heap `Minilang_AoA` begun on `Minilang_AoA.Minilang_AoA`;
+    asserted to go through."""
+    body = tmp_path / "read_back.thy"
+    body.write_text(body_of(TAT_STD.read_text()) + body_of(file))
+    r = await ml_process(harness, f'val _ = after thy0 (File.read (Path.explode {ml_string(str(body))}));\n'
+                                  'writeln "read back";', logic="Minilang_AoA", base="Minilang_AoA.Minilang_AoA")
+    assert r.returncode == 0 and "read back" in r.stdout.splitlines(), (r.stdout, r.stderr)

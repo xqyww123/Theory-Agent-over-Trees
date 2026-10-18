@@ -14,13 +14,15 @@ The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
 this document's: the base every class derives from (§1), the `english`
 field and its `text` line (§2), the base of the classes whose command
-opens a proof obligation (§3), the `$defs` several classes merge (§4),
-the conventions their schemas and sentences follow (§5), and the
-ending of a block that closes a type's Lifting setup (§6). Its Python
-half is `isabelle_theory_agent/std/common.py`, its ML halves
-`Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` and
-`TAT_Overloaded.ML` (§4), and `TAT_Lifting_Closing.ML` (§6). What a
-class makes of it is that class's own document's.
+opens a proof obligation (§3), the `$defs` several classes merge and
+the configuration option `typedef_overloaded`, which `TAT_Std.TAT_Std`
+sets for every theory of a forest (§4), the conventions their schemas
+and sentences follow (§5), and the ending of a block that closes a
+type's Lifting setup (§6). Its Python half is
+`isabelle_theory_agent/std/common.py`, its ML halves
+`Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` (§4),
+and `TAT_Lifting_Closing.ML` (§6). What a class makes of it is that
+class's own document's.
 
 ## 1. `Theory_Member`
 
@@ -215,8 +217,7 @@ through the builder, `register`. Beside it the structure exports the
 admission, `admit : Toplevel.state -> Toplevel.state answer`,
 `apply_transition` of the half of `sorry` below, which the callback
 applies and a step may try on a state of its own (`LiftDefinition`'s
-trial, LIFT_DEFINITION.md §6; `QuotientType`'s probe, QUOTIENT_TYPE.md
-§6), and `decide`, a command's option decided under §5's
+trial, LIFT_DEFINITION.md §6), and `decide`, a command's option decided under §5's
 recorded-choice convention: with a value given — the recorded choice,
 or one the class decided beforehand — the command run with it, once, yielding
 its state and the value, a refusal the refusal; with none the command
@@ -224,8 +225,8 @@ run with the option as a probe, `needed` — a question of the probe's
 state, the class's — asked of it, then the command run with the option
 so decided, yielding that run's state and the option, the probe's state
 a value never written into a slot; a refusal anywhere the answer.
-`Typedef` and `QuotientType` decide `(overloaded)` through it (§4), and
-`LiftDefinition` its `(code_dt)` (LIFT_DEFINITION.md §6). The body,
+`LiftDefinition` decides its `(code_dt)` through it (LIFT_DEFINITION.md
+§6). The body,
 `evaluate`, is private to it,
 so the steps cannot touch a slot and every class answers one shape. The
 callback's arguments are the input slot and the resulting slot of the
@@ -245,9 +246,9 @@ an obstacle — and `Ready(self.record_from_evaluation(what))` otherwise.
 `record_from_evaluation(what)`, a member beside `evaluation_callback`
 and `message()`, records what the two steps yielded and answers the
 tuple of `IsaTerm` messages the `Ready` carries; the default records
-nothing and answers `()`; `Typedef`'s sets `overloaded` and `lifting`
-and answers its notice exactly when it sets `lifting` to false
-(TYPEDEF.md §6). `Theorem`'s `open_goal` is the `lemma` transition and
+nothing and answers `()`; `Typedef`'s sets `lifting` and answers its
+notice exactly when it sets it to false (TYPEDEF.md §6). `Theorem`'s
+`open_goal` is the `lemma` transition and
 the undeclared-variable check, yielding `()`; its `after_admission` the
 identity (THEOREM.md §6).
 
@@ -633,30 +634,20 @@ no keyword set: a symbol and a template are string tokens by
 Isabelle's grammar; `type_parameters_text` writes a type variable bare
 and a sort through `print_name`.
 
-Beside it, `Isabelle_Std/ML/TAT_Overloaded.ML`, structure
-`TAT_Overloaded`, on HOL alone: `needed : theory -> string -> bool`,
-whether the type of that full name has open dependencies on overloaded
-definitions in the theory's definition table — `not (null (maps #2
-(Defs.get_deps (Theory.defs_of thy) (Defs.Type, name))))`, the check
-`typedef` makes when `(overloaded)` is not given (typedef.ML,
-`primitive_typedef`); it does not consult the configuration option
-`typedef_overloaded` —, and `needed_at : Toplevel.state -> binding ->
-bool`, `needed` on the state's theory under the type's full name as
-`Typedecl` declared it — `Context.cases Sign.full_name
-Local_Theory.full_name` on the state's generic theory: the theory's
-naming at theory level, the local theory's inside a `Context` or
-`Locale`, which carries its qualifier. `Typedef` (TYPEDEF.md §6) and
-`QuotientType` (QUOTIENT_TYPE.md §6) decide their recorded `overloaded`
-through `TAT_Proof_Obligation.decide` (§3), a probe run with the option
-and the real run with the option so decided — `needed_at` asked of the
-probe's open goal for `Typedef`, whose `typedef` happens there, and of
-the probe's admitted state for `QuotientType`, whose `typedef` happens
-at the admission —; `Record` (RECORD.md §6) decides its own with
-`needed` on the extension type from `Record.get_extension`, after one
-run of its command with the option. A test pins both answers: `{x ::
-'a::zero. x = 0}` true, `{n :: nat. n > 0}` false; and `needed_at`'s
-answer for a type `t` inside a locale `l` of the test's theory `Probe`,
-true under the name `Probe.l.t`, which the theory's naming would miss.
+No type definition of a forest carries `(overloaded)`:
+`TAT_Std.TAT_Std`, which every theory of a forest imports
+(PLUGIN_SYSTEM.md §1), sets the configuration option
+`typedef_overloaded`, which a theory inherits from its imports. Under
+it Isabelle waives the one check that demands `(overloaded)`
+(typedef.ML, `primitive_typedef`: a type with open dependencies on
+overloaded definitions), for `typedef`, `quotient_type`, `record`,
+`datatype` and `codatatype` alike; the dependencies are registered all
+the same.
+`Typedef`, `QuotientType` and `Record` run their commands with
+`{overloaded = false}`; a type with open dependencies on overloaded
+definitions is defined and emitted as any other, which the
+Isabelle-backed tests of `Typedef` (`'a poly` on `zero`) and
+`QuotientType` (`'a fract` on `idom`) pin.
 
 Four helpers of `common.py` with no definition of their own
 (QUOTIENT_TYPE.md §4–§5). The
@@ -745,8 +736,7 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   A framework exception's whole rendering is RENDER_BASELINES §2's own.
 - A choice the evaluation makes between commands, or between a
   command's options — `Define`'s `definition`, `function (sequential,
-  no_partials)` or `function` (DEFINE.md §6), `QuotientType`'s and `Typedef`'s
-  `(overloaded)` (QUOTIENT_TYPE.md §6, TYPEDEF.md §6), `Typedef`'s
+  no_partials)` or `function` (DEFINE.md §6), `Typedef`'s
   `setup_lifting` (TYPEDEF.md §6), `LiftDefinition`'s `(code_dt)`
   (LIFT_DEFINITION.md §6) — is decided once per set of the
   authored fields it depends on, and recorded: the class's message
@@ -754,10 +744,10 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   one — on a fresh node, on the one an amend makes, after evaluations
   that all failed —; under `None` the
   evaluation decides — a first form tried and a second on its refusal,
-  a probe run whose result decides, a command tried once and kept
-  exactly when accepted, or a heuristic on the authored fields that
-  decides where it can and, where it cannot, a probe run whose result
-  decides — and records the choice; under a
+  a command tried once and kept exactly when accepted, or a heuristic
+  on the authored fields that decides where it can and, where it
+  cannot, a probe run whose result decides — and records the choice;
+  under a
   recorded choice it runs that alone, and a refusal is the operation's
   failure, never a switch. So the text the evaluation ran is the text
   the file carries, a re-evaluation under a changed context never

@@ -33,7 +33,7 @@ from isabelle_theory_agent.std.define import (
     INTERPRETATIONS, OBLIGATIONS, PATTERN_COMPLETENESS, TERMINATION, Constant, Define, Define_Proof_Check,
     Define_Proof_Job, Termination_Task, assertion, goal_hint, task_text)
 from isabelle_theory_agent.store import Forest_Store
-from ml_process import ml_process, ml_string
+from ml_process import TAT_STD, read_back
 from std_forest import KINDS, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import locked, run
@@ -545,7 +545,7 @@ def test_the_texts_the_proof_agent_reads_are_section_7_s():
 def test_the_theory_tat_std_registers_the_two_tasks_under_the_names_the_python_classes_bear():
     """§7: `TAT_Std.thy` registers, under this module's package, exactly the
     names `TAT.<obligation>`, each a key of AoA's registry."""
-    thy = (DOCS.parent / "Isabelle_Std" / "TAT_Std" / "TAT_Std.thy").read_text()
+    thy = TAT_STD.read_text()
     registered = re.findall(r'register_task \{python_packages = \["([^"]+)"\]\}\s*\{name = "([^"]+)"\}', thy)
     assert {name for _, name in registered} == {f"TAT.{o}" for o in OBLIGATIONS} and len(registered) == len(OBLIGATIONS)
     assert all(name in TASK_REGISTRY for _, name in registered)
@@ -772,11 +772,7 @@ async def test_the_three_forms_are_defined_and_the_open_goals_held(std_conversat
                   ["text ‹Definition pred_pos. The predecessor, on the positive naturals.›", 'function pred_pos :: "nat ⇒ nat" where',
                    '  "0 < n ⟹ pred_pos n = n - 1"', "  sorry", "termination", "  by lexicographic_order"]):
         assert "".join(ascii_of_unicode(line) + "\n" for line in block) in file, file
-    body = tmp_path / "body.thy"
-    body.write_text(file[file.index("begin\n") + len("begin\n"):file.rindex("end\n")])
-    r = await ml_process(std_harness, f'val _ = after thy0 (File.read (Path.explode {ml_string(str(body))}));\n'
-                                       'writeln "read back";')
-    assert r.returncode == 0 and "read back" in r.stdout.splitlines(), (r.stdout, r.stderr)
+    await read_back(std_harness, file, tmp_path)
     messages, what = await isabelle_driver.call(
         forest.conversation, "TAT.Define.evaluate",
         (fib.state.to_msgpack(), fib.completeness_state.to_msgpack(), fib.termination_state.to_msgpack(),

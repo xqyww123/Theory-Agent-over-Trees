@@ -34,7 +34,9 @@ from ..model import (
     Theory, cartouche, emit_lines, print_name, status_of_errors, string_token)
 from ..plugin import TAT_compile_hook, TAT_import
 
-TAT_import("TAT_Std.TAT_Std")      # the `aoa` method and the plugin's AoA tasks, for every theory of the forest (§3)
+# every theory of the forest imports it: the `aoa` method, the plugin's AoA tasks and the configuration option
+# `typedef_overloaded` (§3, §4)
+TAT_import("TAT_Std.TAT_Std")
 
 
 class NotInsideTheory(BadEdit):

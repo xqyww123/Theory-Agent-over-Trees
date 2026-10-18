@@ -5,17 +5,14 @@ abstraction, and its reading of the class's own words, callback, message
 and records, through a stand-in, and `TAT_Proof_Obligation.decide` on a
 raw ML process (§3); the shared `$defs` against the section's schema
 text, the type parameters' checks and writer, the function-name pair's
-check and writers, a type's head, the mixfix writers, and
-`TAT_Overloaded`, Isabelle-backed (§4); `Lifting_Closing`'s two hooks
-and its place among a class's bases (§6).  The rest of what
-`Proof_Obligation` does on a node is pinned through `Theorem`,
-test_theorem.py, and what `Lifting_Closing` does through `QuotientType`,
-test_quotient_type.py; the names' checks (§5) through `Theorem` and
-`Datatype`.
+check and writers, a type's head, and the mixfix writers (§4);
+`Lifting_Closing`'s two hooks and its place among a class's bases (§6).
+The rest of what `Proof_Obligation` does on a node is pinned through
+`Theorem`, test_theorem.py, and what `Lifting_Closing` does through
+`QuotientType`, test_quotient_type.py; the names' checks (§5) through
+`Theorem` and `Datatype`.
 Run: python -m pytest test/test_common.py
 """
-
-from pathlib import Path
 
 import jsoncomment
 import pytest
@@ -29,7 +26,7 @@ from isabelle_theory_agent.std import common, datatype, define, lift_definition,
 from isabelle_theory_agent.std.common import (
     Binder, Infix, Lifting_Closing, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
-from ml_process import AFTER, ROOT, ml_process, ml_string
+from ml_process import ROOT, ml_process, ml_string
 from test_datatype import LIST, definition
 from test_define import SUM_UPTO
 from test_lift_definition import DL_REV
@@ -519,40 +516,6 @@ def test_mixfix_text_and_mixfix_wire_write_section_4_s_examples():
     # the symbol or template normalised for newlines and tabs alone: runs of spaces are layout
     assert of({"form": "mixfix", "template": "⟨_,\n\t_⟩  "}) == Template(IsaTerm.from_agent("⟨_,  _⟩  "))
     assert of({"form": "infix", "symbol": "a\r\nb", "priority": 1}) == Infix("infix", IsaTerm.from_agent("a b"), 1)
-
-
-# --- TAT_Overloaded (§4), on a raw ML process: the std harness offers no probe
-
-OVERLOADED_ML = Path(__file__).resolve().parent.parent / "Isabelle_Std" / "ML" / "TAT_Overloaded.ML"
-
-
-async def test_tat_overloaded_needed_answers_section_4_s_two_typedefs(std_harness, tmp_path):
-    """§4: `needed` is true for `{x :: 'a::zero. x = 0}` and false for
-    `{n :: nat. n > 0}`, each made with `(overloaded)` given, as the
-    classes make theirs; and true for the first set made under
-    `typedef_overloaded`, the option it does not consult; `needed_at` on
-    the toplevel state after each, the same answers under the type's full
-    name — inside `locale l`, on the state before `end`, the local
-    theory's naming, `Probe.l.t`, which the theory's naming would miss.
-    The ML file is evaluated inside a theory's context, as the plugin's
-    theory loads it."""
-    probe = tmp_path / "overloaded_probe.ML"
-    probe.write_text(AFTER + """
-      val thy0 = Context.the_theory (Context.the_generic_context ());
-      fun needed thy name = TAT_Overloaded.needed thy (Sign.full_name thy (Binding.name name));
-      val zero_only = after thy0 "typedef (overloaded) 'a zero_only = \\"{x :: 'a::zero. x = 0}\\" by simp";
-      val pos = after thy0 "typedef (overloaded) pos = \\"{n :: nat. n > 0}\\" by (rule exI[of _ 1]) simp";
-      val under_option = after thy0 "declare [[typedef_overloaded]] typedef 'a under_option = \\"{x :: 'a::zero. x = 0}\\" by simp";
-      writeln ("needed: " ^ Value.print_bool (needed zero_only "zero_only") ^ " " ^ Value.print_bool (needed pos "pos")
-        ^ " " ^ Value.print_bool (needed under_option "under_option"));
-      fun needed_at text name = Value.print_bool (TAT_Overloaded.needed_at (state_after thy0 text) (Binding.name name));
-      writeln ("needed_at: " ^ needed_at "typedef (overloaded) 'a zero_only = \\"{x :: 'a::zero. x = 0}\\" by simp" "zero_only"
-        ^ " / " ^ needed_at "typedef (overloaded) pos = \\"{n :: nat. n > 0}\\" by (rule exI[of _ 1]) simp" "pos"
-        ^ " / " ^ needed_at "locale l begin typedef (overloaded) 'a t = \\"{x :: 'a::zero. x = 0}\\" by simp" "t");
-    """)
-    r = await ml_process(std_harness, f"val _ = in_theory thy0 [{ml_string(str(OVERLOADED_ML))}, {ml_string(str(probe))}];")
-    assert r.returncode == 0 and "needed: true false true" in r.stdout.splitlines(), (r.stdout, r.stderr)
-    assert "needed_at: true / false / true" in r.stdout.splitlines(), (r.stdout, r.stderr)
 
 
 # --- TAT_Proof_Obligation.decide (§3), on a raw ML process of the heap the plugin runs on, the theory `Probe` begun on

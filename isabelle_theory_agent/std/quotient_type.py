@@ -6,9 +6,7 @@ block whose beginning is the command, a `Beginning_Proof_Obligation`
 (COMMON.md §3) whose one goal is that the relation is an equivalence,
 whose children are the type's `lift_definition`s and the lemmas proved
 by `transfer`, and whose ending, `Lifting_Closing`'s (COMMON.md §6),
-closes the type's Lifting setup; its evaluation records whether the
-command needs `(overloaded)`, which every later evaluation keeps to
-(COMMON.md §5)."""
+closes the type's Lifting setup."""
 
 from __future__ import annotations
 
@@ -98,12 +96,10 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
     partial: bool
     rep_function_name: IsaTerm | None       # None when left out: Isabelle's default, `rep_` before the name (§2)
     abs_function_name: IsaTerm | None       # likewise, `abs_`
-    overloaded: bool | None                 # recorded by the first evaluation that goes through, kept to by the later
-                                            # ones (§1, §6); None until one has
 
     def __init__(self, parent, state, english: str, type_parameters: tuple[Type_Parameter, ...], type_name: str,
                  syntax: TypeMixfix | None, representation_type: IsaTerm, equiv_relation: IsaTerm, partial: bool,
-                 rep_function_name: IsaTerm | None, abs_function_name: IsaTerm | None, overloaded: bool | None = None):
+                 rep_function_name: IsaTerm | None, abs_function_name: IsaTerm | None):
         super().__init__(parent, state)
         self.english = english
         self.type_parameters = type_parameters
@@ -114,7 +110,6 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
         self.partial = partial
         self.rep_function_name = rep_function_name
         self.abs_function_name = abs_function_name
-        self.overloaded = overloaded
 
     @classmethod
     async def gen(cls, config, raw: QuotientType_RawAST):
@@ -132,8 +127,8 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
                    mixfix_of(raw["syntax"]) if "syntax" in raw else None, representation_type,
                    IsaTerm.from_agent(normalised(raw["equiv_relation"])), raw.get("partial", False), rep, abs_)
 
-    # --- the store (§1): the authored fields in the `unicode` spelling and the recorded one, a field left out a
-    #     None-valued row and `partial` false; every row read with `get`, so that a missing one is refused at start
+    # --- the store (§1): the authored fields in the `unicode` spelling, a field left out a None-valued row and
+    #     `partial` false; every row read with `get`, so that a missing one is refused at start
 
     def to_store(self, rows):
         rows.put("english", self.english)
@@ -145,7 +140,6 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
         rows.put("partial", self.partial)
         rows.put("rep_function_name", self.rep_function_name.unicode if self.rep_function_name is not None else None)
         rows.put("abs_function_name", self.abs_function_name.unicode if self.abs_function_name is not None else None)
-        rows.put("overloaded", self.overloaded)
 
     @classmethod
     def from_store(cls, config, rows):
@@ -156,7 +150,7 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
                    rows.get("type_name"), mixfix_of(syntax) if syntax is not None else None,
                    IsaTerm.from_agent(rows.get("representation_type")), IsaTerm.from_agent(rows.get("equiv_relation")),
                    rows.get("partial"), IsaTerm.from_agent(rep) if rep is not None else None,
-                   IsaTerm.from_agent(abs_) if abs_ is not None else None, rows.get("overloaded"))
+                   IsaTerm.from_agent(abs_) if abs_ is not None else None)
 
     # --- evaluation (§6)
 
@@ -167,21 +161,14 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
         return (self.representation_type.ascii, self.partial, self.equiv_relation.ascii)
 
     def message(self) -> Any:
-        """What `TAT.QuotientType.evaluate` unpacks, three parts: the authored
+        """What `TAT.QuotientType.evaluate` unpacks, two parts: the authored
         fields — `type_name`, the type parameters, the syntax as
         `mixfix_wire` writes it, the two function names with the defaults
-        filled in —, the recorded `overloaded`, None for one to be decided
-        (§6; COMMON.md §5), and the goal structure whole."""
+        filled in — and the goal structure whole."""
         rep, abs_ = function_names(self.rep_function_name, self.abs_function_name, self.name, _DEFAULT_PREFIXES)
         authored = (self.name, [p.name.ascii for p in self.type_parameters], mixfix_wire(self.syntax), rep.ascii,
                     abs_.ascii)
-        return authored, self.overloaded, self.goal_structure()
-
-    def record_from_evaluation(self, what):
-        """§6: `overloaded`, what `open_goal` yielded — the option it ran
-        with —; `after_admission` yields nothing."""
-        self.overloaded, _ = what
-        return ()
+        return authored, self.goal_structure()
 
     def owing_line(self):
         """§7: what the node owes, while its line reads `unverified
@@ -217,16 +204,13 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
             out.write(INDENT * indent + self.english + "\n")
 
     def emit_beginning(self, indent, out):
-        """§5: the `text` line; the command, `(overloaded)` when recorded, the
-        `morphisms` line and the terminal proof under it; one empty line
-        when the block has children — the framework writes the empty lines
-        between siblings."""
-        assert self.overloaded is not None                # a node written is one an evaluation recorded (`can_emit`)
+        """§5: the `text` line; the command, the `morphisms` line and the
+        terminal proof under it; one empty line when the block has children
+        — the framework writes the empty lines between siblings."""
         emit_lines(indent, out, text_line(self.english))
         keywords = self.theory().keywords or ()
         definition, morphisms = self._definition(keywords)
-        command = f"{self.kind} (overloaded)" if self.overloaded else self.kind
-        lines = [f"{command} {definition}"]
+        lines = [f"{self.kind} {definition}"]
         if morphisms is not None:
             lines.append(f"  {morphisms}")
         lines.append(f"  {self.proof_text()}")

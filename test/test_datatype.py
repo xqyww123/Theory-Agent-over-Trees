@@ -26,7 +26,7 @@ from isabelle_theory_agent.std import common, datatype
 from isabelle_theory_agent.std.common import Binder, Infix, NotInsideTheory, Template, Type_Parameter
 from isabelle_theory_agent.std.datatype import Argument, Constructor, Datatype, Defined_Type
 from isabelle_theory_agent.store import Forest_Store
-from ml_process import ml_process, ml_string
+from ml_process import read_back
 from std_forest import KINDS, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import locked, run
@@ -436,9 +436,4 @@ async def test_a_definition_runs_and_a_refused_one_is_an_obstacle(std_conversati
     for block in blocks:
         assert "".join(ascii_of_unicode(line) + "\n" for line in block) in file, file
     assert not any(C.Path(f"TAT_Suite/TAT_Std_{t}.thy") in rendered.files for t in "BC")   # an obstacle: not written
-    # the file's body read back whole by Isabelle on the heap's Main, through the same commands
-    body = tmp_path / "body.thy"
-    body.write_text(file[file.index("begin\n") + len("begin\n"):file.rindex("end\n")])
-    r = await ml_process(std_harness, f'val _ = after thy0 (File.read (Path.explode {ml_string(str(body))}));\n'
-                                           'writeln "read back";')
-    assert r.returncode == 0 and "read back" in r.stdout.splitlines(), (r.stdout, r.stderr)
+    await read_back(std_harness, file, tmp_path)

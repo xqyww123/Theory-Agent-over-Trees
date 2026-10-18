@@ -18,7 +18,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
-Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Overloaded.ML, TAT_Lifting_Closing.ML — and one file per node class, LiftDefinition's with TAT_Lift_Definition_Command.ML beside it, the `lift_definition` command with its refusals rendered, the search for the Lifting setups a refused definition needs and the verdict on `(code_dt)`; TAT_Std/TAT_Std.thy, the theory every forest theory imports (PLUGIN_SYSTEM §1); TAT's own ROOT declares its sessions `TAT_Std in "Isabelle_Std/TAT_Std"` and `TAT_Isabelle_Std in Isabelle_Std`
+Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Lifting_Closing.ML — and one file per node class, LiftDefinition's with TAT_Lift_Definition_Command.ML beside it, the `lift_definition` command with its refusals rendered, the search for the Lifting setups a refused definition needs and the verdict on `(code_dt)`; TAT_Std/TAT_Std.thy, the theory every forest theory imports (PLUGIN_SYSTEM §1); TAT's own ROOT declares its sessions `TAT_Std in "Isabelle_Std/TAT_Std"` and `TAT_Isabelle_Std in Isabelle_Std`
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -155,8 +155,8 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   `apply_transition` (`begin_theory`), its `end` is an ML-built `Toplevel.exit`
   transition through it, and a proof obligation's evaluation runs every
   transition of the class's two steps and `sorry`'s half through it
-  (node_classes/COMMON.md §3) — `Typedef`'s `typedef` with its option
-  and its `setup_lifting` among them (node_classes/TYPEDEF.md §6).
+  (node_classes/COMMON.md §3) — `Typedef`'s `typedef` and its
+  `setup_lifting` among them (node_classes/TYPEDEF.md §6).
   Nothing splits a node's text into
   spans or registers anything in Isabelle's execution table, which a
   library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6).
@@ -415,8 +415,8 @@ then `Theory`'s section, a client of §2.5. The rows after `Theory` are
 the plugin `Isabelle_Std`'s, one structure per class in a file of its
 own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem` —
 after the plugin's shared structures, `TAT_Proof_Obligation`
-(node_classes/COMMON.md §3), `TAT_Mixfix` and `TAT_Overloaded`
-(COMMON.md §4), and `TAT_Lifting_Closing` (COMMON.md §6).
+(node_classes/COMMON.md §3), `TAT_Mixfix` (COMMON.md §4), and
+`TAT_Lifting_Closing` (COMMON.md §6).
 
 | section | what it runs |
 | --- | --- |
@@ -426,10 +426,10 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 | `Theorem` | `TAT.Theorem.evaluate`: built by `TAT_Proof_Obligation` from the statement's transition with, on the open goal, the undeclared-variable check, yielding nothing, and the identity after the admission (THEOREM.md §6) |
 | `Define` | `TAT.Define.evaluate`: the arguments the input slot, the two goal slots, the resulting slot and the definition with its recorded form or none; one `operation'` into the resulting slot — with no recorded form the command decided here, the equations read with the constants fixed, `definition` by their shape, else `function (sequential, no_partials)`, `fun`'s configuration, and, when that command refuses them, plain `function`; with a recorded form that command alone (node_classes/COMMON.md §5) —, then `definition`'s `declare`, or the function command and `termination`, each goal opened into its slot and closed by `fun`'s own method as a terminal proof, the slot emptied, or admitted through `TAT_Proof_Obligation.admit` with the goal left in the slot, then the `declare` of the `simps`; answering the command run and the two methods; a refusal empties both goal slots (node_classes/DEFINE.md §6); its jobs are `TAT_Proof_Obligation`'s, one call per open obligation under the call's setup |
 | `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure built inside the local theory's function, each mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), under `operation` (DATATYPE.md §6) |
-| `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition with its option decided through `decide`, the probe and the real run, `TAT_Overloaded.needed_at` on the probe's open goal, its structure built inside the local theory's function and the type's mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), yielding `overloaded`, the option it ran with — and `after_admission` — the `setup_lifting` transition as the recorded `lifting` says: tried once with none, its state kept when Isabelle accepts it and the admitted one otherwise; run with true, a refusal the failure; nothing with false — yielding `lifting` (node_classes/TYPEDEF.md §6) |
+| `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition, its structure built inside the local theory's function and the type's mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), yielding nothing — and `after_admission` — the `setup_lifting` transition as the recorded `lifting` says: tried once with none, its state kept when Isabelle accepts it and the admitted one otherwise; run with true, a refusal the failure; nothing with false — yielding `lifting` (node_classes/TYPEDEF.md §6) |
 | `LiftDefinition` | `TAT.LiftDefinition.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `lift_definition` transition through `TAT_Lift_Definition_Command`, its structure built inside the local theory's function, the function's mixfix annotation read as the plugin wrote it through `TAT_Mixfix`, its option `(code_dt)` decided through `decide` under the recorded-choice convention: as recorded, or, with none, without it when `code_dt` is false and otherwise by `TAT_Lift_Definition_Command.code_dt_verdict` on the function with its type and the term — not needed or without effect, without the option; undecided, the probe with the option, the admission tried on its state through `admit`, and the real run as the trial decided —; the command's two refusals at the open goal rendered as the class's sentence naming the Lifting setups the definition needs or as Isabelle renders them; yielding `with_code_dt` — and `after_admission`, the identity (node_classes/LIFT_DEFINITION.md §6) |
 | `Lifting_Closing` | the plugin's shared base of a block whose ending closes a type's Lifting setup, `TAT_Lifting_Closing` (§4.5; node_classes/COMMON.md §6): `TAT.Lifting_Closing.close`, the two transitions of `lifting_update` and `lifting_forget` on the bundle's pointer, read from the bundle `t.lifting`'s one attribute as the two commands read it, as one `operation` from the slot after the last child into the block's resulting slot, answering its messages |
-| `QuotientType` | `TAT.QuotientType.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `quotient_type` transition with its option decided through `decide`, the probe through the admission, where the `typedef` happens, `TAT_Overloaded.needed_at` on the probe's admitted state, then the real run, its mixfix read through `TAT_Mixfix`, yielding `overloaded`, the option it ran with — and `after_admission` — the identity, `Accepted` with the state it was given and `()` (node_classes/QUOTIENT_TYPE.md §6); its ending is `Lifting_Closing`'s |
+| `QuotientType` | `TAT.QuotientType.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `quotient_type` transition, its mixfix read through `TAT_Mixfix`, yielding nothing — and `after_admission` — the identity, `Accepted` with the state it was given and `()` (node_classes/QUOTIENT_TYPE.md §6); its ending is `Lifting_Closing`'s |
 | `LiftingContext` | `TAT.LiftingContext.open`: each entry's pointer read from the bundle `t.lifting` as `Lifting_Closing`'s is, and its restore data looked up, the class's sentence answered for an entry with none; an entry whose quotient is registered already left out of `opened`, silently; then the `context` transition, `Toplevel.begin_nested_target` of `Target_Context.context_begin_nested_cmd` on every entry's bundle, under `operation'` into the beginning's resulting slot, answering `opened` beside the messages; `TAT.LiftingContext.close`: the `end` transition, `Toplevel.end_nested_target`, then, for each entry of `opened`, the pointer read again and `Lifting_Closing`'s two transitions on it, as one operation into the block's resulting slot (node_classes/LIFTING_CONTEXT.md §6) |
 | `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
 
@@ -1282,8 +1282,10 @@ forest's structure, are the framework's and live in `model.py`
 and ML live under `Isabelle_Std/`. TAT's own `ROOT` declares two
 sessions whose parent is `Minilang_AoA`: `TAT_Std in
 "Isabelle_Std/TAT_Std"`, one theory importing
-`Minilang_AoA.Minilang_AoA` and registering the AoA tasks `Define`'s
-constructions run under, nothing of the framework; and `TAT_Isabelle_Std
+`Minilang_AoA.Minilang_AoA`, registering the AoA tasks `Define`'s
+constructions run under and setting the configuration option
+`typedef_overloaded` (node_classes/COMMON.md §4), nothing of the
+framework; and `TAT_Isabelle_Std
 in Isabelle_Std`, which imports the sessions `Theory_Agent_over_Trees`
 and `TAT_Std`. The parent being `Minilang_AoA`, TAT's whole session
 structure requires `Minilang_AoA` to resolve — so TAT requires Isa-Mini
@@ -1292,8 +1294,8 @@ lives there and TAT without it does nothing (EVALUATOR_DESIGN §5). Its
 theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and `TAT_Std.TAT_Std`
 and loads from `Isabelle_Std/ML/` the plugin's shared ML —
-`TAT_Proof_Obligation.ML`, `TAT_Mixfix.ML`, `TAT_Overloaded.ML`,
-`TAT_Lifting_Closing.ML` — then one ML file per node class,
+`TAT_Proof_Obligation.ML`, `TAT_Mixfix.ML`, `TAT_Lifting_Closing.ML` —
+then one ML file per node class,
 `TAT_Lift_Definition.ML` after `TAT_Lift_Definition_Command.ML`, which
 runs the `lift_definition` command with its refusals rendered
 (node_classes/LIFT_DEFINITION.md §6); the Python half is the subpackage `isabelle_theory_agent.std`, which the theory's

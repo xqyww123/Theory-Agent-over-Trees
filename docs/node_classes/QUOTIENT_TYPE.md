@@ -55,7 +55,6 @@ One kind, `quotient_type`, which heads the id component:
 | `partial` | `bool`: whether the relation is only a partial equivalence, the command's `partial:`; false when left out | authored |
 | `rep_function_name` | `IsaTerm`, optional; `rep_` before `type_name` when left out | authored |
 | `abs_function_name` | `IsaTerm`, optional; `abs_` before `type_name` when left out | authored |
-| `overloaded` | `bool`, or none until an evaluation has recorded one: whether the command carries `(overloaded)`, decided by the first evaluation that goes through and run as recorded by every later one (§6; COMMON.md §5); stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equiv_relation` is — the class is born with the row, None-valued | recorded |
 | `children` | the nodes inside the block, the framework's row (PLUGIN_SYSTEM §3; ARCHITECTURE §4.1) | — |
 
 `syntax`, `rep_function_name` and `abs_function_name` left out are
@@ -205,8 +204,9 @@ is made of; `kind` and `type_name` carry none (COMMON.md §5). The
 schema's examples are Isabelle's own text, never JSON.
 
 What the class does not take: `parametric`, the command's optional
-parametricity theorem of the relation; `(overloaded)`, which is recorded
-(§6), and the configuration option `typedef_overloaded`; the names
+parametricity theorem of the relation; `(overloaded)` — the forest's
+theories have `typedef_overloaded` set once, in TAT_Std.thy (COMMON.md
+§4), so no `quotient_type` carries the option; the names
 Isabelle fixes — the theorems `Quotient3_fset` and `fset_equivp`, the
 relations `cr_fset` and `pcr_fset`, the bundle `fset.lifting`;
 `lifting_update fset.lifting` and `lifting_forget fset.lifting`, which
@@ -347,7 +347,7 @@ lifting_forget fset.lifting
 ```
 
 and, with no child, no parameter and no function name given, then with
-`partial`, a syntax and `overloaded` recorded true:
+`partial` and a syntax:
 
 ```
 text ‹The integers, as pairs of naturals up to a common summand.›
@@ -360,7 +360,7 @@ lifting_forget int.lifting
 
 ```
 text ‹Rational numbers, as fractions with a non-zero denominator.›
-quotient_type (overloaded) 'a fract ("_ ratio" [21] 21) = "'a :: idom × 'a" / partial: "λ(a, b) (c, d). b ≠ 0 ∧ d ≠ 0 ∧ a * d = c * b"
+quotient_type 'a fract ("_ ratio" [21] 21) = "'a :: idom × 'a" / partial: "λ(a, b) (c, d). b ≠ 0 ∧ d ≠ 0 ∧ a * d = c * b"
   by aoa
 
 lifting_update fract.lifting
@@ -368,8 +368,6 @@ lifting_forget fract.lifting
 ```
 
 - The `text` line: `english` alone, no lead (COMMON.md §2).
-- `(overloaded)` after the command when the recorded `overloaded` is
-  true (§6), nothing otherwise.
 - The head — the type parameters, the name, the syntax — is the
   plugin's `type_head_text` (COMMON.md §4), which `Typedef` and
   `Datatype` use too: the parameters before the name, none
@@ -424,14 +422,12 @@ the beginning's resulting slot — the first child's input, or the slot
 before the ending when there is no child (MODULE_STRUCTURE §4.1) — and
 its `message()`: `type_name`, the type parameters, the syntax (absent
 when left out), the two function names with the defaults filled in,
-the recorded `overloaded` — none until an evaluation has recorded one
-(COMMON.md §5) —, then `goal_structure()` — `representation_type`,
-`partial` and `equiv_relation` — whole, as its goal part (§4), each
-`IsaTerm` as its `ascii`; a test pins the order, as THEOREM.md's does.
-The callback is built by `TAT_Proof_Obligation` (COMMON.md §3) from
-`QuotientType`'s two steps: `open_goal`, the `quotient_type` command's
-transition with the option decided as below, yielding `overloaded`, the
-option it ran with; `after_admission`, the identity — `Accepted` with
+then `goal_structure()` — `representation_type`, `partial` and
+`equiv_relation` — whole, as its goal part (§4), each `IsaTerm` as its
+`ascii`; a test pins the order, as THEOREM.md's does. The callback is
+built by `TAT_Proof_Obligation` (COMMON.md §3) from `QuotientType`'s
+two steps: `open_goal`, the `quotient_type` command's transition,
+yielding nothing; `after_admission`, the identity — `Accepted` with
 the state it was given and `()` —, since no command of the class
 follows the admission (COMMON.md §3).
 
@@ -441,7 +437,7 @@ step:
 
 ```
 Toplevel.local_theory_to_proof NONE NONE (fn lthy =>
-  Quotient_Type.quotient_type_cmd {overloaded = overloaded}
+  Quotient_Type.quotient_type_cmd {overloaded = false}
     ((((((parameters, name), mixfix), representation_type), (partial, equiv_relation)), SOME (rep, abs)), NONE) lthy)
 ```
 
@@ -476,7 +472,7 @@ The admission — the half of `sorry` that ends a toplevel goal, applied
 by `Proof_Obligation`'s callback between the two steps — runs the
 command's own ending (quotient_type.ML, `add_quotient_type`): the
 `typedef` of the representation type's equivalence classes under the
-relation, run with the option the command runs with (below); the two
+relation, with `typedef_overloaded` set (COMMON.md §4); the two
 functions `rep_fset` and `abs_fset`, or the names given, defined on it;
 the theorems `fset_equivp` and `Quotient3_fset` noted; and the Lifting
 setup of the type (quotient_type.ML, `setup_lifting_package`, through
@@ -491,31 +487,7 @@ declares already taken, `Duplicate constant declaration
 "theory_X.rep_fset" vs. "theory_X.rep_fset"`; a Lifting setup the
 package cannot make, which a `Typedef` turns into its notice and a
 `QuotientType` does not, the setup being the command's own work and not
-a step after it. `overloaded`, the option the command runs with, is a
-choice the evaluation makes once per set of authored fields (COMMON.md
-§5). With no recorded value — until an evaluation of the node goes
-through; an amend gives a fresh node — `open_goal` first runs the
-command with `{overloaded = true}` and its admission —
-`TAT_Proof_Obligation.admit`, the one the callback applies (COMMON.md
-§3) — on the input state as a probe, on `Toplevel.state` values in ML
-and into no slot, and asks the
-plugin's `TAT_Overloaded.needed` (COMMON.md §4) of the probe's theory
-on the type's full name — the name `Typedecl` declared, read off the
-probe's generic theory (`Toplevel.generic_theory_of`) by `Context.cases
-Sign.full_name Local_Theory.full_name` on `type_name`'s binding: the
-theory's naming at theory level, where the admission leaves no local
-theory, and the local theory's inside a `Context` or `Locale`, which
-carries its qualifier —, true exactly when Isabelle refuses the
-`typedef` inside the command without the option; the probe is
-discarded, and the goal is opened with the option so decided, which
-the class records. The probe reaches the admission because the
-`typedef` happens there, not where the goal opens; a probe Isabelle
-refuses is the step's failure with its messages. With a recorded value,
-`open_goal` runs the command with it, once, and a refusal is the
-definition's failure, never a switch; the file carries the option the
-run ran with (§5). The configuration option `typedef_overloaded` is not
-consulted: where a theory sets it, the file carries an `(overloaded)`
-Isabelle does not need. At theory level these
+a step after it. At theory level these
 are the steps the hand-written text takes; inside a `Context` or
 `Locale` the definition is made in that context — the type and the two
 functions global all the same.
@@ -526,12 +498,10 @@ the callback answers the messages and nothing to record, and the
 beginning's status is `CannotEvaluate` with them: the node is an
 obstacle, its children have no context and are `not_evaluated`, the
 ending is `Ready` by the framework's copy of the block's input to its
-result when the walk goes on past the block (ARCHITECTURE §3.3), and
-`overloaded` stays what the last successful evaluation recorded, or
-none, which `can_emit` keeps out of a file (ARCHITECTURE §6.1).
-Otherwise the status is `Ready` with no messages: `QuotientType`'s
-`record_from_evaluation` sets `overloaded` to what `open_goal` yielded
-and answers no message (COMMON.md §3). The proof check and the proof construction, with
+result when the walk goes on past the block (ARCHITECTURE §3.3).
+Otherwise the status is `Ready` with no messages:
+`record_from_evaluation` is the default, which records nothing
+(COMMON.md §3). The proof check and the proof construction, with
 their callbacks `TAT.Proof_Obligation.check` and
 `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s (COMMON.md
 §3): the goal they work on has one subgoal, always.
@@ -630,7 +600,7 @@ unless an identifier, whatever keywords the theory recorded, without a
 round trip
 to Isabelle; `english` follows at depth 0 alone; no line carries a key.
 The line is the private helper's that writes the emitted text (§5),
-given no keyword set. `(overloaded)` is not printed: it is not authored.
+given no keyword set.
 The children are the framework's to print, one level deeper, in the mode
 PRINT.md §2's table gives them; a block with none shows the empty node's
 line.

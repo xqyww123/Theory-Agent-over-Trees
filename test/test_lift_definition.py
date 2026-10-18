@@ -35,7 +35,7 @@ from isabelle_theory_agent.std import common, lift_definition
 from isabelle_theory_agent.std.common import Infix, NotInsideTheory, Template
 from isabelle_theory_agent.std.lift_definition import OWING_LINE, LiftDefinition
 from isabelle_theory_agent.store import Forest_Store
-from ml_process import AFTER, ROOT, ml_process, ml_string
+from ml_process import AFTER, ROOT, ml_process, ml_string, read_back
 from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import locked, run
@@ -460,7 +460,7 @@ async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std
             "  - lift_definition_dl_wrap (unverified definition, proof not started)",
             '    dl_wrap :: "\'a dlist ⇒ \'a dlist dlist" is "λxs. [xs]"', "    " + OWING_LINE,
             "  - lemma_uses_the_definitions (valid statement, proof not started)"], shown
-        # the theory rendered as §5 shows, with `sorry`, and its body read back whole by Isabelle on the heap's Main
+        # the theory rendered as §5 shows, with `sorry`, and its body read back whole under what it imports
         rendered = C.render(forest)
         file = rendered.files[C.Path("TAT_Suite/X.thy")]
         assert file.startswith('theory "X"\n  imports "Main" "TAT_Std.TAT_Std"\nbegin\n') and file.endswith("end\n")
@@ -468,11 +468,7 @@ async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std
             assert "".join(ascii_of_unicode(line) + "\n" for line in block).replace(" by aoa\n", " sorry\n") in file, file
         assert ascii_of_unicode('lift_definition dl_wrap :: "\'a dlist ⇒ \'a dlist dlist" is "λxs. [xs]" sorry\n') in file, file
         assert "(code_dt) dl_wrap" not in file
-        body = tmp_path / "body.thy"
-        body.write_text(file[file.index("begin\n") + len("begin\n"):file.rindex("end\n")])
-        r = await ml_process(std_harness, f'val _ = after thy0 (File.read (Path.explode {ml_string(str(body))}));\n'
-                                               'writeln "read back";')
-        assert r.returncode == 0 and "read back" in r.stdout.splitlines(), (r.stdout, r.stderr)
+        await read_back(std_harness, file, tmp_path)
         # `construct` on the goal with no subgoal (§6; COMMON §3): the product `-`, the check passed, `valid definition`
         result = await session.call_tool("construct", {"node_ids": ["lift_definition_dl_length"]})
         assert not result.isError and "Started the proof construction on `lift_definition_dl_length`" in text_of(result)
