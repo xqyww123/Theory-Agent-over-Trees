@@ -2,8 +2,9 @@
 `lift_definition` (node_classes/LIFT_DEFINITION.md): a function on a
 subtype or a quotient type, defined from a term on its representation
 type — a `Proof_Obligation` (COMMON.md §3) whose one goal is that the
-term respects the representation; its evaluation records whether the
-command carries `(code_dt)`."""
+term respects the representation; its evaluation records, once, whether
+the command carries `(code_dt)`, which every later evaluation keeps to
+(COMMON.md §5)."""
 
 from __future__ import annotations
 
@@ -69,10 +70,11 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
     syntax: Mixfix | None
     is_: IsaTerm                    # the field `is`, a Python keyword
     code_dt: bool
-    with_code_dt: bool              # recorded by the evaluation (§6): false until one has
+    with_code_dt: bool | None       # recorded by the first evaluation that goes through and kept to by the later
+                                    # ones, None until one has (§1, §6)
 
     def __init__(self, parent, state, english: str, name: str, type: IsaTerm, syntax: Mixfix | None, is_: IsaTerm,
-                 code_dt: bool, with_code_dt: bool = False):
+                 code_dt: bool, with_code_dt: bool | None = None):
         super().__init__(parent, state)
         self.english = english
         self.name = name                        # the node's and the function's (§1)
@@ -92,8 +94,9 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
                    IsaTerm.from_agent(normalised(raw["type"])), mixfix_of(raw["syntax"]) if "syntax" in raw else None,
                    IsaTerm.from_agent(normalised(raw["is"])), raw.get("code_dt", False))
 
-    # --- the store (§1): the authored fields in the `unicode` spelling and the recorded one, `syntax` left out a
-    #     None-valued row; every row read with `get`, so that a missing one is refused at start
+    # --- the store (§1): the authored fields in the `unicode` spelling and the recorded one, `syntax` left out and
+    #     `with_code_dt` not yet recorded each a None-valued row; every row read with `get`, so that a missing one is
+    #     refused at start
 
     def to_store(self, rows):
         rows.put("english", self.english)
@@ -119,13 +122,15 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
         return (self.type.ascii, self.is_.ascii)
 
     def message(self) -> Any:
-        """The definition as `TAT.LiftDefinition.evaluate` unpacks it: `name`,
+        """What `TAT.LiftDefinition.evaluate` unpacks: the definition — `name`,
         the syntax as `mixfix_wire` writes it, `code_dt`, then the goal
-        structure."""
-        return (self.name, mixfix_wire(self.syntax), self.code_dt, *self.goal_structure())
+        structure — and the recorded `with_code_dt`, None for one to be
+        decided (§6; COMMON.md §5)."""
+        return ((self.name, mixfix_wire(self.syntax), self.code_dt, *self.goal_structure()), self.with_code_dt)
 
     def record_from_evaluation(self, what):
-        """§6: `with_code_dt`, what `open_goal` yielded; `after_admission`
+        """§6: `with_code_dt`, what `open_goal` yielded — the option the
+        command ran with, as decided or as recorded —; `after_admission`
         yields nothing."""
         self.with_code_dt, _ = what
         return ()
@@ -157,8 +162,10 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
             out.write(INDENT * indent + self.english + "\n")
 
     def emit(self, indent, out):
-        """§5: the `text` line; then the command, `(code_dt)` when recorded,
-        the definition and the terminal proof on one line."""
+        """§5: the `text` line; then the command, `(code_dt)` when the recorded
+        `with_code_dt` is true, the definition and the terminal proof on one
+        line."""
+        assert self.with_code_dt is not None        # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
         keywords = self.theory().keywords or ()
         command = f"{self.kind} (code_dt)" if self.with_code_dt else self.kind

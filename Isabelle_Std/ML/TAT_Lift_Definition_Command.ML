@@ -2,12 +2,13 @@
 
 The `lift_definition` command as the plugin's `LiftDefinition` runs it
 (isabelle_theory_agent/std/lift_definition.py; docs/node_classes/LIFT_DEFINITION.md
-§6), its two refusals at the open goal rendered: the class's sentence naming the
+§6): its two refusals at the open goal rendered -- the class's sentence naming the
 Lifting setups the refused definition needs, found by the search `needed`, or
 Isabelle's own rendering, the command parser's, carried here because
-Lifting_Def_Code_Dt keeps it private.  On HOL alone, so that a raw ML process on
-HOL evaluates the file and the tests pin the search, the sentence and the refusals
-(test/test_lift_definition.py).
+Lifting_Def_Code_Dt keeps it private --, and the verdict on the option `(code_dt)`
+the class asks before the run.  On HOL alone, so that a raw ML process on HOL
+evaluates the file and the tests pin the search, the sentence, the refusals and the
+verdict (test/test_lift_definition.py).
 *)
 
 signature TAT_LIFT_DEFINITION_COMMAND =
@@ -21,6 +22,18 @@ sig
       type by type; NONE when no set does*)
   val sentence : Proof.context -> typ -> string list list -> string
     (*the class's sentence on the type read for the sets `needed` answers*)
+  val read : Proof.context -> (binding * string option * mixfix) * string -> Proof.context * (typ * typ)
+    (*the function with its type and the term read as the command reads them
+      (lifting_def_code_dt.ML:772-774): the context the reading gives and the pair
+      Lifting takes, the term's type and the type read*)
+  datatype verdict = Not_Needed | Without_Effect | Undecided
+  val code_dt_verdict : Proof.context -> (binding * string option * mixfix) * string -> verdict
+    (*the heuristic on the option (code_dt) (§6), in the context the command runs
+      in: not needed -- Isabelle accepts the option and declares nothing beyond the
+      plain definition --, without effect -- Isabelle refuses it, or accepts it and
+      declares nothing --, undecided -- a constructor step with no composition, the
+      option at work, and whatever raises in the reading, in prove_quot_thm or in the
+      walk*)
   val lift_def_cmd_with_err_handling :
     string list * (binding * string option * mixfix) * string -> local_theory -> Proof.state
     (*Lifting_Def_Code_Dt.lift_def_cmd on the options, the function with its
@@ -72,9 +85,9 @@ fun needed ctxt (rty, qty) =
         (constructors qty)
     val set_ord = list_ord int_ord o apply2 (map (fn c => find_index (fn d => d = c) candidates))
     fun extend s c = filter (member (op =) (c :: s)) candidates
-    (*one verdict of Lifting with `opened` opened: NONE when it accepts, else the
-      unopened candidates its refusal names (§6)*)
-    fun verdict opened =
+    (*Lifting's refusal with `opened` opened: NONE when it accepts, else the
+      unopened candidates it names (§6)*)
+    fun refusal opened =
       let
         val ctxt' =
           fold (Context.proof_map o Lifting_Setup.lifting_restore o the o Symtab.lookup reopenable)
@@ -107,10 +120,10 @@ fun needed ctxt (rty, qty) =
       end
     fun level [] = NONE
       | level sets =
-          let val verdicts = map (fn s => (s, verdict s)) sets in
-            (case map_filter (fn (s, NONE) => SOME s | _ => NONE) verdicts of
+          let val refusals = map (fn s => (s, refusal s)) sets in
+            (case map_filter (fn (s, NONE) => SOME s | _ => NONE) refusals of
               [] =>
-                level (sort_distinct set_ord (maps (fn (s, named) => map (extend s) (these named)) verdicts))
+                level (sort_distinct set_ord (maps (fn (s, named) => map (extend s) (these named)) refusals))
             | accepted => SOME accepted)
           end
   in level [[]] end
@@ -156,6 +169,51 @@ fun sentence ctxt qty sets =
     "The lifting of " ^ lifting ^ " is not open here. Place this lift_definition under " ^ node ^
     "a lifting_context opening " ^ opening ^ "."
   end
+
+
+(* the reading *)
+
+(*as lift_def_cmd reads them (lifting_def_code_dt.ML:772-774); the type is given, so
+  read_var answers it*)
+fun read ctxt (raw_var, rhs_raw) =
+  let val ((_, qty, _), ctxt') = Proof_Context.read_var raw_var ctxt
+  in (ctxt', (fastype_of (Syntax.read_term ctxt' rhs_raw), the qty)) end
+
+
+(* the verdict on (code_dt) *)
+
+datatype verdict = Not_Needed | Without_Effect | Undecided
+
+(*the three steps of Lifting's walk (lifting_term.ML:224-258)*)
+datatype step = Lift | Composition | Constructor
+
+(*The walk the option itself takes (lifting_def_code_dt.ML:225-232, 253-258) --
+  prove_schematic_quot_thm over the open setups on (body_type ρ, R), ρ the raw type
+  the plain definition is made over and R the result type --, each step recorded.
+  Unless the option returns at once with the plain definition (244-250), it walks the
+  same steps and raises at a composition (199, 231) or, at a lift of no subtype, raises
+  at the witness (209) or finds one in the memo and returns the plain definition (206,
+  261-262) -- without effect either way.  Whatever raises is undecided:
+  where the reading or prove_quot_thm raises, the command is refused at its open goal
+  the same with the option as without it.*)
+fun code_dt_verdict ctxt (raw_var, rhs_raw) =
+  let
+    fun record step (_ : typ) (thm, steps) = (thm, step :: steps)
+    val actions = {constr = record Constructor, lift = record Lift, comp_lift = record Composition}
+    fun subtype thm =
+      (case Lifting_Util.quot_thm_rel thm of Const (\<^const_name>\<open>eq_onp\<close>, _) $ _ => true | _ => false)
+    fun verdict () =
+      let
+        val (ctxt', types as (_, qty)) = read ctxt (raw_var, rhs_raw)
+        val (rty, _) = Lifting_Util.quot_thm_rty_qty (Lifting_Term.prove_quot_thm ctxt' types)
+      in
+        (case Lifting_Term.prove_schematic_quot_thm actions (Lifting_Info.get_quotients ctxt') ctxt'
+                (body_type rty, body_type qty) [] of
+          (_, []) => Not_Needed
+        | (thm, [Lift]) => if subtype thm then Not_Needed else Without_Effect
+        | (_, steps) => if member (op =) steps Composition then Without_Effect else Undecided)
+      end
+  in the_default Undecided (try verdict ()) end
 
 
 (* the refusals rendered *)
@@ -206,12 +264,9 @@ fun check_rty_err ctxt (rty_schematic, rty_forced) (raw_var, rhs_raw) =
 fun lift_def_cmd_with_err_handling (options, raw_var, rhs_raw) lthy =
   let
     fun rendered isabelle_rendering =
-      let
-        val ((_, qty, _), lthy1) = Proof_Context.read_var raw_var lthy
-        val rhs = Syntax.read_term lthy1 rhs_raw
-      in
-        (case needed lthy1 (fastype_of rhs, the qty) of
-          SOME sets => error (sentence lthy1 (the qty) sets)
+      let val (lthy1, types as (_, qty)) = read lthy (raw_var, rhs_raw) in
+        (case needed lthy1 types of
+          SOME sets => error (sentence lthy1 qty sets)
         | NONE => isabelle_rendering ())
       end
   in

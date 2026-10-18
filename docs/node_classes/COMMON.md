@@ -217,14 +217,16 @@ admission, `admit : Toplevel.state -> Toplevel.state answer`,
 applies and a step may try on a state of its own (`LiftDefinition`'s
 trial, LIFT_DEFINITION.md §6; `QuotientType`'s probe, QUOTIENT_TYPE.md
 §6), and `decide`, a command's option decided under §5's
-recorded-choice convention: with a recorded value the command run with
-it, once, yielding its state and the value, a refusal the refusal; with
-none the command run with the option as a probe, `needed` — a question
-of the probe's state, the class's — asked of it, then the command run
-with the option so decided, yielding that run's state and the option,
-the probe's state a value never written into a slot; a refusal
-anywhere the answer. `Typedef` and `QuotientType` decide `(overloaded)`
-through it (§4). The body, `evaluate`, is private to it,
+recorded-choice convention: with a value given — the recorded choice,
+or one the class decided beforehand — the command run with it, once, yielding
+its state and the value, a refusal the refusal; with none the command
+run with the option as a probe, `needed` — a question of the probe's
+state, the class's — asked of it, then the command run with the option
+so decided, yielding that run's state and the option, the probe's state
+a value never written into a slot; a refusal anywhere the answer.
+`Typedef` and `QuotientType` decide `(overloaded)` through it (§4), and
+`LiftDefinition` its `(code_dt)` (LIFT_DEFINITION.md §6). The body,
+`evaluate`, is private to it,
 so the steps cannot touch a slot and every class answers one shape. The
 callback's arguments are the input slot and the resulting slot of the
 operation the goal opens on, with `goal_state` between them, and the
@@ -740,14 +742,17 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   command's options — `Define`'s `definition`, `function (sequential,
   no_partials)` or `function` (DEFINE.md §6), `QuotientType`'s and `Typedef`'s
   `(overloaded)` (QUOTIENT_TYPE.md §6, TYPEDEF.md §6), `Typedef`'s
-  `setup_lifting` (TYPEDEF.md §6) — is decided once per set of the
+  `setup_lifting` (TYPEDEF.md §6), `LiftDefinition`'s `(code_dt)`
+  (LIFT_DEFINITION.md §6) — is decided once per set of the
   authored fields it depends on, and recorded: the class's message
   carries the recorded choice, `None` until an evaluation has recorded
   one — on a fresh node, on the one an amend makes, after evaluations
   that all failed —; under `None` the
   evaluation decides — a first form tried and a second on its refusal,
-  a probe run whose result decides, or a command tried once and kept
-  exactly when accepted — and records the choice; under a
+  a probe run whose result decides, a command tried once and kept
+  exactly when accepted, or a heuristic on the authored fields that
+  decides where it can and, where it cannot, a probe run whose result
+  decides — and records the choice; under a
   recorded choice it runs that alone, and a refusal is the operation's
   failure, never a switch. So the text the evaluation ran is the text
   the file carries, a re-evaluation under a changed context never

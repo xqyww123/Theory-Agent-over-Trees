@@ -45,12 +45,14 @@ sig
      needed : Toplevel.state -> bool TAT_Framework.answer} ->
     Toplevel.state -> (Toplevel.state * bool) TAT_Framework.answer
     (*a command's option decided under the recorded-choice convention
-      (COMMON.md §5), for `(overloaded)` (COMMON.md §4): with a recorded value,
-      `command` run with it, once, yielding the state and the value, a refusal
-      the refusal; with none, `command` run with true as a probe, `needed` asked
+      (COMMON.md §5), for `(overloaded)` (COMMON.md §4) and `LiftDefinition`'s
+      `(code_dt)` (LIFT_DEFINITION.md §6): with a value given -- the recorded
+      choice, or one the class decided beforehand --, `command` run with it, once,
+      yielding the state and the value, a refusal the refusal; with none,
+      `command` run with true as a probe, `needed` asked
       of the probe's state, then `command` run with the option so decided,
       yielding the state and the option -- the probe's state a value never
-      written into a slot; `needed` is not asked under a recorded value, and
+      written into a slot; `needed` is not asked under a value given, and
       the configuration option typedef_overloaded is not consulted*)
 end
 

@@ -477,6 +477,7 @@ def test_the_emitted_text_is_section_5_s():
         node.overloaded = recorded
         with_proof(node, M.READY_CLEAN, PROVED, PASSED)
         for c in node.sub_nodes:
+            c.with_code_dt = False                               # as §5's examples record them: no `(code_dt)`
             with_proof(c, M.READY_CLEAN, PROVED, PASSED)
     assert emitted(p) == expected(*one) and emitted(z) == expected(*two) and emitted(q) == expected(*three)
     for outcome, check in ((PROVED, BAD), (PROVED, None), (PROVED, RUNNING), (NOT_STARTED, None)):

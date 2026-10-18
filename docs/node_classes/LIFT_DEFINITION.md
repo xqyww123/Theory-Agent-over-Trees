@@ -24,7 +24,8 @@ halves `Isabelle_Std/ML/TAT_Lift_Definition.ML` and
 `TAT_Lift_Definition_Command.ML`, which runs the command with its two
 refusals at the open goal rendered — the class's sentence, from the
 search for the Lifting setups a refused definition needs, or Isabelle's
-rendering (§6). Its agent-facing wording lives here — the `description`
+rendering — and gives the verdict on `(code_dt)` the class asks before
+the run (§6). Its agent-facing wording lives here — the `description`
 texts of its construct schema (§3), the sentence of §6, the words on its
 line, and its owing line (§7) — pinned by the baseline tests the way
 TYPEDEF.md's are.
@@ -43,7 +44,7 @@ One kind, `lift_definition`, which heads the id component:
 | `syntax` | `Mixfix` (COMMON.md §4), optional | authored |
 | `is` | `IsaTerm`, the term on the representation type the function is defined from | authored |
 | `code_dt` | `bool`: whether to declare the function's code generation rule by its representation type, the command's option `(code_dt)`; false when left out | authored |
-| `with_code_dt` | `bool`: whether the command carries `(code_dt)` — `code_dt` asked for it and Isabelle accepted it —, decided by the evaluation (§6); false until one has recorded it; stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `is` is — the class is born with the row | recorded |
+| `with_code_dt` | `bool`, or none until an evaluation has recorded one: whether the command carries `(code_dt)` — `code_dt` asked for it, the verdict was undecided and the trial passed (§6) —, decided by the first evaluation that goes through and kept to by every later one (§6; COMMON.md §5); none on a fresh node, on the one an amend makes, after evaluations that all failed; stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `is` is — the class is born with the row, None-valued | recorded |
 
 `syntax` left out is stored as a None-valued row and `code_dt` left out
 as false, so that every row of the class is read with `rows.get` and
@@ -278,14 +279,15 @@ proof (ARCHITECTURE §3.6) and never the `text` command. It goes through
 the ML interfaces. `Proof_Obligation`'s `_eval_opr` (COMMON.md §3)
 sends the class's callback — `evaluation_callback`,
 `TAT.LiftDefinition.evaluate` — the input slot, `goal_state`, the
-resulting slot, and its `message()`: `name`, the syntax (absent when
-left out), `code_dt`, then `goal_structure()` — `type` and `is` —
-whole, as its goal part (§4), each `IsaTerm` as its `ascii`; a test
-pins the order, as THEOREM.md's does. The callback is built by
-`TAT_Proof_Obligation` (COMMON.md §3) from `LiftDefinition`'s two
-steps: `open_goal`, the `lift_definition` command's transition,
-yielding `with_code_dt`; `after_admission`, the identity, yielding
-nothing.
+resulting slot, and its `message()`: the definition — `name`, the
+syntax (absent when left out), `code_dt`, then `goal_structure()` —
+`type` and `is` — whole, as its goal part (§4), each `IsaTerm` as its
+`ascii` — and the recorded `with_code_dt`, `None` until an evaluation
+has recorded one (COMMON.md §5); a test pins the order, as THEOREM.md's
+does. The callback is built by `TAT_Proof_Obligation` (COMMON.md §3)
+from `LiftDefinition`'s two steps: `open_goal`, the `lift_definition`
+command's transition, yielding `with_code_dt`, the option it ran with;
+`after_admission`, the identity, yielding nothing.
 
 `LiftDefinition`'s `open_goal` builds the command's transition and runs
 it — the shape of `begin_theory`, through `apply_transition` — no proof
@@ -304,22 +306,107 @@ otherwise the annotation as `mixfix_text` writes it, in `ascii`, read by
 Isabelle's `Parse.mixfix` under the local theory's keywords through the
 plugin's `TAT_Mixfix` (COMMON.md §4) inside the local theory's function,
 as a `Typedef`'s syntax is; `options` `["code_dt"]` or `[]`; the last
-argument, the command's parametricity theorems, none (§2). With
-`code_dt` false the step runs the command without the option and yields
-false. With `code_dt` true it runs the command with the option and,
-on the state it reaches, the admission as a trial —
-`TAT_Proof_Obligation.admit`, the one the callback applies (COMMON.md
-§3) —, discarding the trial's state: the trial passing, it yields the
-state with the option and true; the trial refused — the option acts at
-the admission, where Isabelle declares the rule, and refuses there what
-it cannot declare, with its own message, `Composition of abstract types
-has not been implemented yet.` for `dl_wrap :: "'a dlist ⇒ 'a dlist
-dlist" is "λxs. [xs]"`, which passes without the option —, it runs the
-command without the option and yields false, nothing said. The option
-acts only where Isabelle has no code generation rule for the function
-already — a result type with the subtype or quotient type inside
-another type, `'a dlist option` — and is nothing otherwise. Two
-refusals the command raises at the open goal as exceptions of its own,
+argument, the command's parametricity theorems, none (§2). Whether the
+command carries the option is decided under the recorded-choice
+convention (COMMON.md §5), through `TAT_Proof_Obligation.decide`
+(COMMON.md §3). With a recorded `with_code_dt` `open_goal` runs the
+command with the option or without it as recorded, alone, and yields
+the recorded value; a refusal is `open_goal`'s failure, never a switch.
+With none and `code_dt` false it runs the command without the option
+and yields false. With none and `code_dt` true it asks the heuristic
+first, `TAT_Lift_Definition_Command.code_dt_verdict`, in the context
+the command runs in, and runs the trial only where the heuristic is
+undecided.
+
+The heuristic's inputs are the type `τ` and the term `t`, read as the
+command reads them — `Proof_Context.read_var` on the function and its
+type, then `Syntax.read_term` in the context that gives, `ctxt'`
+(lifting_def_code_dt.ML:772–774), `TAT_Lift_Definition_Command.read` —;
+the raw type `ρ`, the first component of `Lifting_Util.quot_thm_rty_qty
+(Lifting_Term.prove_quot_thm ctxt' (fastype_of t, τ))`, the raw type
+the plain definition is made over (lifting_def.ML:628–629, 562–567);
+and the result type R, `body_type τ`. Its words: an abstract type is a
+type constructor with an open Lifting setup in that context
+(`Lifting_Info.lookup_quotients` answers), the one kind the option acts
+on — a closed setup is a plain constructor to the walk, and one the
+definition needs is the search's refusal below; a subtype is an
+abstract type whose quotient theorem's relation is `eq_onp P`
+(`Lifting_Util.quot_thm_rel`; a `typedef` onto a set other than `UNIV`
+with `setup_lifting` — the quotient types `'a fset` and `int` and the
+type copies `natural` and `'a wrap`, `typedef`s onto `UNIV`, are none);
+the walk is `Lifting_Term.prove_schematic_quot_thm` over
+`Lifting_Info.get_quotients` on `(body_type ρ, R)` with actions that
+record each step — the function, the table and the pair the option
+itself walks (lifting_def_code_dt.ML:225–232, 253–258) —, its steps a
+lift (an abstract type none of whose arguments is lifted,
+lifting_term.ML:224–229), a composition (an abstract type with a lifted
+argument, 231–238) and a constructor step (the same plain constructor
+on both sides with a lifted argument, 243–258), the arguments visited
+before their parent, so the last step is R's. The verdicts:
+
+- Not needed — the walk takes no step, or exactly one step and that a
+  lift of a subtype: with the option Isabelle accepts and declares
+  nothing beyond the plain definition but at most an entry in the
+  option's own memo of subtype witnesses (`Lifting_Def_Code_Dt`'s
+  `Data`), which the option alone reads — `dl_length`; `dl_rev` and
+  `dl_cons`; `f :: "'a dlist ⇒ 'a dlist dlist" is "λxs::'a dlist.
+  [xs]"`, whose term keeps the inner `dlist`; `int dlist` with `int`'s
+  setup closed; the same inside a locale, a class or an interpreted
+  locale. `open_goal` runs the command without the option and yields
+  false. Sound because a plain definition with a code equation makes
+  the option return at once (lifting_def_code_dt.ML:244–250); with none
+  (`NONE_EQ`, or `UNKNOWN_EQ` inside a locale, lifting_def.ML:528–546)
+  the option's walk takes the heuristic's steps, and a lift of a
+  subtype only looks up the subtype's witness in that memo or builds it
+  and enters it there (201–216, 146–150; Lifting.thy:271), declaring
+  nothing else, since beyond that memo only a constructor step declares
+  (259–262, 341–349, 590).
+- Without effect — the walk takes a composition step, or exactly one
+  step and that a lift of a type that is no subtype: with the option
+  Isabelle refuses the admission — `Composition of abstract types has
+  not been implemented yet.` for `dl_wrap :: "'a dlist ⇒ 'a dlist
+  dlist" is "λxs. [xs]"`, `'a dlist dlist option` with `λxs. Some [xs]`,
+  `('a dlist dlist ⇒ 'a dlist) option`, `'a dlist wrap`; `code_dt: "…"
+  was not defined as a subtype.` where the walk lifts a type that is no
+  subtype, `'a dlist ⇒ 'a fset` with `λxs. xs`, `'a dlist × nat fset
+  fset` —, or accepts it and declares nothing: where the plain
+  definition already has a code equation, `nat ⇒ nat fset fset` with
+  `λn. [[n]]`, or inside a locale whose interpretation's `rewrites`
+  turns the abstraction function into a plain constant, or where the
+  option's memo already holds the type's witness. `open_goal` runs the
+  command without the option and yields false, nothing said. Sound
+  because the option, unless it returns at once with the plain
+  definition (lifting_def_code_dt.ML:244–250), walks the same steps,
+  arguments first, and raises at a composition, `comp_lift_error` (199,
+  231), or, at a lift of a type that is no subtype, raises at the
+  witness (209) or finds one in the memo and returns the plain
+  definition (206, 261–262).
+- Undecided — every other case, and whenever the reading of `τ` or
+  `t`, `prove_quot_thm` or the walk raises: a constructor step with no
+  composition among the steps, where the option has work to do and only
+  the trial tells whether Isabelle accepts it — `dl_tl_opt`, `'a dlist
+  × nat`, `'a dlist list`, `('a dlist × 'a fset) option`. `open_goal`
+  runs the command with the option as a probe, then the trial, the
+  admission tried on the probe's state — `TAT_Proof_Obligation.admit`,
+  the one the callback applies (COMMON.md §3) —, then the command with
+  the option when the trial passed, yielding true, and without it when
+  the trial was refused, yielding false, nothing said; the probe's state
+  is dropped. The option acts at the admission, where Isabelle declares
+  the rule and refuses what it cannot declare, with its own message: `f
+  :: "'a dlist ⇒ ('a dlist × 'a fset) option" is "λxs. Some (xs, xs)"`
+  is refused with `code_dt: "X.fset" was not defined as a subtype.` and
+  passes without the option.
+  Where the command is refused at its open goal, as when the reading or
+  `prove_quot_thm` raises, it is refused the same with the option as
+  without it — the option reaches only `add_lift_def_code_dt`, inside
+  `after_qed` (lifting_def_code_dt.ML:769–802) —, so the probe's
+  refusal, rendered as below, is `open_goal`'s failure and no trial is
+  run.
+
+The option acts only where Isabelle has no code generation rule for the
+function already, and is nothing otherwise.
+
+Two refusals the command raises at the open goal as exceptions of its own,
 `Lifting_Term.QUOT_THM` and `CHECK_RTY`, which `lift_def_cmd` lets
 through, the step catches around the call inside the local theory's
 function, where the command's parser catches them
@@ -362,7 +449,7 @@ constructor — and reopenable — an entry of
 type (`Lifting_Util.quot_thm_rty_qty`) has that constructor. Opening a
 set of candidates applies `Lifting_Setup.lifting_restore` to each one's
 stored quotient, what `context includes t.lifting` does to the table
-Lifting reads. Lifting's verdict on a set is one call of
+Lifting reads. Whether Lifting accepts a set is one call of
 `Lifting_Term.prove_quot_thm` on the type of `is` and on `type`, read as
 `lift_def_cmd` reads them — `Proof_Context.read_var` on the function
 and its type, then `Syntax.read_term` in the context that gives
@@ -460,11 +547,13 @@ A failure anywhere is `Proof_Obligation`'s (COMMON.md §3): `goal_state`
 is emptied and no state is written into the resulting slot, the
 callback answers the messages and nothing to record, and `_eval_opr`
 returns `CannotEvaluate` with them: the node is an obstacle, and
-`with_code_dt` stays what the last successful evaluation recorded, which
-`can_emit` keeps out of a file (ARCHITECTURE §6.1). Otherwise
-`_eval_opr` returns `Ready` with no messages: `LiftDefinition`'s
-`record_from_evaluation` sets `with_code_dt` to what `open_goal`
-yielded and answers no message (COMMON.md §3). The proof check and the proof construction,
+`with_code_dt` stays what the last evaluation that went through
+recorded — none, if none has —, which `can_emit` keeps out of a file
+(ARCHITECTURE §6.1). Otherwise `_eval_opr` returns `Ready` with no
+messages: `LiftDefinition`'s `record_from_evaluation` sets
+`with_code_dt` to what `open_goal` yielded — the option the command ran
+with, as decided or as recorded (COMMON.md §5) — and answers no message
+(COMMON.md §3). The proof check and the proof construction,
 with their callbacks `TAT.Proof_Obligation.check` and
 `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s (COMMON.md
 §3): the goal they work on has one subgoal or none.
