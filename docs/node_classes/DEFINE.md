@@ -423,7 +423,7 @@ method is `None` (§1).
 
 **What the slots hold.** `completeness_state` and `termination_state`
 are state slots beside the node's own (ARCHITECTURE §3.1,
-MODULE_STRUCTURE §4.1), minted in `__init__` as `Proof_Obligation`
+MODULE_STRUCTURE §4.1), minted in its constructor as `Proof_Obligation`
 mints `goal_state`
 (COMMON.md §3), appended in `_states_inside()` and named in
 `_slots_written_by`, so that they are deleted with the node and released

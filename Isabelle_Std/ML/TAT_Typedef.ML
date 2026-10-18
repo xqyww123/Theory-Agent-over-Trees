@@ -4,7 +4,8 @@ The ML half of the plugin's `Typedef` (isabelle_theory_agent/std/typedef.py;
 docs/node_classes/TYPEDEF.md §6): the subtype's definition as the Python class
 sends it, run as the `typedef` command's transition with `(overloaded)`, the
 option's need read off the open goal; after the admission, `setup_lifting` on the
-type's theorem, its state kept when Isabelle accepts it.  The callback is built by
+type's theorem as the recorded `lifting` says -- tried once with none, run with
+true, left out with false.  The callback is built by
 `TAT_Proof_Obligation.register` (COMMON.md §3); the admission, the proof
 construction and the proof check are that structure's too.
 *)
@@ -27,6 +28,10 @@ type definition =
 val unpack_definition =
   unpackTuple6 (unpackString, unpackOption unpackString, unpackString, unpackString,
     unpackList (unpackPair (unpackString, unpackOption unpackString)), unpackString)
+
+(*the message: the definition and the recorded `lifting`, none until an
+  evaluation has recorded one (COMMON.md §5)*)
+val unpack_message = unpackPair (unpack_definition, unpackOption unpackBool)
 
 (*the command's own transition, what its parser hands its result to (typedef.ML),
   with the option: the one check it switches off is asked by TAT_Overloaded.needed
@@ -60,18 +65,22 @@ fun lifting_transition name =
         (Proof_Context.get_fact_single lthy (Facts.named ("type_definition_" ^ name))) lthy
       |> snd)
 
-(*`Typedef`'s after_admission (COMMON.md §3), total: the state after
-  `setup_lifting` and true when Isabelle accepts it; the admitted state and
-  false when it refuses, its messages dropped (TYPEDEF.md §6)*)
-fun after_admission ((name, _, _, _, _, _) : definition) admitted =
-  (case TAT_Framework.apply_transition (lifting_transition name) admitted of
-    Accepted st => (st, true)
-  | Refused _ => (admitted, false))
+(*`Typedef`'s after_admission (COMMON.md §3) under the recorded `lifting`
+  (TYPEDEF.md §6): with none, `setup_lifting` tried once -- the state after it
+  and true when Isabelle accepts it, the admitted state and false when it
+  refuses, its messages dropped; with true, run, a refusal the definition's
+  failure; with false, not run, the admitted state and false*)
+fun after_admission (((name, _, _, _, _, _), recorded) : definition * bool option) admitted =
+  if recorded = SOME false then Accepted (admitted, false)
+  else
+    (case TAT_Framework.apply_transition (lifting_transition name) admitted of
+      Accepted st => Accepted (st, true)
+    | Refused messages => if is_some recorded then Refused messages else Accepted (admitted, false))
 
 val _ = Theory.setup (TAT_Proof_Obligation.register
   {name = "TAT.Typedef.evaluate",
-   message = unpack_definition,
-   open_goal = open_goal,
+   message = unpack_message,
+   open_goal = open_goal o fst,
    after_admission = after_admission,
    records = packPair (packBool, packBool)})
 

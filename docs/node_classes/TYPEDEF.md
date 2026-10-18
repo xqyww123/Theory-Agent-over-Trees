@@ -33,7 +33,7 @@ One kind, `typedef`, which heads the id component: `typedef_dlist`.
 | `rep_function_name` | `IsaTerm`, optional; `Rep_` before `type_name` when left out | authored |
 | `abs_function_name` | `IsaTerm`, optional; `Abs_` before `type_name` when left out | authored |
 | `overloaded` | `bool`: whether the command carries `(overloaded)`, decided by the evaluation (§6); false until one has recorded it; stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `set` is — the class is born with the row | recorded |
-| `lifting` | `bool`: whether `setup_lifting` follows the command — Isabelle set lifting up for the subtype —, decided by the evaluation (§6); false until one has recorded it; stored and read back as `overloaded` is | recorded |
+| `lifting` | `bool`: whether `setup_lifting` follows the command — Isabelle set lifting up for the subtype —, decided by the node's first evaluation and kept to by every later one (§6; COMMON.md §5); `None` until an evaluation has recorded one; stored and read back as `overloaded` is | recorded |
 
 `syntax`, `rep_function_name` and `abs_function_name` left out are
 stored as a None-valued row, so that every row of the class is read with
@@ -276,21 +276,23 @@ setup_lifting type_definition_errorable
 ## 6. Evaluation
 
 The evaluator runs the definition, admits its goal, and sets lifting
-up; it never runs a proof (ARCHITECTURE §3.6) and never the `text`
-command. It goes through the ML interfaces. `Proof_Obligation`'s
-`_eval_opr` (COMMON.md §3) sends the class's callback —
-`evaluation_callback`, `TAT.Typedef.evaluate` — the input slot,
-`goal_state`, the resulting slot, and its `message()`: `type_name`, the
-syntax (absent when left out), the two function names with the defaults
-filled in, then `goal_structure()` — the type parameters with their
-sorts, and `set` — whole, as its goal part (§4), each `IsaTerm` as its
-`ascii`; a test pins the order, as THEOREM.md's does. The callback is
-built by `TAT_Proof_Obligation` (COMMON.md §3) from `Typedef`'s two
-steps: `open_goal`, the `typedef` command's transition and, on the open
-goal, `TAT_Overloaded.needed` (COMMON.md §4), yielding `overloaded`;
-`after_admission`, the `setup_lifting` transition, yielding `lifting`.
-What the two steps yield `_eval_opr` hands the class's
-`record_from_evaluation` (COMMON.md §3).
+up as the recorded `lifting` says; it never runs a proof (ARCHITECTURE
+§3.6) and never the `text` command. It goes through the ML interfaces.
+`Proof_Obligation`'s `_eval_opr` (COMMON.md §3) sends the class's
+callback — `evaluation_callback`, `TAT.Typedef.evaluate` — the input
+slot, `goal_state`, the resulting slot, and its `message()`: the
+definition — `type_name`, the syntax (absent when left out), the two
+function names with the defaults filled in, then `goal_structure()` —
+the type parameters with their sorts, and `set` — whole, as its goal
+part (§4), each `IsaTerm` as its `ascii` — and the recorded `lifting`,
+`None` until an evaluation has recorded one (COMMON.md §5); a test pins
+the order, as THEOREM.md's does. The callback is built by
+`TAT_Proof_Obligation` (COMMON.md §3) from `Typedef`'s two steps:
+`open_goal`, the `typedef` command's transition and, on the open goal,
+`TAT_Overloaded.needed` (COMMON.md §4), yielding `overloaded`;
+`after_admission`, the `setup_lifting` transition under the recorded
+`lifting`, yielding `lifting`. What the two steps yield `_eval_opr`
+hands the class's `record_from_evaluation` (COMMON.md §3).
 
 `Typedef`'s `open_goal` builds the `typedef` command's transition and
 runs it — the shape of `begin_theory`, through `apply_transition` — no
@@ -338,19 +340,24 @@ demand `(overloaded)`. The goal `∃x. x ∈ S`, open and no step taken,
 goes into `goal_state`, where the proof construction and the proof
 check find their goal.
 
-`Typedef`'s `after_admission` runs the one transition `setup_lifting
-type_definition_dlist` makes, `Toplevel.local_theory NONE NONE` of
-`Lifting_Setup.setup_by_typedef_thm Lifting_Setup.default_config` on
-the theorem `type_definition_dlist`, read by
-`Proof_Context.get_fact_single` under `type_definition_` before
+`Typedef`'s `after_admission` runs, as the recorded `lifting` says, the
+one transition `setup_lifting type_definition_dlist` makes,
+`Toplevel.local_theory NONE NONE` of `Lifting_Setup.setup_by_typedef_thm
+Lifting_Setup.default_config` on the theorem `type_definition_dlist`,
+read by `Proof_Context.get_fact_single` under `type_definition_` before
 `type_name` — the lookup by name that the command's own
-`Attrib.eval_thms` makes, with no attribute to apply. Isabelle
-accepting it, `lifting` is true and the state is the one after it.
-Isabelle refusing it — `apply_transition` answering `Refused` with its
-messages; an interrupt, and a Bug of the step's own, propagate instead
-— `lifting` is false and the state is the admitted one, the refusal's
-messages dropped. A refusal never makes the definition invalid,
-Isabelle having accepted the typedef; its causes are Lifting's: a
+`Attrib.eval_thms` makes, with no attribute to apply. With no `lifting`
+recorded the transition is tried once: Isabelle accepting it, `lifting`
+is true and the state is the one after it; Isabelle refusing it —
+`apply_transition` answering `Refused` with its messages; an interrupt,
+and a Bug of the step's own, propagate instead — `lifting` is false and
+the state is the admitted one, the refusal's messages dropped, the
+definition standing, Isabelle having accepted the typedef. With
+`lifting` recorded true the transition runs, and Isabelle refusing it is
+the definition's failure with its messages (COMMON.md §5): the text the
+evaluation ran is the text the file carries. With `lifting` recorded
+false nothing runs, and the state is the admitted one. A refusal's
+causes are Lifting's: a
 representing type over a type constructor whose `quot_map` rule is
 short of a premise, such as `fmap`, where
 `Lifting_Term.prove_param_quot_thm` lets a bare `THM` through

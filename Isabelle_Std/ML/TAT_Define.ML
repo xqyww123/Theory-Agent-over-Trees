@@ -43,9 +43,6 @@ val plain = "function"
 fun config_of command =
   if command = sequential then Function_Fun.fun_config else Function_Common.default_config
 
-fun bind f (Accepted a) = f a
-  | bind _ (Refused messages) = Refused messages
-
 (*Isar text read under the context's keywords: `by`'s one or two method texts
   (`by pat_completeness auto` is an initial and a terminal method) and
   `declare`'s attributes*)
@@ -150,18 +147,18 @@ fun run (definition as (constants, _, auto_reduction, mode) : definition) {compl
     fun declare facts attributes st = if null facts then Accepted st else apply (declare_transition facts attributes) st
     fun by_definition st =
       apply (definition_transition definition) st
-      |> bind (declare (if auto_reduction then [the_single names ^ "_def"] else []) "[simp]")
+      |> TAT_Framework.bind_answer (declare (if auto_reduction then [the_single names ^ "_def"] else []) "[simp]")
       |> TAT_Framework.map_answer (rpair ("definition", NONE, NONE))
     fun opened command st = apply (function_transition command definition) st
     fun finished command st_open =
       close completeness completeness_method st_open
-      |> bind (fn (st', cm) =>
+      |> TAT_Framework.bind_answer (fn (st', cm) =>
           apply termination_transition st'
-          |> bind (close termination termination_method)
-          |> bind (fn (st'', tm) =>
+          |> TAT_Framework.bind_answer (close termination termination_method)
+          |> TAT_Framework.bind_answer (fn (st'', tm) =>
               declare (if auto_reduction then [] else map (fn n => n ^ ".simps") names) "[simp del]" st''
               |> TAT_Framework.map_answer (rpair (command, cm, tm))))
-    fun by_function command st = opened command st |> bind (finished command)
+    fun by_function command st = opened command st |> TAT_Framework.bind_answer (finished command)
   in
     (case mode of
       SOME "definition" => by_definition st

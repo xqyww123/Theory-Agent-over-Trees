@@ -13,7 +13,7 @@ sig
     {name : string,
      message : 'm MessagePackBinIO.Unpack.unpacker,
      open_goal : 'm -> Toplevel.state -> (Toplevel.state * 'a) TAT_Framework.answer,
-     after_admission : 'm -> Toplevel.state -> Toplevel.state * 'b,
+     after_admission : 'm -> Toplevel.state -> (Toplevel.state * 'b) TAT_Framework.answer,
      records : ('a * 'b) MessagePackBinIO.Pack.packer} -> theory -> theory
     (*registers a class's evaluation callback (COMMON.md §3), built from the
       callback's name, the message's unpacker, the class's two steps -- each a
@@ -25,7 +25,8 @@ sig
       command, or a check the class makes on the open goal, refuses the input
       -- runs under `operation'` into `goal_state`; then, as one operation
       into the resulting slot, the half of `sorry` that ends a toplevel goal
-      and `after_admission`, total from the admitted state.  The answer is
+      and `after_admission`, from the admitted state -- refused with messages
+      when a command of the class's after the admission refuses.  The answer is
       `Refused` with the messages, or `Accepted` with the pair of what the
       two steps yielded, packed by TAT_Framework.pack_answer: on the wire
       [[msgs], nil] or [[], [a, b]].  When either operation answers
@@ -63,7 +64,7 @@ fun evaluate (input, goal, result) open_goal after_admission message =
         Accepted a =>
           TAT_Common_Nodes.operation' result (fn () =>
             admit (#get goal ())
-            |> TAT_Framework.map_answer (after_admission message))
+            |> TAT_Framework.bind_answer (after_admission message))
           |> TAT_Framework.map_answer (pair a)
       | Refused messages => Refused messages)
     val _ = (case answer of Refused _ => #put goal NONE | Accepted _ => ())

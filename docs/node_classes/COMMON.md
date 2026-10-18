@@ -83,9 +83,9 @@ rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5). Evaluat
 `Proof_Obligation` serves a class one command of which opens exactly
 one goal, which is admitted, the class's `after_admission` step
 following the admission in the same operation into the resulting slot
-(`Typedef`'s tries `setup_lifting` and keeps the admitted state when
-Isabelle refuses it, TYPEDEF.md §6; `Theorem`'s and `LiftDefinition`'s
-are the identity). That operation is the class's `job_operation`, the
+(`Typedef`'s runs `setup_lifting` as its recorded `lifting` says,
+TYPEDEF.md §6; `Theorem`'s and `LiftDefinition`'s are the identity).
+That operation is the class's `job_operation`, the
 operation that writes what the node's jobs read (CONSTRUCT_INTERACTION
 §3.1), in two shapes: a `Leaf`'s one operation — `Proof_Obligation`
 itself sets `job_operation = None` — and a `StdBlock`'s beginning,
@@ -196,11 +196,12 @@ steps, each a function of the message:
   to the state with the goal open together with what the class records,
   or to the refusal with at least one message when the command, or a
   check the class makes on the open goal, refuses the input;
-- `after_admission : Toplevel.state -> Toplevel.state * 'b`, total,
+- `after_admission : Toplevel.state -> (Toplevel.state * 'b) answer`,
   from the state with the goal admitted to the state after the class's
-  commands that follow the admission, together with what it records:
-  a command of its own that Isabelle refuses leaves it carrying on from
-  the state it was given.
+  commands that follow the admission, together with what it records, or
+  to the refusal with at least one message when one of those commands
+  refuses; the identity, `Accepted` with the state it was given and
+  `()`, for a class with no command after the admission.
 
 Every transition of a step runs through `apply_transition`
 (MODULE_STRUCTURE §2.4), which answers `Refused` with Isabelle's
@@ -714,13 +715,15 @@ The field `type_parameters[1]` declares `'b`, which is not used.
 - A choice the evaluation makes between commands, or between a
   command's options — `Define`'s `definition`, `function (sequential,
   no_partials)` or `function` (DEFINE.md §6), `QuotientType`'s and `Typedef`'s
-  `(overloaded)` (QUOTIENT_TYPE.md §6) — is decided once per set of the
+  `(overloaded)` (QUOTIENT_TYPE.md §6), `Typedef`'s `setup_lifting`
+  (TYPEDEF.md §6) — is decided once per set of the
   authored fields it depends on, and recorded: the class's message
   carries the recorded choice, `None` until an evaluation has recorded
   one — on a fresh node, on the one an amend makes, after evaluations
   that all failed —; under `None` the
   evaluation decides — a first form tried and a second on its refusal,
-  or a probe run whose result decides — and records the choice; under a
+  a probe run whose result decides, or a command tried once and kept
+  exactly when accepted — and records the choice; under a
   recorded choice it runs that alone, and a refusal is the operation's
   failure, never a switch. So the text the evaluation ran is the text
   the file carries, a re-evaluation under a changed context never

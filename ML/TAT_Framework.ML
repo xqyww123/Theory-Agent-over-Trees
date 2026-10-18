@@ -49,6 +49,7 @@ sig
                                       (*a run's answer: what it was accepted with, or
                                         the messages it was refused with, at least one*)
   val map_answer : ('a -> 'b) -> 'a answer -> 'b answer
+  val bind_answer : ('a -> 'b answer) -> 'a answer -> 'b answer
   val pack_answer : 'a MessagePackBinIO.Pack.packer -> 'a answer MessagePackBinIO.Pack.packer
                                       (*[[msgs], nil] or [[], x]: a packer a callback
                                         answering an answer may use*)
@@ -532,12 +533,15 @@ fun install () =
 
 end
 
-(*§2.4: a run's answer -- the datatype of the signature -- and its packer,
-  the wire form of docs/node_classes/COMMON.md §3.*)
+(*§2.4: a run's answer -- the datatype of the signature --, its two combinators
+  and its packer, the wire form of docs/node_classes/COMMON.md §3.*)
 datatype 'a answer = Accepted of 'a | Refused of string list
 
 fun map_answer f (Accepted x) = Accepted (f x)
   | map_answer _ (Refused messages) = Refused messages
+
+fun bind_answer f (Accepted x) = f x
+  | bind_answer _ (Refused messages) = Refused messages
 
 fun pack_answer p =
   let open MessagePackBinIO.Pack in

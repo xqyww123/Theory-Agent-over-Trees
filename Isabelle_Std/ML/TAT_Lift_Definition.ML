@@ -61,7 +61,7 @@ val _ = Theory.setup (TAT_Proof_Obligation.register
   {name = "TAT.LiftDefinition.evaluate",
    message = unpack_definition,
    open_goal = open_goal,
-   after_admission = K (rpair ()),
+   after_admission = K (fn st => Accepted (st, ())),
    records = packPair (packBool, packUnit)})
 
 end

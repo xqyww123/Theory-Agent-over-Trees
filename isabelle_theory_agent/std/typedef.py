@@ -3,8 +3,8 @@
 the elements of a non-empty subset of an existing type, with a function
 each way between the two — a `Proof_Obligation` (COMMON.md §3) whose one
 goal is the subset's non-emptiness; its evaluation records whether the
-command needs `(overloaded)` and whether Isabelle set lifting up for the
-type."""
+command needs `(overloaded)` and, once, whether Isabelle set lifting up
+for the type, which every later evaluation keeps to (COMMON.md §5)."""
 
 from __future__ import annotations
 
@@ -79,11 +79,11 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
     rep_function_name: IsaTerm | None       # None when left out: Isabelle's default, `Rep_` before the name (§2)
     abs_function_name: IsaTerm | None       # likewise, `Abs_`
     overloaded: bool                        # recorded by the evaluation (§6): false until one has
-    lifting: bool
+    lifting: bool | None                    # recorded by the first evaluation, kept to by the later ones (§1, §6)
 
     def __init__(self, parent, state, english: str, type_parameters: tuple[Type_Parameter, ...], type_name: str,
                  syntax: TypeMixfix | None, set: IsaTerm, rep_function_name: IsaTerm | None,
-                 abs_function_name: IsaTerm | None, overloaded: bool = False, lifting: bool = False):
+                 abs_function_name: IsaTerm | None, overloaded: bool = False, lifting: bool | None = None):
         super().__init__(parent, state)
         self.english = english
         self.type_parameters = type_parameters
@@ -142,15 +142,17 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         return (type_parameters_wire(self.type_parameters), self.set.ascii)
 
     def message(self) -> Any:
-        """The definition as `TAT.Typedef.evaluate` unpacks it: `type_name`,
+        """What `TAT.Typedef.evaluate` unpacks: the definition — `type_name`,
         the syntax as `mixfix_wire` writes it, the two function names with
-        the defaults filled in, then the goal structure."""
+        the defaults filled in, then the goal structure — and the recorded
+        `lifting`, None for one to be decided (§6; COMMON.md §5)."""
         rep, abs_ = self._function_names()
-        return (self.name, mixfix_wire(self.syntax), rep.ascii, abs_.ascii, *self.goal_structure())
+        return ((self.name, mixfix_wire(self.syntax), rep.ascii, abs_.ascii, *self.goal_structure()), self.lifting)
 
     def record_from_evaluation(self, what):
-        """§6: `overloaded` and `lifting`, what the two steps yielded; the
-        notice exactly when Isabelle could not set lifting up."""
+        """§6: `overloaded` and `lifting`, what the two steps yielded —
+        `lifting` as decided or as recorded —; the notice exactly when
+        lifting is not set up."""
         self.overloaded, self.lifting = what
         return () if self.lifting else (IsaTerm.from_agent(LIFTING_NOTICE),)
 
@@ -192,7 +194,8 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
     def emit(self, indent, out):
         """§5: the `text` line; the command, `(overloaded)` when recorded,
         the `morphisms` line and the terminal proof under it; then
-        `setup_lifting` when recorded."""
+        `setup_lifting` when the recorded `lifting` is true."""
+        assert self.lifting is not None                   # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
         keywords = self.theory().keywords or ()
         definition, morphisms = self._definition(keywords)

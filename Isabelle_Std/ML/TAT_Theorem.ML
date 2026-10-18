@@ -68,12 +68,12 @@ fun open_goal statement st =
       | names => Refused [undeclared_sentence names])
   | Refused messages => Refused messages)
 
-(*`after_admission` the identity, yielding nothing*)
+(*`after_admission` the identity, `Accepted` with the state and nothing*)
 val _ = Theory.setup (TAT_Proof_Obligation.register
   {name = "TAT.Theorem.evaluate",
    message = unpack_statement,
    open_goal = open_goal,
-   after_admission = K (rpair ()),
+   after_admission = K (fn st => Accepted (st, ())),
    records = packPair (packUnit, packUnit)})
 
 end
