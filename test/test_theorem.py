@@ -115,7 +115,7 @@ def test_gen_refuses_as_section_4_says():
                 InvalidField)
     assert str(e) == "At `constructs[0]`: " + binds and e.field == "statement.premises[1].name"
     e = refused(f, x, [lemma("p", for_any=({"name": "xs"}, {"name": "xs"}))], InvalidField)
-    assert (e.field, e.reason) == ("statement.for_any[1].name", "binds `xs` a second time")
+    assert (e.field, e.reason) == ("statement.for_any[1].name", "repeats `xs`")
     e = refused(f, x, [lemma("p", premises=({"name": "x y", "term": "a"},))], InvalidField)
     assert e.field == "statement.premises[0].name"
     (h,) = insert(f, x, 0, [lemma("h", premises=({"name": "h_", "term": "a"},))])     # a premise may end so

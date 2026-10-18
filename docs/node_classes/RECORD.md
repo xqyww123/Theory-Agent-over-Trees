@@ -164,9 +164,9 @@ The `InvalidField` sentences:
 
 ```
 The field `type_parameters[0].name` must be a type variable, such as 'a.
-The field `type_parameters[1].name` binds `'a` a second time.
+The field `type_parameters[1].name` repeats `'a`.
 The field `fields[1].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
-The field `fields[1].name` binds `xcoord` a second time.
+The field `fields[1].name` repeats `xcoord`.
 ```
 
 The grammar text after the colon is the framework's, the one

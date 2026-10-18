@@ -239,7 +239,7 @@ changed `english` or `auto_reduction` keeps them. `message()` carries
 The `InvalidField` sentence, for a constant listed twice:
 
 ```
-The field `constants[1].name` binds `even` a second time.
+The field `constants[1].name` repeats `even`.
 ```
 
 A parent outside a theory is refused with the plugin's
@@ -536,11 +536,11 @@ any other call. The setup's four parts, a call carrying up to four:
   goals, which stand beside the completeness goal in the same call, and
   the goals a method derives, such as the recursive-call subgoal of
   `relation`. Nothing is shown for it: the agent sees the goal with its
-  binders in place. One limit: when the largest goal of the call — a
-  compatibility goal, or the completeness goal itself, which has one
-  premise per equation — is large enough to set off AoA's split segment
-  (AUTO_INTRO_DECISION.md §8), the segment may rewrite the completeness
-  goal before the decision sees it, and the hook then passes.
+  binders in place. A call that keeps its goal also runs without AoA's
+  split segment, the preprocessing that rewrites every goal of a call
+  whose largest goal is large (AUTO_INTRO_DECISION.md §8): the setup puts
+  AoA's configuration option `AoA_auto_split` to false on the call's
+  context, so that the goal the hook keeps is the goal the agent sees.
 
 The texts the proof agent reads. The task's part of the initial
 message, written for the major agent only — a worker's is the

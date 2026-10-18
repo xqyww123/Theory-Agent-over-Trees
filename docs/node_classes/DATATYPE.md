@@ -217,11 +217,11 @@ not an exception.
 The `InvalidField` sentences:
 
 ```
-The field `types[1].type_name` binds `expr` a second time.
+The field `types[1].type_name` repeats `expr`.
 The field `types[0].constructors[1].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
-The field `types[0].constructors[2].name` binds `Nil` a second time.
+The field `types[0].constructors[2].name` repeats `Nil`.
 The field `types[0].constructors[1].arguments[0].selector` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
-The field `types[0].constructors[1].arguments[1].selector` binds `hd` a second time.
+The field `types[0].constructors[1].arguments[1].selector` repeats `hd`.
 ```
 
 The type parameters' sentences are COMMON.md §4's, written once in

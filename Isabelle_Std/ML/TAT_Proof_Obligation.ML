@@ -129,9 +129,12 @@ val unpack_setup =
   goal kept as it stands is an auto-Intro hook answering No_Intro on exactly the
   call's leading goal -- the sequent's first premise, the term the decision
   compares (AUTO_INTRO_DECISION.md §2) -- so that the goals a method derives
-  keep their automatic Intro*)
+  keep their automatic Intro; and the call runs without AoA's split segment
+  (AoA_auto_split false), which could rewrite that goal before the decision
+  sees it*)
 fun declared ((_, hint, tactics, kept) : setup) (ctxt, sequent) =
   ctxt
+  |> (if kept then Config.put AoA_auto_split false else I)
   |> (case hint of
         NONE => I
       | SOME (text, patterns) =>

@@ -306,7 +306,7 @@ The `InvalidField` sentences:
 
 ```
 The field `type_parameters[0]` must be a type variable, such as 'a.
-The field `type_parameters[1]` binds `'a` a second time.
+The field `type_parameters[1]` repeats `'a`.
 The field `type_parameters[1]` declares `'b`, which is not used.
 ```
 

@@ -146,7 +146,7 @@ The `InvalidField` sentences:
 
 ```
 The field `statement.for_any[0].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
-The field `statement.premises[1].name` binds `ne` a second time.
+The field `statement.premises[1].name` repeats `ne`.
 ```
 
 The grammar text after the colon is the framework's, the one

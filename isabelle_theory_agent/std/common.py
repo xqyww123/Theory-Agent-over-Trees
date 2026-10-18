@@ -137,7 +137,7 @@ def check_not_bound_twice(name: IsaTerm | str, field: str, earlier: Iterable[Isa
     """`InvalidField` with the plugin's one sentence when `name` is among
     `earlier` (§4, §5)."""
     if any(e == name for e in earlier):
-        raise InvalidField(field, f"binds `{IsaTerm.to_unicode(name)}` a second time")
+        raise InvalidField(field, f"repeats `{IsaTerm.to_unicode(name)}`")
 
 
 def _check_type_variable(text: str, field: str, earlier: Iterable[IsaTerm]) -> IsaTerm:

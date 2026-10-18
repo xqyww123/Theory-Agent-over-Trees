@@ -147,7 +147,7 @@ def test_gen_refuses_as_section_4_says():
     e = refused(f, x, [definition(LIST, type_parameters=({"name": "a"},))], InvalidField)
     assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
     e = refused(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
-    assert (e.field, e.reason) == ("type_parameters[1].name", "binds `'a` a second time")
+    assert (e.field, e.reason) == ("type_parameters[1].name", "repeats `'a`")
     # every type parameter used in some constructor's argument type, last — COMMON §4's check and sentence, pinned by
     # test_common.py; a group in which only the second type uses the parameter is accepted
     [unused] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.") if line.endswith("which is not used.")]

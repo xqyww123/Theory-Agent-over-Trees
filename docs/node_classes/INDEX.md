@@ -47,7 +47,7 @@ COMMON.md.
 | `Abbreviation` | `abbreviation` | `Leaf` | none | not yet |
 | `TypeSynonym` | `type_synonym` | `Leaf` | none | not yet |
 | `Inductive` | `inductive`, `coinductive`, `inductive_set`, `coinductive_set` | `Leaf` | none | not yet |
-| `Theorem` | `lemma`, `theorem`, `corollary`, `proposition` | `Leaf` | the statement | THEOREM.md, which gains an authored field `attributes`, the attributes the fact is declared with |
+| `Theorem` | `lemma`, `theorem`, `corollary`, `proposition` | `Leaf` | the statement | THEOREM.md |
 | `Lemmas` | `lemmas` | `Leaf` | none | not yet |
 | `Notation` | `notation`; `type_notation` and the `no_` forms, decided with it | `Leaf` | none | not yet |
 
@@ -66,8 +66,7 @@ Every command inside a proof, since a tree holds no proof (ARCHITECTURE
 
 - **Declarations without a definition**: `axiomatization`, `typedecl`,
   `consts`. An agent is given no way to add an axiom.
-- **`declare`**: it has no name to make an id component from;
-  `Theorem`'s `attributes` and `lemmas` serve instead.
+- **`declare`**: it has no name to make an id component from.
 - **Covered by a class's own choice**: `primrec`, `primcorec`,
   `partial_function` — `Define` chooses the defining command itself.
 - **Derived facts**: `inductive_cases`, `inductive_simps`, `fun_cases` —
