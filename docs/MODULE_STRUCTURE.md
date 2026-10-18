@@ -159,9 +159,8 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
   and its `setup_lifting` among them (node_classes/TYPEDEF.md §6).
   Nothing splits a node's text into
   spans or registers anything in Isabelle's execution table, which a
-  library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6). The
-  output buffers below, `Output_Routing.new_buffer` and `take_buffer`,
-  are exported beside it. `map_answer`, `bind_answer` and `pack_answer`
+  library load's `Execution.reset` wipes (EVALUATOR_DESIGN §6).
+  `map_answer`, `bind_answer` and `pack_answer`
   are exported beside the datatype: `map_answer` applies a function to
   what `Accepted` carries, `bind_answer` one that answers an `answer`
   itself, so that steps each of which may be refused chain;
@@ -215,19 +214,21 @@ The mechanism of EVALUATOR_DESIGN §1, for any node.
 channels (`contrib/Isabelle2025-2/src/Pure/General/output.ML`):
 `writeln_fn`, `writeln_urgent_fn` — a proof's or definition's result block
 prints through this one (`Pure/Isar/proof_display.ML:322-328`) —
-`tracing_fn`, `warning_fn`, `information_fn` and `legacy_fn`. The
-conversation replaces the six once, at its start (`Output_Routing.install`),
-with functions that deliver a message to the buffer registered under the
-id in `Position.thread_data ()`, and to the function they replaced when
-there is no id, or no buffer under it. The remaining channels stay
-untouched: proof states are read off the states themselves, errors travel
-structurally, in the `Runtime.EXCURSION_FAIL` `Toplevel.command_exception`
-raises, and the rest is PIDE
-protocol machinery. No operation of TAT registers a buffer or mints an
-id — the test theory's `run_span` alone does — so what a command prints
-on those channels, Isabelle's warnings among it, goes to the process's
-own output and reaches no status: what a class reports beside its
-state is its callback's own, in its answer (ARCHITECTURE §1).
+`tracing_fn`, `warning_fn`, `information_fn` and `legacy_fn`. TAT leaves
+the six as the process has them: what a command prints on them, Isabelle's
+warnings among it, goes to the process's own output and reaches no status;
+what a class reports beside its state is its callback's own, in its answer
+(ARCHITECTURE §3.2). The test library `TAT_Test_Lib` of the test plugin
+`Test_TAT_Framework` (§1) replaces the six once, as the plugin loads, with
+functions that deliver a message to the buffer registered under the id in
+`Position.thread_data ()`, and to the function they replaced when there is
+no id, or no buffer under it; its `run_span` runs each span under an id of
+its own, with a buffer registered under that id, so that the command
+records `TAT_test.run` and `TAT_test.run_parallel` return carry each
+command's output. The test library leaves the remaining channels
+untouched: proof states are read off the states themselves, a span's
+errors travel structurally, in its command record's `errors`, and the rest
+is PIDE protocol machinery.
 
 ### 2.5 Node classes
 
@@ -358,8 +359,7 @@ the agent client's name, and starts the conversation:
    `TAT.reset`, which cancels every job's future, empties both tables
    (§2.1's and §2.2's `clear`) and begins a fresh Isabelle-side log
    (LOGGING.md §5);
-4. install the output routing of §2.4;
-5. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
+4. `Remote_Procedure_Calling.load ["isabelle_theory_agent"]`, then call the
    procedure `launch_TAT` (§4.6) with the collected package list, the
    working directory, the port, the client's name and the text of the
    Isabelle environment variable `TAT_MAX_CONCURRENT_CONSTRUCTION_JOBS`,

@@ -35,16 +35,6 @@ sig
   }
 
   (*** Running commands (§2.4) ***)
-  datatype output_message =
-    Writeln of string | Tracing of string | Warning of string |
-    Information of string | Legacy of string
-  structure Output_Routing : sig
-    val new_buffer : string -> unit     (*a buffer for what is printed under this id
-                                          in Position.thread_data*)
-    val take_buffer : string -> output_message list
-                                        (*its messages, oldest first, plain text; the
-                                          buffer gone*)
-  end
   datatype 'a answer = Accepted of 'a | Refused of string list
                                       (*a run's answer: what it was accepted with, or
                                         the messages it was refused with, at least one*)
@@ -462,77 +452,6 @@ end
 
 (*** Running commands ***)
 
-datatype output_message =
-  Writeln of string | Tracing of string | Warning of string |
-  Information of string | Legacy of string
-
-structure Output_Routing = struct
-
-(*§2.4: agent-facing text leaves the process through the six Private_Output
-  channels listed below.  Each is replaced once, with a function that routes
-  a message by the id in Position.thread_data () into the buffer registered
-  for that id, and falls back to the function it replaced when there is no
-  id or no buffer.  The id travels with Future.fork (future.ML:452), so a
-  message printed on a forked worker still reaches its command's buffer.*)
-
-val buffers : output_message list Symtab.table Synchronized.var =
-  Synchronized.var "TAT.output_buffers" Symtab.empty
-
-fun new_buffer id = Synchronized.change buffers (Symtab.update_new (id, []))
-
-fun take_buffer id =
-  Synchronized.change_result buffers (fn tab =>
-    (rev (these (Symtab.lookup tab id)), Symtab.delete_safe id tab))
-
-fun route mk fallback outputs =
-  (case Position.id_of (Position.thread_data ()) of
-    NONE => fallback outputs
-  | SOME id =>
-      if not (Symtab.defined (Synchronized.value buffers) id) then fallback outputs
-      else
-        let
-          (*total, unlike a YXML parse: a routed output call must never
-            raise (stock's own cleaner); computed outside the lock*)
-          val text = Protocol_Message.clean_output (implode outputs)
-          val routed =
-            Synchronized.change_result buffers (fn tab =>
-              (case Symtab.lookup tab id of
-                NONE => (false, tab)
-              | SOME msgs => (true, Symtab.update (id, mk text :: msgs) tab)))
-        in if routed then () else fallback outputs end)
-
-(*The channel set is data, so an omission is visible.  The urgent channel
-  taught the lesson: the result block of lemma/theorem/definition prints
-  through writeln_urgent_fn (proof_display.ML:322-328), a separate ref from
-  writeln_fn; urgent output is writeln with an urgent property
-  (isabelle_process.ML), hence the shared constructor.
-  Deliberately not captured:
-  - state_fn: proof states; the Python side reads states off the slots;
-  - error_message_fn: errors travel structurally, in the EXCURSION_FAIL of
-    Toplevel.command_exception and in the test library's command records;
-    capturing the channel would report each twice;
-  - status_fn, report_fn, result_fn, system_message_fn, protocol_message_fn:
-    PIDE protocol machinery, not text for an agent.*)
-val channels = [
-  (Private_Output.writeln_fn, Writeln),
-  (Private_Output.writeln_urgent_fn, Writeln),
-  (Private_Output.tracing_fn, Tracing),
-  (Private_Output.warning_fn, Warning),
-  (Private_Output.information_fn, Information),
-  (Private_Output.legacy_fn, Legacy)
-]
-
-(*Idempotent; the first call captures the process's current functions as the
-  fallback.  Called at conversation start (§2.6), before any operation runs
-  (EVALUATOR_DESIGN §4).*)
-val installed = Synchronized.var "TAT.output_routing" false
-fun install () =
-  Synchronized.change installed (fn true => true | false =>
-    (List.app (fn (r, mk) => let val fallback = ! r in r := route mk fallback end) channels;
-     true))
-
-end
-
 (*§2.4: a run's answer -- the datatype of the signature --, its two combinators
   and its packer, the wire form of docs/node_classes/COMMON.md §3.*)
 datatype 'a answer = Accepted of 'a | Refused of string list
@@ -550,9 +469,8 @@ fun pack_answer p =
   end
 
 (*§2.4: the messages of Runtime errors, Runtime.exn_messages of an exception
-  -- markup stripped, as Output_Routing.route strips the output: in the PIDE
-  print mode the process runs in, any markup in a message -- a position, a
-  pretty-printed term -- is YXML.*)
+  -- markup stripped: in the PIDE print mode the process runs in, any markup
+  in a message -- a position, a pretty-printed term -- is YXML.*)
 fun messages_of_errors errors = map (Protocol_Message.clean_output o #2 o #1) errors
 
 (*§2.4: one transition, built in ML by its operation, applied through
@@ -1005,7 +923,6 @@ fun start' procedure theories working_directory port client =
     val _ = (case duplicates (op =) (map #name callbacks)
               of [] => ()
                | names => error ("Callback registered twice: " ^ commas_quote names))
-    val _ = Output_Routing.install ()
     val conversation
           : (string list * string * int * string * string, unit) Remote_Procedure_Calling.command =
       {name = procedure,

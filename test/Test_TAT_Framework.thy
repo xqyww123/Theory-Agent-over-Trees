@@ -9,7 +9,8 @@ text \<open>The test plugin (ai-artifacts/TEST_HARNESS_PLAN.md §5): the plugin 
   node class; its Python package is \<open>tat_test_plugin\<close>, named twice below on
   purpose.  The two checks that must fail before any conversation starts (a
   duplicated callback name, a rejected \<open>parallel_proofs\<close>) run below as plain
-  ML while the theory loads.\<close>
+  ML while the theory loads, as does the one installation of the output
+  routing through which \<open>TAT_Test_Lib.run_span\<close> reads a command's output.\<close>
 
 ML \<open>
 (*Avoid run_commands wherever possible: it registers each span in Isabelle's
@@ -21,12 +22,80 @@ ML \<open>
   with.*)
 structure TAT_Test_Lib = struct
 
+structure Output_Routing = struct
+
+(*Agent-facing text leaves the process through the six Private_Output
+  channels listed below (docs/MODULE_STRUCTURE.md §2.4).  Each is replaced
+  once, with a function that routes a message by the id in
+  Position.thread_data () into the buffer registered for that id, and falls
+  back to the function it replaced when there is no id or no buffer.  The id
+  travels with Future.fork (future.ML:452), so a message printed on a forked
+  worker still reaches its command's buffer.*)
+
+(*per id, the (kind, text) messages printed under it, newest first*)
+val buffers : (string * string) list Symtab.table Synchronized.var =
+  Synchronized.var "TAT_test.output_buffers" Symtab.empty
+
+fun new_buffer id = Synchronized.change buffers (Symtab.update_new (id, []))
+
+fun take_buffer id =
+  Synchronized.change_result buffers (fn tab =>
+    (rev (these (Symtab.lookup tab id)), Symtab.delete_safe id tab))
+
+fun route kind fallback outputs =
+  (case Position.id_of (Position.thread_data ()) of
+    NONE => fallback outputs
+  | SOME id =>
+      if not (Symtab.defined (Synchronized.value buffers) id) then fallback outputs
+      else
+        let
+          (*total, unlike a YXML parse: a routed output call must never
+            raise (stock's own cleaner); computed outside the lock*)
+          val text = Protocol_Message.clean_output (implode outputs)
+          val routed =
+            Synchronized.change_result buffers (fn tab =>
+              (case Symtab.lookup tab id of
+                NONE => (false, tab)
+              | SOME msgs => (true, Symtab.update (id, (kind, text) :: msgs) tab)))
+        in if routed then () else fallback outputs end)
+
+(*The channel set is data, so an omission is visible; each channel carries
+  Isabelle's own name for it, the kind of its messages.  The urgent channel
+  taught the lesson: the result block of lemma/theorem/definition prints
+  through writeln_urgent_fn (proof_display.ML:322-328), a separate ref from
+  writeln_fn; urgent output is writeln with an urgent property
+  (isabelle_process.ML), hence the shared name.
+  Deliberately not captured:
+  - state_fn: proof states; the Python side reads states off the slots;
+  - error_message_fn: errors travel structurally, in run_span's command
+    records; a failed fork also prints its errors here (execution.ML:187),
+    so capturing the channel would report them twice;
+  - status_fn, report_fn, result_fn, system_message_fn, protocol_message_fn:
+    PIDE protocol machinery, not text for an agent.*)
+val channels = [
+  (Private_Output.writeln_fn, Markup.writelnN),
+  (Private_Output.writeln_urgent_fn, Markup.writelnN),
+  (Private_Output.tracing_fn, Markup.tracingN),
+  (Private_Output.warning_fn, Markup.warningN),
+  (Private_Output.information_fn, Markup.informationN),
+  (Private_Output.legacy_fn, Markup.legacyN)
+]
+
+(*Idempotent; the first call captures the process's current functions as the
+  fallback.  Called once when this theory loads, before any conversation.*)
+val installed = Synchronized.var "TAT_test.output_routing" false
+fun install () =
+  Synchronized.change installed (fn true => true | false =>
+    (List.app (fn (r, kind) => Unsynchronized.change r (route kind)) channels; true))
+
+end
+
 type command_record = {
   source : string,                (*the command's text, sliced verbatim*)
   range : Position.range,         (*within the text handed to run_commands*)
   errors : string list,           (*TAT_Framework.messages_of_errors of the
                                     command's errors and its forks'*)
-  output : TAT_Framework.output_message list    (*plain text, markup stripped*)
+  output : (string * string) list (*kind and text, markup stripped*)
 }
 
 (*offsets count symbols, as Position offsets do*)
@@ -53,7 +122,7 @@ fun run_span tr st =
   in
     \<^try>\<open>
       let
-        val _ = TAT_Framework.Output_Routing.new_buffer id
+        val _ = Output_Routing.new_buffer id
         val _ = Execution.running Document_ID.none exec [] orelse
                   raise TAT_Framework.Bug ("Failed to register execution " ^ id)
         val (errors, st') =
@@ -62,7 +131,7 @@ fun run_span tr st =
         val _ = Execution.join [exec]
         val fork_errors =
           maps Runtime.exn_messages (maps Task_Queue.group_status (Execution.peek exec))
-        val output = TAT_Framework.Output_Routing.take_buffer id
+        val output = Output_Routing.take_buffer id
         val all_errors = TAT_Framework.messages_of_errors (errors @ fork_errors)
       in
         (*a proper interrupt is folded to ([], NONE) by command_errors --
@@ -82,7 +151,7 @@ fun run_span tr st =
         finished groups*)
       finally
         (Execution.cancel exec; Execution.purge [exec];
-         ignore (TAT_Framework.Output_Routing.take_buffer id))\<close>
+         ignore (Output_Routing.take_buffer id))\<close>
   end
 
 (*Split with Outer_Syntax.parse_spans, run each span through
@@ -127,16 +196,10 @@ fun run_commands st text =
           end
   in run spans st end
 
-fun output_message (TAT_Framework.Writeln s) = ("writeln", s)
-  | output_message (TAT_Framework.Tracing s) = ("tracing", s)
-  | output_message (TAT_Framework.Warning s) = ("warning", s)
-  | output_message (TAT_Framework.Information s) = ("information", s)
-  | output_message (TAT_Framework.Legacy s) = ("legacy", s)
-
 (*records travel as (source, error messages, (kind, text) output) triples*)
 fun serialize records =
   map (fn {source, errors, output, ...} : command_record =>
-        (source, errors, map output_message output)) records
+        (source, errors, output)) records
 
 val pack_records =
   let open MessagePackBinIO.Pack in
@@ -145,6 +208,10 @@ val pack_records =
   end
 
 end
+\<close>
+
+ML \<open>
+val _ = TAT_Test_Lib.Output_Routing.install ()
 \<close>
 
 setup \<open>
