@@ -32,8 +32,8 @@ One kind, `typedef`, which heads the id component: `typedef_dlist`.
 | `set` | the subset, `IsaTerm` | authored |
 | `rep_function_name` | `IsaTerm`, optional; `Rep_` before `type_name` when left out | authored |
 | `abs_function_name` | `IsaTerm`, optional; `Abs_` before `type_name` when left out | authored |
-| `overloaded` | `bool`: whether the command carries `(overloaded)`, decided by the evaluation (§6); false until one has recorded it; stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `set` is — the class is born with the row | recorded |
-| `lifting` | `bool`: whether `setup_lifting` follows the command — Isabelle set lifting up for the subtype —, decided by the node's first evaluation and kept to by every later one (§6; COMMON.md §5); `None` until an evaluation has recorded one; stored and read back as `overloaded` is | recorded |
+| `overloaded` | `bool`, or none until an evaluation has recorded one: whether the command carries `(overloaded)`, decided by the first evaluation that goes through and run as recorded by every later one (§6; COMMON.md §5); stored, since the command is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `set` is — the class is born with the row, None-valued | recorded |
+| `lifting` | `bool`, or none until an evaluation has recorded one: whether `setup_lifting` follows the command — Isabelle set lifting up for the subtype —, decided by the first evaluation that goes through and kept to by every later one (§6; COMMON.md §5); stored and read back as `overloaded` is | recorded |
 
 `syntax`, `rep_function_name` and `abs_function_name` left out are
 stored as a None-valued row, so that every row of the class is read with
@@ -165,11 +165,17 @@ arms' fields are COMMON.md §4's, pinned there alone.
 checks: `type_name` against §1's grammar (`InvalidName` with `grammar` =
 `type name`, RENDER_BASELINES §2's fifth form); the type parameters by
 the shared check (COMMON.md §4): each `name` a type variable, no two the
-same; each `rep_function_name` and `abs_function_name` given an Isabelle
-identifier (COMMON.md §5) not ending with an underscore (COMMON.md §5's
-clause on internal names) and not beginning with `Rep_` or `Abs_`, the
-beginnings of the names a field left out takes (§2), and the two not
-the same (`InvalidField`) — so that no given name is a default's. A
+same; each type parameter used in `set`, the plugin's shared check
+(COMMON.md §4); `rep_function_name` and `abs_function_name` through the
+plugin's shared check of a pair of function names (COMMON.md §4) — each
+given name an Isabelle identifier (COMMON.md §5) not ending with an
+underscore (COMMON.md §5's clause on internal names), and the two given
+names, as given, not the same (`InvalidField`); a given name equal to
+the field's default, `Rep_dlist` or `Abs_dlist` (§2), is a given name
+like any other, written into the `morphisms` clause as given (§5). A
+given name that clashes with the other field's default — `Abs_dlist` as
+`rep_function_name` with `abs_function_name` left out — is Isabelle's
+refusal when `open_goal` runs the command (§6). A
 sibling already bearing the
 node's id component is the framework's `DuplicateName`
 (MCP_SPECIFICATION §2); any other clash of the type's name is Isabelle's
@@ -186,19 +192,9 @@ functions. On an amend, a changed `set` or type parameter discards the
 stored proof; a changed `type_name`, function name, `syntax` or
 `english` keeps it.
 
-The `InvalidField` sentences:
-
-```
-The field `rep_function_name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
-The field `rep_function_name` must not begin with `Rep_` or `Abs_`.
-The field `abs_function_name` binds `list_of_dlist` a second time.
-```
-
-The third names the later of two given names that are the same. The
-type parameters' sentences are COMMON.md §4's, written once in
-`common.py`. The grammar text after the colon is the framework's, the
-one `InvalidName` renders for the grammars `fact name` and `type name`
-(RENDER_BASELINES §2), written once and used by both (COMMON.md §5).
+The `InvalidField` sentences — the type parameters', the unused
+parameter's and the function names' — are COMMON.md §4's, pinned there
+alone (COMMON.md §5).
 
 A parent outside a theory is refused with the plugin's
 `NotInsideTheory`, whose sentence COMMON.md §1 pins.
@@ -239,21 +235,23 @@ setup_lifting type_definition_errorable
 - The `text` line: `english` alone, no lead (COMMON.md §2).
 - `(overloaded)` after the command when the recorded `overloaded` is
   true (§6), nothing otherwise.
-- The type parameters, written before the name by the plugin's
-  `type_parameters_text` (COMMON.md §4): none writes the name alone,
-  `typedef dlist =`; one without a sort writes it bare, `typedef 'a
-  dlist =`; otherwise they are parenthesised and comma-separated, a sort
-  after `::` as `print_name` writes it (below): `typedef ('a :: zero, 'b)
-  t =`, `typedef ('a :: "{zero, linorder}", 'b) t =`.
-- The `syntax`, when given, after the name and before `=`, in
-  parentheses as Isabelle writes it, by the plugin's `mixfix_text`
-  (COMMON.md §4): `(infixr "+" 10)`, `("_⇩⊥" [21] 21)`.
+- The head — the type parameters, the name, the syntax — is the
+  plugin's `type_head_text` (COMMON.md §4): the parameters before the
+  name, none writing the name alone, `typedef dlist =`, one without a
+  sort bare, `typedef 'a dlist =`, otherwise parenthesised and
+  comma-separated, a sort after `::` as `print_name` writes it (below),
+  `typedef ('a :: zero, 'b) t =`, `typedef ('a :: "{zero, linorder}",
+  'b) t =` (`type_parameters_text`); the name through the theory's
+  `print_name` (below); the `syntax`, when given, after the name and
+  before `=`, in parentheses as Isabelle writes it (`mixfix_text`):
+  `(infixr "+" 10)`, `("_⇩⊥" [21] 21)`.
 - `set` after `=`, through the theory's `print_name` (below).
 - The `morphisms` line, indented two spaces, when either function name
   was given, the one left out written as its default; no line when
-  neither was. The head with its parameters and syntax, the set and
-  this clause are written by one private helper of typedef.py, which
-  §8's line uses too, given the keyword set to write against.
+  neither was: the plugin's shared writer of the clause (COMMON.md §4).
+  The head, the set and this clause are assembled by one private helper
+  of typedef.py, which §8's line uses too, given the keyword set to
+  write against.
 - The terminal proof, `by aoa` or `sorry`, indented two spaces, is
   `Proof_Obligation`'s `proof_text()` (COMMON.md §3); the `aoa` method's
   import is the plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
@@ -284,15 +282,15 @@ slot, `goal_state`, the resulting slot, and its `message()`: the
 definition — `type_name`, the syntax (absent when left out), the two
 function names with the defaults filled in, then `goal_structure()` —
 the type parameters with their sorts, and `set` — whole, as its goal
-part (§4), each `IsaTerm` as its `ascii` — and the recorded `lifting`,
-`None` until an evaluation has recorded one (COMMON.md §5); a test pins
-the order, as THEOREM.md's does. The callback is built by
-`TAT_Proof_Obligation` (COMMON.md §3) from `Typedef`'s two steps:
-`open_goal`, the `typedef` command's transition and, on the open goal,
-`TAT_Overloaded.needed` (COMMON.md §4), yielding `overloaded`;
-`after_admission`, the `setup_lifting` transition under the recorded
-`lifting`, yielding `lifting`. What the two steps yield `_eval_opr`
-hands the class's `record_from_evaluation` (COMMON.md §3).
+part (§4), each `IsaTerm` as its `ascii` —, the recorded `overloaded`
+and the recorded `lifting`, each `None` until an evaluation has recorded
+one (COMMON.md §5); a test pins the order, as THEOREM.md's does. The
+callback is built by `TAT_Proof_Obligation` (COMMON.md §3) from
+`Typedef`'s two steps: `open_goal`, the `typedef` command's transition
+with the option decided as below, yielding `overloaded`, the option it
+ran with; `after_admission`, the `setup_lifting` transition under the
+recorded `lifting`, yielding `lifting`. What the two steps yield
+`_eval_opr` hands the class's `record_from_evaluation` (COMMON.md §3).
 
 `Typedef`'s `open_goal` builds the `typedef` command's transition and
 runs it — the shape of `begin_theory`, through `apply_transition` — no
@@ -300,7 +298,7 @@ proof step:
 
 ```
 Toplevel.local_theory_to_proof NONE NONE (fn lthy =>
-  Typedef.typedef_cmd {overloaded = true} (name, parameters, mixfix) set (SOME bindings) lthy)
+  Typedef.typedef_cmd {overloaded = overloaded} (name, parameters, mixfix) set (SOME bindings) lthy)
 ```
 
 `name` is `type_name` as a binding; `parameters` the type parameters as
@@ -314,31 +312,37 @@ Isabelle reads; `bindings` `Typedef.make_morphisms` of the two function
 names with the defaults filled in (§2), the bindings the command's own
 syntax makes whether or not a `morphisms` clause is written.
 
-The transition runs with `{overloaded = true}`, once. The option
-switches off one check — that the type has no open dependency on an
-overloaded definition (`typedef.ML`, `primitive_typedef`, the option's
-one use) — and nothing else: the dependencies are registered before the
-check whether or not it is set, so the state is the one the emitted
-text (§5) reaches with or without `(overloaded)`. With the goal open,
-the plugin's `TAT_Overloaded.needed` (COMMON.md §4) asks the state's
-theory the question the check asks — whether the type's entry in the
-definition table has open dependencies, `Defs.get_deps` — and
-`overloaded` is its answer: true exactly when Isabelle would have
-refused the command without the option. The type's full name is the one
-`Typedecl` declared: `Local_Theory.full_name` of the open goal's context
-on `type_name`'s binding, which inside a `Context` or `Locale` carries
-its qualifier. The configuration option
-`typedef_overloaded` is not consulted: where a theory sets it, the
-file carries an `(overloaded)` Isabelle does not need. The same helper
-decides `Record`'s and `QuotientType`'s option, on the type each
-defines through `Typedef.add_typedef`. The transition refused —
-`apply_transition` answering `Refused` with Isabelle's messages: a `set`
-that is no set, `Not a set type`; a free variable in it, `Illegal
-variables in representing set`; a type variable not among the
-parameters — is the step's failure with those messages, which never
-demand `(overloaded)`. The goal `∃x. x ∈ S`, open and no step taken,
-goes into `goal_state`, where the proof construction and the proof
-check find their goal.
+`overloaded`, the option the command runs with, is a choice the
+evaluation makes once per set of authored fields (COMMON.md §5). The
+option switches off one check — that the type has no open dependency on
+an overloaded definition (`typedef.ML`, `primitive_typedef`, the
+option's one use) — and nothing else: the dependencies are registered
+as the goal opens (`prepare_typedef`), whether or not it is set. With
+no recorded value — until an evaluation of the node goes through; an
+amend gives a fresh node — `open_goal` first runs the command with
+`{overloaded = true}` on the input state as a probe, on
+`Toplevel.state` values in ML and into no slot, and asks the plugin's
+`TAT_Overloaded.needed_at` (COMMON.md §4) of the probe's open goal
+whether the type's entry in the definition table has open dependencies
+— under the type's full name as `Typedecl` declared it, which inside a
+`Context` or `Locale` carries its qualifier —, true exactly when
+Isabelle would refuse the command without the option; the probe is
+discarded, and the goal is opened with the option so decided, which
+the class records. A probe Isabelle refuses is the step's failure with
+its messages. With a recorded value, `open_goal` runs the command with
+it, once, and a refusal is the definition's failure, never a switch;
+the file carries the option the run ran with (§5). The configuration
+option `typedef_overloaded` is not consulted: where a theory sets it,
+the file carries an `(overloaded)` Isabelle does not need. The
+transition refused — `apply_transition` answering `Refused` with
+Isabelle's messages: a `set` that is no set, `Not a set type`; a free
+variable in it, `Illegal variables in representing set`; a type
+variable not among the parameters; a name the command declares already
+taken, `Duplicate constant declaration`; under a recorded false, a
+type that needs the option, `Type definition with open dependencies` —
+is the step's failure with those messages. The goal `∃x. x ∈ S`, open
+and no step taken, goes into `goal_state`, where the proof construction
+and the proof check find their goal.
 
 `Typedef`'s `after_admission` runs, as the recorded `lifting` says, the
 one transition `setup_lifting type_definition_dlist` makes,
@@ -379,7 +383,8 @@ emptied and no state is written into the resulting slot, the callback
 answers the messages and nothing to record, and `_eval_opr` returns
 `CannotEvaluate` with them: the node is an obstacle, and its
 `overloaded` and `lifting` stay what the last successful evaluation
-recorded, which `can_emit` keeps out of a file (ARCHITECTURE §6.1).
+recorded, or none, which `can_emit` keeps out of a file (ARCHITECTURE
+§6.1).
 Otherwise `_eval_opr` returns `Ready` with the messages `Typedef`'s
 `record_from_evaluation` answers once it has set `overloaded` and
 `lifting`: none when `lifting` is true, the one notice when it is false
@@ -457,15 +462,15 @@ The evaluation's messages are the framework's to print (PRINT.md
 §3–§4): an `Error:` block while the node is an obstacle, a `Notice:`
 block when its `Ready` carries the notice of §6; after them, while the
 node is unverified, its owing line (§7). A node under `recall`
-whose definition Isabelle refused — a `set` that is a predicate, not a
-set:
+whose definition Isabelle refused — a predicate where a set is
+expected:
 
 ```
 - typedef_dlist (invalid definition)
-  'a dlist = distinct morphisms list_of_dlist dlist_of_list
+  'a dlist = "distinct :: 'a list ⇒ bool" morphisms list_of_dlist dlist_of_list
   Lists without repetition
   Error:
-    Not a set type: "'b list ⇒ bool"
+    Not a set type: "'a list ⇒ bool"
     The error(s) above occurred in typedef "dlist"
 ```
 

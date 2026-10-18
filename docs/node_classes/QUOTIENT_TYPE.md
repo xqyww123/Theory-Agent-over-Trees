@@ -4,14 +4,10 @@ Status: proposed 2026-10-17 and revised the same day after its review
 (ai-artifacts/review/quotient_type/QUOTIENT_TYPE_REVIEW.md); the
 agent-facing wording below is the owner's (his rulings of 2026-10-16
 and 2026-10-17) or COMMON.md's shared sentences under this class's
-paths; the mark's three words and the state line (§7) are his ruling
-of 2026-10-17 for every class that defines (COMMON.md §3). The
-framework's `job_operation`, which
-the class rests on, is committed (16c864e); the class, `Lifting_Closing`
-(COMMON.md §6) and the shared checks and writers of COMMON.md §4 it
-uses are implemented after `LiftDefinition` (LIFT_DEFINITION.md) and
-after the framework step that has `StdBlock` mint its own slot before
-the ending (MODULE_STRUCTURE §4.1).
+paths; the mark's three words and the owing line (§7) are his ruling
+of 2026-10-17 for every class that defines (COMMON.md §3); implemented
+2026-10-18, with `Lifting_Closing` (COMMON.md §6) and the shared checks
+and writers of COMMON.md §4.
 
 A `QuotientType` defines a quotient type: a new type whose values are
 the equivalence classes of an existing type under an equivalence
@@ -38,7 +34,7 @@ leaves the proof standing. Its Python half is
 `Isabelle_Std/ML/TAT_Quotient_Type.ML`; the ending's two halves are
 `Lifting_Closing`'s (COMMON.md §6). Its agent-facing wording lives here
 — the `description` texts of its construct schema (§3), the sentences
-its `gen` renders, the words on its line and its state line (§7) —
+its `gen` renders, the words on its line and its owing line (§7) —
 pinned by the baseline tests the way TYPEDEF.md's are.
 
 One kind, `quotient_type`, which heads the id component:
@@ -276,8 +272,7 @@ tokens, refusing the first parameter it does not find on the path
 `type_parameters[i]` (`InvalidField`, COMMON.md §4); `rep_function_name`
 and
 `abs_function_name` through the plugin's shared check of a pair of
-function names (COMMON.md §4; `Typedef`'s with `Rep_` and `Abs_`),
-with `rep_` and `abs_` as its prefixes — each given name an Isabelle
+function names (COMMON.md §4) — each given name an Isabelle
 identifier (COMMON.md §5) not ending with an underscore (COMMON.md §5's
 clause on internal names), and the two given names, as given, not the
 same (`InvalidField`); a given name equal to the field's default,
@@ -378,7 +373,7 @@ lifting_forget fract.lifting
   true (§6), nothing otherwise.
 - The head — the type parameters, the name, the syntax — is the
   plugin's `type_head_text` (COMMON.md §4), which `Typedef` and
-  `Datatype` switch to: the parameters before the name, none
+  `Datatype` use too: the parameters before the name, none
   writing the name alone, `quotient_type int =`, one bare,
   `quotient_type 'a fset =`, several parenthesised and comma-separated,
   `quotient_type ('a, 'b) t =` (`type_parameters_text` over parameters
@@ -392,7 +387,7 @@ lifting_forget fract.lifting
 - The `morphisms` line, indented two spaces, when either function name
   was given, the one left out written as its default; no line when
   neither was: the plugin's shared writer of the clause (COMMON.md §4),
-  which `Typedef` switches to. The head, the representation type, the
+  which `Typedef` uses too. The head, the representation type, the
   relation and
   this clause are assembled by one private helper of quotient_type.py,
   which §8's line uses too, given the keyword set to write against.
@@ -437,8 +432,9 @@ the recorded `overloaded` — none until an evaluation has recorded one
 The callback is built by `TAT_Proof_Obligation` (COMMON.md §3) from
 `QuotientType`'s two steps: `open_goal`, the `quotient_type` command's
 transition with the option decided as below, yielding `overloaded`, the
-option it ran with; `after_admission`, the identity on the state,
-yielding nothing.
+option it ran with; `after_admission`, the identity — `Accepted` with
+the state it was given and `()` —, since no command of the class
+follows the admission (COMMON.md §3).
 
 `QuotientType`'s `open_goal` builds the command's transition and runs it
 — the shape of `begin_theory`, through `apply_transition` — no proof
@@ -582,7 +578,7 @@ eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
 (not evaluated)                             (not evaluated, proof not started)       (not evaluated, failed to prove)
 ```
 
-While the line reads `unverified definition`, `state_line()` answers
+While the line reads `unverified definition`, `owing_line()` answers
 the sentence the framework prints under the line, after the fields and
 the messages and before the jobs' blocks, wherever the node is detailed
 (COMMON.md §3; PRINT.md §2):
@@ -612,7 +608,7 @@ once it is proven.
 
 `print_fields` (PRINT.md §3) writes the definition, and only under
 `Recall`; wherever it is called the framework writes the two operations'
-messages after it, then the state line while the definition is
+messages after it, then the owing line while the definition is
 unverified (§7), then the failure blocks, then the children (PRINT.md
 §2):
 
@@ -677,7 +673,7 @@ and whose ending was refused:
     fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
 ```
 
-The state line and the jobs' blocks are `Proof_Obligation`'s (COMMON.md
+The owing line and the jobs' blocks are `Proof_Obligation`'s (COMMON.md
 §3); a node under `recall` whose stored proof failed its check:
 
 ```

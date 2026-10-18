@@ -209,10 +209,12 @@ BAD = Failed("")                                         # a failed check: its m
 
 
 def with_proof(node, status, outcome, check=None):
-    """The node in one of §7's states: its statement's status, its proof's
-    outcome, its check — None, `RUNNING` (a running `Proof_Check` on the
-    node), `PASSED` or `FAILED`."""
-    node._status = status
+    """The node in one of §7's states: the status of its `job_operation`'s
+    operation — a leaf's `_status`, a block's `evaluation_status_beginning`
+    —, its proof's outcome, its check — None, `RUNNING` (a running
+    `Proof_Check` on the node), `PASSED` or `FAILED`."""
+    operation = type(node).job_operation
+    setattr(node, "_status" if operation is None else f"evaluation_status_{operation}", status)
     node.job().outcome = outcome
     node._evaluation_job = Proof_Check(node, None) if check is RUNNING else None
     node._check_outcome = check if check in (PASSED, BAD) else None

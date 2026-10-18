@@ -110,7 +110,8 @@ def test_gen_refuses_as_section_4_says():
     """§4's refusals: the parent first (COMMON §1's `NotInsideTheory`, pinned
     for every class by test_common.py); a type name outside §1's grammar
     (RENDER_BASELINES §2's line); the five sentences of §4's block; the type
-    parameters by the shared check (COMMON §4's sentences, pinned by
+    parameters by the shared check, and, last, each used in some
+    constructor's argument type (COMMON §4's sentences, pinned by
     test_common.py); an empty `types` or `constructors` by the framework."""
     f, x = forest()
     (s,) = f.sub_nodes
@@ -147,7 +148,19 @@ def test_gen_refuses_as_section_4_says():
     assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
     e = refused(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
     assert (e.field, e.reason) == ("type_parameters[1].name", "binds `'a` a second time")
-    # §4's order under two faults: the type names first, then the parameters, then the constructors and selectors
+    # every type parameter used in some constructor's argument type, last — COMMON §4's check and sentence, pinned by
+    # test_common.py; a group in which only the second type uses the parameter is accepted
+    [unused] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.") if line.endswith("which is not used.")]
+    e = refused(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)
+    assert str(e) == "At `constructs[0]`: " + unused and e.field == "type_parameters[1]"
+    e = refused(f, x, [definition({"type_name": "phantom", "constructors": [{"name": "phantom", "arguments": [{"type": "'b"}]}]},
+                                  type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)     # the phantom idiom too
+    assert (e.field, e.reason) == ("type_parameters[0]", "declares `'a`, which is not used")
+    (q,) = insert(f, x, 0, [definition({"type_name": "a", "constructors": [{"name": "A", "arguments": [{"type": "nat"}]}]},
+                                       {"type_name": "b", "constructors": [{"name": "B", "arguments": [{"type": "'a"}]}]})])
+    run(locked(f, edit.delete(q)))
+    # §4's order under two faults: the type names first, then the parameters, then the constructors and selectors, then
+    # the parameters' use
     bad_name = {"type_name": "my-list", "constructors": [{"name": "Nil"}]}
     bad_constructor = {"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]}
     bad_selector = {"type_name": "cell", "constructors": [{"name": "Cons", "arguments": [{"type": "'a", "selector": "hd_"}]}]}
@@ -156,6 +169,7 @@ def test_gen_refuses_as_section_4_says():
                    InvalidField).field == "types[1].type_name"
     assert refused(f, x, [definition(bad_constructor, type_parameters=({"name": "a"},))], InvalidField).field == "type_parameters[0].name"
     assert refused(f, x, [definition(bad_selector, bad_constructor)], InvalidField).field == "types[0].constructors[0].arguments[0].selector"
+    assert refused(f, x, [definition(bad_constructor, type_parameters=({"name": "'b"},))], InvalidField).field == "types[0].constructors[1].name"
     # two constructors of one type may share a selector's name: Isabelle makes one selector of them
     (q,) = insert(f, x, 0, [definition({"type_name": "t", "constructors": [
         {"name": "A", "arguments": [{"type": "'a", "selector": "get"}]},

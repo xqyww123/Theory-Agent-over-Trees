@@ -4,5 +4,5 @@ classes of Isabelle's standard commands, one module per class, which
 importing this package registers."""
 
 from . import (
-    common as common, datatype as datatype, define as define, lift_definition as lift_definition, theorem as theorem,
-    typedef as typedef)
+    common as common, datatype as datatype, define as define, lift_definition as lift_definition,
+    quotient_type as quotient_type, theorem as theorem, typedef as typedef)

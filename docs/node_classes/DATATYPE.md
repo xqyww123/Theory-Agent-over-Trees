@@ -200,7 +200,9 @@ Isabelle identifier (COMMON.md §5) not ending with an underscore
 (COMMON.md §5's clause on internal names); no
 two constructors of one type the same name — Isabelle qualifies a
 constructor by its type, so two types of a group may share one; no two
-selectors of one constructor the same name (`InvalidField`). A sibling
+selectors of one constructor the same name (`InvalidField`); and each
+type parameter used in some constructor's argument type, the plugin's
+shared check (COMMON.md §4). A sibling
 already bearing the node's id component is the framework's
 `DuplicateName` (MCP_SPECIFICATION §2); any other clash of the types'
 names in the theory — a `codatatype` sibling of the same name among
@@ -256,15 +258,16 @@ and bexp =
 ```
 
 - The `text` line: `english` alone, no lead (COMMON.md §2).
-- The type parameters, written before every type's name by the
-  plugin's `type_parameters_text` (COMMON.md §4): none writes the name
-  alone, `datatype tree =`; one without a sort writes it bare,
-  `datatype 'a tree =`; otherwise they are parenthesised and
-  comma-separated, a sort after `::` as `print_name` writes it
-  (below): `datatype ('a :: linorder, 'b) map =`.
-- A type's `syntax`, when given, after its name and before `=`, in
-  parentheses as Isabelle writes it, by the plugin's `mixfix_text`
-  (COMMON.md §4): `datatype ('a, 'b) either (infixr "⊕" 60) =`.
+- Every type's head — the node's type parameters, the type's name, its
+  syntax — is the plugin's `type_head_text` (COMMON.md §4): the
+  parameters before the name, none writing the name alone, `datatype
+  tree =`, one without a sort bare, `datatype 'a tree =`, otherwise
+  parenthesised and comma-separated, a sort after `::` as `print_name`
+  writes it (below), `datatype ('a :: linorder, 'b) map =`
+  (`type_parameters_text`); the name through the theory's `print_name`
+  (below); the type's `syntax`, when given, after its name and before
+  `=`, in parentheses as Isabelle writes it (`mixfix_text`): `datatype
+  ('a, 'b) either (infixr "⊕" 60) =`.
 - The first constructor on its own line indented four spaces, every
   further one on its own line indented two and led by `| `; each
   argument's type as `print_name` writes it (below), `nat` bare and

@@ -2,9 +2,10 @@
 (node_classes/TYPEDEF.md): a subtype — a new type whose values stand for
 the elements of a non-empty subset of an existing type, with a function
 each way between the two — a `Proof_Obligation` (COMMON.md §3) whose one
-goal is the subset's non-emptiness; its evaluation records whether the
-command needs `(overloaded)` and, once, whether Isabelle set lifting up
-for the type, which every later evaluation keeps to (COMMON.md §5)."""
+goal is the subset's non-emptiness; its evaluation records, once,
+whether the command needs `(overloaded)` and whether Isabelle set
+lifting up for the type, which every later evaluation keeps to
+(COMMON.md §5)."""
 
 from __future__ import annotations
 
@@ -13,19 +14,18 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..exceptions import InvalidField
 from ..model import INDENT, RECALL, Leaf, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
     TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Proof_Obligation, Theory_Member, Type_Parameter, TypeMixfix,
-    TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, mixfix_of, mixfix_text, mixfix_wire, normalised,
-    require_id_name, text_line, type_parameters_of, type_parameters_text, type_parameters_wire, unverified)
+    TypeMixfix_RawAST, TypeParameter_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of,
+    mixfix_wire, morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
+    type_parameters_wire, unverified)
 
 KINDS = ("typedef",)
 LIFTING_NOTICE = "Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype."   # §6
 OWING_LINE = "The definition is unverified until the set is proven non-empty."                                # §7
-_DEFAULT_PREFIXES = ("Rep_", "Abs_")    # before the type's name: the Rep and the Abs function names left out (§2),
-                                        # which a given name may therefore not begin with (§4)
+_DEFAULT_PREFIXES = ("Rep_", "Abs_")    # before the type's name: the Rep and the Abs function names left out (§2)
 
 
 class Typedef_RawAST(TypedDict):
@@ -78,12 +78,13 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
     set: IsaTerm
     rep_function_name: IsaTerm | None       # None when left out: Isabelle's default, `Rep_` before the name (§2)
     abs_function_name: IsaTerm | None       # likewise, `Abs_`
-    overloaded: bool                        # recorded by the evaluation (§6): false until one has
-    lifting: bool | None                    # recorded by the first evaluation, kept to by the later ones (§1, §6)
+    overloaded: bool | None                 # recorded by the first evaluation that goes through and kept to by the
+                                            # later ones, None until one has (§1, §6)
+    lifting: bool | None                    # likewise
 
     def __init__(self, parent, state, english: str, type_parameters: tuple[Type_Parameter, ...], type_name: str,
                  syntax: TypeMixfix | None, set: IsaTerm, rep_function_name: IsaTerm | None,
-                 abs_function_name: IsaTerm | None, overloaded: bool = False, lifting: bool | None = None):
+                 abs_function_name: IsaTerm | None, overloaded: bool | None = None, lifting: bool | None = None):
         super().__init__(parent, state)
         self.english = english
         self.type_parameters = type_parameters
@@ -98,20 +99,19 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
     @classmethod
     async def gen(cls, config, raw: Typedef_RawAST):
         """§4's checks in its order: the parent; `type_name` against §1's
-        grammar; the type parameters by the shared check; each function
-        name given an identifier not beginning with `Rep_` or `Abs_`, the
-        two not the same."""
+        grammar; the type parameters by the shared check; each used in
+        `set`; the two function names by the shared check of the pair."""
         cls.require_inside_theory(config, raw["kind"])
         require_id_name(raw["type_name"], "type name")
         type_parameters = type_parameters_of(raw.get("type_parameters", []))
-        rep = _function_name_of(raw.get("rep_function_name"), "rep_function_name", ())
-        abs_ = _function_name_of(raw.get("abs_function_name"), "abs_function_name", () if rep is None else (rep,))
+        set_ = IsaTerm.from_agent(normalised(raw["set"]))
+        check_type_parameters_used(type_parameters, (set_,))
+        rep, abs_ = function_names_of(raw.get("rep_function_name"), raw.get("abs_function_name"))
         return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, raw["type_name"],
-                   mixfix_of(raw["syntax"]) if "syntax" in raw else None, IsaTerm.from_agent(normalised(raw["set"])),
-                   rep, abs_)
+                   mixfix_of(raw["syntax"]) if "syntax" in raw else None, set_, rep, abs_)
 
-    # --- the store (§1): the authored fields in the `unicode` spelling and the recorded ones, a field left out a
-    #     None-valued row; every row read with `get`, so that a missing one is refused at start
+    # --- the store (§1): the authored fields in the `unicode` spelling and the recorded ones, a field left out and a
+    #     value not yet recorded a None-valued row; every row read with `get`, so that a missing one is refused at start
 
     def to_store(self, rows):
         rows.put("english", self.english)
@@ -144,15 +144,17 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
     def message(self) -> Any:
         """What `TAT.Typedef.evaluate` unpacks: the definition — `type_name`,
         the syntax as `mixfix_wire` writes it, the two function names with
-        the defaults filled in, then the goal structure — and the recorded
-        `lifting`, None for one to be decided (§6; COMMON.md §5)."""
-        rep, abs_ = self._function_names()
-        return ((self.name, mixfix_wire(self.syntax), rep.ascii, abs_.ascii, *self.goal_structure()), self.lifting)
+        the defaults filled in, then the goal structure —, the recorded
+        `overloaded` and the recorded `lifting`, each None for one to be
+        decided (§6; COMMON.md §5)."""
+        rep, abs_ = function_names(self.rep_function_name, self.abs_function_name, self.name, _DEFAULT_PREFIXES)
+        return ((self.name, mixfix_wire(self.syntax), rep.ascii, abs_.ascii, *self.goal_structure()),
+                self.overloaded, self.lifting)
 
     def record_from_evaluation(self, what):
-        """§6: `overloaded` and `lifting`, what the two steps yielded —
-        `lifting` as decided or as recorded —; the notice exactly when
-        lifting is not set up."""
+        """§6: `overloaded` and `lifting`, what the two steps yielded — each
+        as decided or as recorded —; the notice exactly when lifting is
+        not set up."""
         self.overloaded, self.lifting = what
         return () if self.lifting else (IsaTerm.from_agent(LIFTING_NOTICE),)
 
@@ -163,24 +165,15 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _function_names(self) -> tuple[IsaTerm, IsaTerm]:
-        """The Rep and the Abs function names, one left out as its default (§2)."""
-        rep, abs_ = ((given if given is not None else IsaTerm.from_agent(prefix + self.name))
-                     for given, prefix in zip((self.rep_function_name, self.abs_function_name), _DEFAULT_PREFIXES))
-        return rep, abs_
-
     def _definition(self, keywords: Container[str]) -> tuple[str, str | None]:
-        """The text after the command — the head (the parameters, the name,
-        the syntax), `=` and the set — a name, a sort and the set through
-        `print_name` against `keywords` (the theory's for the file, none
-        under `recall`), a type variable and the syntax as their writers
-        write them; beside it the `morphisms` clause when either function
-        name was given, the other as its default, None when neither was."""
-        head = " ".join(filter(None, (type_parameters_text(self.type_parameters, keywords),
-                                      print_name(self.name, keywords),
-                                      mixfix_text(self.syntax) if self.syntax is not None else "")))
-        morphisms = (None if self.rep_function_name is None and self.abs_function_name is None
-                     else "morphisms " + " ".join(print_name(f, keywords) for f in self._function_names()))
+        """The text after the command — the head by `type_head_text`, `=`
+        and the set, each piece of text through `print_name` against
+        `keywords` (the theory's for the file, none under `recall`) — and
+        beside it the `morphisms` clause by the shared writer, None when
+        neither function name was given."""
+        head = type_head_text(self.type_parameters, self.name, self.syntax, keywords)
+        morphisms = morphisms_clause(self.rep_function_name, self.abs_function_name, self.name, _DEFAULT_PREFIXES,
+                                     keywords)
         return f"{head} = {print_name(self.set, keywords)}", morphisms
 
     def print_fields(self, indent, out, mode, depth):
@@ -195,7 +188,8 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         """§5: the `text` line; the command, `(overloaded)` when recorded,
         the `morphisms` line and the terminal proof under it; then
         `setup_lifting` when the recorded `lifting` is true."""
-        assert self.lifting is not None                   # a node written is one an evaluation recorded (`can_emit`)
+        assert self.overloaded is not None and self.lifting is not None   # a node written is one an evaluation
+                                                                          # recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
         keywords = self.theory().keywords or ()
         definition, morphisms = self._definition(keywords)
@@ -208,15 +202,3 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
             lines.append(f"setup_lifting {print_name(f'type_definition_{self.name}', keywords)}")
         emit_lines(indent, out, "\n".join(lines))
         return indent
-
-
-def _function_name_of(text: str | None, field: str, earlier: tuple[IsaTerm, ...]) -> IsaTerm | None:
-    """§4: a function name given is an Isabelle identifier Isabelle reads
-    in a term, not among `earlier`, and does not begin with `Rep_` or
-    `Abs_`, so that no given name is a default's; None when left out."""
-    if text is None:
-        return None
-    name = check_identifier(text, field, earlier, in_term=True)
-    if name.ascii.startswith(_DEFAULT_PREFIXES):
-        raise InvalidField(field, "must not begin with `Rep_` or `Abs_`")
-    return name

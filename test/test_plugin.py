@@ -1029,9 +1029,10 @@ def test_given_later_inlined_marks_children_and_inlines_every_ref():
     assert plugin.given_later_inlined(plain) is plain
 
 
-# The `edit` schema of the classes TAT's package registers, loaded before the
-# fixture above empties the registry for each test.
-STD_EDIT_SCHEMA = plugin.load(["isabelle_theory_agent.std"]).edit_schema
+# The classes TAT's package registers, loaded before the fixture above
+# empties the registry for each test: their `edit` schema and their table.
+STD_LOADED = plugin.load(["isabelle_theory_agent.std"])
+STD_EDIT_SCHEMA = STD_LOADED.edit_schema
 
 
 def test_the_view_without_recursion_admits_what_the_server_accepts():
@@ -1051,7 +1052,7 @@ def test_the_view_without_recursion_admits_what_the_server_accepts():
     for example in [*SHIPPED_EXAMPLES.values(), *EXAMPLES.values()]:
         bare = {k: v for k, v in example.items() if k != "children"}
         validator.validate(envelope(bare))
-        if example["kind"] in ("session", "theory"):    # the classes declaring `children`
+        if "children" in STD_LOADED.kinds[example["kind"]].construct_schema["properties"]:   # the classes declaring it
             validator.validate(envelope({**bare, "children": plugin.GIVEN_LATER}))
             assert not validator.is_valid(envelope({**bare, "children": [nested]}))
         else:

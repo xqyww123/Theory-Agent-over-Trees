@@ -39,6 +39,19 @@ sig
   val admit : Toplevel.state -> Toplevel.state TAT_Framework.answer
     (*the admission, `apply_transition` of the half of `sorry`, which the
       callback applies and a step may try on a state of its own*)
+  val decide :
+    {recorded : bool option,
+     command : bool -> Toplevel.state -> Toplevel.state TAT_Framework.answer,
+     needed : Toplevel.state -> bool TAT_Framework.answer} ->
+    Toplevel.state -> (Toplevel.state * bool) TAT_Framework.answer
+    (*a command's option decided under the recorded-choice convention
+      (COMMON.md §5), for `(overloaded)` (COMMON.md §4): with a recorded value,
+      `command` run with it, once, yielding the state and the value, a refusal
+      the refusal; with none, `command` run with true as a probe, `needed` asked
+      of the probe's state, then `command` run with the option so decided,
+      yielding the state and the option -- the probe's state a value never
+      written into a slot; `needed` is not asked under a recorded value, and
+      the configuration option typedef_overloaded is not consulted*)
 end
 
 structure TAT_Proof_Obligation : TAT_PROOF_OBLIGATION =
@@ -53,6 +66,12 @@ val admit_transition =
   Toplevel.make "sorry" Position.none |> Toplevel.end_proof Proof.global_skip_proof
 
 val admit = TAT_Framework.apply_transition admit_transition
+
+fun decide {recorded, command, needed} st =
+  (case recorded of
+    SOME b => Accepted b
+  | NONE => command true st |> TAT_Framework.bind_answer needed)
+  |> TAT_Framework.bind_answer (fn b => command b st |> TAT_Framework.map_answer (rpair b))
 
 (*the body of a class's evaluation callback: `register`'s contract; each
   step is applied to the message inside its operation, so that whatever the

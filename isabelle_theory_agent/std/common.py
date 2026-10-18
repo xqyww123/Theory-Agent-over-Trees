@@ -9,6 +9,8 @@ operation, or a block's beginning through `Beginning_Proof_Obligation`
 shared `$defs` — the type parameter and the two mixfix annotations —
 with their checks and writers, and the checks of a name (§4, §5); the
 package's compile hook for AoA's proof stores (§3; COMPILATION.md §5);
+`Lifting_Closing`, the plugin's `StdBlock` whose ending closes a type's
+Lifting setup, its ML half Isabelle_Std/ML/TAT_Lifting_Closing.ML (§6);
 and the theory the plugin declares the forest's theories import
 (PLUGIN_SYSTEM §1)."""
 
@@ -21,15 +23,15 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, NotRequired, TypedDict, final, overload
 
 import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§3)
-from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
+from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, symbol_explode
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
 from ..exceptions import GRAMMARS, BadEdit, InvalidField, InvalidName
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
-    CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Location, Node, NodeConfig, NonLeaf_Node, Ready, Theory,
-    cartouche, print_name, status_of_errors, string_token)
+    CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Location, Node, NodeConfig, NonLeaf_Node, Ready, StdBlock,
+    Theory, cartouche, emit_lines, print_name, status_of_errors, string_token)
 from ..plugin import TAT_compile_hook, TAT_import
 
 TAT_import("TAT_Std.TAT_Std")      # the `aoa` method and the plugin's AoA tasks, for every theory of the forest (§3)
@@ -136,6 +138,17 @@ def check_not_bound_twice(name: IsaTerm | str, field: str, earlier: Iterable[Isa
     `earlier` (§4, §5)."""
     if any(e == name for e in earlier):
         raise InvalidField(field, f"binds `{IsaTerm.to_unicode(name)}` a second time")
+
+
+def _check_type_variable(text: str, field: str, earlier: Iterable[IsaTerm]) -> IsaTerm:
+    """A type parameter's name, normalised, as the node holds it (§4):
+    `InvalidField` on `field` unless, on its `ascii`, a prime then an
+    Isabelle identifier, and not among `earlier`."""
+    name = IsaTerm.from_agent(normalised(text))
+    if not (name.ascii.startswith("'") and is_identifier(name.ascii[1:])):
+        raise InvalidField(field, "must be a type variable, such as 'a")
+    check_not_bound_twice(name, field, earlier)
+    return name
 
 
 # --- the shared `$defs` (§4): the type parameter and the two mixfix annotations
@@ -247,13 +260,50 @@ def type_parameters_of(raw: list[TypeParameter_RawAST]) -> tuple[Type_Parameter,
     A stored image is read back through it too."""
     parameters: list[Type_Parameter] = []
     for i, p in enumerate(raw):
-        name = IsaTerm.from_agent(normalised(p["name"]))
-        if not (name.ascii.startswith("'") and is_identifier(name.ascii[1:])):
-            raise InvalidField(f"type_parameters[{i}].name", "must be a type variable, such as 'a")
-        check_not_bound_twice(name, f"type_parameters[{i}].name", [q.name for q in parameters])
+        name = _check_type_variable(p["name"], f"type_parameters[{i}].name", [q.name for q in parameters])
         sort = normalised(p.get("sort", ""))
         parameters.append(Type_Parameter(name, IsaTerm.from_agent(sort) if sort else None))
     return tuple(parameters)
+
+
+def type_variables_of(raw: list[str]) -> tuple[Type_Parameter, ...]:
+    """The shared check (§4) over type variables written bare, under the
+    path `type_parameters[i]`: `Type_Parameter`s without a sort.  A
+    stored image — the names — is read back through it too."""
+    parameters: list[Type_Parameter] = []
+    for i, name in enumerate(raw):
+        variable = _check_type_variable(name, f"type_parameters[{i}]", [q.name for q in parameters])
+        parameters.append(Type_Parameter(variable, None))
+    return tuple(parameters)
+
+
+def check_type_parameters_used(parameters: Sequence[Type_Parameter], texts: Iterable[IsaTerm]) -> None:
+    """§4's check that every declared type parameter is used: a lexical
+    scan of the class's Isabelle text in `ascii` — `texts`, the types the
+    construct gives — for type-variable tokens; the first parameter found
+    in none refused on its path with the one sentence §4 pins."""
+    used = set().union(*(_type_variables(t.ascii) for t in texts))
+    for i, p in enumerate(parameters):
+        if p.name.ascii not in used:
+            raise InvalidField(f"type_parameters[{i}]", f"declares `{p.name.unicode}`, which is not used")
+
+
+def _type_variables(ascii: str) -> set[str]:
+    """The type-variable tokens of a piece of Isabelle text in `ascii`: each
+    maximal run of identifier symbols — a letter or letter symbol, a
+    digit, an underscore, a prime, a subscript — that starts with a prime
+    and continues as an identifier, so `'a` is one and `'ab`, `'a⇩1` and
+    `x'a` are not it."""
+    found: set[str] = set()
+    run = ""
+    for symbol in [*symbol_explode(ascii), " "]:
+        if is_identifier(symbol) or symbol in "0123456789_'" or symbol == "\\<^sub>":
+            run += symbol
+            continue
+        if run.startswith("'") and is_identifier(run[1:]):
+            found.add(run)
+        run = ""
+    return found
 
 
 def type_parameters_text(parameters: Sequence[Type_Parameter], keywords: Container[str] = ()) -> str:
@@ -353,6 +403,48 @@ def mixfix_wire(syntax: Mixfix | None) -> str | None:
     (§4): `mixfix_text`'s text in `ascii`, the conversion the compile
     applies to a file; None for none."""
     return None if syntax is None else ascii_of_unicode(mixfix_text(syntax))
+
+
+def type_head_text(parameters: Sequence[Type_Parameter], name: str, syntax: TypeMixfix | None,
+                   keywords: Container[str]) -> str:
+    """§4's writer of a type's head, as the commands write it: the type
+    parameters by `type_parameters_text`, the name through `print_name`
+    against `keywords`, and the syntax by `mixfix_text` when one is given
+    — `'a fset`, `('a, 'b) t (infixr "+" 10)`."""
+    return " ".join(filter(None, (type_parameters_text(parameters, keywords), print_name(name, keywords),
+                                  mixfix_text(syntax) if syntax is not None else "")))
+
+
+# --- the Rep and the Abs function names of a type (§4): the check, the defaults and the `morphisms` clause
+
+def function_names_of(raw_rep: str | None, raw_abs: str | None) -> tuple[IsaTerm | None, IsaTerm | None]:
+    """§4's check of the pair, the fields `rep_function_name` and
+    `abs_function_name`: each given name an Isabelle identifier Isabelle
+    reads in a term (§5), the two given names, as given, not the same —
+    the later refused —; None for a name left out."""
+    rep = check_identifier(raw_rep, "rep_function_name", (), in_term=True) if raw_rep is not None else None
+    abs_ = (check_identifier(raw_abs, "abs_function_name", () if rep is None else (rep,), in_term=True)
+            if raw_abs is not None else None)
+    return rep, abs_
+
+
+def function_names(rep: IsaTerm | None, abs_: IsaTerm | None, type_name: str,
+                   prefixes: tuple[str, str]) -> tuple[IsaTerm, IsaTerm]:
+    """The two names with the defaults filled in (§4): a name left out is
+    its prefix before the type's name."""
+    rep_prefix, abs_prefix = prefixes
+    return (rep if rep is not None else IsaTerm.from_agent(rep_prefix + type_name),
+            abs_ if abs_ is not None else IsaTerm.from_agent(abs_prefix + type_name))
+
+
+def morphisms_clause(rep: IsaTerm | None, abs_: IsaTerm | None, type_name: str, prefixes: tuple[str, str],
+                     keywords: Container[str]) -> str | None:
+    """§4's writer of the `morphisms` clause: the two names with the
+    defaults filled in, each through `print_name` against `keywords`;
+    None when neither was given."""
+    if rep is None and abs_ is None:
+        return None
+    return "morphisms " + " ".join(print_name(f, keywords) for f in function_names(rep, abs_, type_name, prefixes))
 
 
 # --- Proof_Obligation and its jobs (§3)
@@ -639,14 +731,49 @@ class Proof_Obligation(With_Proof_Obligations):
 class Beginning_Proof_Obligation(Proof_Obligation):
     """`Proof_Obligation` whose goal opens on a `StdBlock`'s beginning (§3):
     `class QuotientType(Theory_Member, Beginning_Proof_Obligation,
-    StdBlock)`.  The jobs depend on the beginning alone, so the children
-    and the class's own ending leave the proof standing."""
+    Lifting_Closing)`.  The jobs depend on the beginning alone, so the
+    children and the class's own ending leave the proof standing."""
 
     job_operation = "beginning"
 
     @final
     async def _eval_beginning_opr(self):
         return await self._eval_goal()
+
+
+# --- Lifting_Closing (§6)
+
+class Lifting_Closing(StdBlock):
+    """The plugin's `StdBlock` whose ending closes the Lifting setup its
+    beginning made (§6): `lifting_update t.lifting` then `lifting_forget
+    t.lifting`, `t` the node's `name`.  It defines the ending's two hooks
+    together (PLUGIN_SYSTEM §5); a class on it writes neither.  A class
+    takes it as its framework base, after the class that sets its
+    `job_operation`: `class QuotientType(Theory_Member,
+    Beginning_Proof_Obligation, Lifting_Closing)`; listed before that
+    class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
+    the class cannot be instantiated."""
+
+    @final
+    async def _eval_ending_opr(self):
+        """`TAT.Lifting_Closing.close` with the ending's two slots and the
+        type's name, the two transitions as one operation into the
+        resulting slot (§6): its messages make the ending an obstacle,
+        none is `Ready`."""
+        input_slot, resulting_slot = self.operation_slots("ending")
+        messages = await isabelle_driver.call(
+            self.forest().conversation, "TAT.Lifting_Closing.close",
+            (input_slot.to_msgpack(), resulting_slot.to_msgpack(), self.name))
+        return status_of_errors(messages)
+
+    @final
+    def emit_ending(self, indent, out):
+        """§6: one empty line, then the two commands, each on its own line
+        at the block's indent, the bundle's name bare — `t.lifting` is one
+        token to Isabelle's outer lexer even where `t` is a keyword."""
+        out.write("\n")
+        emit_lines(indent, out, f"lifting_update {self.name}.lifting\nlifting_forget {self.name}.lifting")
+        return indent
 
 
 # --- the compile hook (§3; COMPILATION.md §5)

@@ -17,9 +17,9 @@ from ..model import INDENT, NON_EMPTY, RECALL, Leaf, emit_lines, print_name, sta
 from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Theory_Member, Type_Parameter,
-    TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice, mixfix_of,
-    mixfix_text, mixfix_wire, normalised, require_id_name, text_line, type_parameters_of, type_parameters_text,
-    type_parameters_wire)
+    TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice,
+    check_type_parameters_used, mixfix_of, mixfix_text, mixfix_wire, normalised, require_id_name, text_line,
+    type_head_text, type_parameters_of, type_parameters_wire)
 
 KINDS = ("datatype", "codatatype")      # the two commands, one syntax and one implementation
 
@@ -130,7 +130,8 @@ class Datatype(Theory_Member, Leaf):
     async def gen(cls, config, raw: Datatype_RawAST):
         """§4's checks in its order: the parent; every type name against
         §1's grammar and no two the same; the type parameters by the
-        shared check; then each type's constructors and selectors."""
+        shared check; each type's constructors and selectors; last, each
+        type parameter used in some constructor's argument type."""
         cls.require_inside_theory(config, raw["kind"])
         for i, t in enumerate(raw["types"]):
             require_id_name(t["type_name"], "type name")
@@ -140,6 +141,8 @@ class Datatype(Theory_Member, Leaf):
             Defined_Type(t["type_name"], mixfix_of(t["syntax"]) if "syntax" in t else None,
                          _constructors_of(t["constructors"], f"types[{i}]"))
             for i, t in enumerate(raw["types"]))
+        check_type_parameters_used(type_parameters,
+                                   [a.type for t in types for c in t.constructors for a in c.arguments])
         return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, types)
 
     # --- the store (§2): the authored fields in the `unicode` spelling, the construct's shape
@@ -182,15 +185,13 @@ class Datatype(Theory_Member, Leaf):
     # --- what it prints (§8) and emission (§5)
 
     def _definition(self, keywords: Container[str]) -> list[tuple[str, list[str]]]:
-        """Each type's head — the parameters, the name, the syntax — and its
-        constructors' texts, every piece through `print_name` against
-        `keywords`: the theory's for the file; none under `recall`, where
-        every name, an identifier, comes out bare."""
-        parameters = type_parameters_text(self.type_parameters, keywords)
+        """Each type's head by `type_head_text` and its constructors' texts,
+        every piece through `print_name` against `keywords`: the theory's
+        for the file; none under `recall`, where every name, an identifier,
+        comes out bare."""
         definition = []
         for t in self.types:
-            head = " ".join(filter(None, (parameters, print_name(t.type_name, keywords),
-                                          mixfix_text(t.syntax) if t.syntax is not None else "")))
+            head = type_head_text(self.type_parameters, t.type_name, t.syntax, keywords)
             constructors = []
             for c in t.constructors:
                 parts = [print_name(c.name, keywords)]

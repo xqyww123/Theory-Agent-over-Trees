@@ -7,7 +7,8 @@ with the `LiftDefinition` design (LIFT_DEFINITION.md): §3's rule for a
 goal with no subgoal; revised 2026-10-17 with the `QuotientType` design
 (QUOTIENT_TYPE.md; ai-artifacts/review/quotient_type/QUOTIENT_TYPE_REVIEW.md):
 §6, and §4's helpers for type parameters without a sort, a pair of
-function names and a type's head, which land with that class.
+function names and a type's head, implemented 2026-10-18 with that
+class, and §4's check of a type parameter declared and not used.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -214,7 +215,16 @@ through the builder, `register`. Beside it the structure exports the
 admission, `admit : Toplevel.state -> Toplevel.state answer`,
 `apply_transition` of the half of `sorry` below, which the callback
 applies and a step may try on a state of its own (`LiftDefinition`'s
-trial, LIFT_DEFINITION.md §6); the body, `evaluate`, is private to it,
+trial, LIFT_DEFINITION.md §6; `QuotientType`'s probe, QUOTIENT_TYPE.md
+§6), and `decide`, a command's option decided under §5's
+recorded-choice convention: with a recorded value the command run with
+it, once, yielding its state and the value, a refusal the refusal; with
+none the command run with the option as a probe, `needed` — a question
+of the probe's state, the class's — asked of it, then the command run
+with the option so decided, yielding that run's state and the option,
+the probe's state a value never written into a slot; a refusal
+anywhere the answer. `Typedef` and `QuotientType` decide `(overloaded)`
+through it (§4). The body, `evaluate`, is private to it,
 so the steps cannot touch a slot and every class answers one shape. The
 callback's arguments are the input slot and the resulting slot of the
 operation the goal opens on, with `goal_state` between them, and the
@@ -622,32 +632,44 @@ Isabelle's grammar; `type_parameters_text` writes a type variable bare
 and a sort through `print_name`.
 
 Beside it, `Isabelle_Std/ML/TAT_Overloaded.ML`, structure
-`TAT_Overloaded`: `needed : theory -> string -> bool`, whether the type
-of that full name has open dependencies on overloaded definitions in
-the theory's definition table — `not (null (maps #2 (Defs.get_deps
-(Theory.defs_of thy) (Defs.Type, name))))`, the check `typedef` makes
-when `(overloaded)` is not given (typedef.ML, `primitive_typedef`); it
-does not consult the configuration option `typedef_overloaded`.
-`Typedef` (TYPEDEF.md §6), `Record` (RECORD.md §6, on the extension
-type from `Record.get_extension`) and `QuotientType` decide their
-recorded `overloaded` with it, each after one run of its command with
-the option. A test pins both answers: `{x :: 'a::zero. x = 0}` true,
-`{n :: nat. n > 0}` false.
+`TAT_Overloaded`, on HOL alone: `needed : theory -> string -> bool`,
+whether the type of that full name has open dependencies on overloaded
+definitions in the theory's definition table — `not (null (maps #2
+(Defs.get_deps (Theory.defs_of thy) (Defs.Type, name))))`, the check
+`typedef` makes when `(overloaded)` is not given (typedef.ML,
+`primitive_typedef`); it does not consult the configuration option
+`typedef_overloaded` —, and `needed_at : Toplevel.state -> binding ->
+bool`, `needed` on the state's theory under the type's full name as
+`Typedecl` declared it — `Context.cases Sign.full_name
+Local_Theory.full_name` on the state's generic theory: the theory's
+naming at theory level, the local theory's inside a `Context` or
+`Locale`, which carries its qualifier. `Typedef` (TYPEDEF.md §6) and
+`QuotientType` (QUOTIENT_TYPE.md §6) decide their recorded `overloaded`
+through `TAT_Proof_Obligation.decide` (§3), a probe run with the option
+and the real run with the option so decided — `needed_at` asked of the
+probe's open goal for `Typedef`, whose `typedef` happens there, and of
+the probe's admitted state for `QuotientType`, whose `typedef` happens
+at the admission —; `Record` (RECORD.md §6) decides its own with
+`needed` on the extension type from `Record.get_extension`, after one
+run of its command with the option. A test pins both answers: `{x ::
+'a::zero. x = 0}` true, `{n :: nat. n > 0}` false; and `needed_at`'s
+answer for a type `t` inside a locale `l` of the test's theory `Probe`,
+true under the name `Probe.l.t`, which the theory's naming would miss.
 
-Four helpers of `common.py` with no definition of their own, each
-landing with the first class that needs it (QUOTIENT_TYPE.md §4–§5),
-the other classes switching to it in their own change. The
+Four helpers of `common.py` with no definition of their own
+(QUOTIENT_TYPE.md §4–§5). The
 type-parameter check above takes the field's path: `type_parameters_of`
 runs it under `type_parameters[i].name`, and `type_variables_of(raw)`,
 over type variables written bare, under `type_parameters[i]`, answering
 `Type_Parameter`s without a sort and reading a stored image back. The
 check, the defaults and the `morphisms` writer of a pair of function
-names, parameterised by the class's two default prefixes (`Rep_` and
-`Abs_`, `rep_` and `abs_`): each given name an Isabelle identifier (§5)
-not ending with an underscore, the two given names, as given, different
-— a name equal to its default is a given name like any other — its two
-`InvalidField` sentences, pinned here, the second naming the later of
-two given names that are the same:
+names — `function_names_of`, `function_names` and `morphisms_clause` —,
+the last two parameterised by the class's two default prefixes (`Rep_`
+and `Abs_`, `rep_` and `abs_`): each given name an Isabelle identifier
+(§5) not ending with an underscore, the two given names, as given,
+different — a name equal to its default is a given name like any other
+— its two `InvalidField` sentences, pinned here, the second naming the
+later of two given names that are the same:
 
 ```
 The field `rep_function_name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
@@ -655,7 +677,8 @@ The field `abs_function_name` binds `list_of_fset` a second time.
 ```
 
 — the names with the defaults filled in, for the class's `message()`;
-and the `morphisms` clause, none when neither name was given. And
+and the `morphisms` clause, each name through `print_name` against the
+keywords, none when neither name was given. And
 `type_head_text(parameters, name, syntax, keywords)`, a type's head as
 the commands write it: `type_parameters_text` over the parameters, the
 name through `print_name` against the keywords, and `mixfix_text`'s
@@ -716,8 +739,8 @@ The field `type_parameters[1]` declares `'b`, which is not used.
 - A choice the evaluation makes between commands, or between a
   command's options — `Define`'s `definition`, `function (sequential,
   no_partials)` or `function` (DEFINE.md §6), `QuotientType`'s and `Typedef`'s
-  `(overloaded)` (QUOTIENT_TYPE.md §6), `Typedef`'s `setup_lifting`
-  (TYPEDEF.md §6) — is decided once per set of the
+  `(overloaded)` (QUOTIENT_TYPE.md §6, TYPEDEF.md §6), `Typedef`'s
+  `setup_lifting` (TYPEDEF.md §6) — is decided once per set of the
   authored fields it depends on, and recorded: the class's message
   carries the recorded choice, `None` until an evaluation has recorded
   one — on a fresh node, on the one an amend makes, after evaluations

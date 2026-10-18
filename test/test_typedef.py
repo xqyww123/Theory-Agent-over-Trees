@@ -37,6 +37,7 @@ from test_theorem import BAD, INVALID, PROVED, lemma, with_proof
 
 table = ts.table                    # the fake state slot table and the fake wire, per test
 TD = DOCS / "node_classes" / "TYPEDEF.md"
+COMMON = DOCS / "node_classes" / "COMMON.md"
 
 DLIST = json.loads("\n".join(fenced_blocks(TD, "2.")[0]))      # §2's example, the construct of `'a dlist`
 ERRORABLE_SYNTAX = {"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21], "priority": 21}
@@ -86,7 +87,7 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
     assert p.syntax == Template(IsaTerm.from_agent("_  dl  "), (21,), 21)          # newlines and tabs alone, the spaces layout
     assert p.set == IsaTerm.from_agent("{xs :: 'a list. distinct xs}") and isinstance(p.set, IsaTerm)
     assert (p.rep_function_name, p.abs_function_name) == (IsaTerm.from_agent("list_of_dlist"), IsaTerm.from_agent("dlist_of_list"))
-    assert (p.overloaded, p.lifting) == (False, None)                                 # recorded by an evaluation, none yet (§1)
+    assert (p.overloaded, p.lifting) == (None, None)                                  # recorded by an evaluation, none yet (§1)
     assert p.goal_state is not p.state and p.goal_state in p._states_inside()         # `Proof_Obligation`'s slot (COMMON §3)
     (q,) = insert(f, x, 1, [definition("pos", "{n :: nat. n > 0}", "Positive naturals", type_parameters=())])
     assert (q.type_parameters, q.syntax, q.rep_function_name, q.abs_function_name) == ((), None, None, None)
@@ -98,10 +99,12 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 def test_gen_refuses_as_section_4_says():
     """§4's refusals: the parent first (COMMON §1's `NotInsideTheory`, pinned
     for every class by test_common.py); a type name outside §1's grammar
-    (RENDER_BASELINES §2's line); the three sentences of §4's block; the
-    type parameters by the shared check (COMMON §4's sentences, pinned by
-    test_common.py); a missing `set`, a binder syntax or a recorded field
-    authored, by the framework."""
+    (RENDER_BASELINES §2's line); the type parameters by the shared check,
+    each used in `set`, and the two function names by the shared check of
+    the pair (COMMON §4's sentences, pinned by test_common.py) — a name
+    beginning with `Rep_` or `Abs_` and a name equal to its default
+    accepted, written into `morphisms` as given; a missing `set`, a binder
+    syntax or a recorded field authored, by the framework."""
     f, x = forest()
     (s,) = f.sub_nodes
     e = refused(f, s, [definition("my-list")], NotInsideTheory)
@@ -112,7 +115,8 @@ def test_gen_refuses_as_section_4_says():
     assert (e.name, e.grammar) == ("my-list", "type name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "dlist_", "a list", "x'y-", "", "α"):
         assert refused(f, x, [definition(name)], InvalidName).grammar == "type name"
-    [identifier, prefix, twice] = fenced_blocks(TD, "4.")[0]
+    [identifier, twice] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `rep_function_name`")][0]
+    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
     e = refused(f, x, [definition(rep_function_name="rep_")], InvalidField)
     assert str(e) == "At `constructs[0]`: " + identifier and e.field == "rep_function_name"
     assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
@@ -120,20 +124,26 @@ def test_gen_refuses_as_section_4_says():
         assert refused(f, x, [definition(rep_function_name=name)], InvalidField).field == "rep_function_name"
     e = refused(f, x, [definition(abs_function_name="abs_")], InvalidField)
     assert str(e) == "At `constructs[0]`: " + identifier.replace("rep_function_name", "abs_function_name")
-    for field, name in (("rep_function_name", "Rep_dlist"), ("rep_function_name", "Abs_x"), ("rep_function_name", " Abs_dlist"),
-                        ("abs_function_name", "Abs_dlist"), ("abs_function_name", "Rep_y")):    # judged on the normalised text
-        e = refused(f, x, [definition(**{field: name})], InvalidField)
-        assert str(e) == "At `constructs[0]`: " + prefix.replace("rep_function_name", field) and e.field == field
     e = refused(f, x, [definition(rep_function_name="list_of_dlist", abs_function_name="list_of_dlist")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice and e.field == "abs_function_name"
-    # the type parameters: COMMON §4's check, its sentences pinned by test_common.py
+    assert str(e) == "At `constructs[0]`: " + twice.replace("list_of_fset", "list_of_dlist") and e.field == "abs_function_name"
+    for field, name in (("rep_function_name", "Rep_dlist"), ("rep_function_name", "Abs_x"), ("rep_function_name", " Abs_dlist"),
+                        ("abs_function_name", "Abs_dlist"), ("abs_function_name", "Rep_y")):   # a given name like any other
+        (p,) = insert(f, x, 0, [definition(**{field: name})])
+        assert p._definition(())[1] == "morphisms " + " ".join(
+            name.strip() if g == field else d for g, d in (("rep_function_name", "Rep_dlist"), ("abs_function_name", "Abs_dlist")))
+        run(locked(f, edit.delete(p)))
+    # the type parameters: COMMON §4's check, its sentences pinned by test_common.py; then each used in `set`
     e = refused(f, x, [definition(type_parameters=({"name": "a"},))], InvalidField)
     assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
     e = refused(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
     assert (e.field, e.reason) == ("type_parameters[1].name", "binds `'a` a second time")
-    # §4's order under two faults: the type name, then the parameters, then the function names, Rep before Abs
+    e = refused(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)
+    assert str(e) == "At `constructs[0]`: " + unused and e.field == "type_parameters[1]"
+    assert refused(f, x, [definition(set="distinct")], InvalidField).field == "type_parameters[0]"
+    # §4's order under two faults: the type name, then the parameters, their use, then the function names, Rep before Abs
     assert refused(f, x, [definition("my-list", type_parameters=({"name": "a"},), rep_function_name="rep_")], InvalidName).grammar == "type name"
     assert refused(f, x, [definition(type_parameters=({"name": "a"},), rep_function_name="rep_")], InvalidField).field == "type_parameters[0].name"
+    assert refused(f, x, [definition(set="distinct", rep_function_name="rep_")], InvalidField).field == "type_parameters[0]"
     assert refused(f, x, [definition(rep_function_name="rep_", abs_function_name="abs_")], InvalidField).field == "rep_function_name"
     # the framework's integer bound (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's line, the forest unchanged
     [bound] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line.endswith("must be a 64-bit integer.")]
@@ -185,7 +195,7 @@ def test_the_definition_is_stored_and_a_missing_row_is_refused_at_start(tmp_path
     path = tmp_path / "TAT.sqlite"
     f, x = forest(DLIST, ERRORABLE, ZERO_ONLY, store=Forest_Store(path, ts.stand_ins.log()))
     nodes = x.sub_nodes
-    nodes[1].overloaded, nodes[1].lifting = True, False           # as evaluations record them (§6), unequal; `dlist` unrecorded
+    nodes[1].overloaded, nodes[1].lifting = True, False           # as evaluations record them (§6), unequal; `dlist` None at birth
     nodes[2].overloaded, nodes[2].lifting = False, True
     with f.store.transaction():
         for n in nodes:
@@ -198,7 +208,7 @@ def test_the_definition_is_stored_and_a_missing_row_is_refused_at_start(tmp_path
     rows = f.store.fields(nodes[0].identity)
     assert "name" not in rows and rows["type_name"] == "dlist" and rows["set"] == "{xs :: 'a list. distinct xs}"
     assert rows["syntax"] is None and rows["rep_function_name"] == "list_of_dlist"      # a field left out: a None-valued row
-    assert rows["abs_function_name"] == "dlist_of_list" and (rows["overloaded"], rows["lifting"]) == (False, None)
+    assert rows["abs_function_name"] == "dlist_of_list" and (rows["overloaded"], rows["lifting"]) == (None, None)
     rows = f.store.fields(nodes[1].identity)
     assert rows["syntax"] == ERRORABLE_SYNTAX and rows["rep_function_name"] is None
     assert (rows["overloaded"], rows["lifting"]) == (True, False)
@@ -235,24 +245,26 @@ def test_the_definition_is_stored_and_a_missing_row_is_refused_at_start(tmp_path
 def test_eval_opr_sends_the_definition_and_records_what_the_steps_yielded(monkeypatch):
     """COMMON §3's `_eval_opr` with `Typedef`'s own: the message in §6's
     order — the definition, its goal part last, then the recorded
-    `lifting`; the pair the two steps yielded recorded as `overloaded` and
-    `lifting`, the `Ready` carrying the notice exactly when `lifting` is
-    false; Isabelle's messages an obstacle, the recorded fields untouched —
-    under a recorded `lifting` too, which the message carries (COMMON §5);
-    a syntax on the wire as `mixfix_text` writes it, in `ascii`."""
+    `overloaded` and the recorded `lifting`; the pair the two steps yielded
+    recorded as `overloaded` and `lifting`, the `Ready` carrying the notice
+    exactly when `lifting` is false; Isabelle's messages an obstacle, the
+    recorded fields untouched — under recorded values too, which the
+    message carries (COMMON §5); a syntax on the wire as `mixfix_text`
+    writes it, in `ascii`."""
     f = Forest_Under_Test(kinds=KINDS)
     (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
-        DLIST, POLY, definition("bad", "distinct", "A predicate is no set", rep_function_name="list_of_dlist",
-                                abs_function_name="dlist_of_list")]})])     # a fake theory: its header runs no call
+        DLIST, POLY, definition("bad", "distinct :: 'a list ⇒ bool", "A predicate is no set",
+                                rep_function_name="list_of_dlist", abs_function_name="dlist_of_list")]})])
+    # a fake theory: its header runs no call
     (x,) = s.sub_nodes
     p, q, r = x.sub_nodes
     calls = []
 
     async def call(conversation, name, args):
         calls.append((name, args))
-        (type_name, *_), recorded = args[3]
+        (type_name, *_), _, recorded = args[3]
         if type_name == "bad":              # Isabelle's one message of two lines (typedef.ML, cat_error)
-            return [['Not a set type: "\'b list \\<Rightarrow> bool"\nThe error(s) above occurred in typedef "bad"'], None]
+            return [['Not a set type: "\'a list \\<Rightarrow> bool"\nThe error(s) above occurred in typedef "bad"'], None]
         if recorded is True and type_name == "poly":    # `setup_lifting` refused under a recorded true: the failure (§6)
             return [['Duplicate fact declaration "X.poly.domain" vs. "X.domain"'], None]
         return [[], [type_name == "poly", type_name == "dlist"]]    # poly: `(overloaded)` needed, lifting refused
@@ -263,29 +275,30 @@ def test_eval_opr_sends_the_definition_and_records_what_the_steps_yielded(monkey
     assert [args[:3] for _, args in calls] == [
         (n.state.to_msgpack(), n.goal_state.to_msgpack(), n.resulting_state().to_msgpack()) for n in (p, q, r)]
     assert calls[0][1][3] == (
-        ("dlist", None, "list_of_dlist", "dlist_of_list", [("'a", None)], "{xs :: 'a list. distinct xs}"), None)
+        ("dlist", None, "list_of_dlist", "dlist_of_list", [("'a", None)], "{xs :: 'a list. distinct xs}"), None, None)
     assert calls[1][1][3] == (("poly", None, "coeff", "Abs_poly", [("'a", None)],
-                               "{f :: nat \\<Rightarrow> 'a::zero. \\<forall>\\<^sub>\\<infinity> n. f n = 0}"), None)
-    assert calls[2][1][3][1] is True                                           # the recorded choice travels (COMMON §5)
+                               "{f :: nat \\<Rightarrow> 'a::zero. \\<forall>\\<^sub>\\<infinity> n. f n = 0}"), None, None)
+    assert calls[2][1][3][1:] == (True, True)                                 # the recorded choices travel (COMMON §5)
     assert p.message()[0][4:] == p.goal_structure() and q.message()[0][4:] == q.goal_structure()
     assert isinstance(p._status, M.Ready) and p._status.messages == () and (p.overloaded, p.lifting) == (False, True)
     assert isinstance(q._status, M.Ready) and [m.unicode for m in q._status.messages] == [LIFTING_NOTICE]
     assert (q.overloaded, q.lifting) == (True, False)
-    assert (p.message()[1], q.message()[1]) == (True, False)                  # recorded: what the next evaluation keeps to
+    assert (p.message()[1:], q.message()[1:]) == ((False, True), (True, False))   # recorded: what the next evaluation keeps to
     assert isinstance(r._status, M.CannotEvaluate) and (r.overloaded, r.lifting) == (True, True)    # untouched by a failure
-    assert [m.unicode for m in r._status.messages] == ['Not a set type: "\'b list ⇒ bool"\nThe error(s) above occurred in typedef "bad"']
+    assert [m.unicode for m in r._status.messages] == ['Not a set type: "\'a list ⇒ bool"\nThe error(s) above occurred in typedef "bad"']
     assert p.mark(M.BRIEFING, 0) == "unverified definition, proof not started" and r.mark(M.BRIEFING, 0) == "invalid definition"
     assert not p.is_finished() and not r.is_finished()                     # the proof is compulsory (COMMON §3)
     # under a recorded `lifting` true, `setup_lifting`'s refusal is the definition's failure, the record untouched (§6)
     q.lifting = True
     status = run(q._eval_opr())
-    assert calls[-1][1][3] == (calls[1][1][3][0], True)
+    assert calls[-1][1][3] == (calls[1][1][3][0], True, True)
     assert isinstance(status, M.CannotEvaluate) and (q.overloaded, q.lifting) == (True, True)
     assert [m.unicode for m in status.messages] == ['Duplicate fact declaration "X.poly.domain" vs. "X.domain"']
     t, z = insert(f, x, 3, [ERRORABLE, ZERO_ONLY])
     assert t.message() == (("errorable", '("_\\<^sub>\\<bottom>" [21] 21)', "Rep_errorable", "Abs_errorable", [("'a", None)],
-                            "UNIV :: 'a option set"), None)
-    assert z.message() == (("zero_only", None, "Rep_zero_only", "Abs_zero_only", [("'a", "zero")], "{x :: 'a. x = 0}"), None)
+                            "UNIV :: 'a option set"), None, None)
+    assert z.message() == (("zero_only", None, "Rep_zero_only", "Abs_zero_only", [("'a", "zero")], "{x :: 'a. x = 0}"),
+                           None, None)
     assert t.mark(M.BRIEFING, 0) == "not evaluated, proof not started"
 
 
@@ -382,7 +395,7 @@ def test_print_fields_writes_the_definition_and_english_by_depth():
     # §8's two other examples, in a theory of their own: the refused definition's fields, the notice's node whole
     (s,) = f.sub_nodes
     (y,) = insert(f, s, 1, [theory("Y") | {"children": [
-        definition(set="distinct", rep_function_name="list_of_dlist", abs_function_name="dlist_of_list"),
+        definition(set="distinct :: 'a list ⇒ bool", rep_function_name="list_of_dlist", abs_function_name="dlist_of_list"),
         definition("fm", "UNIV :: (nat, nat) fmap set", "Finite maps from naturals to naturals, as a type of their own",
                    type_parameters=())]}])
     v, w = y.sub_nodes
@@ -412,8 +425,11 @@ def test_the_emitted_text_is_section_5_s():
         return ["  " + line for line in unicode_lines]
     with pytest.raises(AssertionError):                             # nothing recorded: never written (`can_emit`; COMMON §5)
         emitted(p)
-    p.lifting = False
-    assert emitted(p) == expected(*one[:3], "  sorry")              # lifting recorded false, no proof: no option, no line, `sorry`
+    for p.overloaded, p.lifting in ((False, None), (None, False)):  # either field unrecorded still
+        with pytest.raises(AssertionError):
+            emitted(p)
+    p.overloaded = p.lifting = False
+    assert emitted(p) == expected(*one[:3], "  sorry")              # both recorded false, no proof: no option, no line, `sorry`
     for node, recorded in ((p, (False, True)), (q, (True, True)), (r, (False, True))):      # as §5's examples record them
         node.overloaded, node.lifting = recorded
         with_proof(node, M.READY_CLEAN, PROVED, PASSED)
@@ -431,7 +447,7 @@ def test_the_emitted_text_is_section_5_s():
     assert emitted(q)[1] == '  typedef (overloaded) \'a poly = "{f :: nat ⇒ \'a::zero. ∀⇩∞ n. f n = 0}"'
     assert emitted(r)[1:3] == expected('typedef \'a errorable ("_⇩⊥" [21] 21) = "UNIV :: \'a option set"', "  by aoa")
     z, u = insert(f, x, 3, [ZERO_ONLY, definition("u", "UNIV", "All", type_parameters=())])
-    z.lifting = u.lifting = False                                                    # recorded, as emission presupposes
+    z.overloaded = z.lifting = u.overloaded = u.lifting = False                      # recorded, as emission presupposes
     assert emitted(z)[1:] == expected('typedef (\'a :: "zero") zero_only = "{x :: \'a. x = 0}"', "  sorry")   # a sort quoted
     assert emitted(u)[1:] == expected('typedef u = "UNIV"', "  sorry")                                       # a set quoted
     x.keywords = frozenset()
@@ -440,7 +456,7 @@ def test_the_emitted_text_is_section_5_s():
     # the Abs name alone given: Rep written as its default; an infix syntax; two parameters
     (t,) = insert(f, x, 5, [definition("sum", "UNIV :: ('a + 'b) set", "Sums!", type_parameters=({"name": "'a"}, {"name": "'b"}),
                                        syntax={"form": "infixr", "symbol": "⊕", "priority": 60}, abs_function_name="mk_sum")])
-    t.lifting = False
+    t.overloaded = t.lifting = False
     assert emitted(t) == expected("text ‹Sums!›", 'typedef (\'a, \'b) sum (infixr "⊕" 60) = "UNIV :: (\'a + \'b) set"',
                                   "  morphisms Rep_sum mk_sum", "  sorry")
 
@@ -454,7 +470,7 @@ def test_the_two_spellings_are_kept_apart():
     (p,) = x.sub_nodes
     x.keywords = frozenset()
     assert p.message() == (("t", None, "\\<rho>", "\\<alpha>\\<^sub>1", [("'\\<alpha>", "linorder")],
-                            "{x :: '\\<alpha>. x \\<noteq> \\<epsilon>}"), None)
+                            "{x :: '\\<alpha>. x \\<noteq> \\<epsilon>}"), None, None)
     rows = {}
     p.to_store(type("Rows", (), {"put": lambda self, k, v: rows.__setitem__(k, v)})())
     assert rows["type_parameters"] == [{"name": "'α", "sort": "linorder"}] and rows["set"] == "{x :: 'α. x ≠ ε}"
@@ -463,7 +479,7 @@ def test_the_two_spellings_are_kept_apart():
     p.print_fields(0, out, M.RECALL, 1)
     assert out.getvalue() == "('α :: linorder) t = \"{x :: 'α. x ≠ ε}\" morphisms ρ α⇩1\n"
     out = io.StringIO()
-    p.lifting = False                                                   # recorded, as emission presupposes
+    p.overloaded = p.lifting = False                                    # recorded, as emission presupposes
     p.emit(0, out)
     assert out.getvalue().splitlines()[1:3] == ["typedef ('α :: linorder) t = \"{x :: 'α. x ≠ ε}\"", "  morphisms ρ α⇩1"]
 
@@ -481,7 +497,9 @@ async def test_a_subtype_is_defined_and_lifting_set_up(std_conversation, std_har
     whose statement parses only through the morphisms, the syntax and the
     relation `setup_lifting` defines; `recall` as §8 shows; the theory
     rendered as §5 shows, under the recorded keywords, and read back whole
-    by Isabelle.  Last, the callback alone: `[[], [a, b]]` on the wire."""
+    by Isabelle.  Last, the callback alone: `[[], [a, b]]` on the wire; and
+    the recorded values' rule (COMMON §5) through it, on slots beside the
+    tree's: a recorded value runs once, a refusal under it the failure."""
     forest = std_conversation.forest
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
@@ -559,19 +577,29 @@ async def test_a_subtype_is_defined_and_lifting_set_up(std_conversation, std_har
     goal, resulting = (M.Isar_State_Slot.assign(forest.conversation) for _ in range(2))
     messages, what = await isabelle_driver.call(
         forest.conversation, "TAT.Typedef.evaluate",
-        (dlist.state.to_msgpack(), goal.to_msgpack(), resulting.to_msgpack(), (dlist.message()[0], False)))
+        (dlist.state.to_msgpack(), goal.to_msgpack(), resulting.to_msgpack(), (dlist.message()[0], dlist.overloaded, False)))
     assert (messages, what) == ([], [False, False])
     messages, what = await isabelle_driver.call(
         forest.conversation, "TAT.Typedef.evaluate",
-        (t2.state.to_msgpack(), goal.to_msgpack(), resulting.to_msgpack(), (t2.message()[0], True)))
+        (t2.state.to_msgpack(), goal.to_msgpack(), resulting.to_msgpack(), (t2.message()[0], t2.overloaded, True)))
     assert what is None and len(messages) == 1 and "domain" in messages[0], messages
+    # under a recorded `overloaded`: true on `dlist`, which needs no option, run once and through; false on `poly`, which
+    # needs it, refused at the open with Isabelle's demand, nothing yielded (§6)
+    messages, what = await isabelle_driver.call(
+        forest.conversation, "TAT.Typedef.evaluate",
+        (dlist.state.to_msgpack(), goal.to_msgpack(), resulting.to_msgpack(), (dlist.message()[0], True, dlist.lifting)))
+    assert (messages, what) == ([], [True, True])
+    messages, what = await isabelle_driver.call(
+        forest.conversation, "TAT.Typedef.evaluate",
+        (poly.state.to_msgpack(), goal.to_msgpack(), resulting.to_msgpack(), (poly.message()[0], False, poly.lifting)))
+    assert what is None and len(messages) == 1 and "Type definition with open dependencies" in messages[0], messages
 
 
 @pytest.mark.isabelle(deadline=300)
 async def test_a_refused_definition_and_a_refused_admission_are_obstacles(std_conversation):
-    """§6, §8: a `dlist` whose set is a predicate, no set, is an obstacle
-    with Isabelle's messages, `goal_state` empty, shown under `recall` as
-    §8's example; a `g` whose Rep name `g_inverse` is the fact the
+    """§6, §8: a `dlist` whose set is a predicate where a set is expected, is
+    an obstacle with Isabelle's messages, `goal_state` empty, shown under
+    `recall` as §8's example; a `g` whose Rep name `g_inverse` is the fact the
     admission notes under it is an obstacle too, nothing recorded,
     `goal_state` empty; neither theory is written."""
     forest = std_conversation.forest
@@ -580,7 +608,7 @@ async def test_a_refused_definition_and_a_refused_admission_are_obstacles(std_co
             "action": "append", "target_id": "Sessions", "evaluate": True,
             "constructs": [ts.session("TAT_Suite",
                                       ts.theory("TAT_Std_B") | {"children": [
-                                          definition(set="distinct", rep_function_name="list_of_dlist",
+                                          definition(set="distinct :: 'a list ⇒ bool", rep_function_name="list_of_dlist",
                                                      abs_function_name="dlist_of_list")]},
                                       ts.theory("TAT_Std_C") | {"children": [
                                           definition("g", "UNIV :: nat set", "A copy whose Rep name is a fact the admission notes",
@@ -594,10 +622,10 @@ async def test_a_refused_definition_and_a_refused_admission_are_obstacles(std_co
         [_, failed, _, _] = fenced_blocks(TD, "8.")
         assert isinstance(bad._status, M.CannotEvaluate) and not await bad.goal_state.is_initialized()
         assert [m.unicode for m in bad._status.messages] == ["\n".join(line.strip() for line in failed[4:6])]   # one message, two lines
-        assert (bad.overloaded, bad.lifting) == (False, None)                                  # nothing recorded (§1)
+        assert (bad.overloaded, bad.lifting) == (None, None)                                   # nothing recorded (§1)
         recalled = await session.call_tool("recall", {"node_id": "typedef_dlist"})                      # §8's example whole
         assert not recalled.isError and text_of(recalled).splitlines() == failed, text_of(recalled)
-        assert isinstance(g._status, M.CannotEvaluate) and (g.overloaded, g.lifting) == (False, None)
+        assert isinstance(g._status, M.CannotEvaluate) and (g.overloaded, g.lifting) == (None, None)
         assert g._status.messages[0].unicode.startswith("Duplicate fact declaration"), g._status.messages
         assert not await g.goal_state.is_initialized()      # emptied; after the walk the resulting slot holds the framework's
                                                             # copy of the input, so it says nothing of the callback
