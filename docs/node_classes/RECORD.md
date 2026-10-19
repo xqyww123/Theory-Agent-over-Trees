@@ -27,7 +27,6 @@ One kind, `record`, which heads the id component: `record_point`.
 | `type_name` | `str`, the node's name, in the id grammar without hyphens — a letter, then letters, digits, underscores and primes, not ending in an underscore (MCP_SPECIFICATION §2); one outside it is refused with the grammar's own sentence, as a `Datatype`'s is | authored |
 | `parent` | `IsaTerm`, the record this one extends, an Isabelle type; optional (§2) | authored |
 | `fields` | the fields added, at least one (§2), each its `name` and its `type`, `IsaTerm`s | authored |
-| `overloaded` | `bool`: whether the command carries `(overloaded)`, decided by the evaluation (§6); false until one has recorded it, which a missing row reads as too; stored, since the command is written from a loaded forest (COMPILATION.md §3) | recorded |
 
 What the last evaluation reported travels on the status the evaluation
 hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
@@ -111,9 +110,9 @@ The class, `kind`, `type_name`, a field's `name` and a type parameter's
 is Isabelle's own word, and those keys say what they hold (COMMON.md
 §5). The schema carries no example: no field's shape hides its meaning.
 
-What the class does not take: mixfix syntax on a field; `(overloaded)`,
-which is recorded (§6), and the configuration option
-`typedef_overloaded`.
+What the class does not take: mixfix syntax on a field, and
+`(overloaded)` — the forest's theories have `typedef_overloaded` set
+once, in TAT_Std.thy (COMMON.md §4), so no record carries the option.
 
 ## 3. Descriptions
 
@@ -123,11 +122,10 @@ which is recorded (§6), and the configuration option
 what is defined, in English, as LaTeX text
 ```
 
-`type_parameters` and `TypeParameter.sort`:
+`type_parameters`:
 
 ```
 the type's parameters; sorts are usually not specified
-an Isabelle sort, such as linorder
 ```
 
 `parent`:
@@ -142,6 +140,9 @@ the parent record this one extends. The resulting record includes the parent's f
 An Isabelle type expression
 ```
 
+The description of `TypeParameter.sort` is COMMON.md §4's, pinned there
+alone.
+
 ## 4. `gen`
 
 `Record.gen` calls `require_inside_theory` first (COMMON.md §1), then
@@ -151,8 +152,10 @@ fifth form); every type parameter's `name` a type variable and no two
 the same, `TypeParameter`'s check (COMMON.md §4); every field's `name`
 an Isabelle identifier (COMMON.md §5) not ending with an underscore
 (COMMON.md §5's clause on internal names), and no two fields the same
-name (`InvalidField`). A sibling already bearing the node's id
-component is the framework's `DuplicateName` (MCP_SPECIFICATION §2);
+name (`InvalidField`); then every type parameter used, in a field's
+`type` or in `parent`, the shared check whose sentence COMMON.md §4
+pins. A sibling already bearing the node's id component is the
+framework's `DuplicateName` (MCP_SPECIFICATION §2);
 any other clash of the name in the theory is Isabelle's at evaluation.
 Whether the types parse, whether `parent` is a record type, whether
 every type variable of the fields and the parent is a type parameter,
@@ -193,26 +196,30 @@ and, extending it:
 ```
 text ‹A point with a colour.›
 record 'a cpoint = "'a point" +
-  colour :: "colour"
+  colour :: colour
 ```
 
 - The `text` line: `english` alone, no lead (COMMON.md §2).
-- `(overloaded)` after the command when the recorded `overloaded` is
-  true (§1, §6): `record (overloaded) 'a point =`.
 - The type parameters, written before the type's name by the plugin's
   `type_parameters_text` (COMMON.md §4): none writes the name alone,
   `record point =`; one without a sort writes it bare, `record 'a point
-  =`; otherwise they are parenthesised and comma-separated, a sort in
-  double quotes after `::`: `record ('a :: "linorder", 'b) entry =`.
-- `parent`, when given, in double quotes after `=`, then `+`.
-- Each field on its own line indented two spaces, its type in double
-  quotes after `::`.
-- Every name — the type's, a field's — is written through the theory's
-  `print_name` (SESSION_AND_THEORY §2): in double quotes when it is a
-  keyword of the theory, bare otherwise.
-- The whole text in the `\<name>` form (`IsaTerm.ascii`), every piece
-  in double quotes written as Isabelle's string token (COMPILATION.md
-  §3); the file reads as Unicode in jEdit all the same.
+  =`; otherwise they are parenthesised and comma-separated, a sort
+  after `::` as `print_name` writes it (below): `record ('a :: linorder,
+  'b) entry =`.
+- `parent`, when given, after `=` as `print_name` writes it (below),
+  then `+`: `record 'a cpoint = "'a point" +`.
+- Each field on its own line indented two spaces, its type after `::`
+  as `print_name` writes it: `xcoord :: "'a"`, `colour :: colour`.
+- Every piece of Isabelle text — the type's name, a field's name, a
+  sort, a type — is written through the theory's `print_name`
+  (SESSION_AND_THEORY §2): bare when its `ascii` is an Isabelle
+  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
+  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise
+  — `colour` and `linorder` bare, `"'a"`, `"'a point"` and a keyword
+  quoted; a type variable as the writer writes it.
+- The text in the `unicode` spelling; the file takes the `\<name>` form
+  from the compile's conversion (COMPILATION.md §2) and reads as Unicode
+  in jEdit all the same.
 
 ## 6. Evaluation
 
@@ -223,43 +230,28 @@ the definition as structure — the type parameters with their sorts,
 the type's name, `parent`, and the fields with their types — each
 `IsaTerm` as its `ascii`. The ML side runs, under
 `TAT_Common_Nodes.operation` (MODULE_STRUCTURE §3), one transition on
-the input slot's state:
+the input slot's state — the shape of `begin_theory`, through
+`apply_transition` (MODULE_STRUCTURE §2.4):
 
 ```
 Toplevel.local_theory NONE NONE
-  (Record.add_record_cmd {overloaded = true} (parameters, name) parent fields)
-|> Toplevel.command_errors true
+  (Record.add_record_cmd {overloaded = false} (parameters, name) parent fields)
 ```
 
-— the shape of `begin_theory`, through `apply_transition`.
 `Record.add_record_cmd` is the function the command's parser hands its
 result to; `parameters` the type parameters as that parser hands them,
 each `(name, sort option)`; `name` the type's name as a binding;
 `parent` the parent type's text or `NONE`; `fields` each field as
-`(binding, type, NoSyn)`.
-
-`overloaded` is Isabelle's to decide, and the command always runs with
-the option: the flag switches off one check — that the new type has no
-open dependency on an overloaded definition (`typedef.ML`,
-`primitive_typedef`) — and nothing else, so a definition that needs it
-goes through, and one that does not is the same with and without. What
-the definition needed is read off the theory the command leaves, by the
-check's own test, the plugin's `TAT_Overloaded.needed` (COMMON.md §4),
-on the name of the record's extension type (`Record.get_extension`):
-true exactly when the command would have refused the definition
-without `(overloaded)`. The callback answers it beside the run's
-result; `_eval_opr` records it as `overloaded` (§1), which emission
-writes (§5).
+`(binding, type, NoSyn)`; the option off, as in the file (§2).
 
 The result is written into the resulting slot: at theory level the
 same steps as a hand-written definition, and inside a `Context` or
-`Locale` the definition is made in that context. An interrupt and a
-`Bug` are re-raised; any other error is the definition's: no state is
-written, the callback answers the messages, and `_eval_opr` returns
-`CannotEvaluate` with them — the node is an obstacle, and its
-`overloaded` stays what the last successful evaluation recorded, which
-`can_emit` keeps out of a file (ARCHITECTURE §6.1). Otherwise
-`_eval_opr` returns `Ready` with no messages.
+`Locale` the definition is made in that context. A proper interrupt is
+the definition's error with the one message `Interrupt`; a `Bug` and
+every other interrupt are re-raised; any other error is the
+definition's: no state is written, the callback answers the messages,
+and `_eval_opr` returns `CannotEvaluate` with them — the node is an
+obstacle. Otherwise `_eval_opr` returns `Ready` with no messages.
 
 ## 7. The mark
 
@@ -284,13 +276,14 @@ messages after it:
 | `Recall`, depth 3 | nothing |
 
 The definition is one line: the type with its parameters as emitted
-(§5), `=`, the parent in double quotes and `+` when given, the fields
-as emitted, joined by one space — assembled from the stored text in
-the `unicode` spelling, every name bare, without a round trip to
-Isabelle; `(overloaded)` is not shown; `english` follows at depth 0
-alone; no line carries a key. One private helper writes the type's
-head, its parent and its fields, given the spelling and how names are
-written; emission and `print_fields` lay its lines out differently.
+(§5), `=`, the parent and `+` when given, the fields as emitted, joined
+by one space — assembled from the stored text in the `unicode`
+spelling, every piece as `print_name` writes it against no keyword,
+every name bare, without a round trip to Isabelle; `english` follows
+at depth 0 alone; no line carries a key.
+One private helper writes the type's head, its parent and its fields,
+given how names are written; emission and `print_fields` lay its lines
+out differently.
 
 ```
 'a point = xcoord :: "'a" ycoord :: "'a"
@@ -298,7 +291,7 @@ A point in the plane
 ```
 
 ```
-'a cpoint = "'a point" + colour :: "colour"
+'a cpoint = "'a point" + colour :: colour
 A point with a colour
 ```
 

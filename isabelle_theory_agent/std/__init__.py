@@ -5,4 +5,5 @@ importing this package registers."""
 
 from . import (
     common as common, datatype as datatype, define as define, lift_definition as lift_definition,
-    lifting_context as lifting_context, quotient_type as quotient_type, theorem as theorem, typedef as typedef)
+    lifting_context as lifting_context, quotient_type as quotient_type, record as record, theorem as theorem,
+    typedef as typedef)

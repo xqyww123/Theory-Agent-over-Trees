@@ -24,7 +24,7 @@ from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit, InvalidField
 from isabelle_theory_agent.std import (
-    common, datatype, define, lift_definition, lifting_context, quotient_type, theorem, typedef)
+    common, datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
 from isabelle_theory_agent.std.common import (
     Binder, Infix, Lifting_Closing, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter,
     lifting_closing_text, text_line)
@@ -36,6 +36,7 @@ from test_lift_definition import DL_REV
 from test_lifting_context import FSET_SIZE
 from test_model import locked, run
 from test_quotient_type import FSET
+from test_record import POINT
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
 from test_typedef import DLIST
@@ -47,6 +48,7 @@ COMMON = DOCS / "node_classes" / "COMMON.md"
 # to the registered kinds, so a new class adds its example here.
 EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: definition(LIST, kind=kind) for kind in datatype.KINDS},
+            **{kind: POINT for kind in record.KINDS},
             **{kind: SUM_UPTO for kind in define.KINDS},
             **{kind: DLIST for kind in typedef.KINDS},
             **{kind: DL_REV for kind in lift_definition.KINDS},

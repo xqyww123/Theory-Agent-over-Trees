@@ -13,7 +13,7 @@ from invariants import assert_invariants, assert_store_mirrors
 from isabelle_theory_agent import edit
 from isabelle_theory_agent.exceptions import TAT_StartupError
 from isabelle_theory_agent.std import (
-    datatype, define, lift_definition, lifting_context, quotient_type, theorem, typedef)
+    datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
 from isabelle_theory_agent.store import Forest_Store
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -21,6 +21,7 @@ from test_session_theory import Forest_Under_Test, session, theory
 KINDS = {**ts.KINDS,
          **{kind: theorem.Theorem for kind in theorem.KINDS},
          **{kind: datatype.Datatype for kind in datatype.KINDS},
+         **{kind: record.Record for kind in record.KINDS},
          **{kind: define.Define for kind in define.KINDS},
          **{kind: typedef.Typedef for kind in typedef.KINDS},
          **{kind: lift_definition.LiftDefinition for kind in lift_definition.KINDS},
