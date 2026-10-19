@@ -238,9 +238,12 @@ and the proof construction, with their callbacks
 The proof construction, `Proof_Job`, the proof check, `Proof_Check`,
 their callbacks `TAT.Proof_Obligation.construct` and
 `TAT.Proof_Obligation.check`, their sentences, and the two-slot mark
-`(<status>, <proof>)` are `Proof_Obligation`'s (COMMON.md §3).
-`Theorem`'s own are `valid_word` and `invalid_word`: `valid statement`
-(`ready`) and `invalid statement` (`cannot_evaluate`). Its line reads
+`(<status>, <proof>)` are `Proof_Obligation`'s (COMMON.md §3);
+`Theorem` names no assertion, and its refutation sentence
+(`refutation_sentence`, COMMON.md §3) is `` `lemma_rev_length` may not
+hold ``. `Theorem`'s own words are `valid_word` and `invalid_word`:
+`valid statement` (`ready`) and `invalid statement`
+(`cannot_evaluate`). Its line reads
 one of eleven ways, plus the tags of CONSTRUCT_INTERACTION §6:
 `automatic construction` for every agent, `needs your answer …` for the
 owner:
@@ -293,7 +296,8 @@ question is never printed here; the tag on the line sends the agent to `check_co
 the tag `automatic construction` when that setting is on
 (CONSTRUCT_INTERACTION §6). The line
 with a question waiting; a focus in a quickview after a failed proof
-construction; a node under `recall` whose stored proof failed its check:
+construction, and after one the agent refuted; a node under `recall`
+whose stored proof failed its check:
 
 ```
 - lemma_rev_length (valid statement, proving, needs your answer, call `check_construct` to see it)
@@ -303,6 +307,12 @@ construction; a node under `recall` whose stored proof failed its check:
 - lemma_rev_length (valid statement, failed to prove)
   No proof was found:
     Sledgehammer timed out on every prover; the goal needs an induction the search did not attempt.
+```
+
+```
+- lemma_rev_length (valid statement, failed to prove)
+  `lemma_rev_length` may not hold:
+    For xs = [a, b], length (rev xs) = 2 while the premise xs ≠ [] holds: the statement fails as stated.
 ```
 
 ```

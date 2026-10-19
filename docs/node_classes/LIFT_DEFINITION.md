@@ -584,6 +584,21 @@ While the line reads `unverified definition`, the node's owing line
 The definition is unverified until the term is proven to respect the representation.
 ```
 
+`LiftDefinition` names what the construction was to prove through the
+hook `failed_assertion` (COMMON.md §3), so that the failure header and
+the failure notification both read, with AoA's message after it:
+
+```
+Failed to prove that `lift_definition_dl_rev`'s defining term respects the representation:
+```
+
+and, when the agent refuted it, its refutation sentence,
+`refutation_sentence` (COMMON.md §3), with the agent's words after it:
+
+```
+`lift_definition_dl_rev`'s defining term may not respect the representation:
+```
+
 ## 8. What it prints
 
 `print_fields` (PRINT.md §3) writes the definition, and only under

@@ -306,7 +306,7 @@ def test_a_run_settles_and_its_owner_is_told():
         job.ends_with = ends(Failed("Sledgehammer timed out on every prover."))
         await run_to_end(job, owner)
         assert job.outcome == Failed("Sledgehammer timed out on every prover.") and not p.is_finished()
-        assert f.store.get(p.identity, "job") == ["FAILED", "Sledgehammer timed out on every prover."]
+        assert f.store.get(p.identity, "job") == ["FAILED", "Sledgehammer timed out on every prover.", None]
         assert records("construction_settled")[-1] == {
             "node": P, "outcome": "FAILED", "message": "Sledgehammer timed out on every prover."}
         assert deliver(f, owner) == [
@@ -929,7 +929,7 @@ def test_an_evaluation_job_is_attached_started_and_settled_by_its_report():
         await report(second, ["bad", "worse"])
         assert second.outcome == Failed("bad\nworse") and p.check_outcome() == Failed("bad\nworse")
         assert p._unfinished() == jobs.Unfinished_Check(Failed("bad\nworse"), Check) and not p.is_finished()
-        assert f.store.get(p.identity, "check") == ["FAILED", "bad\nworse"]
+        assert f.store.get(p.identity, "check") == ["FAILED", "bad\nworse", None]
         assert records("evaluation_reported")[-1] == {"id": second.id, "outcome": "FAILED", "failure": ["bad", "worse"]}
         assert deliver(f, starter) == [f"The proof on `{P_CHECKED}` no longer holds. Call `construct` to prove it again."]
         posted = records("message_posted")[-1]
@@ -1429,7 +1429,9 @@ def test_a_failure_message_of_several_lines_is_indented_line_by_line():
 # failed_image_any_message, check_image_any_message, restore_auto_any_type
 @pytest.mark.parametrize("field, row, match", [
     ("job", ["FAILED", 3], "not a job's image"),
+    ("job", ["FAILED", "no proof", 3], "not a job's image"),
     ("check", ["FAILED", 3], "not a check's image"),
+    ("check", ["FAILED", "broken", 3], "not a check's image"),
     ("auto_construct", "yes", "not a boolean")])
 def test_a_row_of_the_right_tag_but_the_wrong_value_is_refused(field, row, match):
     async def scenario():
@@ -1441,6 +1443,32 @@ def test_a_row_of_the_right_tag_but_the_wrong_value_is_refused(field, row, match
     run(scenario())
 
 
+# failed_kind_stored, failed_row_of_two
+def test_a_failure_s_kind_is_stored_with_its_message_and_a_row_of_two_holds_none():
+    """§3.1: `FAILED(message, kind)` round-trips through the `job` row
+    `["FAILED", message, kind]`, the kind opaque to the framework; a row of
+    two elements loads as a failure of no kind."""
+    async def scenario():
+        f, thy, t1, p, q = build(Checked)
+        owner = stand_ins.agent(f.conversation)
+        job = p.job()
+        job.ends_with = ends(Failed("the agent's words", "refute"))
+        await run_to_end(job, owner)
+        assert job.outcome == Failed("the agent's words", "refute")
+        assert f.store.get(p.identity, "job") == ["FAILED", "the agent's words", "refute"]
+        assert records("construction_settled")[-1] == {"node": P_CHECKED, "outcome": "FAILED", "message": "the agent's words"}
+        twin = tm.OneTreeForest(CONN, f.store, KINDS)
+        assert twin.sub_nodes[0].sub_nodes[1].job().outcome == Failed("the agent's words", "refute")
+        with f.store.transaction():
+            f.store.put(p.identity, "job", ["FAILED", "no proof"])
+            f.store.put(p.identity, "check", ["FAILED", "broken"])
+        twin = tm.OneTreeForest(CONN, f.store, KINDS)
+        loaded = twin.sub_nodes[0].sub_nodes[1]
+        assert loaded.job().outcome == Failed("no proof") and loaded.job().outcome.kind is None
+        assert loaded.check_outcome() == Failed("broken")
+    run(scenario())
+
+
 # carry_drops_failure
 def test_an_amend_carries_a_failure_too():
     async def scenario():
@@ -1448,7 +1476,7 @@ def test_an_amend_carries_a_failure_too():
         p.job().outcome = Failed("no proof")
         (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}], KINDS))
         assert p2.job().outcome == Failed("no proof")
-        assert f.store.get(p2.identity, "job") == ["FAILED", "no proof"]
+        assert f.store.get(p2.identity, "job") == ["FAILED", "no proof", None]
     run(scenario())
 
 
@@ -1511,7 +1539,7 @@ def test_a_start_stores_the_cleared_failure_and_the_cleared_check():
         await run_to_end(job, owner)
         await p.start_evaluation_job(owner)
         await report(p.evaluation_job())
-        assert f.store.get(p.identity, "job") == ["FAILED", "no proof"] and f.store.get(p.identity, "check") == ["PASSED"]
+        assert f.store.get(p.identity, "job") == ["FAILED", "no proof", None] and f.store.get(p.identity, "check") == ["PASSED"]
         job.release = asyncio.Event()
         job.start(owner)
         assert f.store.get(p.identity, "job") == ["NOT_STARTED"]

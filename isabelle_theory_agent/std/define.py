@@ -23,7 +23,7 @@ from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, emit_lines
 from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, Construction_Setup, Mixfix, Mixfix_RawAST, Proof_Check, Proof_Job, Theory_Member,
-    With_Proof_Obligations, check_not_bound_twice, mixfix_of, mixfix_text, mixfix_wire, normalised, proof_from_wire,
+    With_Proof_Obligations, check_not_bound_twice, construction_from_wire, mixfix_of, mixfix_text, mixfix_wire, normalised,
     proof_wire, require_id_name, text_line, unverified)
 
 KINDS = ("definition",)
@@ -188,13 +188,13 @@ class Define_Proof_Job(Proof_Job):
         assert isinstance(node, Define)
         proofs: dict[str, Any] = {}
         for obligation in node.open_obligations():
-            errors, product = await self.forked(
+            construction = construction_from_wire(*await self.forked(
                 "TAT.Proof_Obligation.construct",
-                (node.slot_of(obligation).to_msgpack(), node.construction_setup(obligation)))
-            if errors:
+                (node.slot_of(obligation).to_msgpack(), node.construction_setup(obligation))))
+            if isinstance(construction, Failed):
                 node.failed_obligation = obligation
-                return Failed("\n".join(errors))
-            proofs[obligation] = proof_from_wire(product)
+                return construction
+            proofs[obligation] = construction
         node.failed_obligation = None
         node.attach_evaluation_job(Define_Proof_Check.passed(node))
         return Succeeded(proofs)
@@ -348,6 +348,14 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
             return f"function `{shown_id}` terminates"
         if self.failed_obligation == PATTERN_COMPLETENESS:
             return f"`{shown_id}`'s definitional equations cover every argument"
+        return None
+
+    def refutation_sentence(self, shown_id):
+        """§7: the same obligation, refuted."""
+        if self.failed_obligation == TERMINATION:
+            return f"Function `{shown_id}` may not terminate"
+        if self.failed_obligation == PATTERN_COMPLETENESS:
+            return f"`{shown_id}`'s definitional equations may not cover every argument"
         return None
 
     def construction_setup(self, obligation: Obligation) -> Construction_Setup:

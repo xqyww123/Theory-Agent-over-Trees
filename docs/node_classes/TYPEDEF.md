@@ -390,6 +390,13 @@ both read, with AoA's message after it:
 Failed to prove that `typedef_dlist`'s definitional set is non-empty:
 ```
 
+and, when the agent refuted it, its refutation sentence,
+`refutation_sentence` (COMMON.md §3), with the agent's words after it:
+
+```
+`typedef_dlist`'s definitional set may be empty:
+```
+
 `Typedef`'s own words are
 the three words of a class that defines: `valid_word`, `valid
 definition`, alone when the proof stands; `unverified_word`, `unverified

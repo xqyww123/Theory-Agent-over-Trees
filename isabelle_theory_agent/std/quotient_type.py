@@ -177,6 +177,18 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
             return None
         return OWING_LINE_PARTIAL if self.partial else OWING_LINE
 
+    def _relation(self) -> str:
+        """§7: what the relation is to be proven, by `partial`."""
+        return "a partial equivalence relation" if self.partial else "an equivalence relation"
+
+    def failed_assertion(self, shown_id):
+        """§7: what the failure block and the notification say was not proved."""
+        return f"`{shown_id}`'s definitional relation is {self._relation()}"
+
+    def refutation_sentence(self, shown_id):
+        """§7: what they say when the agent refuted it."""
+        return f"`{shown_id}`'s definitional relation may not be {self._relation()}"
+
     # --- what it prints (§8) and emission (§5)
 
     def _definition(self, keywords: Container[str]) -> tuple[str, str | None]:

@@ -140,7 +140,7 @@ section as they are specified — are one plugin, `Isabelle_Std`
 four kinds (`lemma`, `theorem`, `corollary`, `proposition`), a `name`, a
 `statement` (AoA's `LongStatement`), and, recorded by the framework, `proof`
 — the construction job's outcome, `NOT_STARTED`, `RUNNING`,
-`SUCCEEDED(product)` or `FAILED(message)` (CONSTRUCT_INTERACTION §3.1) — and
+`SUCCEEDED(product)` or `FAILED(message, kind)` (CONSTRUCT_INTERACTION §3.1) — and
 the proof check's outcome, the evaluation job's.
 
 Adding a `Theorem` starts no search: its `proof` is `NOT_STARTED`, so
@@ -612,8 +612,10 @@ not stored either; the loaded forest is given the conversation's current one
 (MODULE_STRUCTURE §4.1, `Conversation`).
 Work in flight is not stored, only its results: a construction job's
 outcome is stored with `RUNNING` read as `NOT_STARTED`, so a loaded forest
-holds no run, and an evaluation job's outcome is stored the same way —
-`PASSED` or `FAILED(message)`, `RUNNING` as none — kept on the node as
+holds no run — the `job` row `["NOT_STARTED"]`, `["SUCCEEDED", product]`
+or `["FAILED", message, kind]` —, and an evaluation job's outcome is
+stored the same way — `PASSED` or `FAILED(message, kind)`, the `check`
+row `["PASSED"]` or `["FAILED", message, kind]`, `RUNNING` as none — kept on the node as
 the stored check, cleared when the stored status of an operation the
 node's jobs depend on (CONSTRUCT_INTERACTION §3.1) leaves
 `Ready`, when a construction job starts on it or another evaluation job

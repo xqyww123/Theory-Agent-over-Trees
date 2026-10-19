@@ -26,7 +26,7 @@ from invariants import assert_store_mirrors
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
-from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Succeeded
+from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, quotient_type
 from isabelle_theory_agent.std.common import Lifting_Closing, NotInsideTheory, Template, Type_Parameter
 from isabelle_theory_agent.std.lift_definition import LiftDefinition, OWING_LINE as LD_OWING_LINE
@@ -378,7 +378,7 @@ def test_the_mark_reads_one_of_eleven_ways_and_the_owing_line_stands_while_unver
     other, are the document's first block; the owing line, its second —
     its third under `partial` — exactly while the line reads `unverified
     definition`."""
-    [block, owing, owing_partial] = fenced_blocks(QT, "7.")
+    [block, owing, owing_partial, _, _] = fenced_blocks(QT, "7.")
     assert [OWING_LINE] == owing and [OWING_LINE_PARTIAL] == owing_partial
     f, x = forest(FSET, FRACT)
     p, q = x.sub_nodes
@@ -387,6 +387,30 @@ def test_the_mark_reads_one_of_eleven_ways_and_the_owing_line_stands_while_unver
     with_proof(p, M.READY_CLEAN, NOT_STARTED)
     p.evaluation_status_ending = M.CannotEvaluate((IsaTerm.from_agent("Interrupt"),))       # not on the line (§7)
     assert p.mark(M.BRIEFING, 0) == "unverified definition, proof not started" and p.owing_line() == OWING_LINE
+
+
+def test_the_jobs_sentences_name_the_relation():
+    """§7: the construction's failure header and its failure notification
+    both read the document's sentence, the node by its id, by `partial`
+    which; the agent's refutation reads the refutation sentence in both;
+    the success notification is `Proof_Job`'s."""
+    [_, _, _, failed, refuted] = fenced_blocks(QT, "7.")
+    f, x = forest(FSET, FRACT)
+    p, q = x.sub_nodes
+    job, qjob = p.job(), q.job()
+    assert failed == ["Failed to prove that `quotient_type_fset`'s definitional relation is an equivalence relation:",
+                      "Failed to prove that `quotient_type_fset`'s definitional relation is a partial equivalence relation:"]
+    assert refuted == ["`quotient_type_fset`'s definitional relation may not be an equivalence relation:",
+                       "`quotient_type_fset`'s definitional relation may not be a partial equivalence relation:"]
+    assert not p.partial and q.partial
+    assert job.failure_header(Failed("gave up")) == failed[0]
+    assert job.finished_notification(Failed("gave up", "surrender")) == failed[0] + "\n  gave up"
+    assert job.failure_header(Failed("gave up", "refute")) == refuted[0]
+    assert job.finished_notification(Failed("gave up", "refute")) == refuted[0] + "\n  gave up"
+    assert qjob.failure_header(Failed("gave up")) == failed[1].replace("quotient_type_fset", f.id_of(q))
+    assert qjob.finished_notification(Failed("gave up", "refute")) == (
+        refuted[1].replace("quotient_type_fset", f.id_of(q)) + "\n  gave up")
+    assert job.finished_notification(Succeeded({})) == "`quotient_type_fset` is proven."
 
 
 # --- what it prints (§8) -----------------------------------------------------

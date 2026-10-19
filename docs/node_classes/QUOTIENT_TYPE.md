@@ -573,6 +573,24 @@ beginning `ready` and its ending not yet run, under the title its
 `Unfinished` carries while its proof is unfinished, and in no group
 once it is proven.
 
+`QuotientType` names what the construction was to prove through the
+hook `failed_assertion` (COMMON.md §3), so that the failure header and
+the failure notification both read, with AoA's message after it, by
+`partial`:
+
+```
+Failed to prove that `quotient_type_fset`'s definitional relation is an equivalence relation:
+Failed to prove that `quotient_type_fset`'s definitional relation is a partial equivalence relation:
+```
+
+and, when the agent refuted it, its refutation sentence,
+`refutation_sentence` (COMMON.md §3), with the agent's words after it:
+
+```
+`quotient_type_fset`'s definitional relation may not be an equivalence relation:
+`quotient_type_fset`'s definitional relation may not be a partial equivalence relation:
+```
+
 ## 8. What it prints
 
 `print_fields` (PRINT.md §3) writes the definition, and only under

@@ -144,7 +144,10 @@ depend on every operation of the node — a `Leaf`'s one, or both of a
 exactly when every own operation is.
 
 **The outcome.** The construction job's `outcome` is `NOT_STARTED`,
-`RUNNING`, `SUCCEEDED(product)` or `FAILED(message)`. `start` sets
+`RUNNING`, `SUCCEEDED(product)` or `FAILED(message, kind)` — `kind` the
+class's own classification of the failure, `None` when it gives none,
+opaque to the framework, which stores it with the message and hands it
+back in the `failure` of `failure_header`. `start` sets
 `RUNNING`, the run's settlement `SUCCEEDED` or `FAILED`, `cancel`
 `NOT_STARTED`. `product` is the class's, a MessagePack-representable
 value — for `Theorem` the proof: the method text AoA writes to its proof

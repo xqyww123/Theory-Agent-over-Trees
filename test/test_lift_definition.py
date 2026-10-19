@@ -284,11 +284,29 @@ def test_the_mark_reads_one_of_eleven_ways_and_the_owing_line_stands_while_unver
     `unverified definition` with the proof's word before; the eleven, and
     no other, are the document's first block; the owing line, its second,
     exactly while the line reads `unverified definition`."""
-    [block, state] = fenced_blocks(LD, "7.")
+    [block, state, _, _] = fenced_blocks(LD, "7.")
     assert [OWING_LINE] == state
     f, x = forest(DL_REV)
     (p,) = x.sub_nodes
     assert_the_eleven_ways(p, block, OWING_LINE)
+
+
+def test_the_jobs_sentences_name_the_term():
+    """§7: the construction's failure header and its failure notification
+    both read the document's sentence, the node by its id; the agent's
+    refutation reads the refutation sentence in both; the success
+    notification is `Proof_Job`'s."""
+    [_, _, failed, refuted] = fenced_blocks(LD, "7.")
+    f, x = forest(DL_REV)
+    (p,) = x.sub_nodes
+    job = p.job()
+    assert failed == ["Failed to prove that `lift_definition_dl_rev`'s defining term respects the representation:"]
+    assert refuted == ["`lift_definition_dl_rev`'s defining term may not respect the representation:"]
+    assert job.failure_header(Failed("gave up")) == failed[0]
+    assert job.finished_notification(Failed("gave up", "surrender")) == failed[0] + "\n  gave up"
+    assert job.failure_header(Failed("gave up", "refute")) == refuted[0]
+    assert job.finished_notification(Failed("gave up", "refute")) == refuted[0] + "\n  gave up"
+    assert job.finished_notification(Succeeded({})) == "`lift_definition_dl_rev` is proven."
 
 
 # --- what it prints (§8) -----------------------------------------------------

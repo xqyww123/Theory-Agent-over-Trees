@@ -140,6 +140,14 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
         definition`."""
         return OWING_LINE if unverified(self) else None
 
+    def failed_assertion(self, shown_id):
+        """§7: what the failure block and the notification say was not proved."""
+        return f"`{shown_id}`'s defining term respects the representation"
+
+    def refutation_sentence(self, shown_id):
+        """§7: what they say when the agent refuted it."""
+        return f"`{shown_id}`'s defining term may not respect the representation"
+
     # --- what it prints (§8) and emission (§5)
 
     def _definition(self, keywords: Container[str]) -> str:

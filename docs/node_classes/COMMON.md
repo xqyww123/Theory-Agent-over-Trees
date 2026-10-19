@@ -276,9 +276,18 @@ the store — a task of its own, which may land after the report —, all
 on AoA's own path with both store switches on; the driver and the
 budget are what Isabelle's configuration gives AoA (`AoA_driver`,
 Minilang's default budget), TAT setting neither. The report brings the
-product: the method text and its two times in the store's
-standard-machine form (the product above), which `hammer_or_AoA'`, the
-entry beside `hammer_or_AoA`, returns beside the text. A run waiting
+construction: the proof — the method text and its two times in the
+store's standard-machine form (the product above), which
+`hammer_or_AoA'`, the entry beside `hammer_or_AoA`, returns beside the
+text —, or the agent's give-up: AoA's reason, `refute`, `surrender`,
+`resource_exhausted`, `resource_unavailable` or `technical_failure`,
+and the message the failure block prints under its header — the agent's
+own words for a refutation or a surrender, the `aoa` method's
+rendering, AoA's banner over them, for the other three. A give-up
+settles the run `FAILED` with the message and the reason as the
+failure's kind (CONSTRUCT_INTERACTION §3.1); the engine's own failure,
+the error the `aoa` method renders it as, is the report's error and
+settles it `FAILED` with no kind. A run waiting
 for its turn under the framework's bound on runs (CONSTRUCT_INTERACTION
 §3.2) is `RUNNING`, and shows as any running one, `proving`. AoA's Python half, the remote
 procedure `IsaMini.AoA`, is served by TAT's own process — the plugin's
@@ -318,15 +327,21 @@ from `title`):
 | situation | |
 | --- | --- |
 | `finished_notification`, success | `` `theory_X.lemma_P` is proven. `` |
-| `finished_notification`, failure | `` No proof of `theory_X.lemma_P` was found: `` + the message; with an assertion, `Failed to prove that <assertion>:` + the message |
-| `failure_header` | `No proof was found:`; with an assertion, `Failed to prove that <assertion>:` |
+| `finished_notification`, failure | `` No proof of `theory_X.lemma_P` was found: `` + the message; with an assertion, `Failed to prove that <assertion>:` + the message; a refutation, with a refutation sentence, `<refutation sentence>:` + the message |
+| `failure_header` | `No proof was found:`; with an assertion, `Failed to prove that <assertion>:`; a refutation, with a refutation sentence, `<refutation sentence>:` |
 
 The assertion is the hook `failed_assertion(shown_id)` of
 `With_Proof_Obligations` — what the construction was to prove, the node
 named by its shown id —, `None` by default, which leaves the two failure
-sentences in their first form; a class that defines names its
-obligation: `Define` the failed one (DEFINE.md §7), `Typedef` its set
-(TYPEDEF.md §7).
+sentences in their first form. The refutation sentence is the hook
+`refutation_sentence(shown_id)` — what may fail, read when the
+failure's kind is `refute` —, `None` by default, which leaves a
+refutation's sentences those of any failure. `Theorem` names no
+assertion and the refutation sentence `` `theory_X.lemma_P` may not
+hold `` (THEOREM.md §7); the classes that define name both: `Define`
+for the failed obligation (DEFINE.md §7), `Typedef` for its set
+(TYPEDEF.md §7), `QuotientType` for its relation (QUOTIENT_TYPE.md §7),
+`LiftDefinition` for its term (LIFT_DEFINITION.md §7).
 
 `Proof_Check`: `title()` is `proof check`, `title(plural=True)` `proof
 checks`. `make` is the default; `_start` calls

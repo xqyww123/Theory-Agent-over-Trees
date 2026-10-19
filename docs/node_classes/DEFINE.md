@@ -594,7 +594,12 @@ failure header and its failure notification both read `Failed to prove
 that <assertion>:` with AoA's message after it; the assertion is
 `failed_obligation`'s, the node by its id: `` function
 `definition_sum_upto` terminates `` or `` `definition_sum_upto`'s
-definitional equations cover every argument ``. A `FAILED` outcome an
+definitional equations cover every argument ``. When the agent refuted
+the obligation both read its refutation sentence,
+`refutation_sentence(shown_id)`, with the agent's words after it: ``
+Function `definition_sum_upto` may not terminate: `` or ``
+`definition_sum_upto`'s definitional equations may not cover every
+argument: ``. A `FAILED` outcome an
 amend carried onto a node that records no `failed_obligation` reads
 `Proof_Job`'s sentences. The
 success notification and the titles are `Proof_Job`'s. The failure
@@ -701,8 +706,9 @@ not exist, with the framework's `Error:` block:
 
 The jobs' blocks have `Proof_Obligation`'s shape (COMMON.md §3), the
 construction's header `Define_Proof_Job`'s (§7); a node under `recall`
-whose termination proof the construction did not find, and one whose
-stored proofs failed their check:
+whose termination proof the construction did not find, one whose
+termination the agent refuted, and one whose stored proofs failed their
+check:
 
 ```
 - definition_sum_upto (unverified definition, failed to prove)
@@ -712,6 +718,16 @@ stored proofs failed their check:
   The definition is unverified until termination is proven.
   Failed to prove that function `definition_sum_upto` terminates:
     Sledgehammer timed out on every prover; the relation the search tried does not decrease on the recursive call.
+```
+
+```
+- definition_sum_upto (unverified definition, failed to prove)
+    sum_upto :: nat ⇒ nat ⇒ nat
+    sum_upto i N = (if N < i then 0 else i + sum_upto (Suc i) N)
+  The sum of the naturals from i to N
+  The definition is unverified until termination is proven.
+  Function `definition_sum_upto` may not terminate:
+    The first argument grows on every recursive call, and no bound on it follows from the equations.
 ```
 
 ```

@@ -131,6 +131,11 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
         unpacks them (§6)."""
         return (self.kind, self.name, *self.goal_structure())
 
+    def refutation_sentence(self, shown_id):
+        """§7: what the failure block and the notification say when the
+        agent refuted the statement."""
+        return f"`{shown_id}` may not hold"
+
     # --- what it prints (§8)
 
     def print_fields(self, indent, out, mode, depth):

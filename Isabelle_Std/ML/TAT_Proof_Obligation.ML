@@ -103,6 +103,25 @@ fun register {name, message, open_goal, after_admission, records} =
 val pack_product = packTuple3 (packString, packInt, packInt)
 val unpack_product = unpackTuple3 (unpackString, unpackInt, unpackInt)
 
+(*what the construction reports (COMMON.md §3): the proof, or the agent's
+  give-up -- AoA's reason, `refute`, `surrender`, `resource_exhausted`,
+  `resource_unavailable` or `technical_failure`, and the message the class
+  prints under its header: the agent's own words for a refutation or a
+  surrender, the `aoa` method's rendering -- AoA's banner over them -- for the
+  other three.  On the wire ["proof", [text, cpu, wall]] or
+  ["gave_up", [reason, message]]*)
+datatype construction = Proof of string * int * int | Gave_Up of string * string
+
+fun pack_construction (Proof proof) = packPair (packString, pack_product) ("proof", proof)
+  | pack_construction (Gave_Up give_up) =
+      packPair (packString, packPair (packString, packString)) ("gave_up", give_up)
+
+fun gave_up (reason, detail) =
+  Gave_Up (reason,
+    if reason = "refute" orelse reason = "surrender" then detail
+    else if detail = "" then MiniLang_Agent_AoA.banner_of reason
+    else MiniLang_Agent_AoA.banner_of reason ^ "\n" ^ detail)
+
 (*the goal `goal_state` holds: the Proof.state's context and goal*)
 fun goal_of get =
   let val {context, goal, ...} = Proof.goal (Toplevel.proof_of (get ()))
@@ -157,9 +176,9 @@ fun task_of ((task, _, _, _) : setup) =
 
 (*the proof construction (COMMON.md §3): one call of AoA's standard entry on the
   goal, under the call's setup, the proof store read and written on AoA's own
-  path, forked as the job's work; its product the proof.  The agent's give-up is
-  the failure's message, as the `aoa` method renders it.  AoA's Python half is
-  served by this process: the plugin's package imports it.*)
+  path, forked as the job's work; its product the construction -- the proof, or
+  the agent's give-up with its reason.  AoA's Python half is served by this
+  process: the plugin's package imports it.*)
 val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn env =>
   {name = "TAT.Proof_Obligation.construct",
     on_interrupt = Remote_Procedure_Calling.Reraise,
@@ -169,22 +188,23 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
       let val (ctxt, sequent) = goal_of (#get goal) in
         #fork_job env {id = id, work = fn () =>
           let
-            (*the two give-ups the `aoa` method renders, rendered as it renders
-              them — the agent's, and the engine's own failure; any other
+            (*the agent's give-up is the construction's; the engine's own
+              failure is the error the `aoa` method renders it as; any other
               Auto_Fail is re-raised.  Sync raises them at the call, the join
               joins a value*)
-            val (times, text) =
-              let val (fut, _) =
-                    MiniLang_Agent_AoA.hammer_or_AoA'
-                      {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
-                       hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
-                       read_store = SOME true, write_store = SOME true,
-                       task = task_of setup, user_operations = []} (declared setup (ctxt, sequent)) sequent
-              in Future.join fut end
-              handle exn as MiniLang_Agent_AoA.Agent_Give_Up _ => MiniLang_Agent_AoA.method_error exn
-                   | exn as Phi_Sledgehammer_Solver.Auto_Fail _ => MiniLang_Agent_AoA.method_error exn
-            val (cpu, wall) = Phi_Proof_Store.ms_of_times times
-          in SOME (pack_product (text, cpu, wall)) end}
+            val construction =
+              (let val (fut, _) =
+                     MiniLang_Agent_AoA.hammer_or_AoA'
+                       {fact_override = Sledgehammer_Fact.no_fact_override, proof_id = NONE,
+                        hammer_timeout = NONE, async_mode = Phi_Sledgehammer_Solver.Sync,
+                        read_store = SOME true, write_store = SOME true,
+                        task = task_of setup, user_operations = []} (declared setup (ctxt, sequent)) sequent
+                   val (times, text) = Future.join fut
+                   val (cpu, wall) = Phi_Proof_Store.ms_of_times times
+               in Proof (text, cpu, wall) end
+               handle MiniLang_Agent_AoA.Agent_Give_Up (reason, detail, _) => gave_up (reason, detail)
+                    | exn as Phi_Sledgehammer_Solver.Auto_Fail _ => MiniLang_Agent_AoA.method_error exn)
+          in SOME (pack_construction construction) end}
       end,
     timeout = NONE}))
 

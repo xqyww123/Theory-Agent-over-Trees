@@ -292,6 +292,10 @@ def test_the_jobs_sentences_are_common_section_3_s():
     assert job.finished_notification(PROVED) == f"`{f.id_of(p)}` is proven."
     assert job.finished_notification(Failed("no proof")) == f"No proof of `{f.id_of(p)}` was found:\n  no proof"
     assert job.failure_header(Failed("no proof")) == "No proof was found:"
+    assert job.failure_header(Failed("no proof", "surrender")) == "No proof was found:"
+    # the agent's refutation: THEOREM §7's refutation sentence in both
+    assert job.finished_notification(Failed("no proof", "refute")) == f"`{f.id_of(p)}` may not hold:\n  no proof"
+    assert job.failure_header(Failed("no proof", "refute")) == f"`{f.id_of(p)}` may not hold:"
     assert jobs.with_message(Proof_Check.failure_header(BAD), "") == sentences[0]
     one, three = ["theory_X.lemma_P"], ["theory_X.lemma_P", "theory_X.lemma_Q", "theory_X.lemma_R"]
     four = three + ["theory_Y.lemma_S"]
@@ -327,12 +331,14 @@ def test_check_answers_common_section_3_s_table():
     assert job._check() and not job.can_start()
 
 
-def test_what_it_prints_with_a_job_is_section_8_s_three_examples():
+def test_what_it_prints_with_a_job_is_section_8_s_four_examples():
     """§8's examples: the line with a question waiting, for the owner; a
-    focus after a failed proof construction, the failure block below;
-    a node under `recall` whose stored proof failed its check, the
-    header alone with a period — the document's blocks verbatim."""
-    [_, asking, failed, bad] = fenced_blocks(TH, "8.")
+    focus after a failed proof construction, the failure block below,
+    and after one the agent refuted, the refutation sentence over the
+    agent's words; a node under `recall` whose stored proof failed its
+    check, the header alone with a period — the document's blocks
+    verbatim."""
+    [_, asking, failed, refuted, bad] = fenced_blocks(TH, "8.")
     f, x = forest(lemma("rev_length"))
     (p,) = x.sub_nodes
     me = stand_ins.agent(f.conversation)
@@ -345,6 +351,8 @@ def test_what_it_prints_with_a_job_is_section_8_s_three_examples():
     with_proof(p, M.READY_CLEAN, Failed(
         "Sledgehammer timed out on every prover; the goal needs an induction the search did not attempt."))
     assert f.render(p, M.Relative_Focus(frozenset([p]), 0), me).splitlines() == failed
+    with_proof(p, M.READY_CLEAN, Failed(refuted[-1].strip(), "refute"))
+    assert f.render(p, M.Relative_Focus(frozenset([p]), 0), me).splitlines() == refuted
     with_proof(p, M.READY_CLEAN, PROVED, BAD)
     assert f.render(p, M.RECALL, me).splitlines() == bad
 

@@ -192,6 +192,7 @@ class Succeeded:
 @dataclass(frozen=True)
 class Failed:
     message: str
+    kind: str | None = None     # the class's own classification of the failure, opaque to the framework (§3.1)
 
 
 NOT_STARTED = Not_Started()
@@ -202,15 +203,34 @@ Settled = Succeeded | Failed             # what a run returns
 Cancel_Reason = Literal["NODE_DELETED", "NODE_AMENDED", "CONTEXT_CHANGED"]
 
 
+def failed_image(failure: Failed) -> list[Any]:
+    """The `FAILED` row of the store's `job` and `check` rows (ARCHITECTURE
+    §4.1): the tag, the message and the kind, nil when none."""
+    return ["FAILED", failure.message, failure.kind]
+
+
+def failed_of_image(row: Any) -> Failed | None:
+    """The failure a `FAILED` row holds — a row of two elements, written
+    before the kind, holds none —; None for a row of no known shape."""
+    match row:
+        case ["FAILED", str(message)]:
+            return Failed(message)
+        case ["FAILED", str(message), str() | None as kind]:
+            return Failed(message, kind)
+        case _:
+            return None
+
+
 def job_image(outcome: Outcome) -> list[Any]:
     """The store's `job` row (§3.1; ARCHITECTURE §4.1): a tag and an
-    optional value — the product, or the failure's message.  `RUNNING` is
-    written as `NOT_STARTED`, so a loaded forest holds no run."""
+    optional value — the product, or the failure's message and kind.
+    `RUNNING` is written as `NOT_STARTED`, so a loaded forest holds no
+    run."""
     match outcome:
         case Succeeded(product):
             return ["SUCCEEDED", product]
-        case Failed(message):
-            return ["FAILED", message]
+        case Failed():
+            return failed_image(outcome)
         case _:
             return ["NOT_STARTED"]
 
@@ -222,8 +242,8 @@ def job_of_image(row: Any) -> Outcome | None:
             return NOT_STARTED
         case ["SUCCEEDED", product]:
             return Succeeded(product)
-        case ["FAILED", str(message)]:
-            return Failed(message)
+        case ["FAILED", *_]:
+            return failed_of_image(row)
         case _:
             return None
 
@@ -744,8 +764,9 @@ Dropped_By = Literal["status_write", "delete", "amend", "construction_start", "a
 
 def check_image(outcome: Stored_Check) -> list[Any]:
     """The store's `check` row (ARCHITECTURE §4.1): a tag and, for a
-    failure, its message; a node without a stored check has no row."""
-    return ["FAILED", outcome.message] if isinstance(outcome, Failed) else ["PASSED"]
+    failure, its message and kind; a node without a stored check has no
+    row."""
+    return failed_image(outcome) if isinstance(outcome, Failed) else ["PASSED"]
 
 
 def check_of_image(row: Any) -> Stored_Check | None:
@@ -754,8 +775,8 @@ def check_of_image(row: Any) -> Stored_Check | None:
     match row:
         case ["PASSED"]:
             return PASSED
-        case ["FAILED", str(message)]:
-            return Failed(message)
+        case ["FAILED", *_]:
+            return failed_of_image(row)
         case _:
             return None
 

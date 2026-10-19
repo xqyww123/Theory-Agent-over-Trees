@@ -29,7 +29,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, 
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
-from ..exceptions import GRAMMARS, BadEdit, InvalidField, InvalidName
+from ..exceptions import GRAMMARS, BadEdit, InvalidField, InvalidName, TAT_InternalError
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
     CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Location, Node, NodeConfig, NonLeaf_Node, Ready, StdBlock,
@@ -476,6 +476,25 @@ def proof_from_wire(product: Any) -> dict[str, Any]:
     return dict(zip(_PRODUCT, product))
 
 
+REFUTE = "refute"       # AoA's reason for a refutation, the kind of failure with sentences of its own (§3)
+
+
+def construction_from_wire(errors: list[str], product: Any) -> dict[str, Any] | Failed:
+    """What a call of `TAT.Proof_Obligation.construct` reports (§3), from
+    `forked`'s errors and product: the proof, stored, or the failure — the
+    errors joined, or the agent's give-up, its message under AoA's reason
+    as the kind."""
+    if errors:
+        return Failed("\n".join(errors))
+    match product:
+        case ["proof", proof]:
+            return proof_from_wire(proof)
+        case ["gave_up", [str(reason), str(message)]]:
+            return Failed(message, reason)
+        case _:
+            raise TAT_InternalError(f"not a construction's report: {product!r}")
+
+
 class Proof_Job(jobs.Construction_Job):
     """`Proof_Obligation`'s proof construction (§3): one call of AoA's
     standard entry on the goal `goal_state` holds, forked by
@@ -487,22 +506,29 @@ class Proof_Job(jobs.Construction_Job):
     def title(cls, plural=False):
         return "proof constructions" if plural else "proof construction"
 
-    def _failed_assertion(self) -> str | None:
-        """The node's `failed_assertion` (§3) under its shown id."""
+    def _failure_sentence(self, failure: Failed, without_assertion: str) -> str:
+        """§3's sentence over a failure's message, the node by its shown id:
+        the node's `refutation_sentence` when the failure is the agent's
+        refutation and the class has one; else `Failed to prove that
+        <assertion>:` with the node's `failed_assertion`; else
+        `without_assertion`."""
         node = self.node
         assert isinstance(node, With_Proof_Obligations)
-        return node.failed_assertion(self.shown_id)
+        if failure.kind == REFUTE:
+            refutation = node.refutation_sentence(self.shown_id)
+            if refutation is not None:
+                return f"{refutation}:"
+        assertion = node.failed_assertion(self.shown_id)
+        return without_assertion if assertion is None else f"Failed to prove that {assertion}:"
 
     def failure_header(self, failure) -> str | None:
-        assertion = self._failed_assertion()
-        return "No proof was found:" if assertion is None else f"Failed to prove that {assertion}:"
+        return self._failure_sentence(failure, "No proof was found:")
 
     def finished_notification(self, outcome):
         if isinstance(outcome, Succeeded):
             return f"`{self.shown_id}` is proven."
-        assertion = self._failed_assertion()
-        return with_message(f"No proof of `{self.shown_id}` was found:" if assertion is None
-                            else f"Failed to prove that {assertion}:", outcome.message)
+        return with_message(self._failure_sentence(outcome, f"No proof of `{self.shown_id}` was found:"),
+                            outcome.message)
 
     def _check(self):
         """§3's table: a proof is constructed where none stands, or where
@@ -515,11 +541,12 @@ class Proof_Job(jobs.Construction_Job):
     async def _run(self):
         node = self.node
         assert isinstance(node, Proof_Obligation)
-        errors, product = await self.forked("TAT.Proof_Obligation.construct", (node.goal_state.to_msgpack(), NO_SETUP))
-        if errors:
-            return Failed("\n".join(errors))
+        construction = construction_from_wire(
+            *await self.forked("TAT.Proof_Obligation.construct", (node.goal_state.to_msgpack(), NO_SETUP)))
+        if isinstance(construction, Failed):
+            return construction
         node.attach_evaluation_job(Proof_Check.passed(node))
-        return Succeeded(proof_from_wire(product))
+        return Succeeded(construction)
 
 
 class Proof_Check(jobs.Evaluation_Job):
@@ -658,9 +685,17 @@ class With_Proof_Obligations(Node):
         """What the construction that failed was to prove, the clause after
         `Failed to prove that` in `Proof_Job`'s two failure sentences (§3),
         the node named by `shown_id`; None, the default, names nothing and
-        leaves the sentences `No proof was found`.  `Define`'s names the
-        failed obligation (DEFINE.md §7), `Typedef`'s its set (TYPEDEF.md
-        §7)."""
+        leaves the sentences `No proof was found`.  `Theorem` keeps the
+        default; `Define`'s names the failed obligation (DEFINE.md §7), the
+        other classes that define name what theirs proves."""
+        return None
+
+    def refutation_sentence(self, shown_id: str) -> str | None:
+        """The sentence `Proof_Job`'s two failure sentences become when the
+        agent refuted the obligation (§3), the node named by `shown_id` —
+        what may fail, without the colon: `` Function `definition_sum_upto`
+        may not terminate ``; None, the default, leaves them as for any
+        failure."""
         return None
 
     def _carries_job_from(self, old):

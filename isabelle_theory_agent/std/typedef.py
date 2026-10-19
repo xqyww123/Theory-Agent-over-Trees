@@ -160,6 +160,10 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         """§7: what the failure block and the notification say was not proved."""
         return f"`{shown_id}`'s definitional set is non-empty"
 
+    def refutation_sentence(self, shown_id):
+        """§7: what they say when the agent refuted it."""
+        return f"`{shown_id}`'s definitional set may be empty"
+
     # --- what it prints (§8) and emission (§5)
 
     def _definition(self, keywords: Container[str]) -> tuple[str, str | None]:
