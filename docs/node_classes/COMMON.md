@@ -283,8 +283,9 @@ text —, or the agent's give-up: AoA's reason, `refute`, `surrender`,
 `resource_exhausted`, `resource_unavailable` or `technical_failure`,
 and the message the failure block prints under its header — for a
 refutation or a surrender the agent's own words, AoA's `detail`; for
-the other three the `aoa` method's rendering: AoA's banner over the
-`detail`, the banner alone when the `detail` is empty. A give-up
+the other three the `aoa` method's rendering, AoA's `give_up_message`:
+the banner over the `detail`, the banner alone when the `detail` is
+empty. A give-up
 settles the run `FAILED` with the message and the reason as the
 failure's kind (CONSTRUCT_INTERACTION §3.1); the engine's own failure,
 the error the `hammer_or_aoa` method renders it as, is the report's

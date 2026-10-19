@@ -107,10 +107,11 @@ val unpack_product = unpackTuple3 (unpackString, unpackInt, unpackInt)
   give-up -- AoA's reason, `refute`, `surrender`, `resource_exhausted`,
   `resource_unavailable` or `technical_failure`, and the message the class
   prints under its header: for a refutation or a surrender the agent's own
-  words, AoA's detail; for the other three the `aoa` method's rendering, AoA's
-  banner over the detail, the banner alone when the detail is empty.  On the
-  wire ["proof", [text, cpu, wall]] or ["gave_up", [reason, message]]*)
-datatype construction = Proof of string * int * int | Gave_Up of string * string
+  words, AoA's detail; for the other three AoA's `give_up_message`, the `aoa`
+  method's rendering -- the banner over the detail, the banner alone when the
+  detail is empty.  On the wire ["proof", [text, cpu, wall]] or
+  ["gave_up", [reason, message]]*)
+datatype construction = Proof of string * int * int | Gave_Up of MiniLang_Agent_AoA.reason * string
 
 fun pack_construction (Proof proof) = packPair (packString, pack_product) ("proof", proof)
   | pack_construction (Gave_Up give_up) =
@@ -119,8 +120,7 @@ fun pack_construction (Proof proof) = packPair (packString, pack_product) ("proo
 fun gave_up (reason, detail) =
   Gave_Up (reason,
     if reason = "refute" orelse reason = "surrender" then detail
-    else if detail = "" then MiniLang_Agent_AoA.banner_of reason
-    else MiniLang_Agent_AoA.banner_of reason ^ "\n" ^ detail)
+    else MiniLang_Agent_AoA.give_up_message reason detail)
 
 (*the goal `goal_state` holds: the Proof.state's context and goal*)
 fun goal_of get =
