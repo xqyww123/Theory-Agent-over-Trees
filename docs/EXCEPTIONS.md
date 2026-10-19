@@ -392,7 +392,7 @@ writes it.
 
 - **Evaluation failure** is a status on the node — `cannot_evaluate`
   (ARCHITECTURE §3.2, §3.3) — or a job's outcome: the construction job's
-  `FAILED(message)`, the evaluation job's `FAILED` (CONSTRUCT_INTERACTION
+  `FAILED`, the evaluation job's `FAILED` (CONSTRUCT_INTERACTION
   §3.1, §3.3), shown as the node's failure block and told once as a
   notification. A failing proof is a normal day at work, not an
   exception.

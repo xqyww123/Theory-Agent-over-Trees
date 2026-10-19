@@ -296,7 +296,7 @@ question is never printed here; the tag on the line sends the agent to `check_co
 the tag `automatic construction` when that setting is on
 (CONSTRUCT_INTERACTION §6). The line
 with a question waiting; a focus in a quickview after a failed proof
-construction, and after one the agent refuted; a node under `recall`
+construction, and after the agent refuted the statement; a node under `recall`
 whose stored proof failed its check:
 
 ```
@@ -312,7 +312,7 @@ whose stored proof failed its check:
 ```
 - lemma_rev_length (valid statement, failed to prove)
   `lemma_rev_length` may not hold:
-    For xs = [a, b], length (rev xs) = 2 while the premise xs ≠ [] holds: the statement fails as stated.
+    For xs = [a, b], rev xs = [b, a] differs from xs while the premise xs ≠ [] holds: the statement fails as stated.
 ```
 
 ```

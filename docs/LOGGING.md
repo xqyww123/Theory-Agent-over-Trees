@@ -163,7 +163,7 @@ A refused edit is a `tool` `result` with its `TAT_Error`.
 | event | level | data |
 | --- | --- | --- |
 | `construction_started` | info | the node, the owner |
-| `construction_settled` | info | the node, the outcome; `FAILED`'s message |
+| `construction_settled` | info | the node, the outcome; `FAILED`'s message and kind |
 | `construction_cancelled` | info | the node, the reason: `NODE_DELETED`, `NODE_AMENDED`, `CONTEXT_CHANGED`, or none for `cancel_construct` and the ending |
 | `evaluation_started` | info | the node, the job's id, the starter |
 | `evaluation_reported` | info | the id, the outcome, the failure the report carried |

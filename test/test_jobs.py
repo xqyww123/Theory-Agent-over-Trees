@@ -1445,9 +1445,10 @@ def test_a_row_of_the_right_tag_but_the_wrong_value_is_refused(field, row, match
 
 # failed_kind_stored, failed_row_of_two
 def test_a_failure_s_kind_is_stored_with_its_message_and_a_row_of_two_holds_none():
-    """§3.1: `FAILED(message, kind)` round-trips through the `job` row
-    `["FAILED", message, kind]`, the kind opaque to the framework; a row of
-    two elements loads as a failure of no kind."""
+    """§3.1, ARCHITECTURE §4.1: `FAILED(message, kind)` round-trips through
+    the `job` row `["FAILED", message, kind]`, the kind read by the
+    framework for nothing; a row of two elements loads as a failure of no
+    kind."""
     async def scenario():
         f, thy, t1, p, q = build(Checked)
         owner = stand_ins.agent(f.conversation)
@@ -1456,7 +1457,8 @@ def test_a_failure_s_kind_is_stored_with_its_message_and_a_row_of_two_holds_none
         await run_to_end(job, owner)
         assert job.outcome == Failed("the agent's words", "refute")
         assert f.store.get(p.identity, "job") == ["FAILED", "the agent's words", "refute"]
-        assert records("construction_settled")[-1] == {"node": P_CHECKED, "outcome": "FAILED", "message": "the agent's words"}
+        assert records("construction_settled")[-1] == {
+            "node": P_CHECKED, "outcome": "FAILED", "message": "the agent's words", "kind": "refute"}
         twin = tm.OneTreeForest(CONN, f.store, KINDS)
         assert twin.sub_nodes[0].sub_nodes[1].job().outcome == Failed("the agent's words", "refute")
         with f.store.transaction():
@@ -1473,10 +1475,10 @@ def test_a_failure_s_kind_is_stored_with_its_message_and_a_row_of_two_holds_none
 def test_an_amend_carries_a_failure_too():
     async def scenario():
         f, thy, t1, p, q = build(Carrying)
-        p.job().outcome = Failed("no proof")
+        p.job().outcome = Failed("no proof", "refute")
         (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}], KINDS))
-        assert p2.job().outcome == Failed("no proof")
-        assert f.store.get(p2.identity, "job") == ["FAILED", "no proof", None]
+        assert p2.job().outcome == Failed("no proof", "refute")                  # the kind with it
+        assert f.store.get(p2.identity, "job") == ["FAILED", "no proof", "refute"]
     run(scenario())
 
 

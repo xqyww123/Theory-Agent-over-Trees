@@ -538,11 +538,15 @@ class Proof_Job(jobs.Construction_Job):
             return True
         return isinstance(self.node.check_outcome(), Failed)
 
+    async def _construct(self, slot: Isar_State_Slot, setup: Construction_Setup = NO_SETUP) -> dict[str, Any] | Failed:
+        """One call of `TAT.Proof_Obligation.construct` (§3) on the goal
+        `slot` holds, under `setup`, and what it reports."""
+        return construction_from_wire(*await self.forked("TAT.Proof_Obligation.construct", (slot.to_msgpack(), setup)))
+
     async def _run(self):
         node = self.node
         assert isinstance(node, Proof_Obligation)
-        construction = construction_from_wire(
-            *await self.forked("TAT.Proof_Obligation.construct", (node.goal_state.to_msgpack(), NO_SETUP)))
+        construction = await self._construct(node.goal_state)
         if isinstance(construction, Failed):
             return construction
         node.attach_evaluation_job(Proof_Check.passed(node))

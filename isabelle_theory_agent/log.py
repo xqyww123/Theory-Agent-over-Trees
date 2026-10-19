@@ -290,7 +290,8 @@ class _Job(_Category):
     def construction_started(self, *, node: Any, owner: str) -> None: ...
 
     @_event("info")
-    def construction_settled(self, *, node: Any, outcome: str, message: str | None = None) -> None: ...
+    def construction_settled(self, *, node: Any, outcome: str, message: str | None = None,
+                             kind: str | None = None) -> None: ...
 
     @_event("info")
     def construction_cancelled(self, *, node: Any,

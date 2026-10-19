@@ -550,7 +550,7 @@ invalidates the rest of the tree and its importers, whose proofs are
 replayed when a walk reaches them.
 
 **The stored check.** The evaluation job's outcome is stored, `PASSED`
-or `FAILED(message)`, `RUNNING` as none (ARCHITECTURE §4.1,
+or `FAILED(message, kind)`, `RUNNING` as none (ARCHITECTURE §4.1,
 CONSTRUCT_INTERACTION §3.3) *(decided)*. It lives on `Node` as one
 framework attribute beside `_last_evaluation_statuses` — its name §7 —
 restored at load from the `check` row and written by `_store_node`. It

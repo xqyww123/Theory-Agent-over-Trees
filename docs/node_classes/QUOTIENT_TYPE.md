@@ -584,7 +584,7 @@ Failed to prove that `quotient_type_fset`'s definitional relation is a partial e
 ```
 
 and, when the agent refuted it, its refutation sentence,
-`refutation_sentence` (COMMON.md §3), with the agent's words after it:
+`refutation_sentence` (COMMON.md §3), with the agent's own words after it:
 
 ```
 `quotient_type_fset`'s definitional relation may not be an equivalence relation:

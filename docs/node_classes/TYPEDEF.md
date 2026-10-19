@@ -391,7 +391,7 @@ Failed to prove that `typedef_dlist`'s definitional set is non-empty:
 ```
 
 and, when the agent refuted it, its refutation sentence,
-`refutation_sentence` (COMMON.md §3), with the agent's words after it:
+`refutation_sentence` (COMMON.md §3), with the agent's own words after it:
 
 ```
 `typedef_dlist`'s definitional set may be empty:

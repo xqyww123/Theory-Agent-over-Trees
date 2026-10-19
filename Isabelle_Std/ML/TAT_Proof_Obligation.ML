@@ -106,10 +106,10 @@ val unpack_product = unpackTuple3 (unpackString, unpackInt, unpackInt)
 (*what the construction reports (COMMON.md §3): the proof, or the agent's
   give-up -- AoA's reason, `refute`, `surrender`, `resource_exhausted`,
   `resource_unavailable` or `technical_failure`, and the message the class
-  prints under its header: the agent's own words for a refutation or a
-  surrender, the `aoa` method's rendering -- AoA's banner over them -- for the
-  other three.  On the wire ["proof", [text, cpu, wall]] or
-  ["gave_up", [reason, message]]*)
+  prints under its header: for a refutation or a surrender the agent's own
+  words, AoA's detail; for the other three the `aoa` method's rendering, AoA's
+  banner over the detail, the banner alone when the detail is empty.  On the
+  wire ["proof", [text, cpu, wall]] or ["gave_up", [reason, message]]*)
 datatype construction = Proof of string * int * int | Gave_Up of string * string
 
 fun pack_construction (Proof proof) = packPair (packString, pack_product) ("proof", proof)
@@ -189,7 +189,7 @@ val _ = Theory.setup (TAT_Framework.register_callback {python_packages = []} (fn
         #fork_job env {id = id, work = fn () =>
           let
             (*the agent's give-up is the construction's; the engine's own
-              failure is the error the `aoa` method renders it as; any other
+              failure is the error `method_error` renders it as; any other
               Auto_Fail is re-raised.  Sync raises them at the call, the join
               joins a value*)
             val construction =

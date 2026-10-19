@@ -144,10 +144,11 @@ depend on every operation of the node — a `Leaf`'s one, or both of a
 exactly when every own operation is.
 
 **The outcome.** The construction job's `outcome` is `NOT_STARTED`,
-`RUNNING`, `SUCCEEDED(product)` or `FAILED(message, kind)` — `kind` the
-class's own classification of the failure, `None` when it gives none,
-opaque to the framework, which stores it with the message and hands it
-back in the `failure` of `failure_header`. `start` sets
+`RUNNING`, `SUCCEEDED(product)` or `FAILED(message, kind)` — `kind` a
+string, the class's own classification of the failure, or `None` when
+it gives none; the framework stores it with the message, hands it back
+in the `failure` of `failure_header`, and reads it for nothing else.
+`start` sets
 `RUNNING`, the run's settlement `SUCCEEDED` or `FAILED`, `cancel`
 `NOT_STARTED`. `product` is the class's, a MessagePack-representable
 value — for `Theorem` the proof: the method text AoA writes to its proof
@@ -157,8 +158,8 @@ also while an evaluation job finds it wanting (`bad proof`), and a new
 `start` replaces the outcome whole.
 
 **The store's image.** The framework persists the outcome in one
-reserved field (one row), `job`, a tag and an optional value — the
-product, or the failure's message — at every
+reserved field (one row), `job` — the product, or the failure's message
+and kind (ARCHITECTURE §4.1) — at every
 change; the value written for
 `RUNNING` is `NOT_STARTED`, so that a loaded forest holds no run
 (ARCHITECTURE §4.1) and a `start` clears a previous failure. That value —
@@ -287,11 +288,11 @@ the instance, does the work, and writes the outcome.
 | member | who | what |
 | --- | --- | --- |
 | `__init__(node, starter)` | base | sets `node`, `starter` (`None` when never started), `id` (the framework's counter, unique across the process, for matching the ML report) and `outcome = RUNNING` |
-| `outcome` | the class writes, the framework reads | `RUNNING`, `PASSED`, `FAILED(message)`. A settled outcome is also kept on the node, as the **stored check**: a framework attribute beside the node's stored statuses, persisted in the reserved field `check` and restored at load (ARCHITECTURE §4.1, COMPILATION.md §4). It is written when the `finished` report's body, or an attach applied at a run's settlement, settles the job, and each such step stores the node in a transaction of its own. It is cleared exactly when the stored status of an operation the node's jobs depend on (§3.1) leaves `Ready` — in the status setter —, when a construction job starts on the node, and when another evaluation job is attached in its place; a rerun that confirms `Ready` over `Ready` does not clear it, whatever its messages, nor does a drop by itself, nor the conversation's ending, nor a write of an operation the jobs do not depend on. `Node.check_outcome()` is its one accessor: `RUNNING` while a running evaluation job is on the node, the stored check otherwise; every reader goes through it — `_unfinished()` (§3.1), emission, a class's mark and `_check()`, the failure blocks and the summary of §6. A loaded forest re-attaches no job |
+| `outcome` | the class writes, the framework reads | `RUNNING`, `PASSED`, `FAILED(message, kind)`. A settled outcome is also kept on the node, as the **stored check**: a framework attribute beside the node's stored statuses, persisted in the reserved field `check` and restored at load (ARCHITECTURE §4.1, COMPILATION.md §4). It is written when the `finished` report's body, or an attach applied at a run's settlement, settles the job, and each such step stores the node in a transaction of its own. It is cleared exactly when the stored status of an operation the node's jobs depend on (§3.1) leaves `Ready` — in the status setter —, when a construction job starts on the node, and when another evaluation job is attached in its place; a rerun that confirms `Ready` over `Ready` does not clear it, whatever its messages, nor does a drop by itself, nor the conversation's ending, nor a write of an operation the jobs do not depend on. `Node.check_outcome()` is its one accessor: `RUNNING` while a running evaluation job is on the node, the stored check otherwise; every reader goes through it — `_unfinished()` (§3.1), emission, a class's mark and `_check()`, the failure blocks and the summary of §6. A loaded forest re-attaches no job |
 | `title(plural=False)` | class method, abstract | the words for the work |
 | `make(node, starter) -> Self` | class method, synchronous, default `cls(node, starter)` | builds the instance and begins nothing; a class whose constructor takes more overrides it; what a class needs from Isabelle to set its job up it fetches in `_start` |
 | `_start()` | hook, async, abstract | begins the work through the class's own ML callback, passing `self.id`, and returns at once; called by the framework once the job is on its node |
-| `_finished(errors)` | hook, default given | called by the framework on the ML report, synchronously, under no lock; default: `PASSED` on no errors, else `FAILED` with the errors joined by newlines |
+| `_finished(errors)` | hook, default given | called by the framework on the ML report, synchronously, under no lock; default: `PASSED` on no errors, else `FAILED` with the errors joined by newlines and no kind |
 | `failure_header(failure)` | class method, abstract | the header of its failure block (§6), printed from a `FAILED` check's outcome whether or not a job is on the node; `None` prints nothing |
 | `failure_notification(ids, automatic)` | class, abstract | the sentence its failure sends (§3.4) for the nodes these ids name, in their shortest form — one, two or three, or more, in the forms of §5 — `automatic` saying that the failure started their construction |
 

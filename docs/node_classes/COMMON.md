@@ -151,7 +151,7 @@ current context, and which the file carries as `by aoa`. What
 
 **The product.** `proof` is the construction job's outcome
 (CONSTRUCT_INTERACTION §3.1): `NOT_STARTED`, `RUNNING`,
-`SUCCEEDED(product)` or `FAILED(message)`, `product` being the proof:
+`SUCCEEDED(product)` or `FAILED(message, kind)`, `product` being the proof:
 the method text AoA answers, such as `(simp add: …)`, `aoa_replay "…"`
 or, on a goal with no subgoal, `-` (above), with the two times of its
 replay — the thread's
@@ -281,13 +281,14 @@ store's standard-machine form (the product above), which
 `hammer_or_AoA'`, the entry beside `hammer_or_AoA`, returns beside the
 text —, or the agent's give-up: AoA's reason, `refute`, `surrender`,
 `resource_exhausted`, `resource_unavailable` or `technical_failure`,
-and the message the failure block prints under its header — the agent's
-own words for a refutation or a surrender, the `aoa` method's
-rendering, AoA's banner over them, for the other three. A give-up
+and the message the failure block prints under its header — for a
+refutation or a surrender the agent's own words, AoA's `detail`; for
+the other three the `aoa` method's rendering: AoA's banner over the
+`detail`, the banner alone when the `detail` is empty. A give-up
 settles the run `FAILED` with the message and the reason as the
 failure's kind (CONSTRUCT_INTERACTION §3.1); the engine's own failure,
-the error the `aoa` method renders it as, is the report's error and
-settles it `FAILED` with no kind. A run waiting
+the error the `hammer_or_aoa` method renders it as, is the report's
+error and settles it `FAILED` with no kind. A run waiting
 for its turn under the framework's bound on runs (CONSTRUCT_INTERACTION
 §3.2) is `RUNNING`, and shows as any running one, `proving`. AoA's Python half, the remote
 procedure `IsaMini.AoA`, is served by TAT's own process — the plugin's
@@ -337,8 +338,8 @@ sentences in their first form. The refutation sentence is the hook
 `refutation_sentence(shown_id)` — what may fail, read when the
 failure's kind is `refute` —, `None` by default, which leaves a
 refutation's sentences those of any failure. `Theorem` names no
-assertion and the refutation sentence `` `theory_X.lemma_P` may not
-hold `` (THEOREM.md §7); the classes that define name both: `Define`
+assertion, and its refutation sentence is `` `theory_X.lemma_P` may
+not hold `` (THEOREM.md §7); the classes that define name both: `Define`
 for the failed obligation (DEFINE.md §7), `Typedef` for its set
 (TYPEDEF.md §7), `QuotientType` for its relation (QUOTIENT_TYPE.md §7),
 `LiftDefinition` for its term (LIFT_DEFINITION.md §7).
@@ -425,7 +426,9 @@ true to have the old job's image copied, the replay times with it
 `With_Proof_Obligations` answers with `old.goal_structure() ==
 self.goal_structure()`; a class may override the answer, saying in its
 own document why its goal is not decided by those fields alone. No
-class's `gen` reads the replaced node for it. `Theorem`'s is its
+class's `gen` reads the replaced node for it; `Define`'s reads it for
+`failed_obligation`, which goes with the outcome, under the same
+question (DEFINE.md §7). `Theorem`'s is its
 statement, names included (THEOREM.md §4); `Typedef`'s is
 `type_parameters` and `set` (TYPEDEF.md §4); `LiftDefinition`'s is
 `type` and `is` (LIFT_DEFINITION.md §4).

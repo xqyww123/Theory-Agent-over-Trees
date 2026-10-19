@@ -593,7 +593,7 @@ Failed to prove that `lift_definition_dl_rev`'s defining term respects the repre
 ```
 
 and, when the agent refuted it, its refutation sentence,
-`refutation_sentence` (COMMON.md §3), with the agent's words after it:
+`refutation_sentence` (COMMON.md §3), with the agent's own words after it:
 
 ```
 `lift_definition_dl_rev`'s defining term may not respect the representation:

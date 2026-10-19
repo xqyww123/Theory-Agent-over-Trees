@@ -56,7 +56,7 @@ is updated with this document).
 | `form` | `definition` \| `function (sequential, no_partials)` \| `function`, or none until an evaluation has recorded one: the command the definition is made with — decided by the first evaluation that goes through and run again as recorded by every later one (§6); stored, since the commands are written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equations` is. The file writes `fun` for `function (sequential, no_partials)` when no obligation is open (§5) | recorded |
 | `completeness_method` | `str \| None`: under `form = function (sequential, no_partials)` or `function`, the method text that closed the pattern-completeness goal when the evaluation closed it by itself (§6), `None` when the goal stands open and its proof is the construction job's; `None` under `definition` | recorded |
 | `termination_method` | `str \| None`: the same for the termination goal | recorded |
-| `failed_obligation` | `pattern_completeness` \| `termination` \| `None`: the obligation the last proof construction did not prove, for the construction's sentences (§7); `None` until a run fails, and again when one succeeds; stored | recorded by the construction |
+| `failed_obligation` | `pattern_completeness` \| `termination` \| `None`: the obligation the last proof construction did not prove, for the construction's sentences (§7); `None` until a run fails, and again when one succeeds; carried by an amend with the outcome (§7); stored | recorded by the construction |
 
 What the last evaluation reported travels on the status the evaluation
 hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
@@ -475,7 +475,7 @@ of the run's fork; each call is what `Proof_Job`'s one call is — AoA's
 AoA's own path, the driver and the budget Isabelle's configuration —
 under the setup's task, with its declarations added to the goal's proof
 context before the call. A call that fails ends the run: the outcome is
-`FAILED` with AoA's message, the node recording which obligation failed,
+the call's failure, its message and kind (COMMON.md §3), the node recording which obligation failed,
 `failed_obligation` (§1), for the job's sentences (below), and the
 proofs of the obligations before it are not kept, which costs nothing
 on the next run, since AoA's store serves them back without a search.
@@ -596,12 +596,14 @@ that <assertion>:` with AoA's message after it; the assertion is
 `definition_sum_upto` terminates `` or `` `definition_sum_upto`'s
 definitional equations cover every argument ``. When the agent refuted
 the obligation both read its refutation sentence,
-`refutation_sentence(shown_id)`, with the agent's words after it: ``
+`refutation_sentence(shown_id)`, with the agent's own words after it: ``
 Function `definition_sum_upto` may not terminate: `` or ``
 `definition_sum_upto`'s definitional equations may not cover every
-argument: ``. A `FAILED` outcome an
-amend carried onto a node that records no `failed_obligation` reads
-`Proof_Job`'s sentences. The
+argument: ``. An amend whose commit carries the outcome carries
+`failed_obligation` with it: `gen` reads the replaced node for it under
+the commit's own question, `_carries_job_from` (COMMON.md §3). A
+`FAILED` outcome on a node that records no `failed_obligation` — stored
+before the carry — reads `Proof_Job`'s sentences. The
 success notification and the titles are `Proof_Job`'s. The failure
 block stands only while the failure is still owed: `failure_header` is
 `None`, and nothing is printed, once an evaluation has recorded a `form`

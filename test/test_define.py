@@ -177,19 +177,26 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proofs():
                     definition() | {"constants": [{"name": "sum_upto", "type": "nat ⇒ nat ⇒ nat",
                                                    "syntax": {"form": "infixl", "symbol": "⊕", "priority": 65}}]}):
         x.sub_nodes[0].job().outcome = PROVED
+        x.sub_nodes[0].failed_obligation = TERMINATION
         (p3,) = run(locked(f, edit.amend(x.sub_nodes[0], [changed], KINDS)))
-        assert p3.job().outcome is NOT_STARTED, changed
+        assert p3.job().outcome is NOT_STARTED and p3.failed_obligation is None, changed    # neither carried
     inv(f)
-    # the replacement records nothing (§6; COMMON §5): the carried failure reads `Proof_Job`'s header
+    # the replacement records nothing else (§6; COMMON §5): `failed_obligation` goes with the carried failure, so
+    # its sentences — the refutation sentence too — read as before the amend
     f, x = forest(SUM_UPTO, lemma("P"))
     p, l = x.sub_nodes
     evaluated(p, SEQUENTIAL, "pat_completeness auto", None)
     p.failed_obligation = TERMINATION
-    with_proof(p, M.READY_CLEAN, Failed("gave up"))
+    with_proof(p, M.READY_CLEAN, Failed("gave up", "refute"))
     (p2,) = run(locked(f, edit.amend(p, [definition(english="The naturals from i to N, summed")], KINDS)))
-    assert p2.job().outcome == Failed("gave up") and p2.check_outcome() is None
-    assert (p2.form, p2.completeness_method, p2.termination_method, p2.failed_obligation) == (None, None, None, None)
+    assert p2.job().outcome == Failed("gave up", "refute") and p2.check_outcome() is None
+    assert (p2.form, p2.completeness_method, p2.termination_method, p2.failed_obligation) == (None, None, None, TERMINATION)
     assert p2.message()[3] is None and p2.open_obligations() == ()
+    assert p2.job().failure_header(p2.job().outcome) == "Function `definition_sum_upto` may not terminate:"
+    assert p2.job().failure_header(Failed("gave up")) == "Failed to prove that function `definition_sum_upto` terminates:"
+    assert f.store.get(p2.identity, "failed_obligation") == TERMINATION
+    # a node stored before the carry, its failure naming no obligation: `Proof_Job`'s header
+    p2.failed_obligation = None
     assert p2.job().failure_header(Failed("gave up")) == l.job().failure_header(Failed("gave up"))
     inv(f)
 
@@ -438,10 +445,11 @@ def test_check_answers_common_section_3_s_table_and_no_open_obligation():
 
 def test_the_jobs_sentences_are_section_7_s():
     """§7: the construction's failure header and notification name the
-    failed obligation, the node by its id, the same sentence in both;
-    without a recorded obligation they are `Proof_Job`'s — a `Theorem`'s
-    job's, the id aside; the success notification and the titles are
-    `Proof_Job`'s; the check's are `Proof_Check`'s."""
+    failed obligation, the node by its id, the same sentence in both, the
+    refutation sentence for the agent's refutation; without a recorded
+    obligation they are `Proof_Job`'s plain forms, a refutation's too; the
+    success notification and the titles are `Proof_Job`'s; the check's are
+    `Proof_Check`'s."""
     f, x = forest(SUM_UPTO, EVEN_ODD, lemma("P"))
     p, q, l = x.sub_nodes
     job, qjob, ljob = p.job(), q.job(), l.job()
@@ -469,6 +477,8 @@ def test_the_jobs_sentences_are_section_7_s():
     p.failed_obligation = PATTERN_COMPLETENESS
     assert job.failure_header(Failed("", "refute")) == (
         "`definition_sum_upto`'s definitional equations may not cover every argument:")
+    assert job.finished_notification(Failed("", "refute")) == (          # an empty message: a period, nothing below
+        "`definition_sum_upto`'s definitional equations may not cover every argument.")
     assert qjob.finished_notification(Failed("x", "resource_exhausted")) == (
         "Failed to prove that `definition_even_and_odd`'s definitional equations cover every argument:\n  x")
     p.failed_obligation = None
@@ -523,7 +533,7 @@ def test_a_construction_failure_block_stands_only_while_the_obligation_it_names_
     assert f.render(p, focus, me).splitlines() == [
         "- definition_sum_upto (unverified definition, failed to prove)",
         "  The definition is unverified until pattern completeness is proven."]
-    # a carried failure names no obligation: `Proof_Job`'s header while any is open, none when none is
+    # a failure naming no obligation, a node stored before the carry: `Proof_Job`'s header while any is open, none when none is
     p.failed_obligation = None
     assert p.job().failure_header(failure) == "No proof was found:"
     evaluated(p, *FUN)
@@ -963,10 +973,14 @@ async def test_the_agents_give_up_settles_the_construction_failed_of_its_reasons
     `resource_exhausted`, no detail — and the construction settles `FAILED`
     of that kind, AoA's banner alone the message, stored beside it; the
     notification and the failure block read `Failed to prove that function
-    `definition_sum_upto` terminates:` over the banner."""
+    `definition_sum_from` terminates:` over the banner.  The function is
+    `sum_upto` under another name: AoA's proof store, one per run of the
+    suite, holds the proof the case before this one found for `sum_upto`'s
+    goal, and would answer it here before any agent runs."""
     from IsaMini.AoA import test as aoa_test
     from harness import until
     seen: dict = {}
+    sum_from = definition("sum_from", ("sum_from i N = (if N < i then 0 else i + sum_from (Suc i) N)",))
 
     async def script(root, file):
         seen["task"] = type(root.session.task)           # the agent was reached, and proved nothing
@@ -988,24 +1002,24 @@ async def test_the_agents_give_up_settles_the_construction_failed_of_its_reasons
                 result = await session.call_tool("edit", {
                     "action": "append", "target_id": "Sessions", "evaluate": True,
                     "constructs": [ts.session("TAT_Suite", ts.theory("TAT_Std_A", "Main", "Theory_Agent_over_Trees.TAT_Define_Helper")
-                                              | {"children": [SUM_UPTO]})]})
+                                              | {"children": [sum_from]})]})
                 assert not result.isError, text_of(result)
                 (s,) = forest.sub_nodes
                 (x,) = s.sub_nodes
                 (p,) = x.sub_nodes
-                result = await session.call_tool("construct", {"node_ids": ["definition_sum_upto"]})
+                result = await session.call_tool("construct", {"node_ids": ["definition_sum_from"]})
                 assert not result.isError, text_of(result)
                 job = p.job()
                 await until(lambda: job.outcome is not RUNNING, "the proof construction's outcome", 600.0)
-                assert seen["task"] is Termination_Task
+                assert seen.get("task") is Termination_Task, (seen, job.outcome)
                 assert job.outcome == Failed(banner, "resource_exhausted"), job.outcome
                 assert p.failed_obligation == TERMINATION and p.check_outcome() is None
                 assert p.mark(M.BRIEFING, 0) == "unverified definition, failed to prove"
                 assert forest.store.get(p.identity, "job") == ["FAILED", banner, "resource_exhausted"]
                 result = await session.call_tool("check_construct", {})
-                assert f"Failed to prove that function `definition_sum_upto` terminates:\n  {banner}" in text_of(result), text_of(result)
-                result = await session.call_tool("recall", {"node_id": "definition_sum_upto"})
+                assert f"Failed to prove that function `definition_sum_from` terminates:\n  {banner}" in text_of(result), text_of(result)
+                result = await session.call_tool("recall", {"node_id": "definition_sum_from"})
                 assert [line for line in text_of(result).splitlines() if "Failed to prove" in line or banner in line] == [
-                    "  Failed to prove that function `definition_sum_upto` terminates:", f"    {banner}"], text_of(result)
+                    "  Failed to prove that function `definition_sum_from` terminates:", f"    {banner}"], text_of(result)
     finally:
         aoa_test.TESTS.pop("tat_define_termination", None)

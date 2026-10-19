@@ -23,7 +23,7 @@ from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, emit_lines
 from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, Construction_Setup, Mixfix, Mixfix_RawAST, Proof_Check, Proof_Job, Theory_Member,
-    With_Proof_Obligations, check_not_bound_twice, construction_from_wire, mixfix_of, mixfix_text, mixfix_wire, normalised,
+    With_Proof_Obligations, check_not_bound_twice, mixfix_of, mixfix_text, mixfix_wire, normalised,
     proof_wire, require_id_name, text_line, unverified)
 
 KINDS = ("definition",)
@@ -188,9 +188,7 @@ class Define_Proof_Job(Proof_Job):
         assert isinstance(node, Define)
         proofs: dict[str, Any] = {}
         for obligation in node.open_obligations():
-            construction = construction_from_wire(*await self.forked(
-                "TAT.Proof_Obligation.construct",
-                (node.slot_of(obligation).to_msgpack(), node.construction_setup(obligation))))
+            construction = await self._construct(node.slot_of(obligation), node.construction_setup(obligation))
             if isinstance(construction, Failed):
                 node.failed_obligation = obligation
                 return construction
@@ -286,15 +284,21 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
     @classmethod
     async def gen(cls, config, raw: Define_RawAST):
         """§4's checks in its order: the parent; each constant's name against
-        §1's grammar, no two the same; the texts normalised."""
+        §1's grammar, no two the same; the texts normalised.  On an amend,
+        `failed_obligation` comes from the replaced node exactly when the
+        commit carries its outcome (§7), the two answering one question."""
         cls.require_inside_theory(config, raw["kind"])
         constants: list[Constant] = []
         for i, c in enumerate(raw["constants"]):
             require_id_name(c["name"], "constant name")
             check_not_bound_twice(c["name"], f"constants[{i}].name", [x.name for x in constants])
             constants.append(Constant.of_image(c))
-        return cls(config.parent, config.state, normalised(raw["english"]), tuple(constants),
+        node = cls(config.parent, config.state, normalised(raw["english"]), tuple(constants),
                    tuple(IsaTerm.from_agent(normalised(e)) for e in raw["equations"]), raw["auto_reduction"])
+        old = config.replaces()
+        if isinstance(old, Define) and node._carries_job_from(old):
+            node.failed_obligation = old.failed_obligation
+        return node
 
     # --- the store (§1): the authored fields in the `unicode` spelling, the construct's shape, and the recorded
     #     ones; every row read with `get`, so that a missing one is refused at start

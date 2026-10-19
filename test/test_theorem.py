@@ -22,7 +22,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
 from harness import text_of, until
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, model as M, plugin
-from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError, TAT_InternalError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, statement, theorem
 from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Check, Proof_Job, Proof_Obligation
@@ -311,6 +311,39 @@ def test_the_jobs_sentences_are_common_section_3_s():
     assert passed.outcome is PASSED and passed.starter is None and passed.node is p
 
 
+def test_the_construction_reads_the_report_and_keeps_a_give_ups_kind():
+    """COMMON §3: `Proof_Job._run` calls `TAT.Proof_Obligation.construct`
+    with the goal slot and the empty setup; the report's errors are the
+    failure's message, of no kind, nothing attached; the agent's give-up
+    the failure of its reason's kind, so that the header reads the
+    refutation sentence; the proof the product, a `PASSED` check attached."""
+    f, x = forest(lemma("p"))
+    (p,) = x.sub_nodes
+    job = p.job()
+    calls, report = [], {}
+
+    async def forked(name, args):
+        calls.append((name, args))
+        return report["value"]
+    job.forked = forked
+    report["value"] = (["e1", "e2"], None)
+    assert run(job._run()) == Failed("e1\ne2") and p.check_outcome() is None
+    assert calls == [("TAT.Proof_Obligation.construct", (p.goal_state.to_msgpack(), common.NO_SETUP))]
+    report["value"] = ([], ["gave_up", ["refute", "w"]])              # the lists msgpack delivers
+    outcome = run(job._run())
+    assert outcome == Failed("w", "refute") and p.check_outcome() is None
+    assert job.failure_header(outcome) == f"`{f.id_of(p)}` may not hold:"
+    report["value"] = ([], ["proof", ["by simp", 1, 2]])
+    assert run(job._run()) == Succeeded({"text": "by simp", "thread_cpu": 1, "wall": 2})
+    assert p.check_outcome() is PASSED
+
+
+@pytest.mark.parametrize("product", [("bogus",), ["gave_up", ["refute"]], ["gave_up", ["refute", 3]], ["proof"], None])
+def test_a_construction_report_of_no_known_shape_is_a_bug(product):
+    with pytest.raises(TAT_InternalError, match="not a construction's report"):
+        common.construction_from_wire([], product)
+
+
 def test_check_answers_common_section_3_s_table():
     """`_check()`: true with no proof — `NOT_STARTED` or `FAILED`; on a
     proof, true only when its check `FAILED`; `can_start()` false off
@@ -334,8 +367,8 @@ def test_check_answers_common_section_3_s_table():
 def test_what_it_prints_with_a_job_is_section_8_s_four_examples():
     """§8's examples: the line with a question waiting, for the owner; a
     focus after a failed proof construction, the failure block below,
-    and after one the agent refuted, the refutation sentence over the
-    agent's words; a node under `recall` whose stored proof failed its
+    and after the agent refuted the statement, the refutation sentence
+    over the agent's own words; a node under `recall` whose stored proof failed its
     check, the header alone with a period — the document's blocks
     verbatim."""
     [_, asking, failed, refuted, bad] = fenced_blocks(TH, "8.")

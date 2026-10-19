@@ -222,10 +222,9 @@ def failed_of_image(row: Any) -> Failed | None:
 
 
 def job_image(outcome: Outcome) -> list[Any]:
-    """The store's `job` row (§3.1; ARCHITECTURE §4.1): a tag and an
-    optional value — the product, or the failure's message and kind.
-    `RUNNING` is written as `NOT_STARTED`, so a loaded forest holds no
-    run."""
+    """The store's `job` row (§3.1; ARCHITECTURE §4.1): a tag and, after
+    it, the product, or the failure's message and kind.  `RUNNING` is
+    written as `NOT_STARTED`, so a loaded forest holds no run."""
     match outcome:
         case Succeeded(product):
             return ["SUCCEEDED", product]
@@ -564,8 +563,10 @@ class Construction_Job(ABC):
         if run.attach is not None:
             self.node._attach_now(run.attach)
         self._store()
+        failure = outcome if isinstance(outcome, Failed) else None
         self._log.construction_settled(node=self.node_id, outcome=job_image(outcome)[0],
-                                       message=outcome.message if isinstance(outcome, Failed) else None)
+                                       message=failure.message if failure else None,
+                                       kind=failure.kind if failure else None)
         post(self._log_of_conversation, Message(self._owned_by(), self.finished_notification(outcome),
                                                 interrupts=True))
 

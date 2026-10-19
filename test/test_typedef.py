@@ -317,7 +317,8 @@ def test_the_recorded_lifting_reaches_the_store_and_the_mirror_catches_an_emit_o
 
 def test_the_jobs_sentences_name_the_set():
     """§7: the construction's failure header and its failure notification
-    both read the document's sentence, the node by its id; the success
+    both read the document's sentence, the node by its id; the agent's
+    refutation reads the refutation sentence in both; the success
     notification is `Proof_Job`'s."""
     [failed, refuted, _, _] = fenced_blocks(TD, "7.")
     f, x = forest(DLIST)
@@ -338,7 +339,7 @@ def test_the_mark_reads_one_of_eleven_ways_and_the_owing_line_stands_while_unver
     """§7's mark, state by state — COMMON §3's table with the three words of
     a class that defines: `valid definition` alone once the proof stands,
     `unverified definition` with the proof's word before; the eleven, and
-    no other, are the document's second block; the owing line, its third,
+    no other, are the document's third block; the owing line, its fourth,
     exactly while the line reads `unverified definition`."""
     [_, _, block, state] = fenced_blocks(TD, "7.")
     assert [OWING_LINE] == state
