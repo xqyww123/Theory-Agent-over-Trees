@@ -297,11 +297,17 @@ def _type_variables(ascii: str) -> set[str]:
     maximal run of identifier symbols — a letter or letter symbol, a
     digit, an underscore, a prime, a subscript — that starts with a prime
     and continues as an identifier, so `'a` is one and `'ab`, `'a⇩1` and
-    `x'a` are not it."""
+    `x'a` are not it; taken outside cartouches, since Isabelle's lexer
+    reads a cartouche, and so an inner comment's body, as no part of the
+    type."""
     found: set[str] = set()
-    run = ""
+    run, depth = "", 0
     for symbol in [*symbol_explode(ascii), " "]:
-        if is_identifier(symbol) or symbol in "0123456789_'" or symbol == "\\<^sub>":
+        if symbol == "\\<open>":
+            depth += 1
+        elif symbol == "\\<close>":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and (is_identifier(symbol) or symbol in "0123456789_'" or symbol == "\\<^sub>"):
             run += symbol
             continue
         if run.startswith("'") and is_identifier(run[1:]):

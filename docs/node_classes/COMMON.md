@@ -701,7 +701,7 @@ t (infixr "+" 10)`. And the check that every declared type parameter is
 used, for every class that declares type parameters (`Datatype`,
 `Record`, `Typedef`, `QuotientType`): a lexical scan of the class's
 Isabelle text in `ascii` — a datatype's constructor argument types, a
-record's field types, a typedef's set, a quotient type's
+record's field types and its `parent`, a typedef's set, a quotient type's
 `representation_type` — for type-variable tokens, the first parameter
 not found refused on its path with the one `InvalidField` sentence,
 pinned here:

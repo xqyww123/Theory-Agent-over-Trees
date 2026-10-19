@@ -415,10 +415,16 @@ def test_the_unused_type_parameter_check_renders_section_4_s_sentence():
     with pytest.raises(InvalidField) as e:
         common.check_type_parameters_used(of([{"name": "'a"}, {"name": "'b"}]), texts("nat"))
     assert e.value.field == "type_parameters[0]"
-    for text in ("'ab", "'a1", "'a'", "'a⇩1", "x'a", "'A", ""):
+    for text in ("'ab", "'a1", "'a'", "'a⇩1", "x'a", "'A", "",
+                 "nat ― ‹'a›", "nat ― ‹of ‹'a››", "\\<^cancel>‹'a› nat"):       # inside a cartouche: no part of the type
         with pytest.raises(InvalidField) as e:
             common.check_type_parameters_used(of([{"name": "'a"}]), texts(text))
         assert e.value.field == "type_parameters[0]", text
+    with pytest.raises(InvalidField) as e:
+        common.check_type_parameters_used(of([{"name": "'a"}, {"name": "'b"}]), texts("'a ― ‹of 'b›"))
+    assert e.value.field == "type_parameters[1]"
+    for text in ("'a ― ‹a comment› list", "‹x› ⇒ 'a", "‹‹x›› 'a"):         # outside a cartouche, before or after one
+        common.check_type_parameters_used(of([{"name": "'a"}]), texts(text))
     for text in ("'a", "'a list", "nat ⇒ 'a", "'a⇒'b", "('a, 'b) t", "'b ⇒ 'a⇩1 ⇒ 'a", "{x :: 'a. x = x}"):
         common.check_type_parameters_used(of([{"name": "'a"}]), texts(text))
     common.check_type_parameters_used(of([{"name": "'α", "sort": "linorder"}, {"name": "'x⇩1"}]), texts("'α ⇒ 'x⇩1"))

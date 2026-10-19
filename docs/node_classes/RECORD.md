@@ -1,6 +1,9 @@
 # The `Record` node class
 
-Status: proposed 2026-10-13; under review.
+Status: proposed 2026-10-13; committed b34cf79; revised and its Python
+half implemented, 689a2c2; revised 2026-10-19 after an adversarial
+review and the owner's rulings (ai-artifacts/RECORD_HANDOFF.md names
+the review's run); the ML half waiting for the localized record port.
 
 A `Record` defines a record type — a type whose values are tuples of
 named fields — by its name, its type parameters, its fields and, when
@@ -28,6 +31,10 @@ One kind, `record`, which heads the id component: `record_point`.
 | `parent` | `IsaTerm`, the record this one extends, an Isabelle type; optional (§2) | authored |
 | `fields` | the fields added, at least one (§2), each its `name` and its `type`, `IsaTerm`s | authored |
 
+`parent` left out is stored as a None-valued row, so that every row of
+the class is read with `rows.get` and any row missing is refused at
+start.
+
 What the last evaluation reported travels on the status the evaluation
 hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
 (messages)` when the definition failed, `Ready` with no messages when
@@ -47,8 +54,8 @@ when it extends one, its parent record, an Isabelle type:
 {
   "kind": "record",
   "english": "A point in the plane",
-  "type_name": "point",
   "type_parameters": [{"name": "'a"}],
+  "type_name": "point",
   "fields": [
     {"name": "xcoord", "type": "'a"},
     {"name": "ycoord", "type": "'a"}]
@@ -56,11 +63,16 @@ when it extends one, its parent record, an Isabelle type:
 ```
 
 A record extending it names it as `parent` — `"parent": "'a point"` —,
-its `fields` the ones added. `kind`, `english`, `type_name` and
+its `fields` the ones added. A bare type constructor name as `parent`
+— `point` — is read as the parent applied to the record's type
+parameters in their order, `('a, 'b) point`, `point` itself when there
+are none: the node keeps the text as authored, and printing, emission
+and evaluation use the applied form; the schema says nothing of it.
+`kind`, `english`, `type_name` and
 `fields` are required, and in a field `name` and `type`;
 `type_parameters` is optional and empty when left out, `parent` and a
-parameter's `sort` optional and absent when left out; an empty `sort`
-is no sort. An empty `fields` is refused by the framework's check of
+parameter's `sort` optional and absent when left out; an empty
+`parent` is no parent and an empty `sort` no sort. An empty `fields` is refused by the framework's check of
 the construct, `must not be empty` (MODULE_STRUCTURE §4.4). `gen`
 normalises every piece of Isabelle text and `english` once, when the
 construct is accepted: newlines become spaces and runs of whitespace
@@ -79,13 +91,13 @@ The class's construct schema:
 {
   "type": "object",
   "properties": {
-    "kind":            { "type": "string", "enum": ["record"] },
+    "kind":            { "const": "record" },
     "english":         { "type": "string", "description": "what is defined, in English, as LaTeX text" },
-    "type_name":       { "type": "string" },
     "type_parameters": { "type": "array", "items": { "$ref": "#/$defs/TypeParameter" },
                          "description": "the type's parameters; sorts are usually not specified" },
+    "type_name":       { "type": "string" },
     "parent":          { "type": "string",
-                         "description": "the parent record this one extends. The resulting record includes the parent's fields and the ones added here." },
+                         "description": "the parent record this one extends. The resulting record includes the parent's fields and the ones added here. Example: 'a point; the type arguments are required" },
     "fields":          { "type": "array", "minItems": 1,
       "items": {
         "type": "object",
@@ -131,7 +143,7 @@ the type's parameters; sorts are usually not specified
 `parent`:
 
 ```
-the parent record this one extends. The resulting record includes the parent's fields and the ones added here.
+the parent record this one extends. The resulting record includes the parent's fields and the ones added here. Example: 'a point; the type arguments are required
 ```
 
 `fields[].type`:
@@ -148,17 +160,17 @@ alone.
 `Record.gen` calls `require_inside_theory` first (COMMON.md §1), then
 checks: `type_name` against §1's grammar, the node's name
 (`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's
-fifth form); every type parameter's `name` a type variable and no two
-the same, `TypeParameter`'s check (COMMON.md §4); every field's `name`
-an Isabelle identifier (COMMON.md §5) not ending with an underscore
+fifth form); the type parameters by the shared check (COMMON.md §4):
+each `name` a type variable, no two the same; every field's `name` an
+Isabelle identifier (COMMON.md §5) not ending with an underscore
 (COMMON.md §5's clause on internal names), and no two fields the same
-name (`InvalidField`); then every type parameter used, in a field's
-`type` or in `parent`, the shared check whose sentence COMMON.md §4
-pins. A sibling already bearing the node's id component is the
-framework's `DuplicateName` (MCP_SPECIFICATION §2);
+name (`InvalidField`); then each type parameter used, in a field's
+`type` or in `parent` in its applied form (§2), the plugin's shared
+check (COMMON.md §4). A sibling already bearing the node's id
+component is the framework's `DuplicateName` (MCP_SPECIFICATION §2);
 any other clash of the name in the theory is Isabelle's at evaluation.
 Whether the types parse, whether `parent` is a record type, whether
-every type variable of the fields and the parent is a type parameter,
+every type variable of the fields and of `parent` is a type parameter,
 and whether a field's name is the one Isabelle reserves, `more`, are
 Isabelle's business at evaluation (MODULE_STRUCTURE §4.1); what
 Isabelle rejects is an evaluation failure, not an exception.
@@ -166,15 +178,16 @@ Isabelle rejects is an evaluation failure, not an exception.
 The `InvalidField` sentences:
 
 ```
-The field `type_parameters[0].name` must be a type variable, such as 'a.
-The field `type_parameters[1].name` repeats `'a`.
 The field `fields[1].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 The field `fields[1].name` repeats `xcoord`.
 ```
 
+The type parameters' sentences and the unused parameter's are
+COMMON.md §4's, pinned there alone (COMMON.md §5).
+
 The grammar text after the colon is the framework's, the one
-`InvalidName` renders for the grammars `fact name` and `type name`
-(RENDER_BASELINES §2), written once and used by both (COMMON.md §5).
+`InvalidName` renders for the grammar `type name` (RENDER_BASELINES
+§2), written once and used by both (COMMON.md §5).
 
 A parent outside a theory is refused with the plugin's
 `NotInsideTheory`, whose sentence COMMON.md §1 pins.
@@ -200,14 +213,16 @@ record 'a cpoint = "'a point" +
 ```
 
 - The `text` line: `english` alone, no lead (COMMON.md §2).
-- The type parameters, written before the type's name by the plugin's
-  `type_parameters_text` (COMMON.md §4): none writes the name alone,
-  `record point =`; one without a sort writes it bare, `record 'a point
-  =`; otherwise they are parenthesised and comma-separated, a sort
-  after `::` as `print_name` writes it (below): `record ('a :: linorder,
-  'b) entry =`.
-- `parent`, when given, after `=` as `print_name` writes it (below),
-  then `+`: `record 'a cpoint = "'a point" +`.
+- The head — the type parameters and the name — is the plugin's
+  `type_head_text` (COMMON.md §4) with no syntax, which the command
+  does not take: the parameters before the name, none writing the name
+  alone, `record point =`, one without a sort bare, `record 'a point
+  =`, otherwise parenthesised and comma-separated, a sort after `::` as
+  `print_name` writes it (below): `record ('a :: linorder, 'b) entry
+  =`.
+- `parent`, when given, in its applied form (§2) after `=` as
+  `print_name` writes it (below), then `+`: `record 'a cpoint = "'a
+  point" +`.
 - Each field on its own line indented two spaces, its type after `::`
   as `print_name` writes it: `xcoord :: "'a"`, `colour :: colour`.
 - Every piece of Isabelle text — the type's name, a field's name, a
@@ -227,11 +242,12 @@ The evaluator runs the definition and never the `text` command. It goes
 through the ML interfaces. `Record._eval_opr` sends the class's
 callback `TAT.Record.evaluate` the input slot, the resulting slot, and
 the definition as structure — the type parameters with their sorts,
-the type's name, `parent`, and the fields with their types — each
-`IsaTerm` as its `ascii`. The ML side runs, under
-`TAT_Common_Nodes.operation` (MODULE_STRUCTURE §3), one transition on
-the input slot's state — the shape of `begin_theory`, through
-`apply_transition` (MODULE_STRUCTURE §2.4):
+the type's name, `parent` in its applied form with whether it was
+authored bare (§2), and the fields with their types — each `IsaTerm` as
+its `ascii`. The ML side runs, under `TAT_Common_Nodes.operation`
+(MODULE_STRUCTURE §2.5), one transition on the input slot's state — the
+shape of `begin_theory`, through `apply_transition` (MODULE_STRUCTURE
+§2.4):
 
 ```
 Toplevel.local_theory NONE NONE
@@ -239,10 +255,26 @@ Toplevel.local_theory NONE NONE
 ```
 
 `Record.add_record_cmd` is the function the command's parser hands its
-result to; `parameters` the type parameters as that parser hands them,
+result to in the localized record port (contrib/localized_record), the
+Isabelle TAT runs on, where `record` is a local theory command;
+`parameters` the type parameters as that parser hands them,
 each `(name, sort option)`; `name` the type's name as a binding;
 `parent` the parent type's text or `NONE`; `fields` each field as
 `(binding, type, NoSyn)`; the option off, as in the file (§2).
+
+A `parent` authored bare took the record's type parameters as its
+arguments (§2), which fits the parent record only when it takes as
+many. Before the command runs, the ML side reads the parent record's
+parameters (`Record.get_info`, the name resolved in the local theory)
+and, when their number differs from the record's, refuses the run with
+one message, the definition's failure:
+
+```
+The parent record `point` takes 1 type argument; `cpoint` declares 2: you must specify `parent` with its type arguments.
+```
+
+A `parent` that names no record is Isabelle's to refuse (`Unknown
+parent record`), as is a `parent` authored with its arguments.
 
 The result is written into the resulting slot: at theory level the
 same steps as a hand-written definition, and inside a `Context` or
@@ -276,14 +308,14 @@ messages after it:
 | `Recall`, depth 3 | nothing |
 
 The definition is one line: the type with its parameters as emitted
-(§5), `=`, the parent and `+` when given, the fields as emitted, joined
+(§5), `=`, `parent` and `+` when given, the fields as emitted, joined
 by one space — assembled from the stored text in the `unicode`
 spelling, every piece as `print_name` writes it against no keyword,
 every name bare, without a round trip to Isabelle; `english` follows
-at depth 0 alone; no line carries a key.
-One private helper writes the type's head, its parent and its fields,
-given how names are written; emission and `print_fields` lay its lines
-out differently.
+at depth 0 alone; no line carries a key. One private helper writes the
+type's head, its parent record and its fields, given the keyword set —
+the theory's for emission, none here; emission and `print_fields` lay
+its lines out differently.
 
 ```
 'a point = xcoord :: "'a" ycoord :: "'a"

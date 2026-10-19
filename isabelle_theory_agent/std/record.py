@@ -10,14 +10,14 @@ from collections.abc import Container
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
-from Isabelle_RPC_Host.unicode import IsaTerm
+from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver
 from ..model import INDENT, NON_EMPTY, RECALL, Leaf, emit_lines, print_name, status_of_errors
 from ..plugin import TAT_node
 from .common import (
     TYPE_PARAMETER_DEFS, Theory_Member, Type_Parameter, TypeParameter_RawAST, check_identifier,
-    check_type_parameters_used, normalised, require_id_name, text_line, type_parameters_of, type_parameters_text,
+    check_type_parameters_used, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
     type_parameters_wire)
 
 KINDS = ("record",)
@@ -31,8 +31,8 @@ class Field_RawAST(TypedDict):
 class Record_RawAST(TypedDict):
     kind: Literal["record"]
     english: str
-    type_name: str
     type_parameters: NotRequired[list[TypeParameter_RawAST]]
+    type_name: str
     parent: NotRequired[str]
     fields: Annotated[list[Field_RawAST], NON_EMPTY]
 
@@ -48,14 +48,15 @@ class Record(Theory_Member, Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
-            "kind": {"type": "string", "enum": list(KINDS)},
+            "kind": {"const": "record"},
             "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
-            "type_name": {"type": "string"},
             "type_parameters": {"type": "array", "items": {"$ref": "#/$defs/TypeParameter"},
                                 "description": "the type's parameters; sorts are usually not specified"},
+            "type_name": {"type": "string"},
             "parent": {"type": "string",
                        "description": "the parent record this one extends. The resulting record includes the"
-                                      " parent's fields and the ones added here."},
+                                      " parent's fields and the ones added here. Example: 'a point; the type"
+                                      " arguments are required"},
             "fields": {"type": "array", "minItems": 1,
                        "items": {
                            "type": "object",
@@ -98,13 +99,18 @@ class Record(Theory_Member, Leaf):
         for i, f in enumerate(raw["fields"]):
             name = check_identifier(f["name"], f"fields[{i}].name", [x.name for x in fields], in_term=True)
             fields.append(Field(name, IsaTerm.from_agent(normalised(f["type"]))))
-        parent_record = IsaTerm.from_agent(normalised(raw["parent"])) if "parent" in raw else None
-        check_type_parameters_used(type_parameters,
-                                   [f.type for f in fields] + ([parent_record] if parent_record is not None else []))
+        parent = normalised(raw.get("parent", ""))                   # an empty `parent` is no parent (§2)
+        parent_record = IsaTerm.from_agent(parent) if parent else None
+        check_type_parameters_used(type_parameters, [f.type for f in fields] + (
+            [_applied(parent_record, type_parameters)] if parent_record is not None else []))
         return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, raw["type_name"],
                    parent_record, tuple(fields))
 
-    # --- the store (§2): the authored fields in the `unicode` spelling, the construct's shape, `parent` a
+    def parent_type(self) -> IsaTerm | None:
+        """`parent` in its applied form (§2); None when there is none."""
+        return _applied(self.parent_record, self.type_parameters) if self.parent_record is not None else None
+
+    # --- the store (§1): the authored fields in the `unicode` spelling, the construct's shape, `parent` a
     # None-valued row when there is none; every row read with `rows.get`, so that a missing one is refused at start
 
     def to_store(self, rows):
@@ -126,11 +132,14 @@ class Record(Theory_Member, Leaf):
 
     def message(self) -> Any:
         """The definition as `TAT.Record.evaluate` unpacks it: the type
-        parameters with their sorts, the type's name, `parent` and the
+        parameters with their sorts, the type's name, `parent` in its
+        applied form with whether it was authored bare (§2, §6), and the
         fields with their types — each `IsaTerm` as its `ascii`."""
+        parent = self.parent_record
         return (type_parameters_wire(self.type_parameters),
                 self.name,
-                self.parent_record.ascii if self.parent_record is not None else None,
+                (_applied(parent, self.type_parameters).ascii, is_identifier(parent.ascii)) if parent is not None
+                else None,
                 [(f.name.ascii, f.type.ascii) for f in self.fields])
 
     async def _eval_opr(self):
@@ -145,14 +154,15 @@ class Record(Theory_Member, Leaf):
     # --- what it prints (§8) and emission (§5)
 
     def _definition(self, keywords: Container[str]) -> tuple[str, list[str]]:
-        """The head — the parameters, the name, `=`, the parent and `+` when
-        given — and the fields' texts, every piece through `print_name`
-        against `keywords`: the theory's for the file; none under `recall`,
-        where every name, an identifier, comes out bare."""
-        head = " ".join(filter(None, (type_parameters_text(self.type_parameters, keywords),
-                                      print_name(self.name, keywords), "=")))
-        if self.parent_record is not None:
-            head += f" {print_name(self.parent_record, keywords)} +"
+        """The head — the type's head by `type_head_text`, `=`, `parent` in
+        its applied form and `+` when given — and the fields' texts, every
+        piece through `print_name` against `keywords`: the theory's for the
+        file; none under `recall`, where every name, an identifier, comes
+        out bare."""
+        head = type_head_text(self.type_parameters, self.name, None, keywords) + " ="
+        parent_type = self.parent_type()
+        if parent_type is not None:
+            head += f" {print_name(parent_type, keywords)} +"
         return head, [f"{print_name(f.name, keywords)} :: {print_name(f.type, keywords)}" for f in self.fields]
 
     def print_fields(self, indent, out, mode, depth):
@@ -169,3 +179,14 @@ class Record(Theory_Member, Leaf):
         head, fields = self._definition(self.theory().keywords or ())
         emit_lines(indent, out, "\n".join([f"{self.kind} {head}", *(f"  {f}" for f in fields)]))
         return indent
+
+
+def _applied(parent: IsaTerm, parameters: tuple[Type_Parameter, ...]) -> IsaTerm:
+    """`parent` in its applied form (§2): as authored, unless authored bare
+    — an identifier —, then applied to the type parameters in their order,
+    `('a, 'b) point`, `point` itself when there are none."""
+    if not is_identifier(parent.ascii):
+        return parent
+    names = [p.name.unicode for p in parameters]
+    arguments = "" if not names else names[0] + " " if len(names) == 1 else "(" + ", ".join(names) + ") "
+    return IsaTerm.from_agent(arguments + parent.unicode)

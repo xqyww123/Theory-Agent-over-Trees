@@ -369,8 +369,7 @@ lifting_forget fract.lifting
 
 - The `text` line: `english` alone, no lead (COMMON.md §2).
 - The head — the type parameters, the name, the syntax — is the
-  plugin's `type_head_text` (COMMON.md §4), which `Typedef` and
-  `Datatype` use too: the parameters before the name, none
+  plugin's `type_head_text` (COMMON.md §4): the parameters before the name, none
   writing the name alone, `quotient_type int =`, one bare,
   `quotient_type 'a fset =`, several parenthesised and comma-separated,
   `quotient_type ('a, 'b) t =` (`type_parameters_text` over parameters

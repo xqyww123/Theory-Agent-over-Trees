@@ -300,7 +300,7 @@ the definition as structure — `kind`, the type parameters with their
 sorts, the types each with its name, its syntax and its constructors
 with their arguments, selectors and syntax — each `IsaTerm` as its
 `ascii`. The ML
-side runs, under `TAT_Common_Nodes.operation` (MODULE_STRUCTURE §3),
+side runs, under `TAT_Common_Nodes.operation` (MODULE_STRUCTURE §2.5),
 one transition on the input slot's state:
 
 ```
