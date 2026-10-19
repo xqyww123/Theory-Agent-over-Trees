@@ -288,8 +288,8 @@ the banner over the `detail`, the banner alone when the `detail` is
 empty. A give-up
 settles the run `FAILED` with the message and the reason as the
 failure's kind (CONSTRUCT_INTERACTION §3.1); the engine's own failure,
-the error the `hammer_or_aoa` method renders it as, is the report's
-error and settles it `FAILED` with no kind. A run waiting
+the error the `aoa` method renders it as, is the report's error and
+settles it `FAILED` with no kind. A run waiting
 for its turn under the framework's bound on runs (CONSTRUCT_INTERACTION
 §3.2) is `RUNNING`, and shows as any running one, `proving`. AoA's Python half, the remote
 procedure `IsaMini.AoA`, is served by TAT's own process — the plugin's
