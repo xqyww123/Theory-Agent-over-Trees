@@ -186,7 +186,7 @@ The class's construct schema:
     "abs_function_name":   { "type": "string",
                              "description": "the name of the function that sends a value of the existing type to its equivalence class, a value of the quotient type; abs_ followed by the type name when left out. Example: fset_of_list" },
     "children":            { "type": "array", "items": { "$ref": "#/$defs/Construct" },
-                             "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer method — unless a lifting_context opens it again" }
+                             "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }
   },
   "required": ["kind", "english", "type_name", "representation_type", "equiv_relation"],
   "additionalProperties": false,
@@ -250,7 +250,7 @@ the name of the function that sends a value of the existing type to its equivale
 `children`:
 
 ```
-lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer method — unless a lifting_context opens it again
+lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again
 ```
 
 The descriptions of `TypeMixfix` and of its arms' fields are COMMON.md

@@ -10,7 +10,9 @@ shared `$defs` — the type parameter and the two mixfix annotations —
 with their checks and writers, and the checks of a name (§4, §5); the
 package's compile hook for AoA's proof stores (§3; COMPILATION.md §5);
 `Lifting_Closing`, the plugin's `StdBlock` whose ending closes a type's
-Lifting setup, its ML half Isabelle_Std/ML/TAT_Lifting_Closing.ML (§6);
+Lifting setup, its ML half Isabelle_Std/ML/TAT_Lifting_Closing.ML, with
+`lifting_closing_text`, the two lines its ending and `LiftingContext`'s
+write (§6);
 and the theory the plugin declares the forest's theories import
 (PLUGIN_SYSTEM §1)."""
 
@@ -745,6 +747,15 @@ class Beginning_Proof_Obligation(Proof_Obligation):
 
 # --- Lifting_Closing (§6)
 
+def lifting_closing_text(name: str) -> str:
+    """§6's two lines, `lifting_update t.lifting` then `lifting_forget
+    t.lifting`, the bundle's name bare — `t.lifting` is one token to
+    Isabelle's outer lexer even where `t` is a keyword: what
+    `Lifting_Closing`'s ending writes for its type and `LiftingContext`'s
+    for each type it opened (LIFTING_CONTEXT.md §5)."""
+    return f"lifting_update {name}.lifting\nlifting_forget {name}.lifting"
+
+
 class Lifting_Closing(StdBlock):
     """The plugin's `StdBlock` whose ending closes the Lifting setup its
     beginning made (§6): `lifting_update t.lifting` then `lifting_forget
@@ -770,11 +781,10 @@ class Lifting_Closing(StdBlock):
 
     @final
     def emit_ending(self, indent, out):
-        """§6: one empty line, then the two commands, each on its own line
-        at the block's indent, the bundle's name bare — `t.lifting` is one
-        token to Isabelle's outer lexer even where `t` is a keyword."""
+        """§6: one empty line, then the two commands by `lifting_closing_text`,
+        each on its own line at the block's indent."""
         out.write("\n")
-        emit_lines(indent, out, f"lifting_update {self.name}.lifting\nlifting_forget {self.name}.lifting")
+        emit_lines(indent, out, lifting_closing_text(self.name))
         return indent
 
 

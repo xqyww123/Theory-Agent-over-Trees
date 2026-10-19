@@ -14,6 +14,7 @@ The rest of what `Proof_Obligation` does on a node is pinned through
 Run: python -m pytest test/test_common.py
 """
 
+import io
 import jsoncomment
 import pytest
 
@@ -22,14 +23,17 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadEdit, InvalidField
-from isabelle_theory_agent.std import common, datatype, define, lift_definition, quotient_type, theorem, typedef
+from isabelle_theory_agent.std import (
+    common, datatype, define, lift_definition, lifting_context, quotient_type, theorem, typedef)
 from isabelle_theory_agent.std.common import (
-    Binder, Infix, Lifting_Closing, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter, text_line)
+    Binder, Infix, Lifting_Closing, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter,
+    lifting_closing_text, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import ROOT, ml_process, ml_string
 from test_datatype import LIST, definition
 from test_define import SUM_UPTO
 from test_lift_definition import DL_REV
+from test_lifting_context import FSET_SIZE
 from test_model import locked, run
 from test_quotient_type import FSET
 from test_session_theory import Forest_Under_Test, session, theory
@@ -46,6 +50,7 @@ EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: SUM_UPTO for kind in define.KINDS},
             **{kind: DLIST for kind in typedef.KINDS},
             **{kind: DL_REV for kind in lift_definition.KINDS},
+            **{kind: FSET_SIZE for kind in lifting_context.KINDS},
             **{kind: FSET for kind in quotient_type.KINDS}}
 
 
@@ -336,6 +341,27 @@ def test_lifting_closing_defines_the_ending_s_two_hooks_and_comes_after_the_clas
     assert right.__abstractmethods__ == frozenset() and wrong.__abstractmethods__ == frozenset({"_eval_beginning_opr"})
     with pytest.raises(TypeError, match="_eval_beginning_opr"):
         wrong()
+
+
+def test_lifting_closing_text_writes_section_6_s_two_lines_and_the_ending_writes_through_it(monkeypatch):
+    """§6: the two commands, `lifting_update` then `lifting_forget`, each
+    on its own line, the bundle's name bare; `Lifting_Closing.emit_ending`
+    writes one empty line and that text at the block's indent, through
+    the one writer — `LiftingContext`'s ending shares it (LIFTING_CONTEXT.md
+    §5) — so a stand-in for the writer changes what the ending writes."""
+    assert lifting_closing_text("fset") == "lifting_update fset.lifting\nlifting_forget fset.lifting"
+    assert lifting_closing_text("term") == "lifting_update term.lifting\nlifting_forget term.lifting"
+    kinds = {**ts.KINDS, "quotient_type": quotient_type.QuotientType,
+             **{kind: lift_definition.LiftDefinition for kind in lift_definition.KINDS}}
+    f = Forest_Under_Test(kinds=kinds)
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X") | {"children": [FSET]})], kinds)))
+    (p,) = s.sub_nodes[0].sub_nodes
+    out = io.StringIO()
+    assert p.emit_ending(1, out) == 1 and out.getvalue() == "\n  lifting_update fset.lifting\n  lifting_forget fset.lifting\n"
+    monkeypatch.setattr(common, "lifting_closing_text", lambda name: f"closing {name}")
+    out = io.StringIO()
+    p.emit_ending(0, out)
+    assert out.getvalue() == "\nclosing fset\n"
 
 
 # --- the shared `$defs` (§4): the schema text, the type parameters' check and writer, the mixfix writers

@@ -74,7 +74,7 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
             "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},
                          "description": "lift_definitions and lemmas whose proofs transfer the defined type to its"
                                         " representation type. Outside this block the defined type is opaque — its"
-                                        " representation is closed to lift_definition and the transfer method — unless"
+                                        " representation is closed to lift_definition and the transfer tactic — unless"
                                         " a lifting_context opens it again"},
         },
         "required": ["kind", "english", "type_name", "representation_type", "equiv_relation"],

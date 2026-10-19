@@ -5,8 +5,8 @@ Status: proposed 2026-10-18 and revised the same day after its review
 agent-facing wording below is the owner's (the rulings of 2026-10-18):
 the four descriptions of §3, the `types[i]` sentence of §4, the
 sentence of §6, and `name` under the framework's name grammar; the
-`repeats` sentence is COMMON.md §4's under this class's path; not yet
-implemented.
+`repeats` sentence is COMMON.md §4's under this class's path;
+implemented the same day, with `Lifting_Closing` (COMMON.md §6).
 
 A `LiftingContext` opens the Lifting setup of one or more types again,
 inside its block alone: `context includes fset.lifting begin … end`.
