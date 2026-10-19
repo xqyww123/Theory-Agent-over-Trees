@@ -315,13 +315,27 @@ def test_the_recorded_lifting_reaches_the_store_and_the_mirror_catches_an_emit_o
         assert_store_mirrors(f, KINDS, shape=ts.shape)
 
 
+def test_the_jobs_sentences_name_the_set():
+    """§7: the construction's failure header and its failure notification
+    both read the document's sentence, the node by its id; the success
+    notification is `Proof_Job`'s."""
+    [failed, _, _] = fenced_blocks(TD, "7.")
+    f, x = forest(DLIST)
+    (p,) = x.sub_nodes
+    job = p.job()
+    assert failed == ["Failed to prove that `typedef_dlist`'s definitional set is non-empty:"]
+    assert job.failure_header(Failed("gave up")) == failed[0]
+    assert job.finished_notification(Failed("gave up")) == failed[0] + "\n  gave up"
+    assert job.finished_notification(PROVED) == "`typedef_dlist` is proven."
+
+
 def test_the_mark_reads_one_of_eleven_ways_and_the_owing_line_stands_while_unverified():
     """§7's mark, state by state — COMMON §3's table with the three words of
     a class that defines: `valid definition` alone once the proof stands,
     `unverified definition` with the proof's word before; the eleven, and
-    no other, are the document's first block; the owing line, its second,
+    no other, are the document's second block; the owing line, its third,
     exactly while the line reads `unverified definition`."""
-    [block, state] = fenced_blocks(TD, "7.")
+    [_, block, state] = fenced_blocks(TD, "7.")
     assert [OWING_LINE] == state
     f, x = forest(DLIST)
     (p,) = x.sub_nodes

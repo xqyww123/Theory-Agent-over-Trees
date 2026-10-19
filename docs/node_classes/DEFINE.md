@@ -588,17 +588,15 @@ theorem, `FAILED` with an empty message at the first that does not, a
 missing proof among them; the failure block and the notification are
 `Proof_Check`'s.
 
-**Its sentences.** `Define_Proof_Job` names what was not proved through
-`Proof_Job`'s hook `_failed_assertion()` (COMMON.md §3), so that its
-`failure_header` reads `No proof was found that <assertion>:` and its
-failure notification `` No proof of `theory_X.definition_sum_upto` was
-found that <assertion>: `` with AoA's message after it; the assertion is
-`failed_obligation`'s, the sentence the task text above uses, written
-once in `define.py`: `the function `sum_upto` terminates` — several
-constants, `the functions `even` and `odd` terminate` — or `the
-equations of the function `sum_upto` cover every argument and agree
-where they overlap`. A `FAILED` outcome an amend carried onto a node that
-records no `failed_obligation` reads `Proof_Job`'s sentences. The
+**Its sentences.** `Define` names what was not proved through the hook
+`failed_assertion(shown_id)` (COMMON.md §3), so that the construction's
+failure header and its failure notification both read `Failed to prove
+that <assertion>:` with AoA's message after it; the assertion is
+`failed_obligation`'s, the node by its id: `` function
+`definition_sum_upto` terminates `` or `` `definition_sum_upto`'s
+definitional equations cover every argument ``. A `FAILED` outcome an
+amend carried onto a node that records no `failed_obligation` reads
+`Proof_Job`'s sentences. The
 success notification and the titles are `Proof_Job`'s. The failure
 block stands only while the failure is still owed: `failure_header` is
 `None`, and nothing is printed, once an evaluation has recorded a `form`
@@ -712,7 +710,7 @@ stored proofs failed their check:
     sum_upto i N = (if N < i then 0 else i + sum_upto (Suc i) N)
   The sum of the naturals from i to N
   The definition is unverified until termination is proven.
-  No proof was found that the function `sum_upto` terminates:
+  Failed to prove that function `definition_sum_upto` terminates:
     Sledgehammer timed out on every prover; the relation the search tried does not decrease on the recursive call.
 ```
 

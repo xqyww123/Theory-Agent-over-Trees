@@ -318,13 +318,15 @@ from `title`):
 | situation | |
 | --- | --- |
 | `finished_notification`, success | `` `theory_X.lemma_P` is proven. `` |
-| `finished_notification`, failure | `` No proof of `theory_X.lemma_P` was found: `` + the message |
-| `failure_header` | `No proof was found:` |
+| `finished_notification`, failure | `` No proof of `theory_X.lemma_P` was found: `` + the message; with an assertion, `Failed to prove that <assertion>:` + the message |
+| `failure_header` | `No proof was found:`; with an assertion, `Failed to prove that <assertion>:` |
 
-The two failure sentences take the clause ` that <assertion>` after
-`was found` from the hook `_failed_assertion()`, `None` by default;
-`Define_Proof_Job` answers the failed obligation's assertion (DEFINE.md
-§7).
+The assertion is the hook `failed_assertion(shown_id)` of
+`With_Proof_Obligations` — what the construction was to prove, the node
+named by its shown id —, `None` by default, which leaves the two failure
+sentences in their first form; a class that defines names its
+obligation: `Define` the failed one (DEFINE.md §7), `Typedef` its set
+(TYPEDEF.md §7).
 
 `Proof_Check`: `title()` is `proof check`, `title(plural=True)` `proof
 checks`. `make` is the default; `_start` calls

@@ -381,7 +381,16 @@ and `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s
 
 The proof construction, `Proof_Job`, the proof check, `Proof_Check`,
 their callbacks, their sentences, and the two-slot mark `(<status>,
-<proof>)` are `Proof_Obligation`'s (COMMON.md §3). `Typedef`'s own are
+<proof>)` are `Proof_Obligation`'s (COMMON.md §3). `Typedef` names what
+the construction was to prove through the hook `failed_assertion`
+(COMMON.md §3), so that the failure header and the failure notification
+both read, with AoA's message after it:
+
+```
+Failed to prove that `typedef_dlist`'s definitional set is non-empty:
+```
+
+`Typedef`'s own words are
 the three words of a class that defines: `valid_word`, `valid
 definition`, alone when the proof stands; `unverified_word`, `unverified
 definition`, with the proof's word while the node owes it; and

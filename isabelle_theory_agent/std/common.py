@@ -488,23 +488,21 @@ class Proof_Job(jobs.Construction_Job):
         return "proof constructions" if plural else "proof construction"
 
     def _failed_assertion(self) -> str | None:
-        """What the run that failed was to prove, for the two failure
-        sentences (§3), ` that <assertion>` after `was found`; None, the
-        default, names nothing.  `Define_Proof_Job` names the obligation
-        (DEFINE.md §7)."""
-        return None
-
-    def _that(self) -> str:
-        assertion = self._failed_assertion()
-        return f" that {assertion}" if assertion is not None else ""
+        """The node's `failed_assertion` (§3) under its shown id."""
+        node = self.node
+        assert isinstance(node, With_Proof_Obligations)
+        return node.failed_assertion(self.shown_id)
 
     def failure_header(self, failure) -> str | None:
-        return f"No proof was found{self._that()}:"
+        assertion = self._failed_assertion()
+        return "No proof was found:" if assertion is None else f"Failed to prove that {assertion}:"
 
     def finished_notification(self, outcome):
         if isinstance(outcome, Succeeded):
             return f"`{self.shown_id}` is proven."
-        return with_message(f"No proof of `{self.shown_id}` was found{self._that()}:", outcome.message)
+        assertion = self._failed_assertion()
+        return with_message(f"No proof of `{self.shown_id}` was found:" if assertion is None
+                            else f"Failed to prove that {assertion}:", outcome.message)
 
     def _check(self):
         """§3's table: a proof is constructed where none stands, or where
@@ -655,6 +653,15 @@ class With_Proof_Obligations(Node):
         `Proof_Obligation`'s one goal —; `Define` answers whether an
         obligation is open (DEFINE.md §7)."""
         return True
+
+    def failed_assertion(self, shown_id: str) -> str | None:
+        """What the construction that failed was to prove, the clause after
+        `Failed to prove that` in `Proof_Job`'s two failure sentences (§3),
+        the node named by `shown_id`; None, the default, names nothing and
+        leaves the sentences `No proof was found`.  `Define`'s names the
+        failed obligation (DEFINE.md §7), `Typedef`'s its set (TYPEDEF.md
+        §7)."""
+        return None
 
     def _carries_job_from(self, old):
         return old.goal_structure() == self.goal_structure()    # the proofs stand when the goals do (§3)

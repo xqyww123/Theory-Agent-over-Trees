@@ -437,10 +437,10 @@ def test_check_answers_common_section_3_s_table_and_no_open_obligation():
 
 def test_the_jobs_sentences_are_section_7_s():
     """§7: the construction's failure header and notification name the
-    failed obligation's assertion, for one constant and for two; without a
-    recorded obligation they are `Proof_Job`'s — a `Theorem`'s job's, the
-    id aside; the success notification and the titles are `Proof_Job`'s;
-    the check's are `Proof_Check`'s."""
+    failed obligation, the node by its id, the same sentence in both;
+    without a recorded obligation they are `Proof_Job`'s — a `Theorem`'s
+    job's, the id aside; the success notification and the titles are
+    `Proof_Job`'s; the check's are `Proof_Check`'s."""
     f, x = forest(SUM_UPTO, EVEN_ODD, lemma("P"))
     p, q, l = x.sub_nodes
     job, qjob, ljob = p.job(), q.job(), l.job()
@@ -448,18 +448,17 @@ def test_the_jobs_sentences_are_section_7_s():
     assert (Define_Proof_Check.title(), Define_Proof_Check.title(plural=True)) == ("proof check", "proof checks")
     assert job.finished_notification(PROVED) == "`definition_sum_upto` is proven."
     p.failed_obligation = TERMINATION
-    assert job.failure_header(Failed("gave up")) == "No proof was found that the function `sum_upto` terminates:"
+    assert job.failure_header(Failed("gave up")) == "Failed to prove that function `definition_sum_upto` terminates:"
     assert job.finished_notification(Failed("gave up")) == (
-        "No proof of `definition_sum_upto` was found that the function `sum_upto` terminates:\n  gave up")
+        "Failed to prove that function `definition_sum_upto` terminates:\n  gave up")
     p.failed_obligation = PATTERN_COMPLETENESS
     assert job.failure_header(Failed("")) == (
-        "No proof was found that the equations of the function `sum_upto` cover every argument and agree where they overlap:")
+        "Failed to prove that `definition_sum_upto`'s definitional equations cover every argument:")
     q.failed_obligation = TERMINATION
-    assert qjob.failure_header(Failed("")) == "No proof was found that the functions `even` and `odd` terminate:"
+    assert qjob.failure_header(Failed("")) == "Failed to prove that function `definition_even_and_odd` terminates:"
     q.failed_obligation = PATTERN_COMPLETENESS
     assert qjob.finished_notification(Failed("x")) == (
-        "No proof of `definition_even_and_odd` was found that the equations of the functions `even` and `odd`"
-        " cover every argument and agree where they overlap:\n  x")
+        "Failed to prove that `definition_even_and_odd`'s definitional equations cover every argument:\n  x")
     p.failed_obligation = None
     assert job.failure_header(Failed("gave up")) == ljob.failure_header(Failed("gave up"))
     assert job.finished_notification(Failed("gave up")) == ljob.finished_notification(Failed("gave up")).replace(
@@ -496,7 +495,7 @@ def test_a_construction_failure_block_stands_only_while_the_obligation_it_names_
     assert f.render(p, focus, me).splitlines() == [
         "- definition_sum_upto (unverified definition, failed to prove)",
         "  The definition is unverified until termination is proven.",
-        "  No proof was found that the function `sum_upto` terminates:", "    Sledgehammer timed out on every prover."]
+        "  Failed to prove that function `definition_sum_upto` terminates:", "    Sledgehammer timed out on every prover."]
     # a rerun closed termination by itself: nothing open, the line `valid definition`, no block
     evaluated(p, *FUN)
     with_proof(p, M.READY_CLEAN, failure)

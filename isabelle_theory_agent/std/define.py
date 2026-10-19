@@ -67,8 +67,7 @@ def _functions(names: Sequence[str]) -> str:
 
 
 def assertion(obligation: str, names: Sequence[str]) -> str:
-    """What an obligation asserts (§7): the sentence the task's text, the
-    failure header and the failure notification share."""
+    """What an obligation asserts (§7), as the task's text states it."""
     if obligation == TERMINATION:
         return f"{_functions(names)} terminate{'s' if len(names) == 1 else ''}"
     return f"the equations of {_functions(names)} cover every argument and agree where they overlap"
@@ -168,14 +167,6 @@ class Define_Proof_Job(Proof_Job):
         node = self.node
         assert isinstance(node, Define)
         return bool(node.open_obligations()) and super()._check()     # the common `Define` has nothing to prove
-
-    def _failed_assertion(self):
-        """The assertion of the obligation the last run did not prove;
-        None when the node does not know it (a carried outcome)."""
-        node = self.node
-        assert isinstance(node, Define)
-        failed = node.failed_obligation
-        return assertion(failed, node.constant_names()) if failed is not None else None
 
     def failure_header(self, failure):
         """§7: `Proof_Job`'s header while the failure is still owed — the
@@ -349,6 +340,15 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
 
     def owes_proof(self):
         return bool(self.open_obligations())
+
+    def failed_assertion(self, shown_id):
+        """§7: the obligation the last run did not prove, the node by its
+        id; None when the node records none (a carried outcome)."""
+        if self.failed_obligation == TERMINATION:
+            return f"function `{shown_id}` terminates"
+        if self.failed_obligation == PATTERN_COMPLETENESS:
+            return f"`{shown_id}`'s definitional equations cover every argument"
+        return None
 
     def construction_setup(self, obligation: Obligation) -> Construction_Setup:
         """The call's setup (§7): the task with its payload, the goal hint for

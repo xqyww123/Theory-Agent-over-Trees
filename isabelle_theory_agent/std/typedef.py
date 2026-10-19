@@ -156,6 +156,10 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         definition`."""
         return OWING_LINE if unverified(self) else None
 
+    def failed_assertion(self, shown_id):
+        """§7: what the failure block and the notification say was not proved."""
+        return f"`{shown_id}`'s definitional set is non-empty"
+
     # --- what it prints (§8) and emission (§5)
 
     def _definition(self, keywords: Container[str]) -> tuple[str, str | None]:
