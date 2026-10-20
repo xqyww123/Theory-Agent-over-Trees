@@ -94,6 +94,7 @@ class Note(M.Leaf):
         "additionalProperties": False,
     }
     argument_schema = Note_RawAST
+    placement = M.Placement(within="Theory", through=())
     construction_job_class = Note_Construction
     evaluation_job_class = Note_Check
 

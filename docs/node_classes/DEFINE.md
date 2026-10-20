@@ -19,10 +19,9 @@ proofs — one AoA call per obligation, since each is proved at its own
 command and replayed at its own `by aoa` —, the evaluation job, the proof
 check, replays them in the current context, and the emitted theory
 carries each as `by aoa`. It is a `Leaf` of the plugin `Isabelle_Std`
-deriving from the plugin's `Theory_Member` (COMMON.md §1) and from
-`With_Proof_Obligations` (COMMON.md §3), the base of the classes whose
-commands open proof obligations — `class Define(Theory_Member,
-With_Proof_Obligations, Leaf)` — and not from `Proof_Obligation` under
+deriving from the plugin's `With_Proof_Obligations` (COMMON.md §3), the
+base of the classes whose commands open proof obligations — `class
+Define(With_Proof_Obligations, Leaf)` — and not from `Proof_Obligation` under
 it, which serves one command opening one goal: `Define`'s commands
 open up to two goals, on two commands, and its common forms open none.
 Its jobs, `Define_Proof_Job` and `Define_Proof_Check`, derive from
@@ -209,22 +208,26 @@ pinned there alone.
 
 ## 4. `gen`
 
-`Define.gen` calls `require_inside_theory` first (COMMON.md §1), then
-checks: each constant's `name` against §1's grammar (`InvalidName` with
-`grammar` = `constant name`, the grammar of the framework's `GRAMMARS`
-that `LiftDefinition` checks its name against too (LIFT_DEFINITION.md
-§4), rendered as RENDER_BASELINES §2's line); no two constants the same
-(`InvalidField` with the plugin's one sentence for a name bound twice,
-COMMON.md §5); `constants` and `equations` non-empty, which the schema's
-`minItems` refuses before `gen` (MODULE_STRUCTURE §4.4). A sibling
-already bearing the node's id
-component is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any
-other clash of a constant's name is Isabelle's at evaluation. Whether
-the equations parse, whether their left sides are the constants applied
-to patterns, whether the patterns are complete and the recursion
-terminates, and whether a syntax is well-formed, are Isabelle's business
-at evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects is an
-evaluation failure, not an exception.
+A `Define` stands inside a theory, directly or under `QuotientType`
+and `LiftingContext` blocks: its `placement` is
+`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
+which the framework checks (PLUGIN_SYSTEM §2).
+
+`Define.gen` checks: each constant's `name` against §1's grammar
+(`InvalidName` with `grammar` = `constant name`, the grammar of the
+framework's `GRAMMARS` that `LiftDefinition` checks its name against too
+(LIFT_DEFINITION.md §4), rendered as RENDER_BASELINES §2's line); no two
+constants the same (`InvalidField` with the plugin's one sentence for a
+name bound twice, COMMON.md §5); `constants` and `equations` non-empty,
+which the schema's `minItems` refuses before `gen` (MODULE_STRUCTURE
+§4.4). A sibling already bearing the node's id component is the
+framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of a
+constant's name is Isabelle's at evaluation. Whether the equations
+parse, whether their left sides are the constants applied to patterns,
+whether the patterns are complete and the recursion terminates, and
+whether a syntax is well-formed, are Isabelle's business at evaluation
+(MODULE_STRUCTURE §4.1); what Isabelle rejects is an evaluation failure,
+not an exception.
 
 `Define`'s `goal_structure()` is `constants` — names, types and
 syntaxes — and `equations`, each `IsaTerm` as its `ascii`: both goals
@@ -241,9 +244,6 @@ The `InvalidField` sentence, for a constant listed twice:
 ```
 The field `constants[1].name` repeats `even`.
 ```
-
-A parent outside a theory is refused with the plugin's
-`NotInsideTheory`, whose sentence COMMON.md §1 pins.
 
 ## 5. Emission
 

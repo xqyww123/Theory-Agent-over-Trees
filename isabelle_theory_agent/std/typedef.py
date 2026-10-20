@@ -13,10 +13,10 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, Leaf, emit_lines, print_name
+from ..model import INDENT, RECALL, Leaf, Placement, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
-    TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Proof_Obligation, Theory_Member, Type_Parameter, TypeMixfix,
+    TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Proof_Obligation, Type_Parameter, TypeMixfix,
     TypeMixfix_RawAST, TypeParameter_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of,
     mixfix_wire, morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
     type_parameters_wire, unverified)
@@ -39,7 +39,7 @@ class Typedef_RawAST(TypedDict):
 
 
 @TAT_node
-class Typedef(Theory_Member, Proof_Obligation, Leaf):
+class Typedef(Proof_Obligation, Leaf):
     construct_schema = {
         "type": "object",
         "description": "defines a subtype: a new type whose values stand for the elements of a non-empty subset of an"
@@ -67,6 +67,7 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         "$defs": {**TYPE_PARAMETER_DEFS, **TYPE_MIXFIX_DEFS},
     }
     argument_schema = Typedef_RawAST
+    placement = Placement(within="Theory", through=())
     evaluation_callback = "TAT.Typedef.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed
@@ -95,10 +96,9 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Typedef_RawAST):
-        """§4's checks in its order: the parent; `type_name` against §1's
-        grammar; the type parameters by the shared check; each used in
-        `set`; the two function names by the shared check of the pair."""
-        cls.require_inside_theory(config, raw["kind"])
+        """§4's checks in its order: `type_name` against §1's grammar; the
+        type parameters by the shared check; each used in `set`; the two
+        function names by the shared check of the pair."""
         require_id_name(raw["type_name"], "type name")
         type_parameters = type_parameters_of(raw.get("type_parameters", []))
         set_ = IsaTerm.from_agent(normalised(raw["set"]))
@@ -191,7 +191,7 @@ class Typedef(Theory_Member, Proof_Obligation, Leaf):
         `lifting` is true."""
         assert self.lifting is not None     # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
-        keywords = self.theory().keywords or ()
+        keywords = self.enclosing(Theory).keywords or ()
         definition, morphisms = self._definition(keywords)
         lines = [f"{self.kind} {definition}"]
         if morphisms is not None:

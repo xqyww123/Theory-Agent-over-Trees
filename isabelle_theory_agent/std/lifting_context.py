@@ -16,9 +16,9 @@ from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver
 from ..exceptions import GRAMMARS, InvalidField
-from ..model import INDENT, NON_EMPTY, RECALL, StdBlock, emit_lines, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, Placement, StdBlock, emit_lines, status_of_errors
 from ..plugin import TAT_node
-from .common import Theory_Member, check_not_bound_twice, lifting_closing_text, normalised
+from .common import check_not_bound_twice, lifting_closing_text, normalised
 
 KINDS = ("lifting_context",)
 
@@ -47,7 +47,7 @@ def type_names_of(raw: list[str]) -> tuple[IsaTerm, ...]:
 
 
 @TAT_node
-class LiftingContext(Theory_Member, StdBlock):
+class LiftingContext(StdBlock):
     construct_schema = {
         "type": "object",
         "description": "opens the Lifting setup of one or more subtypes (by `typedef`) or quotient types (such as fset)"
@@ -67,6 +67,7 @@ class LiftingContext(Theory_Member, StdBlock):
         "additionalProperties": False,
     }
     argument_schema = LiftingContext_RawAST
+    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
     output_omissible = input_omissible = True
     drop_priority = 1                       # after `Section`'s, with `Session`'s, before `Theory`'s (§9)
 
@@ -84,9 +85,8 @@ class LiftingContext(Theory_Member, StdBlock):
 
     @classmethod
     async def gen(cls, config, raw: LiftingContext_RawAST):
-        """§4: the parent, then `types` by `type_names_of`; `name` is the
-        framework's to judge."""
-        cls.require_inside_theory(config, raw["kind"])
+        """§4: `types` by `type_names_of`; `name` is the framework's to
+        judge."""
         return cls(config.parent, config.state, raw["name"], type_names_of(raw["types"]))
 
     # --- the store (§1): `name`, `types` and the recorded `opened`, the names in the `unicode` spelling, `opened`

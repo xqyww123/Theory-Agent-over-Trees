@@ -81,14 +81,14 @@ process — the imported modules are the process's (ARCHITECTURE §9).
 
 ## 2. What a class declares
 
-A node class derives from `Leaf`, `StdBlock` or `Unchained_Node`
-(MODULE_STRUCTURE §4.1) and is registered with `@TAT_node`, which takes no
-arguments. An `Unchained_Node` chains no children, so a child class that
-has a result owns the slot for it, as `Theory` does: it mints the slot
-on `state.conversation` in its constructor, which `gen` and `from_store`
-both reach, returns it from `resulting_state()`, and appends it in
-`_states_inside()`, so it is released when the node leaves.
-A class may own a further slot besides, as `Proof_Obligation` does with
+A node class derives from `Leaf` or `StdBlock` (MODULE_STRUCTURE §4.1)
+and is registered with `@TAT_node`, which takes no arguments.
+`Unchained_Node` is the framework's alone (§5): its `Session` chains no
+children, so `Theory`, which has a result, owns the slot for it — it
+mints the slot on `state.conversation` in its constructor, which `gen`
+and `from_store` both reach, returns it from `resulting_state()`, and
+appends it in `_states_inside()`, so it is released when the node leaves.
+A class may own a further slot, as `Proof_Obligation` does with
 `goal_state`: it mints and appends it the same way, and names it in
 `_slots_written_by(operation)`, so that the framework releases it with
 the result of the operation that writes it (MODULE_STRUCTURE §4.1,
@@ -103,6 +103,7 @@ Besides its hooks a class declares, as class attributes:
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1; compulsory in both directions and priority 0 by default, so an omissible class declares them and a leaf declares none |
 | `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.2), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
 | `construction_job_class`, `evaluation_job_class`, optional | the class's job classes, `None` by default: the `Construction_Job` subclass `construct` starts on the node, the `Evaluation_Job` subclass an evaluation starts on it (CONSTRUCT_INTERACTION §3) |
+| `placement` | where a node of the class may stand: `Placement(within=..., through=(...))`, class names — inside a node of class `within`, directly or under nodes of the classes `through` alone. A name matches a node whose class, or one of its base classes, bears it, and may name the class itself or another plugin's class. The framework checks it, where the place takes effect: under a `Session` or the forest root at the edit, refused with `BadPlacement` (EXCEPTIONS.md §3); inside a theory at evaluation, before the node's first own operation, whose status becomes a `CannotEvaluate` carrying the refusal, the hook not called (RENDER_BASELINES §2, §3). Required of a plugin's class (§5); the framework's declare none |
 | `job_operation`, optional | the operation that writes what the node's jobs read, named as `_operation_names()` names it — `None` for a `Leaf`'s one operation, `"beginning"` or `"ending"` for a `StdBlock`'s; the jobs depend on it and on every own operation before it (CONSTRUCT_INTERACTION §3.1). The base's default is its last operation, so a class that declares nothing has jobs depending on every operation; a `StdBlock` class whose jobs read what its beginning wrote declares `"beginning"`, as the plugin's `Beginning_Proof_Obligation` does (node_classes/COMMON.md §3) |
 
 The two schemas describe one thing twice, for two readers — the agent and
@@ -117,8 +118,9 @@ framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
 §2). Besides its own node, a class may read `forest().conversation` — what
 MODULE_STRUCTURE §4.1 lists; of its log a class writes `note` records
 alone, the named events being the framework's (LOGGING.md §3, §5) —,
-`forest().id_of` for a node's id as the agent sees it, and its
-`Theory`'s `print_name` over the stored `keywords`
+`forest().id_of` for a node's id as the agent sees it,
+`enclosing(cls)`, the nearest ancestor of class `cls`, and so its
+theory's `print_name` over the stored `keywords`, `enclosing(Theory).print_name`
 (node_classes/SESSION_AND_THEORY.md §2), its own
 `operation_slots(operation)` — an operation's input slot and resulting
 slot, what the operation's evaluation hook runs from and into
@@ -140,7 +142,7 @@ invents no key and rewrites no schema of the class's own.
 
 ```python
 @TAT_node
-class Theorem(Theory_Member, Proof_Obligation, Leaf):
+class Theorem(Proof_Obligation, Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -162,10 +164,10 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
   "#/$defs/Construct"}, ...}`, or with a narrower `items`, such as
   `Session`'s `{"type": "array", "items": {"$ref": "#/$defs/Theory"}}`.
   One that does not declare it takes contents only through later `edit`
-  calls — a `children` in its construct is refused — and a narrower
-  `items` describes where the classes' `gen`s let a node stand, the
-  framework checking no containment (MODULE_STRUCTURE §4.2). A leaf
-  class declares no `children`.
+  calls — a `children` in its construct is refused. A narrower `items`
+  describes where a node may stand, which `Session` and `Theory` check
+  themselves and a plugin's class declares as its `placement` (§2). A
+  leaf class declares no `children`.
 - Shared structures go in the class's own `$defs`, each key a Python
   identifier, and are used through `$ref`; a `$ref` under the top-level
   `children` names `Construct` or a node class (the bullet above), every other
@@ -249,9 +251,11 @@ registration, per class:
 - a `Leaf` or `StdBlock` class's `job_operation` is among its
   `_operation_names()` (§2; CONSTRUCT_INTERACTION §3.1): the plugin's
   `Proof_Obligation` bare on a block, whose `job_operation` is `None`,
-  is refused, and so is `Beginning_Proof_Obligation` on a leaf; an
-  `Unchained_Node` class names no job class, since it runs no operation
-  to write what a job reads;
+  is refused, and so is `Beginning_Proof_Obligation` on a leaf;
+- a plugin's class — every class but the framework's `Session` and
+  `Theory` — carries a `Placement` (§2), its own or inherited, does not
+  derive from `Unchained_Node`, and does not override `_evaluate`, so
+  no class skips the placement check;
 - the class does not override `is_finished` — `_unfinished` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
   `job_operation_status` nor
@@ -306,10 +310,10 @@ registration, per class:
   sets, never by position, since an annotation does not reliably keep
   its order (MODULE_STRUCTURE §4.4). So what a construct schema says of
   the class's own fields — which the check enforces — is what `gen`'s
-  `raw` holds. Which classes a
-  `children` property's `items` admit describes where the classes'
-  `gen`s let a node stand — `Bad<Class>NodeParent`, `NotInsideTheory` —
-  the framework checking no containment (MODULE_STRUCTURE §4.2).
+  `raw` holds. Which classes a `children` property's `items` admit
+  describes where a node may stand; what is checked is `Session`'s and
+  `Theory`'s `Bad<Class>NodeParent` and a plugin class's `placement`
+  (§2; MODULE_STRUCTURE §4.2).
 
 At assembly, once every class is known:
 
@@ -320,6 +324,10 @@ At assembly, once every class is known:
   name;
 - two classes defining the same `$defs` name define it equally (`dict`
   equality); otherwise the error names both classes and the name;
+- every name of a class's `placement` names a class of the
+  conversation, and `within` names neither an `Unchained_Node` class nor
+  a class answering to several kinds; a class naming another plugin's
+  class is loadable only together with that plugin;
 - the assembled `edit` schema is itself well-formed.
 
 TAT's test suite validates the assembled schema again, with `jsonschema`,

@@ -13,10 +13,10 @@ from typing import Annotated, Any, Literal, NotRequired, TypedDict
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver
-from ..model import INDENT, NON_EMPTY, RECALL, Leaf, emit_lines, print_name, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors
 from ..plugin import TAT_node
 from .common import (
-    TYPE_PARAMETER_DEFS, Theory_Member, Type_Parameter, TypeParameter_RawAST, check_identifier,
+    TYPE_PARAMETER_DEFS, Type_Parameter, TypeParameter_RawAST, check_identifier,
     check_type_parameters_used, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
     type_parameters_wire)
 
@@ -44,7 +44,7 @@ class Field:
 
 
 @TAT_node
-class Record(Theory_Member, Leaf):
+class Record(Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -71,6 +71,7 @@ class Record(Theory_Member, Leaf):
         "$defs": {**TYPE_PARAMETER_DEFS},
     }
     argument_schema = Record_RawAST
+    placement = Placement(within="Theory", through=())
 
     english: str
     type_parameters: tuple[Type_Parameter, ...]
@@ -88,11 +89,10 @@ class Record(Theory_Member, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Record_RawAST):
-        """§4's checks in its order: the parent; `type_name` against §1's
-        grammar; the type parameters by the shared check; each field's
-        name, no two the same; then every type parameter used, in a
-        field's type or `parent`."""
-        cls.require_inside_theory(config, raw["kind"])
+        """§4's checks in its order: `type_name` against §1's grammar; the
+        type parameters by the shared check; each field's name, no two the
+        same; then every type parameter used, in a field's type or
+        `parent`."""
         require_id_name(raw["type_name"], "type name")
         type_parameters = type_parameters_of(raw.get("type_parameters", []))
         fields: list[Field] = []
@@ -176,7 +176,7 @@ class Record(Theory_Member, Leaf):
 
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.english))
-        head, fields = self._definition(self.theory().keywords or ())
+        head, fields = self._definition(self.enclosing(Theory).keywords or ())
         emit_lines(indent, out, "\n".join([f"{self.kind} {head}", *(f"  {f}" for f in fields)]))
         return indent
 

@@ -9,8 +9,8 @@ elements of a non-empty subset of an existing type, with a function each
 way between the two. Its one command opens one proof obligation
 (INDEX.md), that the subset is non-empty, which it discharges the way
 `Theorem` does: it is a `Leaf` of the plugin `Isabelle_Std` deriving
-from the plugin's `Theory_Member` and `Proof_Obligation` (COMMON.md §1,
-§3) — `class Typedef(Theory_Member, Proof_Obligation, Leaf)` — whose job
+from the plugin's `Proof_Obligation` (COMMON.md §3) — `class
+Typedef(Proof_Obligation, Leaf)` — whose job
 classes `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s. Its
 Python half is `isabelle_theory_agent/std/typedef.py`, its ML half
 `Isabelle_Std/ML/TAT_Typedef.ML`. Its agent-facing wording lives here —
@@ -161,29 +161,31 @@ arms' fields are COMMON.md §4's, pinned there alone.
 
 ## 4. `gen`
 
-`Typedef.gen` calls `require_inside_theory` first (COMMON.md §1), then
-checks: `type_name` against §1's grammar (`InvalidName` with `grammar` =
-`type name`, RENDER_BASELINES §2's fifth form); the type parameters by
-the shared check (COMMON.md §4): each `name` a type variable, no two the
-same; each type parameter used in `set`, the plugin's shared check
-(COMMON.md §4); `rep_function_name` and `abs_function_name` through the
-plugin's shared check of a pair of function names (COMMON.md §4) — each
-given name an Isabelle identifier (COMMON.md §5) not ending with an
-underscore (COMMON.md §5's clause on internal names), and the two given
-names, as given, not the same (`InvalidField`); a given name equal to
-the field's default, `Rep_dlist` or `Abs_dlist` (§2), is a given name
-like any other, written into the `morphisms` clause as given (§5). A
-given name that clashes with the other field's default — `Abs_dlist` as
-`rep_function_name` with `abs_function_name` left out — is Isabelle's
-refusal when `open_goal` runs the command (§6). A
-sibling already bearing the
-node's id component is the framework's `DuplicateName`
-(MCP_SPECIFICATION §2); any other clash of the type's name is Isabelle's
-at evaluation. Whether `set` parses and has a set type, whether every type
-variable in it is a parameter, and whether the mixfix annotation is
-well-formed with one `_` per parameter, are Isabelle's business at
-evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects is an
-evaluation failure, not an exception.
+A `Typedef` stands directly inside a theory: its `placement` is
+`Placement(within="Theory", through=())`, which the framework checks
+(PLUGIN_SYSTEM §2).
+
+`Typedef.gen` checks: `type_name` against §1's grammar (`InvalidName`
+with `grammar` = `type name`, RENDER_BASELINES §2's fifth form); the
+type parameters by the shared check (COMMON.md §4): each `name` a type
+variable, no two the same; each type parameter used in `set`, the
+plugin's shared check (COMMON.md §4); `rep_function_name` and
+`abs_function_name` through the plugin's shared check of a pair of
+function names (COMMON.md §4) — each given name an Isabelle identifier
+(COMMON.md §5) not ending with an underscore (COMMON.md §5's clause on
+internal names), and the two given names, as given, not the same
+(`InvalidField`); a given name equal to the field's default, `Rep_dlist`
+or `Abs_dlist` (§2), is a given name like any other, written into the
+`morphisms` clause as given (§5). A given name that clashes with the
+other field's default — `Abs_dlist` as `rep_function_name` with
+`abs_function_name` left out — is Isabelle's refusal when `open_goal`
+runs the command (§6). A sibling already bearing the node's id component
+is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any other
+clash of the type's name is Isabelle's at evaluation. Whether `set`
+parses and has a set type, whether every type variable in it is a
+parameter, and whether the mixfix annotation is well-formed with one `_`
+per parameter, are Isabelle's business at evaluation (MODULE_STRUCTURE
+§4.1); what Isabelle rejects is an evaluation failure, not an exception.
 
 `Typedef`'s `goal_structure()` (COMMON.md §3) is `type_parameters` and
 `set`, each `IsaTerm` as its `ascii`: the goal, `∃x. x ∈ S`, is made of
@@ -195,9 +197,6 @@ stored proof; a changed `type_name`, function name, `syntax` or
 The `InvalidField` sentences — the type parameters', the unused
 parameter's and the function names' — are COMMON.md §4's, pinned there
 alone (COMMON.md §5).
-
-A parent outside a theory is refused with the plugin's
-`NotInsideTheory`, whose sentence COMMON.md §1 pins.
 
 ## 5. Emission
 

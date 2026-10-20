@@ -229,7 +229,7 @@ its beginning and its ending, and so two statuses.
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
 | `ready` | the operation ran and its resulting slot is current |
-| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal: the node is an obstacle (§3.3) |
+| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the node standing where its class's placement does not admit it (PLUGIN_SYSTEM §2): the node is an obstacle (§3.3) |
 
 Every operation has a second field beside `evaluation_status`, its
 **stored status** `last_evaluation_status`: the value `evaluation_status`
@@ -301,6 +301,12 @@ mentions it fails with a message about the constant instead of about itself. A
 nesting node whose ending command failed is one too: a `Theory` whose `end`
 failed has no theory value. Such a node **stops** evaluation: everything after
 it in the tree is `not_evaluated`.
+
+A node standing where its class's placement does not admit it
+(PLUGIN_SYSTEM §2) is an obstacle too: its first own operation is
+`cannot_evaluate` without running, a leaf's one operation or a nesting
+node's beginning, and a move or an amend that invalidates it has it
+checked again at its new place.
 
 A **nesting node whose beginning command failed** leaves its children no context
 to run in. Its beginning is `cannot_evaluate` and, like any obstacle, is not

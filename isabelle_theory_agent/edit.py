@@ -24,12 +24,13 @@ from typing import Literal
 
 from . import isabelle_driver
 from .exceptions import (
-    BadEdit, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
+    BadEdit, BadPlacement, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
     MalformedRawAST, MoveIntoOwnSubtree, TAT_Error, TAT_InternalError,
     UnexpectedChildren, UnknownKind)
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
-    NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
+    NodeConfig, NonLeaf_Node, RawAST, Role, Unchained_Node, _completed, _leaving, _wrote, is_valid_name,
+    placement_refusal)
 from .plugin import GIVEN_LATER, _must_be, check_call
 
 
@@ -268,6 +269,7 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     old_index = node.index_of()
     old_location = Location(parent, old_index)
     new_location = Location(new_parent, new_index)
+    _require_placement(type(node), node.kind, new_parent)
     _gate(node.on_moving, new_location)
     _gate(parent.on_removing_child, node, "move")
     # Judge the destination side against the post-removal shape, with no
@@ -418,6 +420,15 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname
     return nodes
 
 
+def _require_placement(cls: type[Node], kind: str, parent: NonLeaf_Node) -> None:
+    """`BadPlacement` for a node placed under an `Unchained_Node` where its
+    class's `placement` does not admit it: no evaluation would reach it to
+    refuse it (PLUGIN_SYSTEM §2).  Under a chaining parent the check runs
+    at evaluation."""
+    if isinstance(parent, Unchained_Node) and (sentence := placement_refusal(cls, kind, parent)) is not None:
+        raise BadPlacement(sentence)
+
+
 async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tuple[Node, ...],
                              role: Role, call: Edit_Call, path: str) -> Node:
     forest, kinds = call.forest, call.kinds
@@ -453,6 +464,7 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
     schema = cls.construct_schema
     assert schema is not None                 # registration checked it
     check_call(schema, kind, raw, construct=True)
+    _require_placement(cls, kind, parent)
     node = await cls.gen(config, {k: v for k, v in raw.items()
                                   if k != "children"})
     if isinstance(node, NonLeaf_Node) and node.sub_nodes:
@@ -473,7 +485,7 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
                 f"{cls.__name__} took children but is no nesting class")
         children = await _construct_siblings(
             node, raw["children"], "children", call, Insertion(), path=path)
-        for child in children:                # the framework owns placement
+        for child in children:                # the framework sets `parent`
             child.parent = node
         node.sub_nodes.extend(children)
     return node

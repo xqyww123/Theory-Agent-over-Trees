@@ -12,12 +12,13 @@ from __future__ import annotations
 import asyncio
 import difflib
 import io
+import itertools
 import os
 import re
 import stat
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Container, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Container, Coroutine, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +32,7 @@ from . import isabelle_driver
 from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent, DuplicateName,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
-    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError)
+    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError, one_of)
 from .jobs import (
     NOT_STARTED, RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
     Succeeded, Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs,
@@ -133,11 +134,13 @@ class Ready:
 
 @dataclass(frozen=True)
 class CannotEvaluate:
-    """The operation ran and its class judged the failure fatal: the node is
-    an obstacle (ARCHITECTURE §3.3) — while it stands it is not rerun
-    unless a walk rewrote its input, and its input stands as its result;
-    once invalidated (ARCHITECTURE §3.4) it is `NotEvaluated` and runs when
-    a walk reaches it unblocked.  What it blocks is `NotEvaluated` too.
+    """The operation ran and its class judged the failure fatal, or the
+    framework refused to run it where the node's `placement` does not
+    admit it: the node is an obstacle (ARCHITECTURE §3.3) — while it
+    stands it is not rerun unless a walk rewrote its input, and its input
+    stands as its result; once invalidated (ARCHITECTURE §3.4) it is
+    `NotEvaluated` and runs when a walk reaches it unblocked.  What it
+    blocks is `NotEvaluated` too.
     `messages`: the reason."""
     messages: tuple[IsaTerm, ...] = ()
 
@@ -180,6 +183,7 @@ def _status_from_store(value: Any) -> EvaluationStatus | None:
 # One evaluation (ARCHITECTURE §3.5)
 
 _T = TypeVar("_T")
+_N = TypeVar("_N", bound="Node")
 
 
 async def _timed(hook: Coroutine[Any, Any, _T]) -> tuple[_T, float]:
@@ -374,6 +378,16 @@ class Location:
     index: int
 
 
+@dataclass(frozen=True)
+class Placement:
+    """Where a node of a plugin's class may stand (PLUGIN_SYSTEM §2): inside
+    a node of class `within`, directly or under nodes of the classes
+    `through` alone.  Class names, matching a node whose class or one of
+    its base classes bears the name."""
+    within: str
+    through: tuple[str, ...]
+
+
 class Node(ABC):
     """The Python half of a node class (ARCHITECTURE §6).
 
@@ -429,14 +443,20 @@ class Node(ABC):
     # jobs depending on every operation.
     job_operation: ClassVar[Any]
 
+    # Where a node of the class may stand (PLUGIN_SYSTEM §2), which the
+    # framework checks (`placement_refusal`); every plugin class declares
+    # one, the framework's classes none.
+    placement: ClassVar[Placement | None] = None
+
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
         """Semantic construction from the agent's construct — `raw`, the
         RawAST, which the class annotates with its own `argument_schema`
-        TypedDict (MODULE_STRUCTURE §4.1): judge the fields' meaning, refuse
-        a parent the class cannot live under, and build the node from
-        `config`.  May read over the wire through the framework's query
-        functions (MODULE_STRUCTURE §4.3); must not write.  Raises
+        TypedDict (MODULE_STRUCTURE §4.1): judge the fields' meaning and
+        build the node from `config` — where it may stand is the
+        framework's to check, by the class's `placement`.  May read over
+        the wire through the framework's query functions (MODULE_STRUCTURE
+        §4.3); must not write.  Raises
         `TAT_Error`s bare — the framework prefixes the `raw_ast_path`
         (EXCEPTIONS.md §5)."""
         raise TAT_InternalError(f"{cls.__name__} has no gen")
@@ -544,7 +564,8 @@ class Node(ABC):
         kind, messages = _status_to_store(new)
         forest.conversation.log.evaluation.operation(
             node=forest.full_id(self), operation=operation or "own", ran=duration is not None,
-            status=kind, messages=messages if duration is not None else None, duration=duration)
+            status=kind, messages=messages if duration is not None or isinstance(new, CannotEvaluate) else None,
+            duration=duration)
         if isinstance(old, Ready) and not isinstance(new, Ready):
             _completed(self.on_invalidated, operation)
         # a running construction job is told of every write of an operation
@@ -582,15 +603,36 @@ class Node(ABC):
         assert isinstance(n, Forest)
         return n
 
+    def ancestors(self) -> Iterator[NonLeaf_Node]:
+        """The node's ancestors, nearest first, the forest root last."""
+        n = self.parent
+        while n is not None:
+            yield n
+            n = n.parent
+
+    def enclosing(self, cls: type[_N]) -> _N:
+        """The nearest ancestor of class `cls` (PLUGIN_SYSTEM §2)."""
+        for n in self.ancestors():
+            if isinstance(n, cls):
+                return n
+        raise TAT_InternalError(f"no {cls.__name__} above a {type(self).__name__}")
+
     def _is_under(self, ancestor: Node) -> bool:
         """Whether `ancestor` is one of this node's ancestors — strictly:
         no node is under itself."""
-        n = self.parent
-        while n is not None:
-            if n is ancestor:
-                return True
-            n = n.parent
-        return False
+        return any(n is ancestor for n in self.ancestors())
+
+    async def _placed(self, hook: Callable[[], Coroutine[Any, Any, _T]]
+                      ) -> tuple[_T | CannotEvaluate, float | None]:
+        """The node's first own operation, run where the node may stand
+        (PLUGIN_SYSTEM §2): the hook's answer and how long it ran; at a
+        place the class does not admit, a `CannotEvaluate` carrying the
+        refusal, the hook never called."""
+        assert self.parent is not None
+        refusal = placement_refusal(type(self), self.kind, self.parent)
+        if refusal is not None:
+            return CannotEvaluate((IsaTerm.from_agent(refusal),)), None
+        return await _timed(hook())
 
     # --- Subtree traversals.  Each appends to `out` and returns it, so a
     # walk over many nodes fills one list instead of concatenating one per
@@ -1250,7 +1292,7 @@ class Leaf(Node):
 
     async def _evaluate(self, ev, mode):
         if not _wrote(self._status):              # a Ready operation, or an obstacle, is not rerun
-            status, duration = await _timed(self._eval_opr())
+            status, duration = await self._placed(self._eval_opr)
             if isinstance(status, CannotEvaluate):
                 input_slot, resulting_slot = self.operation_slots(None)
                 await input_slot.copy_to(resulting_slot)
@@ -1502,7 +1544,7 @@ class StdBlock(NonLeaf_Node):
 
     async def _evaluate(self, ev, mode):
         if self.evaluation_status_beginning is NOT_EVALUATED:          # an obstacle is not rerun
-            status, duration = await _timed(self._eval_beginning_opr())
+            status, duration = await self._placed(self._eval_beginning_opr)
             self._set_beginning(ev, status, duration)
         await self._passes(ev, "beginning")       # settled, a failed beginning included: passed before the children
         if isinstance(self.evaluation_status_beginning, CannotEvaluate):   # the children have no context
@@ -1737,9 +1779,11 @@ class Forest(Unchained_Node):
         `not_evaluated` throughout, every slot fresh (ARCHITECTURE §4.1).
         A database TAT could not have written is refused (`TAT_StartupError`).
         `imports` are the theories the loaded plugins declare, which
-        `Theory.header` writes (PLUGIN_SYSTEM §1)."""
+        `Theory.header` writes (PLUGIN_SYSTEM §1); `kinds` is kept, the
+        kind words of the placement refusals (`placement_refusal`)."""
         super().__init__(None, Isar_State_Slot.assign(conversation))
         self.conversation = conversation
+        self.kinds = dict(kinds)
         self.imports = tuple(imports)
         self.identity = self.ROOT_IDENTITY
         self.store = store
@@ -1904,7 +1948,7 @@ class Forest(Unchained_Node):
         if isinstance(node, NonLeaf_Node) and node.sub_nodes:
             raise TAT_InternalError(
                 f"{cls.__name__}.from_store returned children; the framework loads them")
-        node.parent = parent                   # the framework owns placement
+        node.parent = parent                   # the framework sets `parent`
         node.kind = kind
         node.identity = identity
         self._restore_statuses(node, identity)
@@ -2830,6 +2874,38 @@ def status_of_errors(errors: list[str]) -> Ready | CannotEvaluate:
     if errors:
         return CannotEvaluate(tuple(IsaTerm.from_isabelle(e) for e in errors))
     return READY_CLEAN
+
+
+def bears(cls: type[Node], name: str) -> bool:
+    """Whether the class, or one of its base classes, bears the class name
+    `name` — what a `Placement`'s names match."""
+    return any(c.__name__ == name for c in cls.__mro__)
+
+
+def placement_refusal(cls: type[Node], kind: str, place: NonLeaf_Node) -> str | None:
+    """Why a node of class `cls` and kind `kind` cannot stand under `place`,
+    or None where its `placement` admits it (PLUGIN_SYSTEM §2): the walk up
+    from `place` reaching an `Unchained_Node` gives the edit-time sentence,
+    naming `place` (`BadPlacement`, EXCEPTIONS.md §3); an ancestor of the
+    class `within` admits; the nearest other ancestor of no class
+    `through` gives the evaluation sentence, naming it."""
+    placement = cls.placement
+    if placement is None:
+        return None
+    forest = place.forest()
+    within = next(k for k, c in forest.kinds.items() if c.__name__ == placement.within)
+    through = [f"`{k}`" for k, c in forest.kinds.items() if c.__name__ in placement.through]
+    rule = (f"it stands inside a node of kind `{within}`, "
+            + (f"directly or under nodes of kind {one_of(through)}." if through else "directly."))
+    for n in itertools.chain((place,), place.ancestors()):
+        if isinstance(n, Unchained_Node):
+            return f"A node of kind `{kind}` cannot be placed under `{forest.full_id(place)}`; {rule}"
+        if bears(type(n), placement.within):
+            return None
+        if not any(bears(type(n), name) for name in placement.through):
+            return (f"A node of kind `{kind}` cannot stand inside `{forest.full_id(n)}`,"
+                    f" a node of kind `{n.kind}`; {rule}")
+    raise TAT_InternalError("a node outside the forest")
 
 
 FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]

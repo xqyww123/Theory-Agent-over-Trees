@@ -22,11 +22,10 @@ children; its ending closes the type's Lifting setup, `lifting_update
 fset.lifting` then `lifting_forget fset.lifting`, Isabelle's own
 discipline for a type whose construction is finished (HOL's
 `Multiset.thy` and `FSet.thy` end so). It is a `StdBlock` of the plugin
-`Isabelle_Std` deriving from the plugin's `Theory_Member`,
-`Beginning_Proof_Obligation` and `Lifting_Closing`, the plugin's
-`StdBlock` whose ending closes the Lifting setup (COMMON.md §1, §3, §6)
-— `class QuotientType(Theory_Member, Beginning_Proof_Obligation,
-Lifting_Closing)` — whose job classes `Proof_Job` and `Proof_Check` are
+`Isabelle_Std` deriving from the plugin's `Beginning_Proof_Obligation`
+and `Lifting_Closing`, the plugin's `StdBlock` whose ending closes the
+Lifting setup (COMMON.md §3, §6) — `class
+QuotientType(Beginning_Proof_Obligation, Lifting_Closing)` — whose job classes `Proof_Job` and `Proof_Check` are
 `Proof_Obligation`'s and depend on the beginning alone
 (CONSTRUCT_INTERACTION §3.1): a child inserted, amended or deleted
 leaves the proof standing. Its Python half is
@@ -154,14 +153,15 @@ text.
 `english` are `str`; `partial` is `bool`. `TypeMixfix` is shared
 through `TYPE_MIXFIX_DEFS` (COMMON.md §4).
 
-What stands inside the block: any theory member — the framework checks
-no containment (PLUGIN_SYSTEM §3), and each class's `gen` judges its own
-parent (COMMON.md §1). The type's Lifting setup is open inside the block
+What stands inside the block: a node whose class's `placement` lists
+`QuotientType` among the classes it stands through (PLUGIN_SYSTEM §2) —
+of this plugin `Theorem`, `Define`, `LiftDefinition` and
+`LiftingContext`. The type's Lifting setup is open inside the block
 and closed at its end (§6), so a `LiftDefinition` on the type stands
 here or inside a `LiftingContext`, which opens the setup again
 (LIFTING_CONTEXT.md); lemmas about the type proved by `transfer`
 likewise, since `lifting_forget` deletes the type's transfer rules. A
-member that uses the type by name alone — a `Datatype` with an `'a
+node that uses the type by name alone — a `Datatype` with an `'a
 fset` field, a `Theorem` proved without `transfer` — stands anywhere
 after the block too.
 
@@ -258,38 +258,40 @@ The descriptions of `TypeMixfix` and of its arms' fields are COMMON.md
 
 ## 4. `gen`
 
-`QuotientType.gen` calls `require_inside_theory` first (COMMON.md §1),
-then checks: `type_name` against §1's grammar (`InvalidName` with
-`grammar` = `type name`, RENDER_BASELINES §2's fifth form); the type
-parameters through `type_variables_of` (COMMON.md §4) — each a type
-variable on its `ascii`, a prime, then an Isabelle identifier
-(COMMON.md §5), and no two the same —; each type parameter used in
-`representation_type`, the plugin's one check for a type parameter
-declared and not used, shared by every class that declares type
-parameters: a lexical scan of the field's `ascii` for type-variable
+A `QuotientType` stands directly inside a theory: its `placement` is
+`Placement(within="Theory", through=())`, which the framework checks
+(PLUGIN_SYSTEM §2).
+
+`QuotientType.gen` checks: `type_name` against §1's grammar
+(`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth
+form); the type parameters through `type_variables_of` (COMMON.md §4) —
+each a type variable on its `ascii`, a prime, then an Isabelle
+identifier (COMMON.md §5), and no two the same —; each type parameter
+used in `representation_type`, the plugin's one check for a type
+parameter declared and not used, shared by every class that declares
+type parameters: a lexical scan of the field's `ascii` for type-variable
 tokens, refusing the first parameter it does not find on the path
 `type_parameters[i]` (`InvalidField`, COMMON.md §4); `rep_function_name`
-and
-`abs_function_name` through the plugin's shared check of a pair of
-function names (COMMON.md §4) — each given name an Isabelle
-identifier (COMMON.md §5) not ending with an underscore (COMMON.md §5's
-clause on internal names), and the two given names, as given, not the
-same (`InvalidField`); a given name equal to the field's default,
-`rep_fset` or `abs_fset` (§2), is a given name like any other, written
-into the `morphisms` clause as given (§5). A given name that clashes
-with the other field's default — `abs_fset` as `rep_function_name` with
+and `abs_function_name` through the plugin's shared check of a pair of
+function names (COMMON.md §4) — each given name an Isabelle identifier
+(COMMON.md §5) not ending with an underscore (COMMON.md §5's clause on
+internal names), and the two given names, as given, not the same
+(`InvalidField`); a given name equal to the field's default, `rep_fset`
+or `abs_fset` (§2), is a given name like any other, written into the
+`morphisms` clause as given (§5). A given name that clashes with the
+other field's default — `abs_fset` as `rep_function_name` with
 `abs_function_name` left out — is Isabelle's refusal at the admission
 (§6). A sibling already bearing the node's id component is the
 framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of
 the type's name is Isabelle's at evaluation. Whether
 `representation_type` parses, whether every type variable in it is a
 parameter, whether `equiv_relation` parses to a relation on it, whether
-it has a free or a schematic variable, and whether the mixfix
-annotation is well-formed with one `_` per parameter, are Isabelle's
-business at evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects
-is an evaluation failure, not an exception. The children are the
-framework's: built by their own classes' `gen`s and placed under the
-node (MODULE_STRUCTURE §4.2).
+it has a free or a schematic variable, and whether the mixfix annotation
+is well-formed with one `_` per parameter, are Isabelle's business at
+evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects is an
+evaluation failure, not an exception. The children are the framework's:
+built by their own classes' `gen`s and placed under the node
+(MODULE_STRUCTURE §4.2).
 
 `QuotientType`'s `goal_structure()` (COMMON.md §3) is
 `representation_type`, `partial` and `equiv_relation`, each `IsaTerm` as
@@ -316,9 +318,6 @@ COMMON.md §4's sentence for a type parameter declared and not used, the
 one sentence of every class that declares type parameters, on the path
 `type_parameters[i]` too. The function names' sentences are the shared
 check's, pinned in COMMON.md §4.
-
-A parent outside a theory is refused with the plugin's
-`NotInsideTheory`, whose sentence COMMON.md §1 pins.
 
 ## 5. Emission
 

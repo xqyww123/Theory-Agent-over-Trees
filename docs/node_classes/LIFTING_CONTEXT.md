@@ -27,9 +27,8 @@ block notes does, and the two commands store it into the type's bundle
 and delete it from the context, so that outside the block the type is
 opaque again and a later `LiftingContext` opening the type finds the
 rule in the bundle. The class opens no proof obligation and has no jobs
-(INDEX.md). It is a `StdBlock` of the plugin `Isabelle_Std` deriving
-from the plugin's `Theory_Member` (COMMON.md §1) — `class
-LiftingContext(Theory_Member, StdBlock)` — and defines the four hooks
+(INDEX.md). It is a `StdBlock` of the plugin `Isabelle_Std` — `class
+LiftingContext(StdBlock)` — and defines the four hooks
 of a block itself, the beginning's two and the ending's two together
 (PLUGIN_SYSTEM §5). Its Python half is
 `isabelle_theory_agent/std/lifting_context.py`, its ML half
@@ -118,9 +117,10 @@ printing, emission and evaluation all use the stored text.
 Each entry of `types` is an `IsaTerm` (MODULE_STRUCTURE §4.3); `name`
 is `str`.
 
-Where the block stands: anywhere a theory member stands (COMMON.md §1)
-— under a `Theory`, inside a `Section`, inside a `QuotientType`'s
-block, inside another `LiftingContext`. A type whose setup is open
+Where the block stands: inside a theory, directly or under
+`QuotientType` and `LiftingContext` blocks — its `placement` is
+`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
+which the framework checks (PLUGIN_SYSTEM §2). A type whose setup is open
 where the block stands already — the type a `QuotientType` block
 defines, inside that block; the type a `Typedef` whose recorded
 `lifting` is true defines — a `Leaf` that closes nothing (TYPEDEF.md
@@ -131,12 +131,13 @@ nor closes it (§6). A type with no Lifting setup to open — a
 later — is refused at evaluation (§6). `gen` checks neither: each needs
 the context where the block stands.
 
-What stands inside the block: any theory member — the framework checks
-no containment (PLUGIN_SYSTEM §3), and each class's `gen` judges its own
-parent (COMMON.md §1). The opened types' Lifting setups are open inside
+What stands inside the block: a node whose class's `placement` lists
+`LiftingContext` among the classes it stands through (PLUGIN_SYSTEM §2)
+— of this plugin `Theorem`, `Define`, `LiftDefinition` and
+`LiftingContext`. The opened types' Lifting setups are open inside
 the block and closed at its end (§6), so a `LiftDefinition` on an
 opened type stands here, as does a `Theorem` about it proved by
-`transfer`; a member that uses the type by name alone stands anywhere.
+`transfer`; a node that uses the type by name alone stands anywhere.
 Inside the block Isabelle is in a local theory, as in every `context`
 block, so a member whose command needs the theory itself, not a local
 theory, does not run there and stands outside the block.
@@ -202,8 +203,7 @@ the lift_definitions on the opened types, and any other declarations whose proof
 
 ## 4. `gen`
 
-`LiftingContext.gen` calls `require_inside_theory` first (COMMON.md
-§1), then checks each entry of `types`, normalised: an Isabelle
+`LiftingContext.gen` checks each entry of `types`, normalised: an Isabelle
 identifier, or identifiers joined by dots, each part an identifier on
 its `ascii` (COMMON.md §5) not ending with an underscore, refused on
 the path `types[i]` with the class's own sentence below
@@ -232,8 +232,7 @@ The field `types[1]` repeats `fset`.
 
 The first is this class's own, its grammar text the framework's
 (COMMON.md §5); the second is COMMON.md §4's; the path of both this
-class's own, `types[i]`. A parent outside a theory is refused with the
-plugin's `NotInsideTheory`, whose sentence COMMON.md §1 pins.
+class's own, `types[i]`.
 
 ## 5. Emission
 

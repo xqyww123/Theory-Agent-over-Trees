@@ -19,10 +19,10 @@ from IsaMini.AoA.task import StdTask, aoa_task
 
 from .. import isabelle_driver
 from ..jobs import Failed, Succeeded, series
-from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, emit_lines, print_name, status_of_errors, string_token
+from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors, string_token
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, Construction_Setup, Mixfix, Mixfix_RawAST, Proof_Check, Proof_Job, Theory_Member,
+    MIXFIX_DEFS, Construction_Setup, Mixfix, Mixfix_RawAST, Proof_Check, Proof_Job,
     With_Proof_Obligations, check_not_bound_twice, mixfix_of, mixfix_text, mixfix_wire, normalised,
     proof_wire, require_id_name, text_line, unverified)
 
@@ -215,7 +215,7 @@ class Define_Proof_Check(Proof_Check):
 
 
 @TAT_node
-class Define(Theory_Member, With_Proof_Obligations, Leaf):
+class Define(With_Proof_Obligations, Leaf):
     construct_schema = {
         "type": "object",
         "description": "defines constants by (recursive) equations",
@@ -248,6 +248,7 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
         },
     }
     argument_schema = Define_RawAST
+    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
     construction_job_class = Define_Proof_Job
     evaluation_job_class = Define_Proof_Check
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's words (§7) ...
@@ -283,11 +284,10 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Define_RawAST):
-        """§4's checks in its order: the parent; each constant's name against
-        §1's grammar, no two the same; the texts normalised.  On an amend,
+        """§4's checks in its order: each constant's name against §1's
+        grammar, no two the same; the texts normalised.  On an amend,
         `failed_obligation` comes from the replaced node exactly when the
         commit carries its outcome (§7), the two answering one question."""
-        cls.require_inside_theory(config, raw["kind"])
         constants: list[Constant] = []
         for i, c in enumerate(raw["constants"]):
             require_id_name(c["name"], "constant name")
@@ -463,7 +463,7 @@ class Define(Theory_Member, With_Proof_Obligations, Leaf):
         says otherwise than the command does."""
         names = self.constant_names()
         emit_lines(indent, out, text_line(self.english, f"Definition {' and '.join(names)}."))
-        keywords = self.theory().keywords or ()
+        keywords = self.enclosing(Theory).keywords or ()
         def write(text: str | IsaTerm) -> str:
             return print_name(text, keywords)
         command = self._command()

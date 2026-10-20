@@ -193,9 +193,8 @@ When amending a non-leaf node, `children` is not allowed: the amended node inher
 `theory_X.section_Basics` has 1 child, which a `lemma` cannot hold. Move or delete it first.
 ```
 
-`Bad<Class>NodeParent` — one sentence per judgement of where a node may
-live (EXCEPTIONS.md §3). The plugin `Isabelle_Std`'s `NotInsideTheory`,
-shared by all its classes, is pinned in node_classes/COMMON.md §1.
+`Bad<Class>NodeParent` — one sentence per judgement of where a node of a
+framework class may live (EXCEPTIONS.md §3).
 
 `Session`'s `BadSessionNodeParent`:
 
@@ -207,6 +206,19 @@ A `session` cannot be placed under `theory_X`; a session lives directly under `S
 
 ```
 A `theory` cannot be placed under `section_Basics`; a theory lives directly under a session.
+```
+
+`BadPlacement`, a plugin's node placed under a `Session` or the forest
+root, composed by the framework from the class's `placement`
+(PLUGIN_SYSTEM §2): the parent's full id, the kind of the class it
+stands within, and the kinds of the classes allowed between, in registry
+order; with none allowed, the sentence ends at "directly". Here a class
+standing within `Theory` through a class of the kinds `section` and
+`subsection`, and one standing directly in a theory:
+
+```
+A node of kind `note` cannot be placed under `session_Arith`; it stands inside a node of kind `theory`, directly or under nodes of kind `section` or `subsection`.
+A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind `theory`, directly.
 ```
 
 `MoveIntoOwnSubtree`:
@@ -279,6 +291,17 @@ EVALUATOR_DESIGN §7), named as Isabelle resolved it:
 
 ```
 Fail to load `TAT_Nowhere.Nope` because it is not found.
+```
+
+A plugin's node standing inside a theory where its class's `placement`
+does not admit it (PLUGIN_SYSTEM §2): its operation's `CannotEvaluate`,
+the hook never run, composed by the framework as `BadPlacement`'s
+sentence is, naming the nearest ancestor not allowed by its full id and
+its kind. The two classes of §2's example:
+
+```
+A node of kind `note` cannot stand inside `session_Arith.theory_X.section_S.block_B`, a node of kind `block`; it stands inside a node of kind `theory`, directly or under nodes of kind `section` or `subsection`.
+A node of kind `top` cannot stand inside `session_Arith.theory_X.section_S`, a node of kind `section`; it stands inside a node of kind `theory`, directly.
 ```
 
 ## 4. Server text

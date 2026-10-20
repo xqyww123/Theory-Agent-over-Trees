@@ -1,6 +1,6 @@
 """What the classes of `Isabelle_Std` share (node_classes/COMMON.md):
-`NotInsideTheory`'s sentence, and `Theory_Member` over every class the
-package registers (§1); the `text` line (§2); `Proof_Obligation`'s
+each class's `placement` and the framework's edit-time refusal over every
+class the package registers (PLUGIN_SYSTEM §2); the `text` line (§2); `Proof_Obligation`'s
 abstraction, and its reading of the class's own words, callback, message
 and records, through a stand-in, and `TAT_Proof_Obligation.decide` on a
 raw ML process (§3); the shared `$defs` against the section's schema
@@ -22,12 +22,11 @@ import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
-from isabelle_theory_agent.exceptions import BadEdit, InvalidField
+from isabelle_theory_agent.exceptions import BadPlacement, InvalidField
 from isabelle_theory_agent.std import (
     common, datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
 from isabelle_theory_agent.std.common import (
-    Binder, Infix, Lifting_Closing, NotInsideTheory, Proof_Obligation, Template, Theory_Member, Type_Parameter,
-    lifting_closing_text, text_line)
+    Binder, Infix, Lifting_Closing, Proof_Obligation, Template, Type_Parameter, lifting_closing_text, text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import ROOT, ml_process, ml_string
 from test_datatype import LIST, definition
@@ -56,21 +55,30 @@ EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: FSET for kind in quotient_type.KINDS}}
 
 
-def test_not_inside_theory_is_section_1_s_sentence():
-    [line] = fenced_lines(COMMON, "1.")
-    e = NotInsideTheory("datatype", "session_Arith")
-    assert str(e) == line and (e.kind, e.parent_id) == ("datatype", "session_Arith")
-    assert issubclass(NotInsideTheory, BadEdit)
+# Where each class stands (PLUGIN_SYSTEM §2): within `Theory`, through the
+# classes listed; `Section`, `Locale` and a `Typedef` block join as they land.
+THROUGH = {theorem.Theorem: ("QuotientType", "LiftingContext"),
+           define.Define: ("QuotientType", "LiftingContext"),
+           lift_definition.LiftDefinition: ("QuotientType", "LiftingContext"),
+           lifting_context.LiftingContext: ("QuotientType", "LiftingContext"),
+           datatype.Datatype: (), typedef.Typedef: (), record.Record: (), quotient_type.QuotientType: ()}
 
 
-def test_every_registered_class_is_a_theory_member_refused_outside_a_theory():
-    """§1: every class the package registers derives from `Theory_Member`;
-    a construct of each placed under a `Session` or the root is refused by
-    its `gen` with `NotInsideTheory`, a move there by `on_moving`, the
-    parent's id as the agent sees it; under a nesting node under the
-    theory it is accepted, by `gen` and by a move, and directly under
-    another theory by a move; `theory()` is, each time, the theory it
-    lives in."""
+def test_each_registered_class_declares_where_it_stands():
+    loaded = plugin.load(["isabelle_theory_agent.std"])
+    registered = {cls for cls in loaded.kinds.values() if cls not in M.FRAMEWORK_NODE_CLASSES}
+    assert registered == set(THROUGH)
+    for cls, through in THROUGH.items():
+        assert cls.placement == M.Placement(within="Theory", through=through)
+
+
+def test_every_registered_class_is_refused_under_a_session_or_the_root():
+    """A construct of each class placed under a `Session` or the root — an
+    insert, an amend, a session's inline child, a move — is refused with
+    the framework's `BadPlacement`, the parent's full id named; under a
+    nesting node under the theory it is accepted, by an insert and by a
+    move, and directly under another theory by a move; `enclosing(Theory)`
+    is, each time, the theory it lives in."""
     loaded = plugin.load(["isabelle_theory_agent.std"])
     registered = {kind: cls for kind, cls in loaded.kinds.items() if cls not in M.FRAMEWORK_NODE_CLASSES}
     assert set(registered) == set(EXAMPLES)
@@ -81,24 +89,29 @@ def test_every_registered_class_is_a_theory_member_refused_outside_a_theory():
     x, y = s.sub_nodes
     (b,) = x.sub_nodes
     (c,) = b.sub_nodes
-    outside = ((s, "session_Arith"), (f, "Sessions"))
     for kind, construct in EXAMPLES.items():
         cls = registered[kind]
-        assert issubclass(cls, Theory_Member)
-        for parent, parent_id in outside:
-            with pytest.raises(NotInsideTheory) as e:
+        for parent in (s, f):
+            with pytest.raises(BadPlacement) as e:
                 run(locked(f, edit.insert(parent, 0, [construct], kinds)))
-            assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, parent_id, "constructs[0]")
+            assert (e.value.sentence, e.value.raw_ast_path) == (M.placement_refusal(cls, kind, parent), "constructs[0]")
+            assert f"under `{f.full_id(parent)}`;" in e.value.sentence
+        (z,) = run(locked(f, edit.insert(s, 2, [theory("Z")], kinds)))
+        with pytest.raises(BadPlacement):
+            run(locked(f, edit.amend(z, [{k: v for k, v in construct.items() if k != "children"}], kinds)))
+        with pytest.raises(BadPlacement):
+            run(locked(f, edit.insert(f, 1, [session("Other", construct)], kinds)))
+        run(locked(f, edit.delete(z)))
         (node,) = run(locked(f, edit.insert(c, 0, [construct], kinds)))
-        assert isinstance(node, cls) and node.theory() is x
+        assert isinstance(node, cls) and node.enclosing(M.Theory) is x
         run(locked(f, edit.move(node, b, 0)))
-        assert node.parent is b and node.theory() is x
+        assert node.parent is b and node.enclosing(M.Theory) is x
         run(locked(f, edit.move(node, y, 0)))
-        assert node.parent is y and node.theory() is y
-        for parent, parent_id in outside:
-            with pytest.raises(NotInsideTheory) as e:
+        assert node.parent is y and node.enclosing(M.Theory) is y
+        for parent in (s, f):
+            with pytest.raises(BadPlacement) as e:
                 run(locked(f, edit.move(node, parent, 0)))
-            assert (e.value.kind, e.value.parent_id) == (kind, parent_id)
+            assert e.value.sentence == M.placement_refusal(cls, kind, parent)
         assert node.parent is y
         run(locked(f, edit.delete(node)))
     assert f.sub_nodes == [s] and s.sub_nodes == [x, y] and x.sub_nodes == [b] and b.sub_nodes == [c]
@@ -123,8 +136,8 @@ def test_proof_obligation_enforces_its_abstract_methods(shape):
     bases, complete, body = {
         "leaf": ((Proof_Obligation, M.Leaf), theorem.Theorem, {"emit": lambda self, indent, out: indent}),
         "block": ((common.Beginning_Proof_Obligation, tm.Block), Block_Stand_In, {})}[shape]
-    without_goal_structure = type("Without_Goal_Structure", (Theory_Member, *bases), {**body, "message": lambda self: ()})
-    without_message = type("Without_Message", (Theory_Member, *bases), {**body, "goal_structure": lambda self: ()})
+    without_goal_structure = type("Without_Goal_Structure", bases, {**body, "message": lambda self: ()})
+    without_message = type("Without_Message", bases, {**body, "goal_structure": lambda self: ()})
     for cls, missing in ((without_goal_structure, "goal_structure"), (without_message, "message")):
         with pytest.raises(TypeError, match=missing):
             cls(None, None)
@@ -185,7 +198,7 @@ def test_proof_obligation_reads_the_class_s_own_words_callback_message_and_recor
 
 # --- Beginning_Proof_Obligation (§3): the goal on a block's beginning, through a stand-in over test_model's fake block
 
-class Block_Stand_In(Theory_Member, common.Beginning_Proof_Obligation, tm.Block):
+class Block_Stand_In(common.Beginning_Proof_Obligation, tm.Block):
     """A `Proof_Obligation` whose goal opens on the beginning of test_model's
     fake block, the shape of `QuotientType` (§3): its own words, callback
     and message; the fake's ending."""
@@ -286,8 +299,9 @@ def test_the_loader_refuses_a_bare_proof_obligation_on_a_block_and_beginning_pro
     leaf (PLUGIN_SYSTEM §5)."""
     monkeypatch.setattr(plugin, "registry", {})
 
-    class Bare(Theory_Member, Proof_Obligation, tm.Block):
+    class Bare(Proof_Obligation, tm.Block):
         construct_schema = {**tm.BLOCK_SCHEMA, "properties": {**tm.BLOCK_SCHEMA["properties"], "kind": {"const": "bare"}}}
+        placement = M.Placement(within="Theory", through=())
         evaluation_callback = "TAT.Bare.evaluate"
         def goal_structure(self): return ()
         def message(self): return ()
@@ -338,8 +352,8 @@ def test_lifting_closing_defines_the_ending_s_two_hooks_and_comes_after_the_clas
     assert quotient_type.QuotientType.__mro__.index(common.Beginning_Proof_Obligation) < quotient_type.QuotientType.__mro__.index(Lifting_Closing)
     assert quotient_type.QuotientType.__abstractmethods__ == frozenset()
     body = {k: v for k, v in vars(quotient_type.QuotientType).items() if k not in ("__dict__", "__weakref__")}
-    right = type("Right", (Theory_Member, common.Beginning_Proof_Obligation, Lifting_Closing), body)
-    wrong = type("Wrong", (Theory_Member, Lifting_Closing, common.Beginning_Proof_Obligation), body)
+    right = type("Right", (common.Beginning_Proof_Obligation, Lifting_Closing), body)
+    wrong = type("Wrong", (Lifting_Closing, common.Beginning_Proof_Obligation), body)
     assert right.__abstractmethods__ == frozenset() and wrong.__abstractmethods__ == frozenset({"_eval_beginning_opr"})
     with pytest.raises(TypeError, match="_eval_beginning_opr"):
         wrong()

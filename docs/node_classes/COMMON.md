@@ -12,53 +12,16 @@ class, and §4's check of a type parameter declared and not used.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
-this document's: the base every class derives from (§1), the `english`
-field and its `text` line (§2), the base of the classes whose command
-opens a proof obligation (§3), the `$defs` several classes merge and
-the configuration option `typedef_overloaded`, which `TAT_Std.TAT_Std`
-sets for every theory of a forest (§4), the conventions their schemas
-and sentences follow (§5), and the ending of a block that closes a
-type's Lifting setup (§6). Its Python half is
+this document's: the `english` field and its `text` line (§2), the base
+of the classes whose command opens a proof obligation (§3), the `$defs`
+several classes merge and the configuration option `typedef_overloaded`,
+which `TAT_Std.TAT_Std` sets for every theory of a forest (§4), the
+conventions their schemas and sentences follow (§5), and the ending of a
+block that closes a type's Lifting setup (§6). Its Python half is
 `isabelle_theory_agent/std/common.py`, its ML halves
 `Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` (§4),
 and `TAT_Lifting_Closing.ML` (§6). What a class makes of it is that
 class's own document's.
-
-## 1. `Theory_Member`
-
-Every class of the plugin lives inside a theory — under a `Theory`, or
-under a nesting node under one; never under a `Session` or the forest
-root — and derives from `Theory_Member` before its framework base:
-`class Datatype(Theory_Member, Leaf)`. `Theory_Member` gives three
-things:
-
-- `require_inside_theory(config, kind)`, a class method the class's
-  `gen` calls first, the plugin's convention. It raises
-  `NotInsideTheory` for a parent outside a theory.
-- `on_moving`, overriding the framework's empty default (MODULE_STRUCTURE
-  §4.1): a move whose destination is outside a theory is refused with
-  `NotInsideTheory`, carrying the destination's id.
-- `theory()`, the `Theory` the node lives in — the root of its tree,
-  which the two checks guarantee exists — through which a class writes
-  its Isabelle text into the file (`print_name` against the theory's
-  `keywords`, SESSION_AND_THEORY §2).
-
-`NotInsideTheory` derives from `BadEdit` and carries the kind and the
-parent's id as the agent sees it — `forest().id_of` of the parent:
-`config.parent` in `gen`, the destination's in `on_moving`, through one
-private helper of `common.py`. It is the plugin's one parent exception:
-the framework's `Session` and `Theory` keep theirs,
-`BadSessionNodeParent` and `BadTheoryNodeParent`, and every class of
-the plugin shares this one (EXCEPTIONS.md §3). Its sentence, pinned
-here:
-
-```
-A `datatype` cannot be placed under `session_Arith`; it belongs inside a theory.
-```
-
-A test of the plugin asserts that every class its package registers
-derives from `Theory_Member`, and that a construct of each placed under
-a `Session` is refused with `NotInsideTheory`.
 
 ## 2. `english` and the `text` line
 
@@ -83,47 +46,45 @@ rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5). Evaluat
 
 ## 3. `Proof_Obligation`
 
-`Proof_Obligation` serves a class one command of which opens exactly
-one goal, which is admitted, the class's `after_admission` step
-following the admission in the same operation into the resulting slot
-(`Typedef`'s runs `setup_lifting` as its recorded `lifting` says,
-TYPEDEF.md §6; `Theorem`'s and `LiftDefinition`'s are the identity).
-That operation is the class's `job_operation`, the
-operation that writes what the node's jobs read (CONSTRUCT_INTERACTION
-§3.1), in two shapes: a `Leaf`'s one operation — `Proof_Obligation`
-itself sets `job_operation = None` — and a `StdBlock`'s beginning,
-through the subclass `Beginning_Proof_Obligation`, which sets
-`"beginning"`, so that the node's jobs depend on the beginning alone. A
-class of
-either shape whose command opens a proof obligation (INDEX.md) derives
-from the class that sets its `job_operation`, before its framework base
-— `class Theorem(Theory_Member, Proof_Obligation, Leaf)`, `class
-QuotientType(Theory_Member, Beginning_Proof_Obligation,
-Lifting_Closing)`, `Lifting_Closing` being the plugin's `StdBlock` (§6)
-— and takes its goal's evaluation hook from that class: `_eval_opr` from
+`Proof_Obligation` serves a class one command of which opens exactly one
+goal, which is admitted, the class's `after_admission` step following
+the admission in the same operation into the resulting slot (`Typedef`'s
+runs `setup_lifting` as its recorded `lifting` says, TYPEDEF.md §6;
+`Theorem`'s and `LiftDefinition`'s are the identity). That operation is
+the class's `job_operation`, the operation that writes what the node's
+jobs read (CONSTRUCT_INTERACTION §3.1), in two shapes: a `Leaf`'s one
+operation — `Proof_Obligation` itself sets `job_operation = None` — and
+a `StdBlock`'s beginning, through the subclass
+`Beginning_Proof_Obligation`, which sets `"beginning"`, so that the
+node's jobs depend on the beginning alone. A class of either shape whose
+command opens a proof obligation (INDEX.md) derives from the class that
+sets its `job_operation`, before its framework base — `class
+Theorem(Proof_Obligation, Leaf)`, `class
+QuotientType(Beginning_Proof_Obligation, Lifting_Closing)`,
+`Lifting_Closing` being the plugin's `StdBlock` (§6) — and takes its
+goal's evaluation hook from that class: `_eval_opr` from
 `Proof_Obligation`, `_eval_beginning_opr` from
-`Beginning_Proof_Obligation`, each `final` and each running
-`_eval_goal` (the evaluation, below); the plugin's test over every
-registered class pins the rule, as §1's pins `Theory_Member`, and the
-loader refuses `Proof_Obligation` bare on a block, `None` being no
-operation of a block, as it refuses `Beginning_Proof_Obligation` on a
-leaf (PLUGIN_SYSTEM §5). `Proof_Obligation` derives from
-`With_Proof_Obligations`, the base of every class whose commands open
-proof obligations — `Define`'s open up to two, on two commands
-(DEFINE.md) —, which holds what the proofs' standing decides for every
-such class: the mark's three words and `mark` (the mark, below),
-`proof_text()` (the emission, below), `_carries_job_from` (the amend,
-below) and the hook `owes_proof()` — true by default, `Define`'s whether
-an obligation is open —; it derives from `Node`, so that its abstract
-methods, `goal_structure()` and `message()`, are enforced. `Theorem`,
-`Typedef` and `LiftDefinition` derive from `Proof_Obligation`
-(THEOREM.md, TYPEDEF.md, LIFT_DEFINITION.md) and `QuotientType` from
-`Beginning_Proof_Obligation` (INDEX.md); `Interpretation` and
-`Sublocale` are expected to derive from it, each confirming it in its
-own document; `Instantiation`, whose goal opens on a `StdBlock`'s
-ending, decides in its own document how it discharges its own, and
-extends `Proof_Obligation` then, if it uses it, with a subclass whose
-goal opens on the ending.
+`Beginning_Proof_Obligation`, each `final` and each running `_eval_goal`
+(the evaluation, below); the plugin's test over every registered class
+pins the rule, and the loader refuses `Proof_Obligation` bare on a
+block, `None` being no operation of a block, as it refuses
+`Beginning_Proof_Obligation` on a leaf (PLUGIN_SYSTEM §5).
+`Proof_Obligation` derives from `With_Proof_Obligations`, the base of
+every class whose commands open proof obligations — `Define`'s open up
+to two, on two commands (DEFINE.md) —, which holds what the proofs'
+standing decides for every such class: the mark's three words and `mark`
+(the mark, below), `proof_text()` (the emission, below),
+`_carries_job_from` (the amend, below) and the hook `owes_proof()` —
+true by default, `Define`'s whether an obligation is open —; it derives
+from `Node`, so that its abstract methods, `goal_structure()` and
+`message()`, are enforced. `Theorem`, `Typedef` and `LiftDefinition`
+derive from `Proof_Obligation` (THEOREM.md, TYPEDEF.md,
+LIFT_DEFINITION.md) and `QuotientType` from `Beginning_Proof_Obligation`
+(INDEX.md); `Interpretation` and `Sublocale` are expected to derive from
+it, each confirming it in its own document; `Instantiation`, whose goal
+opens on a `StdBlock`'s ending, decides in its own document how it
+discharges its own, and extends `Proof_Obligation` then, if it uses it,
+with a subclass whose goal opens on the ending.
 
 **A goal with no subgoal.** A command may open its goal with no subgoal
 — `lift_definition`'s when Isabelle proves the respectfulness by itself
@@ -753,7 +714,7 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   baseline tests. Every shared sentence — a shared `$defs`
   description, a shared refusal sentence — has one home, §4, and one
   test pin there; a class document lists its own sentences alone and
-  names that home for the rest. `NotInsideTheory`'s sentence is §1's.
+  names that home for the rest.
   A framework exception's whole rendering is RENDER_BASELINES §2's own.
 - A choice the evaluation makes between commands, or between a
   command's options — `Define`'s `definition`, `function (sequential,
@@ -798,8 +759,8 @@ those rules from the context and the type's Quotient registration,
 after which a `lift_definition` on the type is refused
 (LIFT_DEFINITION.md §6) and `transfer` leaves the type alone. A class
 takes it as its framework base, after the class that sets its
-`job_operation`: `class QuotientType(Theory_Member,
-Beginning_Proof_Obligation, Lifting_Closing)`; listed before that
+`job_operation`: `class QuotientType(Beginning_Proof_Obligation,
+Lifting_Closing)`; listed before that
 class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
 the class cannot be instantiated.
 

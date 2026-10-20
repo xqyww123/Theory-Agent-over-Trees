@@ -21,7 +21,7 @@ does — a construction job finds the proof, an evaluation job checks it,
 emission writes `by aoa` or `sorry` (CONSTRUCT_INTERACTION §3) — through
 `Proof_Obligation`, for the classes COMMON.md §3 names; how exactly
 each class discharges its own is its own document's. What every class
-of the plugin shares besides — its base `Theory_Member`, the `english`
+of the plugin shares besides — the `english`
 field and its `text` line, the `$defs` merged across classes — is
 COMMON.md.
 

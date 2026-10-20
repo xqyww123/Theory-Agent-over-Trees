@@ -1,7 +1,5 @@
 """What the classes of the plugin `Isabelle_Std` share
-(node_classes/COMMON.md): `Theory_Member`, the base every class derives
-from, with the plugin's one parent exception `NotInsideTheory` (§1); the
-`text` line (§2); `With_Proof_Obligations`, the base of the classes
+(node_classes/COMMON.md): the `text` line (§2); `With_Proof_Obligations`, the base of the classes
 whose commands open proof obligations, and under it `Proof_Obligation`,
 the base of those whose one command opens one goal — a `Leaf`'s one
 operation, or a block's beginning through `Beginning_Proof_Obligation`
@@ -29,66 +27,16 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, 
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
-from ..exceptions import GRAMMARS, BadEdit, InvalidField, InvalidName, TAT_InternalError
+from ..exceptions import GRAMMARS, InvalidField, InvalidName, TAT_InternalError
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
-    CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Location, Node, NodeConfig, NonLeaf_Node, Ready, StdBlock,
-    Theory, cartouche, emit_lines, print_name, status_of_errors, string_token)
+    CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Node, NonLeaf_Node, Ready, StdBlock, cartouche, emit_lines,
+    print_name, status_of_errors, string_token)
 from ..plugin import TAT_compile_hook, TAT_import
 
 # every theory of the forest imports it: the `aoa` method, the plugin's AoA tasks and the configuration option
 # `typedef_overloaded` (§3, §4)
 TAT_import("TAT_Std.TAT_Std")
-
-
-class NotInsideTheory(BadEdit):
-    """The plugin's one parent exception (§1; EXCEPTIONS.md §3): raised by
-    `Theory_Member` for a parent outside a theory — a `Session` or the
-    forest root — in `gen` and on a move."""
-
-    def __init__(self, kind: str, parent_id: str):
-        super().__init__()
-        self.kind = kind
-        self.parent_id = parent_id
-
-    def _cause(self) -> str:
-        return f"A `{self.kind}` cannot be placed under `{self.parent_id}`; it belongs inside a theory."
-
-
-class Theory_Member(Node):
-    """The base every class of the plugin derives from, before its
-    framework base (§1): each lives inside a theory — under a `Theory`,
-    or under a nesting node under one."""
-
-    @classmethod
-    def require_inside_theory(cls, config: NodeConfig, kind: str) -> None:
-        """`NotInsideTheory` for a parent outside a theory; the class's `gen`
-        calls it first, the plugin's convention."""
-        _require_inside_theory(config.parent, kind)
-
-    def on_moving(self, new_location: Location) -> None:
-        _require_inside_theory(new_location.parent, self.kind)
-
-    def theory(self) -> Theory:
-        """The `Theory` the node lives in, the root of its tree, which the
-        two checks guarantee exists."""
-        theory = _theory_above(self.parent)
-        assert theory is not None, "a Theory_Member outside every theory"
-        return theory
-
-
-def _theory_above(node: Node | None) -> Theory | None:
-    """The `Theory` that `node` is or lives under; None outside every theory."""
-    while node is not None and not isinstance(node, Theory):
-        node = node.parent
-    return node
-
-
-def _require_inside_theory(parent: Node, kind: str) -> None:
-    """`NotInsideTheory` for a `kind` placed under a parent outside every
-    theory, with the parent's id as the agent sees it."""
-    if _theory_above(parent) is None:
-        raise NotInsideTheory(kind, parent.forest().id_of(parent))
 
 
 def text_line(english: str, lead: str | None = None) -> str:
@@ -667,7 +615,7 @@ class With_Proof_Obligations(Node):
     standing decides for every such class: the mark's three words and the
     two-slot `mark`, the terminal proof `proof_text()`, the amend's carry
     by `goal_structure()`, and `owes_proof()`.  Taken before the framework
-    base: `class Define(Theory_Member, With_Proof_Obligations, Leaf)`.
+    base: `class Define(With_Proof_Obligations, Leaf)`.
     Derives from `Node`, so that the abstract methods are enforced at the
     class's first instantiation."""
 
@@ -729,7 +677,7 @@ class Proof_Obligation(With_Proof_Obligations):
     operation (§3): the operation the goal opens on, the class's
     `job_operation` — a `Leaf`'s one operation here, a block's beginning
     in `Beginning_Proof_Obligation`.  Taken before the framework base: `class
-    Theorem(Theory_Member, Proof_Obligation, Leaf)`.  The tree holds no
+    Theorem(Proof_Obligation, Leaf)`.  The tree holds no
     proof: every evaluation admits the goal, the proof construction finds
     the proof, the proof check replays it, and the file carries `by aoa`."""
 
@@ -786,9 +734,9 @@ class Proof_Obligation(With_Proof_Obligations):
 
 class Beginning_Proof_Obligation(Proof_Obligation):
     """`Proof_Obligation` whose goal opens on a `StdBlock`'s beginning (§3):
-    `class QuotientType(Theory_Member, Beginning_Proof_Obligation,
-    Lifting_Closing)`.  The jobs depend on the beginning alone, so the
-    children and the class's own ending leave the proof standing."""
+    `class QuotientType(Beginning_Proof_Obligation, Lifting_Closing)`.  The
+    jobs depend on the beginning alone, so the children and the class's
+    own ending leave the proof standing."""
 
     job_operation = "beginning"
 
@@ -814,9 +762,8 @@ class Lifting_Closing(StdBlock):
     t.lifting`, `t` the node's `name`.  It defines the ending's two hooks
     together (PLUGIN_SYSTEM §5); a class on it writes neither.  A class
     takes it as its framework base, after the class that sets its
-    `job_operation`: `class QuotientType(Theory_Member,
-    Beginning_Proof_Obligation, Lifting_Closing)`; listed before that
-    class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
+    `job_operation`: `class QuotientType(Beginning_Proof_Obligation,
+    Lifting_Closing)`; listed before that class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
     the class cannot be instantiated."""
 
     @final

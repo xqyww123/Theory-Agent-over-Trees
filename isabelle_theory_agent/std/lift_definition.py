@@ -13,10 +13,10 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, Leaf, emit_lines, print_name
+from ..model import INDENT, RECALL, Leaf, Placement, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, Mixfix, Mixfix_RawAST, Proof_Obligation, Theory_Member, mixfix_of, mixfix_text, mixfix_wire,
+    MIXFIX_DEFS, Mixfix, Mixfix_RawAST, Proof_Obligation, mixfix_of, mixfix_text, mixfix_wire,
     normalised, require_id_name, text_line, unverified)
 
 KINDS = ("lift_definition",)
@@ -35,7 +35,7 @@ LiftDefinition_RawAST = TypedDict("LiftDefinition_RawAST", {
 
 
 @TAT_node
-class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
+class LiftDefinition(Proof_Obligation, Leaf):
     construct_schema = {
         "type": "object",
         "description": "defines a function on a subtype or a quotient type from a term on its representation type; its"
@@ -61,6 +61,7 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
         "$defs": {**MIXFIX_DEFS},
     }
     argument_schema = LiftDefinition_RawAST
+    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
     evaluation_callback = "TAT.LiftDefinition.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed
@@ -86,9 +87,8 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: LiftDefinition_RawAST):
-        """§4's checks in its order: the parent; `name` against §1's grammar.
-        The rest is Isabelle's at evaluation."""
-        cls.require_inside_theory(config, raw["kind"])
+        """§4's check: `name` against §1's grammar.  The rest is Isabelle's
+        at evaluation."""
         require_id_name(raw["name"], "constant name")
         return cls(config.parent, config.state, normalised(raw["english"]), raw["name"],
                    IsaTerm.from_agent(normalised(raw["type"])), mixfix_of(raw["syntax"]) if "syntax" in raw else None,
@@ -175,7 +175,7 @@ class LiftDefinition(Theory_Member, Proof_Obligation, Leaf):
         line."""
         assert self.with_code_dt is not None        # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
-        keywords = self.theory().keywords or ()
+        keywords = self.enclosing(Theory).keywords or ()
         command = f"{self.kind} (code_dt)" if self.with_code_dt else self.kind
         emit_lines(indent, out, f"{command} {self._definition(keywords)} {self.proof_text()}")
         return indent

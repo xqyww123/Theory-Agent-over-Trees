@@ -27,7 +27,7 @@ from test_model import CANNOT_EVALUATE, READY
 # RENDER_BASELINES §3's three fenced lines, in order; the third is the
 # loader's refusal, asserted verbatim for `TAT_Nowhere.Nope` and derived for
 # every other name.  A fourth line, or a missing one, fails here.
-_, _, NOT_FOUND = fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")
+NOT_FOUND = fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")[2]
 assert NOT_FOUND.count("`TAT_Nowhere.Nope`") == 1, NOT_FOUND
 
 

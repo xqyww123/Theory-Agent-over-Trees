@@ -22,10 +22,10 @@ from harness import text_of
 from invariants import assert_store_mirrors
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import BadPlacement, DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed
 from isabelle_theory_agent.std import common, typedef
-from isabelle_theory_agent.std.common import NotInsideTheory, Template, Type_Parameter
+from isabelle_theory_agent.std.common import Template, Type_Parameter
 from isabelle_theory_agent.std.typedef import LIFTING_NOTICE, OWING_LINE, Typedef
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import read_back
@@ -97,7 +97,7 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the parent first (COMMON §1's `NotInsideTheory`, pinned
+    """§4's refusals: the place first (the framework's `BadPlacement`, pinned
     for every class by test_common.py); a type name outside §1's grammar
     (RENDER_BASELINES §2's line); the type parameters by the shared check,
     each used in `set`, and the two function names by the shared check of
@@ -108,8 +108,8 @@ def test_gen_refuses_as_section_4_says():
     by the framework."""
     f, x = forest()
     (s,) = f.sub_nodes
-    e = refused(f, s, [definition("my-list")], NotInsideTheory)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("typedef", "session_Arith", "constructs[0]")
+    e = refused(f, s, [definition("my-list")], BadPlacement)
+    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(Typedef, "typedef", s), "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition("my-list")], InvalidName)

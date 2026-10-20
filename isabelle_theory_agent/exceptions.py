@@ -112,6 +112,11 @@ _OPERATIONS = frozenset(
     {"append", "insert_before", "insert_after", "amend", "move", "delete"})
 
 
+def one_of(items: list[str]) -> str:
+    """The items joined as alternatives: "x", "x or y", "x, y or z"."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " or " + items[-1]
+
+
 # ---------------------------------------------------------------------------
 # ResolutionError — an id failed to designate exactly one node
 
@@ -128,10 +133,7 @@ class NodeNotFound(ResolutionError):
     def _cause(self) -> str:
         sentence = f"`{self.id}` is not found."
         if self.near_matches:
-            quoted = [f"`{m}`" for m in self.near_matches]
-            guesses = (quoted[0] if len(quoted) == 1
-                       else ", ".join(quoted[:-1]) + " or " + quoted[-1])
-            sentence += f" Did you mean {guesses}?"
+            sentence += f" Did you mean {one_of([f'`{m}`' for m in self.near_matches])}?"
         return sentence
 
 
@@ -440,6 +442,20 @@ class BadTheoryNodeParent(BadEdit):
     def _cause(self) -> str:
         return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
                 " a theory lives directly under a session.")
+
+
+class BadPlacement(BadEdit):
+    """A plugin's node placed under a `Session` or the forest root
+    (EXCEPTIONS.md §3): raised by the framework at an insert, an amend and
+    a move, carrying the sentence of `model.placement_refusal`, the one
+    source of the placement refusals."""
+
+    def __init__(self, sentence: str):
+        super().__init__()
+        self.sentence = sentence
+
+    def _cause(self) -> str:
+        return self.sentence
 
 
 class MoveIntoOwnSubtree(BadEdit):

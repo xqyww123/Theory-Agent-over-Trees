@@ -11,9 +11,9 @@ from typing import Any, Literal, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, Leaf, emit_lines
+from ..model import INDENT, RECALL, Leaf, Placement, Theory, emit_lines
 from ..plugin import TAT_node
-from .common import Proof_Obligation, Theory_Member, check_identifier, normalised, require_id_name, text_line
+from .common import Proof_Obligation, check_identifier, normalised, require_id_name, text_line
 from .statement import STATEMENT_DEFS, LongStatement_RawAST
 
 KINDS = ("lemma", "theorem", "corollary", "proposition")   # the Isar commands Isabelle treats alike
@@ -85,7 +85,7 @@ class Statement:
 
 
 @TAT_node
-class Theorem(Theory_Member, Proof_Obligation, Leaf):
+class Theorem(Proof_Obligation, Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -98,6 +98,7 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
         "$defs": STATEMENT_DEFS,
     }
     argument_schema = Theorem_RawAST
+    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
     evaluation_callback = "TAT.Theorem.evaluate"
     valid_word, invalid_word = "valid statement", "invalid statement"       # the mark's first slot (§7)
 
@@ -111,7 +112,6 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Theorem_RawAST):
-        cls.require_inside_theory(config, raw["kind"])
         require_id_name(raw["name"], "fact name")
         return cls(config.parent, config.state, raw["name"], _statement_of(raw["statement"]))
 
@@ -150,7 +150,7 @@ class Theorem(Theory_Member, Proof_Obligation, Leaf):
 
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.statement.english, f"{self.kind.capitalize()} {self.name}."))
-        print_name = self.theory().print_name               # every piece of Isabelle text through it (§5)
+        print_name = self.enclosing(Theory).print_name   # every piece of Isabelle text through it (§5)
         lines = [f"{self.kind} {print_name(self.name)}:"]
         if self.statement.for_any:
             lines.append("  fixes " + " and ".join(

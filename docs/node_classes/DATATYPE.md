@@ -190,29 +190,30 @@ and of their arms' fields are COMMON.md §4's, pinned there alone.
 
 ## 4. `gen`
 
-`Datatype.gen` calls `require_inside_theory` first (COMMON.md §1), then
-checks: every `type_name` against §1's grammar, since each is part of
-the node's name (`InvalidName` with `grammar` = `type name`,
-RENDER_BASELINES §2's fifth form), and no two types the same name;
-the type parameters by the shared check (COMMON.md §4): each `name` a
-type variable, no two the same; every constructor's `name` and every `selector` an
-Isabelle identifier (COMMON.md §5) not ending with an underscore
-(COMMON.md §5's clause on internal names); no
-two constructors of one type the same name — Isabelle qualifies a
+A `Datatype` stands directly inside a theory: its `placement` is
+`Placement(within="Theory", through=())`, which the framework checks
+(PLUGIN_SYSTEM §2).
+
+`Datatype.gen` checks: every `type_name` against §1's grammar, since
+each is part of the node's name (`InvalidName` with `grammar` = `type
+name`, RENDER_BASELINES §2's fifth form), and no two types the same
+name; the type parameters by the shared check (COMMON.md §4): each
+`name` a type variable, no two the same; every constructor's `name` and
+every `selector` an Isabelle identifier (COMMON.md §5) not ending with
+an underscore (COMMON.md §5's clause on internal names); no two
+constructors of one type the same name — Isabelle qualifies a
 constructor by its type, so two types of a group may share one; no two
 selectors of one constructor the same name (`InvalidField`); and each
 type parameter used in some constructor's argument type, the plugin's
-shared check (COMMON.md §4). A sibling
-already bearing the node's id component is the framework's
-`DuplicateName` (MCP_SPECIFICATION §2); any other clash of the types'
-names in the theory — a `codatatype` sibling of the same name among
-them — is Isabelle's at evaluation.
-Whether the types parse, whether each argument's type is a bounded
-natural functor, whether every type is non-empty, and whether a mixfix
-annotation is well-formed, a type's with one `_` per parameter, are
-Isabelle's business at evaluation
-(MODULE_STRUCTURE §4.1); what Isabelle rejects is an evaluation failure,
-not an exception.
+shared check (COMMON.md §4). A sibling already bearing the node's id
+component is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any
+other clash of the types' names in the theory — a `codatatype` sibling
+of the same name among them — is Isabelle's at evaluation. Whether the
+types parse, whether each argument's type is a bounded natural functor,
+whether every type is non-empty, and whether a mixfix annotation is
+well-formed, a type's with one `_` per parameter, are Isabelle's
+business at evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects is
+an evaluation failure, not an exception.
 
 The `InvalidField` sentences:
 
@@ -228,9 +229,6 @@ The type parameters' sentences are COMMON.md §4's, written once in
 `common.py`. The grammar text after the colon is the framework's, the
 one `InvalidName` renders for the grammars `fact name` and `type name`
 (RENDER_BASELINES §2), written once and used by both (COMMON.md §5).
-
-A parent outside a theory is refused with the plugin's
-`NotInsideTheory`, whose sentence COMMON.md §1 pins.
 
 ## 5. Emission
 

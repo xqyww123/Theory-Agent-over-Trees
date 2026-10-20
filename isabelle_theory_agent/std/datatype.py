@@ -13,10 +13,10 @@ from typing import Annotated, Any, Literal, NotRequired, TypedDict
 from Isabelle_RPC_Host.unicode import IsaTerm
 
 from .. import isabelle_driver
-from ..model import INDENT, NON_EMPTY, RECALL, Leaf, emit_lines, print_name, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Theory_Member, Type_Parameter,
+    MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Type_Parameter,
     TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice,
     check_type_parameters_used, mixfix_of, mixfix_text, mixfix_wire, normalised, require_id_name, text_line,
     type_head_text, type_parameters_of, type_parameters_wire)
@@ -71,7 +71,7 @@ class Defined_Type:
 
 
 @TAT_node
-class Datatype(Theory_Member, Leaf):
+class Datatype(Leaf):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -113,6 +113,7 @@ class Datatype(Theory_Member, Leaf):
         "$defs": {**TYPE_PARAMETER_DEFS, **TYPE_MIXFIX_DEFS, **MIXFIX_DEFS},
     }
     argument_schema = Datatype_RawAST
+    placement = Placement(within="Theory", through=())
 
     english: str
     type_parameters: tuple[Type_Parameter, ...]
@@ -128,11 +129,10 @@ class Datatype(Theory_Member, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Datatype_RawAST):
-        """§4's checks in its order: the parent; every type name against
-        §1's grammar and no two the same; the type parameters by the
-        shared check; each type's constructors and selectors; last, each
-        type parameter used in some constructor's argument type."""
-        cls.require_inside_theory(config, raw["kind"])
+        """§4's checks in its order: every type name against §1's grammar
+        and no two the same; the type parameters by the shared check; each
+        type's constructors and selectors; last, each type parameter used
+        in some constructor's argument type."""
         for i, t in enumerate(raw["types"]):
             require_id_name(t["type_name"], "type name")
             check_not_bound_twice(t["type_name"], f"types[{i}].type_name", [u["type_name"] for u in raw["types"][:i]])
@@ -217,7 +217,7 @@ class Datatype(Theory_Member, Leaf):
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.english))
         lines = []
-        for i, (head, constructors) in enumerate(self._definition(self.theory().keywords or ())):
+        for i, (head, constructors) in enumerate(self._definition(self.enclosing(Theory).keywords or ())):
             lines.append(f"{self.kind if i == 0 else 'and'} {head} =")
             lines.append(f"    {constructors[0]}")
             lines.extend(f"  | {c}" for c in constructors[1:])

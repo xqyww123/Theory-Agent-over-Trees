@@ -29,10 +29,10 @@ from harness import text_of, until
 from invariants import assert_store_mirrors
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import BadPlacement, DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, lift_definition
-from isabelle_theory_agent.std.common import Infix, NotInsideTheory, Template
+from isabelle_theory_agent.std.common import Infix, Template
 from isabelle_theory_agent.std.lift_definition import OWING_LINE, LiftDefinition
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import AFTER, ROOT, ml_process, ml_string, read_back
@@ -105,15 +105,15 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the parent first (COMMON §1's `NotInsideTheory`, pinned
+    """§4's refusals: the place first (the framework's `BadPlacement`, pinned
     for every class by test_common.py); a name outside §1's grammar
     (RENDER_BASELINES §2's sixth line); the integer bound on a priority, a
     missing `is`, the recorded field or an unknown one authored, by the
     framework."""
     f, x = forest()
     (s,) = f.sub_nodes
-    e = refused(f, s, [definition("dl-rev")], NotInsideTheory)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lift_definition", "session_Arith", "constructs[0]")
+    e = refused(f, s, [definition("dl-rev")], BadPlacement)
+    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(LiftDefinition, "lift_definition", s), "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`dl-rev` is not a valid constant name")]
     e = refused(f, x, [definition("dl-rev")], InvalidName)

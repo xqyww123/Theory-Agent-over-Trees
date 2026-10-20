@@ -15,10 +15,10 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, emit_lines, print_name
+from ..model import INDENT, RECALL, Placement, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
-    TYPE_MIXFIX_DEFS, Beginning_Proof_Obligation, Lifting_Closing, Theory_Member, Type_Parameter, TypeMixfix,
+    TYPE_MIXFIX_DEFS, Beginning_Proof_Obligation, Lifting_Closing, Type_Parameter, TypeMixfix,
     TypeMixfix_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of, mixfix_wire,
     morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_variables_of, unverified)
 
@@ -42,7 +42,7 @@ class QuotientType_RawAST(TypedDict):
 
 
 @TAT_node
-class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
+class QuotientType(Beginning_Proof_Obligation, Lifting_Closing):
     construct_schema = {
         "type": "object",
         "description": "defines a quotient type whose values are the equivalence classes of an existing type under"
@@ -82,6 +82,7 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
         "$defs": {**TYPE_MIXFIX_DEFS},
     }
     argument_schema = QuotientType_RawAST
+    placement = Placement(within="Theory", through=())
     evaluation_callback = "TAT.QuotientType.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed
@@ -113,11 +114,10 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
 
     @classmethod
     async def gen(cls, config, raw: QuotientType_RawAST):
-        """§4's checks in its order: the parent; `type_name` against §1's
-        grammar; the type parameters by the shared check over bare type
-        variables; each used in `representation_type`; the two function
-        names by the shared check of the pair."""
-        cls.require_inside_theory(config, raw["kind"])
+        """§4's checks in its order: `type_name` against §1's grammar; the
+        type parameters by the shared check over bare type variables; each
+        used in `representation_type`; the two function names by the shared
+        check of the pair."""
         require_id_name(raw["type_name"], "type name")
         type_parameters = type_variables_of(raw.get("type_parameters", []))
         representation_type = IsaTerm.from_agent(normalised(raw["representation_type"]))
@@ -220,7 +220,7 @@ class QuotientType(Theory_Member, Beginning_Proof_Obligation, Lifting_Closing):
         terminal proof under it; one empty line when the block has children
         — the framework writes the empty lines between siblings."""
         emit_lines(indent, out, text_line(self.english))
-        keywords = self.theory().keywords or ()
+        keywords = self.enclosing(Theory).keywords or ()
         definition, morphisms = self._definition(keywords)
         lines = [f"{self.kind} {definition}"]
         if morphisms is not None:

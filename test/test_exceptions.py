@@ -8,7 +8,7 @@ cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadAnswer, BadEdit, BadSessionNodeParent, BadTheoryNodeParent,
+    AmbiguousId, BadAnswer, BadEdit, BadPlacement, BadSessionNodeParent, BadTheoryNodeParent,
     ChildrenNotInheritable, ConstructionError,
     ConstructNotSupported, ConstructOwnedByAnother, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
@@ -19,6 +19,8 @@ from isabelle_theory_agent.exceptions import (
     UnknownKind)
 
 from baselines import DOCS, fenced_lines
+from isabelle_theory_agent.model import placement_refusal
+from test_placement import Note, Top, arith, table  # noqa: F401  # the fake wire `arith` builds on
 
 # §3 is evaluation text, not exception renderings; the forest walk's test
 # pins its Python-side line (the plan's §7, step 4).
@@ -225,6 +227,17 @@ def test_bad_node_parent():
           "A `theory` cannot be placed under `section_Basics`; a theory lives"
           " directly under a session.")
 
+def test_bad_placement():
+    """The framework's sentence, `placement_refusal`'s, on test_placement.py's
+    stand-ins: `{through}` two kinds, and none."""
+    f, s, *_ = arith()
+    check(BadPlacement(placement_refusal(Note, "note", s)),
+          "A node of kind `note` cannot be placed under `session_Arith`; it stands inside a node of kind"
+          " `theory`, directly or under nodes of kind `section` or `subsection`.")
+    check(BadPlacement(placement_refusal(Top, "top", f)),
+          "A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind"
+          " `theory`, directly.")
+
 
 def test_move_into_own_subtree():
     check(MoveIntoOwnSubtree(id="theory_X.section_Basics",
@@ -335,6 +348,7 @@ def test_groups():
     assert issubclass(ReservedSessionName, BadEdit)
     assert issubclass(BadSessionNodeParent, BadEdit)
     assert issubclass(BadTheoryNodeParent, BadEdit)
+    assert issubclass(BadPlacement, BadEdit)
     for cls in (ConstructNotSupported, ConstructOwnedByAnother, NoQuestionPending):
         assert issubclass(cls, ConstructionError)
     for group in (ResolutionError, RawASTError, BadEdit, ConstructionError):

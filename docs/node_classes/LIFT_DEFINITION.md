@@ -16,9 +16,8 @@ dlist ⇒ 'a dlist" is rev`. Its one command opens one proof obligation
 that it keeps the values inside the subtype's defining set; for a
 quotient type, that it maps related values to related values — which
 it discharges the way `Theorem` does: it is a `Leaf` of the plugin
-`Isabelle_Std` deriving from the plugin's `Theory_Member` and
-`Proof_Obligation` (COMMON.md §1, §3) — `class
-LiftDefinition(Theory_Member, Proof_Obligation, Leaf)` — whose job
+`Isabelle_Std` deriving from the plugin's `Proof_Obligation` (COMMON.md
+§3) — `class LiftDefinition(Proof_Obligation, Leaf)` — whose job
 classes `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s. Its
 Python half is `isabelle_theory_agent/std/lift_definition.py`, its ML
 halves `Isabelle_Std/ML/TAT_Lift_Definition.ML` and
@@ -189,18 +188,22 @@ pinned there alone.
 
 ## 4. `gen`
 
-`LiftDefinition.gen` calls `require_inside_theory` first (COMMON.md §1),
-then checks `name` against §1's grammar (`InvalidName` with `grammar` =
-`constant name`, rendered with the fact name's text, RENDER_BASELINES
-§2's sixth line, a grammar `Define` shares, DEFINE.md §4). A sibling
-already bearing the node's id component
-is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any other
-clash of the function's name is Isabelle's at evaluation. Whether `type`
-parses and the Lifting setup of its subtype or quotient type is open
-here, whether `is` parses and its type fits, whether it has a free
-variable, and whether the mixfix annotation is well-formed, are
-Isabelle's business at evaluation (MODULE_STRUCTURE §4.1); what Isabelle
-rejects is an evaluation failure, not an exception.
+A `LiftDefinition` stands inside a theory, directly or under `QuotientType`
+and `LiftingContext` blocks: its `placement` is
+`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
+which the framework checks (PLUGIN_SYSTEM §2).
+
+`LiftDefinition.gen` checks `name` against §1's grammar (`InvalidName`
+with `grammar` = `constant name`, rendered with the fact name's text,
+RENDER_BASELINES §2's sixth line, a grammar `Define` shares, DEFINE.md
+§4). A sibling already bearing the node's id component is the
+framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of
+the function's name is Isabelle's at evaluation. Whether `type` parses
+and the Lifting setup of its subtype or quotient type is open here,
+whether `is` parses and its type fits, whether it has a free variable,
+and whether the mixfix annotation is well-formed, are Isabelle's
+business at evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects is
+an evaluation failure, not an exception.
 
 `LiftDefinition`'s `goal_structure()` (COMMON.md §3) is `type` and `is`,
 each `IsaTerm` as its `ascii`: the obligation is made of them alone —
@@ -209,8 +212,7 @@ changed `type` or `is` discards the stored proof; a changed `name`,
 `syntax`, `code_dt` or `english` keeps it.
 
 `gen` renders no sentence of its own: the name's is the framework's
-grammar sentence, and a parent outside a theory is refused with the
-plugin's `NotInsideTheory`, whose sentence COMMON.md §1 pins. The
+grammar sentence. The
 class's own sentence is the evaluation's, for a node standing where a
 Lifting setup it needs is closed (§6).
 

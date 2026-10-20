@@ -25,10 +25,10 @@ from harness import text_of
 from invariants import assert_store_mirrors
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import BadPlacement, DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, quotient_type
-from isabelle_theory_agent.std.common import Lifting_Closing, NotInsideTheory, Template, Type_Parameter
+from isabelle_theory_agent.std.common import Lifting_Closing, Template, Type_Parameter
 from isabelle_theory_agent.std.lift_definition import LiftDefinition, OWING_LINE as LD_OWING_LINE
 from isabelle_theory_agent.std.quotient_type import OWING_LINE, OWING_LINE_PARTIAL, QuotientType
 from isabelle_theory_agent.store import Forest_Store
@@ -116,20 +116,20 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals in its order: the parent first (COMMON §1's
-    `NotInsideTheory`, pinned for every class by test_common.py); a type
-    name outside §1's grammar (RENDER_BASELINES §2's line); the three
-    sentences of §4's block under `type_parameters[i]`; the two function
-    names by the shared check of the pair (COMMON §4's sentences) — two
-    equal given names refused, a name equal to its default accepted and
-    written into `morphisms` as given, `abs_fset` as the Rep name with the
-    Abs name left out accepted (Isabelle's at the admission); a missing
-    relation, a `partial` that is no boolean, a binder syntax or an
-    `overloaded` field given, by the framework."""
+    """§4's refusals in its order: the place first (the framework's
+    `BadPlacement`, pinned for every class by test_common.py); a type name
+    outside §1's grammar (RENDER_BASELINES §2's line); the three sentences
+    of §4's block under `type_parameters[i]`; the two function names by the
+    shared check of the pair (COMMON §4's sentences) — two equal given names
+    refused, a name equal to its default accepted and written into
+    `morphisms` as given, `abs_fset` as the Rep name with the Abs name left
+    out accepted (Isabelle's at the admission); a missing relation, a
+    `partial` that is no boolean, a binder syntax or an `overloaded` field
+    given, by the framework."""
     f, x = forest()
     (s,) = f.sub_nodes
-    e = refused(f, s, [definition("my-set")], NotInsideTheory)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("quotient_type", "session_Arith", "constructs[0]")
+    e = refused(f, s, [definition("my-set")], BadPlacement)
+    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(QuotientType, "quotient_type", s), "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition("my-list")], InvalidName)

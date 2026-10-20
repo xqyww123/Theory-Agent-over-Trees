@@ -223,9 +223,8 @@ name, an identifier, is bare there, and which other pieces a class
 writes through `print_name` its own document's §8 says. While
 `keywords` is `None`, no keyword is known. `Theory.can_emit` is the
 framework's default and `keywords` known: a tree whose keyword table
-is `None` is not written (COMPILATION.md §3, §4). A node of the plugin
-reaches its theory through `theory()` of its base `Theory_Member`
-(node_classes/COMMON.md §1).
+is `None` is not written (COMPILATION.md §3, §4). A node of a plugin
+reaches its theory as `enclosing(Theory)` (PLUGIN_SYSTEM §2).
 
 ## 3. The `InvalidField` reasons
 

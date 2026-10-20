@@ -54,8 +54,10 @@ def leaf_schema(kinds, fields=None, required=(), defs=None):
 
 
 class Persisted:
-    """The three methods every class must override (PLUGIN_SYSTEM §5);
+    """The three methods every class must override (PLUGIN_SYSTEM §5), and
+    a `placement`, naming `Sec`, the framework's class in the load tests;
     nothing here is ever built or stored."""
+    placement = M.Placement(within="Sec", through=())
     @classmethod
     async def gen(cls, config, raw): raise NotImplementedError
     def to_store(self, rows): raise NotImplementedError
@@ -305,11 +307,11 @@ def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchron
                          print_fields=lambda self, i, o, m, d: None))
 
 
-def test_job_operation_is_an_operation_of_the_class_and_a_container_names_no_job_class():
+def test_job_operation_is_an_operation_of_the_class_and_no_plugin_class_is_a_container():
     """PLUGIN_SYSTEM §5 (CONSTRUCT_INTERACTION §3.1): a `Leaf` or `StdBlock`
-    class's `job_operation` is among its `_operation_names()`; an
-    `Unchained_Node` class names no job class; `job_operation_status` is
-    the framework's."""
+    class's `job_operation` is among its `_operation_names()`; a plugin
+    class does not derive from `Unchained_Node`, whatever job classes it
+    names; `job_operation_status` is the framework's."""
     children = {"type": "array", "items": {"$ref": "#/$defs/Construct"}}
     refused(leaf("Opening_Leaf", ["opening_leaf"], job_operation="beginning"),
             "`job_operation` is 'beginning', not an operation of the class: None")
@@ -329,11 +331,65 @@ def test_job_operation_is_an_operation_of_the_class_and_a_container_names_no_job
         schema["properties"] = dict(schema["properties"]) | {"kind": {"const": name.lower()}}
         return type(name, (Persisted, M.Unchained_Node), {
             "construct_schema": schema, "argument_schema": Sec_RawAST, "__module__": __name__, **body})
-    for body in ({"construction_job_class": Whole}, {"evaluation_job_class": Check}):
-        refused(container("Jobbed", **body), "names a job class, but runs no operation to write what a job reads")
-    plugin.TAT_node(container("Plain_Container"))
+    for body in ({}, {"construction_job_class": Whole}, {"evaluation_job_class": Check}):
+        refused(container("Container", **body), "derives from `Unchained_Node`, which only the framework's classes do")
     refused(leaf("Seeing", ["seeing"], job_operation_status=lambda self: M.READY_CLEAN),
             "overrides `job_operation_status`, which is the framework's")
+
+
+def test_a_plugin_class_declares_its_placement_and_leaves_evaluate_to_the_framework(monkeypatch):
+    """PLUGIN_SYSTEM §5: a plugin class carries a `Placement`, its own or
+    inherited, and does not override `_evaluate`, on a leaf or a block,
+    so that no class skips the placement check; the framework's classes
+    are exempt from both."""
+    async def own_evaluate(self, ev, mode): ...
+    refused(leaf("Unplaced", ["unplaced"], placement=None), "declares no `placement`")
+    placeless = type("Placeless", (M.Leaf,), {
+        "construct_schema": leaf_schema(["placeless"]), "argument_schema": Empty, "_eval_opr": Thm._eval_opr,
+        "__module__": __name__, **{m: Persisted.__dict__[m] for m in ("gen", "to_store", "from_store")}})
+    refused(placeless, "declares no `placement`")
+    refused(leaf("Own_Leaf", ["own_leaf"], _evaluate=own_evaluate), "overrides `_evaluate`, which is the framework's")
+    children = {"type": "array", "items": {"$ref": "#/$defs/Construct"}}
+    refused(type("Own_Block", (block("Plain_Block", children),), {"_evaluate": own_evaluate, "__module__": __name__}),
+            "overrides `_evaluate`, which is the framework's")
+    plugin.TAT_node(leaf("Inherited", ["inherited"]))
+    exempt = leaf("Exempt", ["exempt"], placement=None)
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [exempt])
+    plugin.TAT_node(exempt)
+
+
+def test_load_refuses_a_placement_naming_no_class_a_container_or_a_class_of_several_kinds(monkeypatch):
+    """PLUGIN_SYSTEM §5, judged once every package is imported: each name a
+    class of the conversation's; `within` not an `Unchained_Node` class,
+    nor a class answering to several kinds; two classes naming each other
+    load in either order of registration."""
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec, M.Session, M.Theory])
+    def load_refusing(cls, match):
+        monkeypatch.setattr(plugin, "registry", {})
+        plugin.TAT_node(cls)                                       # registration cannot judge the names
+        with pytest.raises(CannotLoadPlugin, match=match) as e:
+            plugin.load([__name__])
+        assert e.value.node_class == cls.__name__
+    load_refusing(leaf("Lost", ["lost"], placement=M.Placement(within="Sec", through=("Nowhere",))),
+                  "`placement` names `Nowhere`, which is not a node class of the conversation")
+    load_refusing(leaf("Lost_Within", ["lost_within"], placement=M.Placement(within="Nowhere", through=())),
+                  "`placement` names `Nowhere`, which is not a node class of the conversation")
+    load_refusing(leaf("Unchained_Within", ["unchained_within"], placement=M.Placement(within="Session", through=())),
+                  "`placement.within` names `Session`, which runs no operation")
+    two_kinds = leaf("Two_Kinds", ["two_a", "two_b"])
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec, two_kinds])
+    load_refusing(leaf("Within_Two", ["within_two"], placement=M.Placement(within="Two_Kinds", through=())),
+                  "`placement.within` names `Two_Kinds`, which answers to several kinds")
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
+    one = block("One", {"type": "array", "items": {"$ref": "#/$defs/Construct"}})
+    one.placement = M.Placement(within="Sec", through=("Other",))
+    other = block("Other", {"type": "array", "items": {"$ref": "#/$defs/Construct"}})
+    other.placement = M.Placement(within="Sec", through=("One",))
+    for order in ((one, other), (other, one)):
+        monkeypatch.setattr(plugin, "registry", {})
+        for cls in order:
+            plugin.TAT_node(cls)
+        assert set(plugin.load([__name__]).kinds) == {"section", "one", "other"}
 
 
 def test_the_descent_is_the_frameworks_for_leaves_and_nesting_classes_alike():
@@ -413,7 +469,7 @@ def test_gen_and_both_persistence_methods_must_be_overridden():
     for missing in methods:
         cls = type("No_" + missing, (M.Leaf,), {         # not Persisted: one method short
             "construct_schema": leaf_schema(["no_" + missing]), "argument_schema": Empty,
-            "_eval_opr": Thm._eval_opr, "__module__": __name__,
+            "_eval_opr": Thm._eval_opr, "placement": Persisted.placement, "__module__": __name__,
             **{m: Persisted.__dict__[m] for m in methods if m != missing}})
         refused(cls, f"does not override `{missing}`")
 
@@ -982,7 +1038,8 @@ SHIPPED_EXAMPLES: dict[str, dict] = {
 }
 
 
-def test_a_construct_of_every_shipped_kind_validates():
+def test_a_construct_of_every_shipped_kind_validates(monkeypatch):
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", SHIPPED)
     for cls in SHIPPED:
         plugin.TAT_node(cls)
     assert set(SHIPPED_EXAMPLES) == {k for kinds in plugin.registry.values() for k in kinds}
@@ -1069,6 +1126,7 @@ def a_leaf_module(name, kind):
             "    construct_schema = {'type': 'object', 'additionalProperties': False,\n"
             f"        'properties': {{'kind': {{'const': '{kind}'}}}}, 'required': ['kind']}}\n"
             "    argument_schema = Empty\n"
+            "    placement = model.Placement(within='Sec', through=())\n"
             "    @classmethod\n"
             "    async def gen(cls, config, raw): raise NotImplementedError\n"
             "    def to_store(self, rows): raise NotImplementedError\n"
@@ -1186,6 +1244,7 @@ def test_a_failed_load_does_not_poison_the_retry(tmp_path, monkeypatch):
     """A package whose second class fails its checks: the first is
     registered by then, and the failed import drops the module.  Once the
     author has fixed the package, the next load must take it."""
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
     package = tmp_path / "halfbroken_pkg.py"
     good = a_leaf_module("Good", "good")
     package.write_text(good + "\n@plugin.TAT_node\nclass Broken(model.Leaf):\n"
@@ -1198,7 +1257,7 @@ def test_a_failed_load_does_not_poison_the_retry(tmp_path, monkeypatch):
     assert e.value.node_class == "Broken"
     package.write_text(good + "\n# the broken class removed\n")   # another size: no stale bytecode
     loaded = plugin.load(["halfbroken_pkg"])
-    assert list(loaded.kinds) == ["good"] and [c.__name__ for c in registered()] == ["Good"]
+    assert list(loaded.kinds) == ["section", "good"] and [c.__name__ for c in registered()] == ["Sec", "Good"]
 
 
 def test_a_package_that_cannot_be_imported_fails_the_load_the_same_way():

@@ -138,7 +138,7 @@ def assert_invariants(forest, table):
                     f"{node}: beginning ready, consumed {node.consumed_begin!r}"
             if node.evaluation_status_ending is READY:
                 if node.consumed_end is NOT_RUN:   # the failed opening's copy-through
-                    assert node.evaluation_status_beginning is CANNOT_EVALUATE, \
+                    assert isinstance(node.evaluation_status_beginning, M.CannotEvaluate), \
                         f"{node}: ending ready without a run, yet the beginning stands"
                     assert (values.get(node.resulting_state().name)
                             == values.get(node.state.name)), \

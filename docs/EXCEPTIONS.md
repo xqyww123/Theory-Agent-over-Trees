@@ -243,17 +243,19 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          replacement class is a Leaf. Raised before
 │  │                          any gen runs                        [framework]
 │  ├─ Bad<Class>NodeParent    kind, parent_id — the class cannot live under
-│  │                          that parent. One exception per judgement of
-│  │                          where a node may live, derived from BadEdit
-│  │                          and owned by whoever makes the judgement,
-│  │                          raised in gen and on_moving:
-│  │                          BadSessionNodeParent and BadTheoryNodeParent,
-│  │                          the framework's (Session's gen refuses every
-│  │                          parent but the forest root); NotInsideTheory,
-│  │                          shared by every class of the plugin
-│  │                          Isabelle_Std and raised by its base
-│  │                          Theory_Member (node_classes/COMMON.md §1).
-│  │                          The framework checks no containment
+│  │                          that parent: BadSessionNodeParent and
+│  │                          BadTheoryNodeParent, raised in Session's and
+│  │                          Theory's gen and on_moving (Session's gen
+│  │                          refuses every parent but the forest root)
+│  │                                                        [Session, Theory]
+│  ├─ BadPlacement            sentence — a plugin's node placed under a
+│  │                          Session or the forest root where its
+│  │                          class's placement does not admit it
+│  │                          (PLUGIN_SYSTEM §2), at an insert, an amend
+│  │                          and a move; the sentence is
+│  │                          model.placement_refusal's, the one source of
+│  │                          it and of the refusal at evaluation
+│  │                          (RENDER_BASELINES §2, §3)           [framework]
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
 │  ├─ MoveBesideItself        id — the move is `before` or `after` the
@@ -321,8 +323,8 @@ class's `gen` supplies to a framework exception — `InvalidField`'s
 that class's document under docs/node_classes/ and pinned by that class's
 test, as `Session`'s and `Theory`'s reasons are in SESSION_AND_THEORY
 §3 and test_session_theory.py; a plugin's own exception class keeps its
-render baseline in the plugin's document, pinned by the plugin's tests,
-as `NotInsideTheory`'s is in node_classes/COMMON.md §1. Every other
+render baseline in the plugin's document, pinned by the plugin's tests.
+Every other
 test that meets a rendering
 asserts the exception's class and fields, or reads the line from the
 documents (TOOL_SCHEMAS §4's malformed-call block, RENDER_BASELINES §6's

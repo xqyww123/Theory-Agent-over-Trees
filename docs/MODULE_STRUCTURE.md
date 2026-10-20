@@ -459,7 +459,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — Theory_Member and NotInsideTheory, With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); typedef.py, Typedef (TYPEDEF.md); quotient_type.py, QuotientType (QUOTIENT_TYPE.md); lifting_context.py, LiftingContext (LIFTING_CONTEXT.md); lift_definition.py, LiftDefinition (LIFT_DEFINITION.md); define.py, Define with its two AoA tasks (DEFINE.md); statement.py, the statement's schema definitions
+  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); typedef.py, Typedef (TYPEDEF.md); quotient_type.py, QuotientType (QUOTIENT_TYPE.md); lifting_context.py, LiftingContext (LIFTING_CONTEXT.md); lift_definition.py, LiftDefinition (LIFT_DEFINITION.md); define.py, Define with its two AoA tasks (DEFINE.md); statement.py, the statement's schema definitions
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -491,7 +491,27 @@ messages and the default `mark` (PRINT.md §1, §3), the stored list
 `last_evaluation_statuses()` in the same order, made by
 `Node`'s constructor from `_operation_names()`, the operations' names in
 that order, which the three base classes answer likewise
-(COMPILATION.md §4); and the event hooks (below).
+(COMPILATION.md §4); `ancestors()`, nearest first, and `enclosing(cls)`,
+the nearest ancestor of class `cls`, `TAT_InternalError` when none; and
+the event hooks (below).
+
+**Placement.** Where a node of a plugin's class may stand is its
+class's `placement`, a `Placement(within, through)` of class names, which
+the framework checks (PLUGIN_SYSTEM §2); the framework's classes have
+`None`. One function decides it, `placement_refusal(cls, kind, place)`:
+the refusal sentence of a node of class `cls` and kind `kind` under
+`place`, or `None` where it may stand. It walks up once from `place`:
+an `Unchained_Node` reached gives the edit-time sentence, naming `place`;
+an ancestor bearing `within` — its class, or one of its base classes,
+of that name — admits; the nearest other ancestor bearing none of the
+names `through` gives the evaluation sentence, naming it. Each sentence
+names nodes by their full ids and classes by their kinds, read off the
+forest's kind table (RENDER_BASELINES §2, §3). The check at evaluation
+runs where a node's first own operation does, `Leaf._evaluate` and
+`StdBlock._evaluate`, through `Node._placed(hook)`: a refusal is the
+operation's status, a `CannotEvaluate` carrying the sentence, the hook
+uncalled; otherwise the hook runs and is timed. The edit-time check is
+§4.2's.
 
 Four aliases name what an id is made of: `Id = str`, the dotted string the
 agent sees; `Id_Component = str`, one `<kind>_<name>`; `Id_Components =
@@ -576,11 +596,11 @@ class NodeConfig(NamedTuple):
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
 ```
 
-`gen` checks and constructs; the framework owns placement. Where a node
-may live is the node's own judgement: its `gen` refuses a parent its class
-cannot live under — its `Bad<Class>NodeParent`, or the plugin's shared
-`NotInsideTheory` raised by its base `Theory_Member`, EXCEPTIONS.md §3 —
-and on a move its `on_moving` does; the framework checks no containment. `gen`
+`gen` checks and constructs; the framework sets the node's `parent`.
+Where a node of a plugin's class may stand is its `placement`, which the
+framework checks (above); `Session` and `Theory` judge their own parent,
+in `gen` and in `on_moving`, each with its `Bad<Class>NodeParent`
+(EXCEPTIONS.md §3). `gen`
 has no part in the replaced node's job outcome: the amend's commit asks
 the replacement `_carries_job_from(old)` (CONSTRUCT_INTERACTION §3.1).
 It may read
@@ -1007,7 +1027,9 @@ and its resolved imports, the `Theory` nodes themselves
    `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
    table alone, so they run before any `gen`), the class lookup, the
    schema check (§4.4; a `children` that is not a list meets it there,
-   `must be a list`), `gen`, then — for a nesting class — its `children`, built
+   `must be a list`), under an `Unchained_Node` the placement check —
+   `BadPlacement` with `placement_refusal`'s sentence (§4.1), since no
+   evaluation reaches the node there to refuse it —, `gen`, then — for a nesting class — its `children`, built
    by the framework onto the fresh, still-detached node the same way. The
    framework assigns each new node a fresh state slot and reads the name
    off the finished node: a name outside the grammar of
@@ -1105,7 +1127,8 @@ holder awaits a job's task.
 
 `move` re-homes a node with its subtree — a copy on the source side and a
 copy on the destination side (ARCHITECTURE §3.4), both round trips made
-before the commit's synchronous block (step 3). Its invalidation runs
+before the commit's synchronous block (step 3). To a destination under
+an `Unchained_Node` it checks the placement first, as step 1 does. Its invalidation runs
 from two positions, each whose input the move changed: the source
 successor's, taken after the pointer surgery — the parent's ending when
 the moved node was last — where the successor now reads the
@@ -1213,7 +1236,8 @@ field's name is told before the hole it leaves; and an `items` that
 names `Construct` or a node class — `edit`'s `constructs`, a class's
 `children` — checked to be an array, with `minItems` where declared,
 its elements left to `edit.py`, which checks each against its own
-class's construct schema (§4.2), the framework checking no containment.
+class's construct schema (§4.2) — where a node may stand is the
+placement check's (§4.1).
 The tool call's entry point alone, before the check, refuses an
 argument nested deeper than 100 levels, each object or array a level,
 `must not be nested deeper than 100 levels`, and marks every refusal as

@@ -10,8 +10,7 @@ named fields — by its name, its type parameters, its fields and, when
 it extends one, its parent record. It opens no proof obligation
 (INDEX.md): its evaluation runs the command and nothing more, and the
 node is finished when it is `ready`. It is a `Leaf` of the plugin
-`Isabelle_Std` deriving from the plugin's `Theory_Member` (COMMON.md
-§1) — `class Record(Theory_Member, Leaf)`. Its Python half is
+`Isabelle_Std` — `class Record(Leaf)`. Its Python half is
 `isabelle_theory_agent/std/record.py`, its ML half
 `Isabelle_Std/ML/TAT_Record.ML`. Its agent-facing wording lives here —
 the `description` texts of its construct schema (§3), the sentences its
@@ -157,23 +156,26 @@ alone.
 
 ## 4. `gen`
 
-`Record.gen` calls `require_inside_theory` first (COMMON.md §1), then
-checks: `type_name` against §1's grammar, the node's name
-(`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's
-fifth form); the type parameters by the shared check (COMMON.md §4):
-each `name` a type variable, no two the same; every field's `name` an
+A `Record` stands directly inside a theory: its `placement` is
+`Placement(within="Theory", through=())`, which the framework checks
+(PLUGIN_SYSTEM §2).
+
+`Record.gen` checks: `type_name` against §1's grammar, the node's name
+(`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth
+form); the type parameters by the shared check (COMMON.md §4): each
+`name` a type variable, no two the same; every field's `name` an
 Isabelle identifier (COMMON.md §5) not ending with an underscore
 (COMMON.md §5's clause on internal names), and no two fields the same
 name (`InvalidField`); then each type parameter used, in a field's
 `type` or in `parent` in its applied form (§2), the plugin's shared
-check (COMMON.md §4). A sibling already bearing the node's id
-component is the framework's `DuplicateName` (MCP_SPECIFICATION §2);
-any other clash of the name in the theory is Isabelle's at evaluation.
-Whether the types parse, whether `parent` is a record type, whether
-every type variable of the fields and of `parent` is a type parameter,
-and whether a field's name is the one Isabelle reserves, `more`, are
-Isabelle's business at evaluation (MODULE_STRUCTURE §4.1); what
-Isabelle rejects is an evaluation failure, not an exception.
+check (COMMON.md §4). A sibling already bearing the node's id component
+is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any other
+clash of the name in the theory is Isabelle's at evaluation. Whether the
+types parse, whether `parent` is a record type, whether every type
+variable of the fields and of `parent` is a type parameter, and whether
+a field's name is the one Isabelle reserves, `more`, are Isabelle's
+business at evaluation (MODULE_STRUCTURE §4.1); what Isabelle rejects is
+an evaluation failure, not an exception.
 
 The `InvalidField` sentences:
 
@@ -188,9 +190,6 @@ COMMON.md §4's, pinned there alone (COMMON.md §5).
 The grammar text after the colon is the framework's, the one
 `InvalidName` renders for the grammar `type name` (RENDER_BASELINES
 §2), written once and used by both (COMMON.md §5).
-
-A parent outside a theory is refused with the plugin's
-`NotInsideTheory`, whose sentence COMMON.md §1 pins.
 
 ## 5. Emission
 

@@ -13,8 +13,8 @@ A `Theorem` states a fact and never proves it in the tree (ARCHITECTURE
 the proof construction, finds a proof, which its evaluation job, the
 proof check, replays in the current context, and which the emitted
 theory carries as `by aoa`. It is a `Leaf`, the first node class of the
-plugin `Isabelle_Std`, deriving from the plugin's `Theory_Member` and
-`Proof_Obligation` (COMMON.md §1, §3), whose job classes `Proof_Job` and
+plugin `Isabelle_Std`, deriving from the plugin's `Proof_Obligation`
+(COMMON.md §3), whose job classes `Proof_Job` and
 `Proof_Check` are `Proof_Obligation`'s: its Python half is
 `isabelle_theory_agent/std/theorem.py`,
 its ML half `Isabelle_Std/ML/TAT_Theorem.ML`, loaded by the plugin's
@@ -122,25 +122,27 @@ Isabelle/HOL term with all literal numbers annotated with types
 
 ## 4. `gen`
 
-`Theorem.gen` calls `require_inside_theory` first (COMMON.md §1), then
-checks: `name` against §1's
-grammar (`InvalidName` with `grammar` = `fact name`, rendered as
-RENDER_BASELINES §2's fourth form with that grammar); every `for_any`
-variable's `name` and every premise's `name` an Isabelle identifier
-(COMMON.md §5), a variable's not ending with an underscore (COMMON.md
-§5's clause on internal names), and no two of either the same
-(`InvalidField`). Whether the
-terms parse is Isabelle's business at evaluation (MODULE_STRUCTURE
-§4.1); a term Isabelle rejects is an evaluation failure, not an
-exception. `Theorem`'s `goal_structure()` (COMMON.md §3) is the
-`for_any`, `premises` and `conclusion`, names included — each binds a
-fact a stored proof may cite —, each `IsaTerm`
-as its `ascii`; `message()` carries it as its goal part (§6; COMMON.md
-§3). `english`, `kind` and `name` are not
-in it, since Isabelle opens the same goal for the four kinds and for
-any name: on an amend a rename, a change of kind or a reworded
-`english` keeps the proof, and a change to any other part of the
-statement does not. `gen` has no part in it.
+A `Theorem` stands inside a theory, directly or under `QuotientType`
+and `LiftingContext` blocks: its `placement` is
+`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
+which the framework checks (PLUGIN_SYSTEM §2).
+
+`Theorem.gen` checks: `name` against §1's grammar (`InvalidName` with
+`grammar` = `fact name`, rendered as RENDER_BASELINES §2's fourth form
+with that grammar); every `for_any` variable's `name` and every
+premise's `name` an Isabelle identifier (COMMON.md §5), a variable's not
+ending with an underscore (COMMON.md §5's clause on internal names), and
+no two of either the same (`InvalidField`). Whether the terms parse is
+Isabelle's business at evaluation (MODULE_STRUCTURE §4.1); a term
+Isabelle rejects is an evaluation failure, not an exception. `Theorem`'s
+`goal_structure()` (COMMON.md §3) is the `for_any`, `premises` and
+`conclusion`, names included — each binds a fact a stored proof may cite
+—, each `IsaTerm` as its `ascii`; `message()` carries it as its goal
+part (§6; COMMON.md §3). `english`, `kind` and `name` are not in it,
+since Isabelle opens the same goal for the four kinds and for any name:
+on an amend a rename, a change of kind or a reworded `english` keeps the
+proof, and a change to any other part of the statement does not. `gen`
+has no part in it.
 
 The `InvalidField` sentences:
 

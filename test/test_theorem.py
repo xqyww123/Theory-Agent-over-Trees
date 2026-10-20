@@ -22,10 +22,10 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
 from harness import text_of, until
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, model as M, plugin
-from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError, TAT_InternalError
+from isabelle_theory_agent.exceptions import BadPlacement, InvalidField, InvalidName, RawASTError, TAT_InternalError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, statement, theorem
-from isabelle_theory_agent.std.common import NotInsideTheory, Proof_Check, Proof_Job, Proof_Obligation
+from isabelle_theory_agent.std.common import Proof_Check, Proof_Job, Proof_Obligation
 from isabelle_theory_agent.std.theorem import Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
 from test_compile import listing
@@ -92,14 +92,14 @@ def test_gen_keeps_the_statement_normalised_as_isaterms():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the parent, checked first (COMMON §1's `NotInsideTheory`,
-    pinned for every class by test_common.py), the fact name's grammar
-    (RENDER_BASELINES §2's line), the identifiers and the repeated names
-    (TH §4's fenced lines)."""
+    """§4's refusals: the place first (the framework's `BadPlacement`, pinned
+    for every class by test_common.py), the fact name's grammar
+    (RENDER_BASELINES §2's line), the identifiers and the repeated names (TH
+    §4's fenced lines)."""
     f, x = forest()
     (s,) = f.sub_nodes
-    e = refused(f, s, [lemma("rev-length")], NotInsideTheory)        # a bad name too: the parent is checked first
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lemma", "session_Arith", "constructs[0]")
+    e = refused(f, s, [lemma("rev-length")], BadPlacement)        # a bad name too: the parent is checked first
+    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(Theorem, "lemma", s), "constructs[0]")
     identifier, binds = fenced_lines(TH, "4.")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`rev-length` is not a valid fact name")]
