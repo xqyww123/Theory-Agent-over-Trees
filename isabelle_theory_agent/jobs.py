@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, final
 from Isabelle_RPC_Host import Connection, isabelle_remote_procedure
 
 from . import isabelle_driver
-from .exceptions import BadAnswer, TAT_InternalError
+from .exceptions import BadAnswer, TAT_InternalError, series
 from .log import current_agent
 
 if TYPE_CHECKING:
@@ -269,12 +269,6 @@ class Interactive_Question(ABC):
 @dataclass(frozen=True)
 class Answered:
     response: str | None = None
-
-
-def series(words: list[str], last: str) -> str:
-    """Words joined with commas and `last` before the last: `A`; `A and B`;
-    `A, B and C`."""
-    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
 
 
 def on_each(ids: list[str], preposition: str = "on") -> str:

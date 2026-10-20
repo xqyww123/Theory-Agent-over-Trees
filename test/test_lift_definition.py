@@ -113,7 +113,7 @@ def test_gen_refuses_as_section_4_says():
     f, x = forest()
     (s,) = f.sub_nodes
     e = refused(f, s, [definition("dl-rev")], BadPlacement)
-    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(LiftDefinition, "lift_definition", s), "constructs[0]")
+    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lift_definition", "session_Arith", "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`dl-rev` is not a valid constant name")]
     e = refused(f, x, [definition("dl-rev")], InvalidName)

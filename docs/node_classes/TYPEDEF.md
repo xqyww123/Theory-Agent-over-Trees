@@ -161,9 +161,8 @@ arms' fields are COMMON.md §4's, pinned there alone.
 
 ## 4. `gen`
 
-A `Typedef` stands directly inside a theory: its `placement` is
-`Placement(within="Theory", through=())`, which the framework checks
-(PLUGIN_SYSTEM §2).
+Where a `Typedef` stands is COMMON.md §1's; the framework checks it, not
+`gen` (PLUGIN_SYSTEM §2).
 
 `Typedef.gen` checks: `type_name` against §1's grammar (`InvalidName`
 with `grammar` = `type name`, RENDER_BASELINES §2's fifth form); the

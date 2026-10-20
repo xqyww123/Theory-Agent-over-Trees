@@ -1,8 +1,9 @@
-"""Reading approved wording and the event tables out of the documents (not
-a pytest module): a baseline test pins every fenced line of the sections
-that hold agent-facing text, and the log's tests pin the events and their
-levels to LOGGING.md §4's tables, so the code and the documents cannot
-drift apart."""
+"""Reading approved wording and tables out of the documents (not a pytest
+module): a baseline test pins every fenced line of the sections that hold
+agent-facing text, the log's tests pin the events and their levels to
+LOGGING.md §4's tables, and the plugin's test pins each class's
+`placement` to node_classes/COMMON.md §1's table, so the code and the
+documents cannot drift apart."""
 
 from pathlib import Path
 
@@ -49,9 +50,26 @@ def event_tables(doc: Path, section_prefix: str) -> dict[str, dict[str, str]]:
             category = line.removeprefix("### ").strip("`")
             tables[category] = {}
         elif in_section and category and line.startswith("| `"):
-            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            cells = _cells(line)
             tables[category][cells[0].strip("`")] = cells[1]
     return tables
+
+
+def table_rows(doc: Path, *section_prefixes: str) -> list[list[str]]:
+    """The cells of every table row opening with a backticked cell, within
+    the `## ` sections whose title starts with one of `section_prefixes`."""
+    rows: list[list[str]] = []
+    in_section = False
+    for line in doc.read_text().splitlines():
+        if line.startswith("## "):
+            in_section = line.removeprefix("## ").startswith(section_prefixes)
+        elif in_section and line.startswith("| `"):
+            rows.append(_cells(line))
+    return rows
+
+
+def _cells(row: str) -> list[str]:
+    return [cell.strip() for cell in row.strip("|").split("|")]
 
 
 def stated(doc: Path, label: str) -> list[str]:

@@ -448,7 +448,8 @@ never interleave:
   has no theory value, is a stop instead (§3.3). A `Session` as destination
   stands for all the trees under it, and the root for every tree: the
   forest schedules each of them, to its `end`, through the same graph.
-- A **nesting node** runs its beginning command if it is not evaluated. If that
+- A **nesting node** runs its beginning command if it is not evaluated and its
+  placement admits it (§3.3). If that
   command succeeded, now or earlier, it calls its children in order up to
   the one that contains the destination, what follows being invalidated
   past the destination (§3.4);
@@ -461,7 +462,7 @@ never interleave:
   command: it is the destination only once its children have run, so naming a
   `Theory` means the whole tree, `end` included.
 - A **leaf** runs its commands if it is not evaluated or the walk rewrote the
-  state before it, and otherwise runs nothing.
+  state before it, and its placement admits it (§3.3); otherwise it runs nothing.
 
 The recursion visits every node up to the destination, or up to the
 first stop when `ignore_error` is unset, or, whatever the flag, up to a

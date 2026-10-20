@@ -20,7 +20,7 @@ import pytest
 
 import test_model as tm
 import test_session_theory as ts
-from baselines import DOCS, fenced_blocks, fenced_lines
+from baselines import DOCS, fenced_blocks, fenced_lines, table_rows
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import BadPlacement, InvalidField
 from isabelle_theory_agent.std import (
@@ -62,12 +62,10 @@ def test_each_registered_class_declares_section_1_s_placement():
     loaded = plugin.load(["isabelle_theory_agent.std"])
     by_name = {cls.__name__: cls for cls in loaded.kinds.values() if cls not in M.FRAMEWORK_NODE_CLASSES}
     declared = {}
-    for line in COMMON.read_text().split("## 1. ")[1].split("\n## ")[0].splitlines():
-        if line.startswith("| `"):
-            classes, through = (cell.strip() for cell in line.strip("|").split("|"))
-            names = tuple(n.strip("` ") for n in through.split(",")) if through.startswith("`") else ()
-            assert through.startswith("`") or through.startswith("nothing")
-            declared |= {name.strip("` "): names for name in classes.split(",")}
+    for classes, through in table_rows(COMMON, "1."):
+        assert through.startswith(("`", "nothing"))
+        names = tuple(n.strip("` ") for n in through.split(",")) if through.startswith("`") else ()
+        declared |= {name.strip("` "): names for name in classes.split(",")}
     assert set(declared) == set(by_name)
     for name, through in declared.items():
         assert by_name[name].placement == M.Placement(within="Theory", through=through)
@@ -95,8 +93,8 @@ def test_every_registered_class_is_refused_under_a_session_or_the_root():
         for parent in (s, f):
             with pytest.raises(BadPlacement) as e:
                 run(locked(f, edit.insert(parent, 0, [construct], kinds)))
-            assert (e.value.sentence, e.value.raw_ast_path) == (M.placement_refusal(cls, kind, parent), "constructs[0]")
-            assert f"under `{f.full_id(parent)}`;" in e.value.sentence
+            assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, f.full_id(parent), "constructs[0]")
+            assert (e.value.within, e.value.through) == M.placement_kinds(cls.placement, kinds)
         (z,) = run(locked(f, edit.insert(s, 2, [theory("Z")], kinds)))
         with pytest.raises(BadPlacement):
             run(locked(f, edit.amend(z, [{k: v for k, v in construct.items() if k != "children"}], kinds)))
@@ -112,7 +110,7 @@ def test_every_registered_class_is_refused_under_a_session_or_the_root():
         for parent in (s, f):
             with pytest.raises(BadPlacement) as e:
                 run(locked(f, edit.move(node, parent, 0)))
-            assert e.value.sentence == M.placement_refusal(cls, kind, parent)
+            assert (e.value.kind, e.value.parent_id) == (kind, f.full_id(parent))
         assert node.parent is y
         run(locked(f, edit.delete(node)))
     assert f.sub_nodes == [s] and s.sub_nodes == [x, y] and x.sub_nodes == [b] and b.sub_nodes == [c]

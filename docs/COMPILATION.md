@@ -450,7 +450,8 @@ the two are equal; they differ only on a loaded node not yet rerun.
 **One form per status, and the messages of a run.** The status values
 carry what the run reported *(decided)*. `NotEvaluated` carries nothing,
 its one instance `NOT_EVALUATED`; `CannotEvaluate(messages)` the reason the run
-failed; `Ready(messages)` what the class's callback chose to report of a
+failed, or the refusal of the node's placement when the framework did not run
+it (PLUGIN_SYSTEM §2); `Ready(messages)` what the class's callback chose to report of a
 run that went through — a failure it carried on past, or a notice of
 its own — and `Ready()` a clean
 run; nothing Isabelle prints on its warning channel reaches a status
@@ -466,7 +467,7 @@ identity *(decided)*. Its name is §7's. The evaluation hooks return the status 
 `TAT_Error` escaping one of them is the class's bug, turned into a
 `TAT_InternalError` once in `Forest._run`, and anything else that
 escapes ends the conversation as it is (EXCEPTIONS §1) *(decided)*. So the messages shown, stored
-and reported are those of the run whose status stands: an invalidation
+and reported are those of the run, or the refusal, whose status stands: an invalidation
 replaces the value and the messages go with it, a rerun brings its own.
 Rendering is the framework's: wherever `print_fields` is called
 (PRINT.md §2–§3, `Recall` included), the framework writes each own

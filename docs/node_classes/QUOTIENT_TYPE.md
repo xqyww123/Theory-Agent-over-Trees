@@ -153,17 +153,17 @@ text.
 `english` are `str`; `partial` is `bool`. `TypeMixfix` is shared
 through `TYPE_MIXFIX_DEFS` (COMMON.md §4).
 
-What stands inside the block: a node whose class's `placement` lists
-`QuotientType` among the classes it stands through (PLUGIN_SYSTEM §2) —
-of this plugin `Theorem`, `Define`, `LiftDefinition` and
-`LiftingContext`. The type's Lifting setup is open inside the block
+What stands inside the block: a node whose class's `placement` names
+`QuotientType` in its `through` (PLUGIN_SYSTEM §2; this plugin's,
+COMMON.md §1). The type's Lifting setup is open inside the block
 and closed at its end (§6), so a `LiftDefinition` on the type stands
 here or inside a `LiftingContext`, which opens the setup again
 (LIFTING_CONTEXT.md); lemmas about the type proved by `transfer`
 likewise, since `lifting_forget` deletes the type's transfer rules. A
 node that uses the type by name alone — a `Datatype` with an `'a
-fset` field, a `Theorem` proved without `transfer` — stands anywhere
-after the block too.
+fset` field, a `Theorem` proved without `transfer` — needs no open
+setup, so the block does not bound it: it stands wherever its class's
+`placement` admits it (COMMON.md §1).
 
 The class's construct schema:
 
@@ -258,9 +258,8 @@ The descriptions of `TypeMixfix` and of its arms' fields are COMMON.md
 
 ## 4. `gen`
 
-A `QuotientType` stands directly inside a theory: its `placement` is
-`Placement(within="Theory", through=())`, which the framework checks
-(PLUGIN_SYSTEM §2).
+Where a `QuotientType` stands is COMMON.md §1's; the framework checks it, not
+`gen` (PLUGIN_SYSTEM §2).
 
 `QuotientType.gen` checks: `type_name` against §1's grammar
 (`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth

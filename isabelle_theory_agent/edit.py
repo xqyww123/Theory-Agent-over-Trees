@@ -30,7 +30,7 @@ from .exceptions import (
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
     NodeConfig, NonLeaf_Node, RawAST, Role, Unchained_Node, _completed, _leaving, _wrote, is_valid_name,
-    placement_refusal)
+    placement_kinds)
 from .plugin import GIVEN_LATER, _must_be, check_call
 
 
@@ -421,12 +421,14 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname
 
 
 def _require_placement(cls: type[Node], kind: str, parent: NonLeaf_Node) -> None:
-    """`BadPlacement` for a node placed under an `Unchained_Node` where its
-    class's `placement` does not admit it: no evaluation would reach it to
-    refuse it (PLUGIN_SYSTEM §2).  Under a chaining parent the check runs
-    at evaluation."""
-    if isinstance(parent, Unchained_Node) and (sentence := placement_refusal(cls, kind, parent)) is not None:
-        raise BadPlacement(sentence)
+    """`BadPlacement` for a plugin's node placed under an `Unchained_Node`,
+    where no evaluation would reach it to refuse it (PLUGIN_SYSTEM §2): no
+    `placement` admits one there, since load refuses a `within` naming an
+    `Unchained_Node` class.  Under a chaining parent the check runs at
+    evaluation."""
+    if isinstance(parent, Unchained_Node) and cls.placement is not None:
+        forest = parent.forest()
+        raise BadPlacement(kind, forest.full_id(parent), *placement_kinds(cls.placement, forest.kinds))
 
 
 async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tuple[Node, ...],

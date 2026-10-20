@@ -122,10 +122,8 @@ Isabelle/HOL term with all literal numbers annotated with types
 
 ## 4. `gen`
 
-A `Theorem` stands inside a theory, directly or under `QuotientType`
-and `LiftingContext` blocks: its `placement` is
-`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
-which the framework checks (PLUGIN_SYSTEM §2).
+Where a `Theorem` stands is COMMON.md §1's; the framework checks it, not
+`gen` (PLUGIN_SYSTEM §2).
 
 `Theorem.gen` checks: `name` against §1's grammar (`InvalidName` with
 `grammar` = `fact name`, rendered as RENDER_BASELINES §2's fourth form

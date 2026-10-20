@@ -208,10 +208,8 @@ pinned there alone.
 
 ## 4. `gen`
 
-A `Define` stands inside a theory, directly or under `QuotientType`
-and `LiftingContext` blocks: its `placement` is
-`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
-which the framework checks (PLUGIN_SYSTEM §2).
+Where a `Define` stands is COMMON.md §1's; the framework checks it, not
+`gen` (PLUGIN_SYSTEM §2).
 
 `Define.gen` checks: each constant's `name` against §1's grammar
 (`InvalidName` with `grammar` = `constant name`, the grammar of the

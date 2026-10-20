@@ -190,9 +190,8 @@ and of their arms' fields are COMMON.md §4's, pinned there alone.
 
 ## 4. `gen`
 
-A `Datatype` stands directly inside a theory: its `placement` is
-`Placement(within="Theory", through=())`, which the framework checks
-(PLUGIN_SYSTEM §2).
+Where a `Datatype` stands is COMMON.md §1's; the framework checks it, not
+`gen` (PLUGIN_SYSTEM §2).
 
 `Datatype.gen` checks: every `type_name` against §1's grammar, since
 each is part of the node's name (`InvalidName` with `grammar` = `type

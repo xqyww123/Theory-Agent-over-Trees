@@ -1116,8 +1116,9 @@ def test_the_view_without_recursion_admits_what_the_server_accepts():
             assert not validator.is_valid(envelope({**bare, "children": plugin.GIVEN_LATER}))
 
 
-def a_leaf_module(name, kind):
-    """The source of a module defining one registered Leaf class."""
+def a_leaf_module(name, kind, through=()):
+    """The source of a module defining one registered Leaf class, standing
+    within `Sec` through the classes `through`."""
     return ("from typing import TypedDict\n"
             "from isabelle_theory_agent import model, plugin\n"
             "class Empty(TypedDict): pass\n"
@@ -1126,7 +1127,7 @@ def a_leaf_module(name, kind):
             "    construct_schema = {'type': 'object', 'additionalProperties': False,\n"
             f"        'properties': {{'kind': {{'const': '{kind}'}}}}, 'required': ['kind']}}\n"
             "    argument_schema = Empty\n"
-            "    placement = model.Placement(within='Sec', through=())\n"
+            f"    placement = model.Placement(within='Sec', through={tuple(through)!r})\n"
             "    @classmethod\n"
             "    async def gen(cls, config, raw): raise NotImplementedError\n"
             "    def to_store(self, rows): raise NotImplementedError\n"
@@ -1180,6 +1181,23 @@ def test_the_table_holds_the_listed_packages_classes_only(two_packages, monkeypa
     assert list(plugin.load(["fake_tat_pkg", "other_tat_pkg"]).kinds) == ["section", "fake", "other"]
     assert list(plugin.load(["other_tat_pkg", "fake_tat_pkg"]).kinds) == ["section", "fake", "other"]
     assert list(plugin.load([]).kinds) == ["section"]
+
+
+def test_a_class_naming_another_plugins_class_loads_only_together_with_it(tmp_path, monkeypatch):
+    """PLUGIN_SYSTEM §5: a `placement` name is judged against the
+    conversation's classes, not the process's registry: `Naming`, whose
+    module imports `Named`'s, is refused when `named_tat_pkg` is not
+    listed, though `Named` is registered, and loads with it."""
+    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
+    (tmp_path / "named_tat_pkg.py").write_text(a_leaf_module("Named", "named"))
+    (tmp_path / "naming_tat_pkg.py").write_text("import named_tat_pkg\n" + a_leaf_module("Naming", "naming", ("Named",)))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for module in ("named_tat_pkg", "naming_tat_pkg"):
+        monkeypatch.delitem(sys.modules, module, raising=False)
+    with pytest.raises(CannotLoadPlugin, match="`placement` names `Named`, which is not a node class of the conversation") as e:
+        plugin.load(["naming_tat_pkg"])
+    assert e.value.node_class == "Naming" and "Named" in [c.__name__ for c in registered()]
+    assert list(plugin.load(["named_tat_pkg", "naming_tat_pkg"]).kinds) == ["section", "named", "naming"]
 
 
 def test_a_compile_hook_is_checked_and_registered_at_import_and_returned_by_load(tmp_path, monkeypatch):

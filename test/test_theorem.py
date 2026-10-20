@@ -99,7 +99,7 @@ def test_gen_refuses_as_section_4_says():
     f, x = forest()
     (s,) = f.sub_nodes
     e = refused(f, s, [lemma("rev-length")], BadPlacement)        # a bad name too: the parent is checked first
-    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(Theorem, "lemma", s), "constructs[0]")
+    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lemma", "session_Arith", "constructs[0]")
     identifier, binds = fenced_lines(TH, "4.")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`rev-length` is not a valid fact name")]

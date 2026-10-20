@@ -32,7 +32,7 @@ from . import isabelle_driver
 from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent, DuplicateName,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
-    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError, one_of)
+    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError, placement_rule)
 from .jobs import (
     NOT_STARTED, RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
     Succeeded, Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs,
@@ -2328,7 +2328,7 @@ class Forest(Unchained_Node):
                 reason = "import_without_theory"
             else:
                 stop = await self._evaluate_tree(ev, tree)
-                reason = "command_failed"
+                reason = "command_failed"         # any obstacle's, a refusal of its placement included
         if stop is not None:                              # the one place a stop is recorded (LOGGING.md §4)
             self.conversation.log.evaluation.stopped(
                 node=self.full_id(stop), reason=reason,
@@ -2882,30 +2882,31 @@ def bears(cls: type[Node], name: str) -> bool:
     return any(c.__name__ == name for c in cls.__mro__)
 
 
+def placement_kinds(placement: Placement, kinds: Mapping[str, type[Node]]) -> tuple[str, list[str]]:
+    """The kind words of a `placement` in the kind table `kinds`: `within`'s
+    one kind, and the kinds of the classes `through` in the table's order —
+    what both refusals name (RENDER_BASELINES §2, §3)."""
+    within = next(k for k, c in kinds.items() if c.__name__ == placement.within)
+    return within, [k for k, c in kinds.items() if c.__name__ in placement.through]
+
+
 def placement_refusal(cls: type[Node], kind: str, place: NonLeaf_Node) -> str | None:
     """Why a node of class `cls` and kind `kind` cannot stand under `place`,
-    or None where its `placement` admits it (PLUGIN_SYSTEM §2): the walk up
-    from `place` reaching an `Unchained_Node` gives the edit-time sentence,
-    naming `place` (`BadPlacement`, EXCEPTIONS.md §3); an ancestor of the
-    class `within` admits; the nearest other ancestor of no class
-    `through` gives the evaluation sentence, naming it."""
+    a node inside a theory, or None where its `placement` admits it
+    (PLUGIN_SYSTEM §2): an ancestor of the class `within` admits; the
+    nearest other ancestor of no class `through` is named.  Under an
+    `Unchained_Node` the edit refuses instead (`BadPlacement`)."""
     placement = cls.placement
     if placement is None:
         return None
-    forest = place.forest()
-    within = next(k for k, c in forest.kinds.items() if c.__name__ == placement.within)
-    through = [f"`{k}`" for k, c in forest.kinds.items() if c.__name__ in placement.through]
-    rule = (f"it stands inside a node of kind `{within}`, "
-            + (f"directly or under nodes of kind {one_of(through)}." if through else "directly."))
     for n in itertools.chain((place,), place.ancestors()):
-        if isinstance(n, Unchained_Node):
-            return f"A node of kind `{kind}` cannot be placed under `{forest.full_id(place)}`; {rule}"
         if bears(type(n), placement.within):
             return None
         if not any(bears(type(n), name) for name in placement.through):
+            forest = place.forest()
             return (f"A node of kind `{kind}` cannot stand inside `{forest.full_id(n)}`,"
-                    f" a node of kind `{n.kind}`; {rule}")
-    raise TAT_InternalError("a node outside the forest")
+                    f" a node of kind `{n.kind}`; " + placement_rule(*placement_kinds(placement, forest.kinds)))
+    raise TAT_InternalError("a node outside every theory")
 
 
 FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]

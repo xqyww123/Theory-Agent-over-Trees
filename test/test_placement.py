@@ -36,9 +36,18 @@ class Section_Block(tm.Block):      # a class of two kinds, nesting in itself
 class Top_Block(tm.Block):
     placement = M.Placement(within="Theory", through=())
 
+class Inside_Top(tm.T):              # within a class other than `Theory`
+    placement = M.Placement(within="Top_Block", through=())
+
+class Chapter_Block(Section_Block):  # bears `Section_Block` through its base; its own kind is no `through` word
+    pass
+
+class Aside(tm.T):                   # its classes declared against the table's order
+    placement = M.Placement(within="Theory", through=("Top_Block", "Section_Block"))
+
 
 KINDS = {**ts.KINDS, "note": Note, "top": Top, "section": Section_Block, "subsection": Section_Block,
-         "top_block": Top_Block}
+         "top_block": Top_Block, "inside_top": Inside_Top, "chapter": Chapter_Block, "aside": Aside}
 
 
 def insert(f, parent, index, raws):
@@ -68,34 +77,49 @@ def inv(f):
 # --- the function and its sentences -----------------------------------------
 
 def test_the_sentences_are_render_baselines():
-    """§2's edit-time pair and §3's evaluation pair, verbatim: `{through}`
-    the two kinds of one class in table order, an empty `through` ending
-    at "directly"; ids full."""
+    """§2's edit-time pair, from real edits, and §3's evaluation pair,
+    verbatim: `{through}` the two kinds of one class, an empty `through`
+    ending at "directly"; ids full.  The kinds of `{through}` come in the
+    kind table's order, whatever order the declaration names its classes."""
     f, s, x, sec, b = arith()
     edit_time = fenced_lines(BASELINES, "2.")
     evaluation = fenced_lines(BASELINES, "3.")
-    for line in (placement_refusal(Note, "note", s), placement_refusal(Top, "top", f)):
-        assert line in edit_time
+    for parent, construct in ((s, node("note", "n")), (f, node("top", "t"))):
+        with pytest.raises(BadPlacement) as e:
+            insert(f, parent, 0, [construct])
+        assert e.value._cause() in edit_time
     for line in (placement_refusal(Note, "note", b), placement_refusal(Top, "top", sec)):
         assert line in evaluation
-    with pytest.raises(BadPlacement) as e:
-        insert(f, s, 0, [node("note", "n")])
-    assert e.value.sentence == placement_refusal(Note, "note", s)
+    assert placement_refusal(Aside, "aside", b) == (
+        "A node of kind `aside` cannot stand inside `session_Arith.theory_X.section_S.block_B`, a node of kind"
+        " `block`; it stands inside a node of kind `theory`, directly or under nodes of kind `section`,"
+        " `subsection` or `top_block`.")
 
 
 def test_the_walk_admits_within_through_and_names_the_nearest_blocker():
     """Admitted at the theory and under any depth of the classes `through`,
-    the class naming itself included; refused at the nearest ancestor of
-    another class — two nested ones, the inner named; the framework's
-    classes declare nothing and are never refused."""
+    the class naming itself included, and under a subclass of one;
+    refused at the nearest ancestor of another class — two nested ones,
+    the inner named, also with an admitted node between it and the place;
+    a `within` other than `Theory` admits under its class and names its
+    own kind; the framework's classes declare nothing and are never
+    refused."""
     f, s, x, sec, b = arith()
     (sub,) = insert(f, sec, 0, [node("subsection", "T", node("section", "U"))])
     (u,) = sub.sub_nodes
     for place in (x, sec, sub, u):
         assert placement_refusal(Note, "note", place) is None
-    (c,) = insert(f, b, 0, [node("block", "C")])
-    refusal = placement_refusal(Note, "note", c)
-    assert refusal is not None and f"`{f.full_id(c)}`, a node of kind `block`" in refusal
+    (c,) = insert(f, b, 0, [node("block", "C", node("section", "V"))])
+    (v,) = c.sub_nodes
+    for place in (c, v):
+        refusal = placement_refusal(Note, "note", place)
+        assert refusal is not None and f"inside `{f.full_id(c)}`, a node of kind `block`;" in refusal
+    top_block, chapter = insert(f, x, 0, [node("top_block", "K"), node("chapter", "H")])
+    assert placement_refusal(Note, "note", chapter) is None
+    assert placement_refusal(Inside_Top, "inside_top", top_block) is None
+    assert placement_refusal(Inside_Top, "inside_top", x) == (
+        "A node of kind `inside_top` cannot stand inside `session_Arith.theory_X`, a node of kind `theory`;"
+        " it stands inside a node of kind `top_block`, directly.")
     assert placement_refusal(Top, "top", sec) is not None and placement_refusal(Top, "top", x) is None
     assert placement_refusal(M.Theory, "theory", b) is None and placement_refusal(M.Session, "session", x) is None
 
@@ -184,26 +208,23 @@ def test_an_amend_passing_children_on_checks_them_at_their_new_parent():
 def test_under_a_session_or_the_root_every_edit_is_refused(kind):
     """Under an `Unchained_Node`, which no evaluation reaches, an insert,
     an amend, a move and a session's inline child are refused with
-    `BadPlacement`, the parent named; the forest is unchanged."""
+    `BadPlacement`, the parent's full id and the placement's kind words
+    its fields; the forest is unchanged."""
     f, s, x, sec, b = arith()
-    cls = KINDS[kind]
+    words = M.placement_kinds(KINDS[kind].placement, KINDS)
     construct = node(kind, "n")
-    for parent in (s, f):
-        expected = placement_refusal(cls, kind, parent)
+    def refused(parent_id, call, raw_ast_path="constructs[0]"):
         with pytest.raises(BadPlacement) as e:
-            insert(f, parent, 0, [construct])
-        assert e.value.sentence == expected and e.value.raw_ast_path == "constructs[0]"
+            run(locked(f, call))
+        assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, parent_id, raw_ast_path)
+        assert (e.value.within, e.value.through) == words
+    for parent, parent_id in ((s, "session_Arith"), (f, "Sessions")):
+        refused(parent_id, edit.insert(parent, 0, [construct], KINDS))
     (y,) = insert(f, s, 1, [theory("Y")])
-    with pytest.raises(BadPlacement) as e:
-        run(locked(f, edit.amend(y, [construct], KINDS)))
-    assert e.value.sentence == placement_refusal(cls, kind, s)
-    with pytest.raises(BadPlacement) as e:
-        insert(f, f, 1, [session("Other", construct)])
-    assert e.value.sentence == placement_refusal(cls, kind, s).replace("session_Arith", "session_Other")
+    refused("session_Arith", edit.amend(y, [construct], KINDS))
+    refused("session_Other", edit.insert(f, 1, [session("Other", construct)], KINDS), "constructs[0].children[0]")
     (n,) = insert(f, x, 0, [construct])
-    for parent in (s, f):
-        with pytest.raises(BadPlacement) as e:
-            run(locked(f, edit.move(n, parent, 0)))
-        assert e.value.sentence == placement_refusal(cls, kind, parent)
+    for parent, parent_id in ((s, "session_Arith"), (f, "Sessions")):
+        refused(parent_id, edit.move(n, parent, 0), None)
     assert n.parent is x and f.sub_nodes == [s] and s.sub_nodes == [x, y]
     inv(f)

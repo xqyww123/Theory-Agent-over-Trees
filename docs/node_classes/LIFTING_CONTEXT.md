@@ -117,10 +117,8 @@ printing, emission and evaluation all use the stored text.
 Each entry of `types` is an `IsaTerm` (MODULE_STRUCTURE §4.3); `name`
 is `str`.
 
-Where the block stands: inside a theory, directly or under
-`QuotientType` and `LiftingContext` blocks — its `placement` is
-`Placement(within="Theory", through=("QuotientType", "LiftingContext"))`,
-which the framework checks (PLUGIN_SYSTEM §2). A type whose setup is open
+Where the block stands is COMMON.md §1's; the framework checks it
+(PLUGIN_SYSTEM §2). A type whose setup is open
 where the block stands already — the type a `QuotientType` block
 defines, inside that block; the type a `Typedef` whose recorded
 `lifting` is true defines — a `Leaf` that closes nothing (TYPEDEF.md
@@ -131,16 +129,13 @@ nor closes it (§6). A type with no Lifting setup to open — a
 later — is refused at evaluation (§6). `gen` checks neither: each needs
 the context where the block stands.
 
-What stands inside the block: a node whose class's `placement` lists
-`LiftingContext` among the classes it stands through (PLUGIN_SYSTEM §2)
-— of this plugin `Theorem`, `Define`, `LiftDefinition` and
-`LiftingContext`. The opened types' Lifting setups are open inside
+What stands inside the block: a node whose class's `placement` names
+`LiftingContext` in its `through` (PLUGIN_SYSTEM §2; this plugin's,
+COMMON.md §1). The opened types' Lifting setups are open inside
 the block and closed at its end (§6), so a `LiftDefinition` on an
 opened type stands here, as does a `Theorem` about it proved by
-`transfer`; a node that uses the type by name alone stands anywhere.
-Inside the block Isabelle is in a local theory, as in every `context`
-block, so a member whose command needs the theory itself, not a local
-theory, does not run there and stands outside the block.
+`transfer`; a node that uses the type by name alone needs no open setup
+and stands wherever its class's `placement` admits it (COMMON.md §1).
 
 The class's construct schema:
 

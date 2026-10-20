@@ -110,7 +110,7 @@ def test_gen_refuses_as_section_4_says():
     f, x = forest()
     (s,) = f.sub_nodes
     e = refused(f, s, [block()], BadPlacement)
-    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(LiftingContext, "lifting_context", s), "constructs[0]")
+    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lifting_context", "session_Arith", "constructs[0]")
     [identifier, twice] = fenced_blocks(LC, "4.")[0]
     assert identifier.endswith(GRAMMARS["type name"] + ".")
     e = refused(f, x, [block(types=("'a fset",))], InvalidField)

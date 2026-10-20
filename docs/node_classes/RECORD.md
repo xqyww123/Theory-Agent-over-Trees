@@ -156,9 +156,8 @@ alone.
 
 ## 4. `gen`
 
-A `Record` stands directly inside a theory: its `placement` is
-`Placement(within="Theory", through=())`, which the framework checks
-(PLUGIN_SYSTEM §2).
+Where a `Record` stands is COMMON.md §1's; the framework checks it, not
+`gen` (PLUGIN_SYSTEM §2).
 
 `Record.gen` checks: `type_name` against §1's grammar, the node's name
 (`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth

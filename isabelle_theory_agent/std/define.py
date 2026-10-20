@@ -18,7 +18,8 @@ from IsaMini.AoA.model import Role_Major
 from IsaMini.AoA.task import StdTask, aoa_task
 
 from .. import isabelle_driver
-from ..jobs import Failed, Succeeded, series
+from ..exceptions import series
+from ..jobs import Failed, Succeeded
 from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors, string_token
 from ..plugin import TAT_node
 from .common import (

@@ -248,13 +248,13 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          Theory's gen and on_moving (Session's gen
 │  │                          refuses every parent but the forest root)
 │  │                                                        [Session, Theory]
-│  ├─ BadPlacement            sentence — a plugin's node placed under a
-│  │                          Session or the forest root where its
-│  │                          class's placement does not admit it
+│  ├─ BadPlacement            kind, parent_id, within, through — a
+│  │                          plugin's node placed under a Session or the
+│  │                          forest root, where no placement admits it
 │  │                          (PLUGIN_SYSTEM §2), at an insert, an amend
-│  │                          and a move; the sentence is
-│  │                          model.placement_refusal's, the one source of
-│  │                          it and of the refusal at evaluation
+│  │                          and a move; within and through are the
+│  │                          placement's kind words, whose rule the
+│  │                          refusal at evaluation shares
 │  │                          (RENDER_BASELINES §2, §3)           [framework]
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]

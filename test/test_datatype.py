@@ -116,7 +116,7 @@ def test_gen_refuses_as_section_4_says():
     f, x = forest()
     (s,) = f.sub_nodes
     e = refused(f, s, [definition({"type_name": "my-list", "constructors": [{"name": "N"}]})], BadPlacement)
-    assert (e.sentence, e.raw_ast_path) == (M.placement_refusal(Datatype, "datatype", s), "constructs[0]")
+    assert (e.kind, e.parent_id, e.raw_ast_path) == ("datatype", "session_Arith", "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition({"type_name": "my-list", "constructors": [{"name": "N"}]})], InvalidName)

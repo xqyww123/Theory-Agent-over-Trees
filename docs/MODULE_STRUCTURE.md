@@ -498,15 +498,18 @@ the event hooks (below).
 **Placement.** Where a node of a plugin's class may stand is its
 class's `placement`, a `Placement(within, through)` of class names, which
 the framework checks (PLUGIN_SYSTEM §2); the framework's classes have
-`None`. One function decides it, `placement_refusal(cls, kind, place)`:
-the refusal sentence of a node of class `cls` and kind `kind` under
-`place`, or `None` where it may stand. It walks up once from `place`:
-an `Unchained_Node` reached gives the edit-time sentence, naming `place`;
+`None`. Under an `Unchained_Node` no placement admits a plugin's node,
+since load refuses a `within` naming such a class, so the edit refuses
+it there (§4.2). Inside a theory, `placement_refusal(cls, kind, place)`
+decides: the refusal sentence of a node of class `cls` and kind `kind`
+under `place`, or `None` where it may stand. It walks up from `place`:
 an ancestor bearing `within` — its class, or one of its base classes,
 of that name — admits; the nearest other ancestor bearing none of the
-names `through` gives the evaluation sentence, naming it. Each sentence
-names nodes by their full ids and classes by their kinds, read off the
-forest's kind table (RENDER_BASELINES §2, §3). The check at evaluation
+names `through` is named. Both refusals name nodes by their full ids and
+classes by their kinds — `placement_kinds(placement, kinds)` reads them
+off the forest's kind table, the classes `through` in the table's
+order — and share their second half, `exceptions.placement_rule`
+(RENDER_BASELINES §2, §3). The check at evaluation
 runs where a node's first own operation does, `Leaf._evaluate` and
 `StdBlock._evaluate`, through `Node._placed(hook)`: a refusal is the
 operation's status, a `CannotEvaluate` carrying the sentence, the hook
@@ -723,7 +726,8 @@ with `_state_after_ending` (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6).
 a `Ready(messages)` or a `CannotEvaluate(messages)` — the Python classes
 of ARCHITECTURE §3.2's `not_evaluated`, `ready` and `cannot_evaluate`;
 the last two are frozen dataclasses with one field, `messages:
-tuple[IsaTerm, ...]`, the output of the run that left the status, so a
+tuple[IsaTerm, ...]`, the output of the run that left the status, or the
+refusal of the node's placement (§4.1), so a
 kind is tested with `isinstance` and `==` compares the messages too;
 `Ready()` is a clean run, and `READY_CLEAN` a module-level instance of
 it, a value and never a kind (COMPILATION.md §4). A `Leaf`
@@ -1027,8 +1031,8 @@ and its resolved imports, the `Theory` nodes themselves
    `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
    table alone, so they run before any `gen`), the class lookup, the
    schema check (§4.4; a `children` that is not a list meets it there,
-   `must be a list`), under an `Unchained_Node` the placement check —
-   `BadPlacement` with `placement_refusal`'s sentence (§4.1), since no
+   `must be a list`), under an `Unchained_Node` the placement check — a
+   plugin's class is refused there with `BadPlacement` (§4.1), since no
    evaluation reaches the node there to refuse it —, `gen`, then — for a nesting class — its `children`, built
    by the framework onto the fresh, still-detached node the same way. The
    framework assigns each new node a fresh state slot and reads the name
@@ -1236,8 +1240,9 @@ field's name is told before the hole it leaves; and an `items` that
 names `Construct` or a node class — `edit`'s `constructs`, a class's
 `children` — checked to be an array, with `minItems` where declared,
 its elements left to `edit.py`, which checks each against its own
-class's construct schema (§4.2) — where a node may stand is the
-placement check's (§4.1).
+class's construct schema (§4.2) — where a node may stand is checked by
+`Session`'s and `Theory`'s `Bad<Class>NodeParent` and a plugin class's
+`placement` (§4.1).
 The tool call's entry point alone, before the check, refuses an
 argument nested deeper than 100 levels, each object or array a level,
 `must not be nested deeper than 100 levels`, and marks every refusal as

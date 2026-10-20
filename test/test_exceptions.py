@@ -19,8 +19,6 @@ from isabelle_theory_agent.exceptions import (
     UnknownKind)
 
 from baselines import DOCS, fenced_lines
-from isabelle_theory_agent.model import placement_refusal
-from test_placement import Note, Top, arith, table  # noqa: F401  # the fake wire `arith` builds on
 
 # §3 is evaluation text, not exception renderings; the forest walk's test
 # pins its Python-side line (the plan's §7, step 4).
@@ -228,13 +226,11 @@ def test_bad_node_parent():
           " directly under a session.")
 
 def test_bad_placement():
-    """The framework's sentence, `placement_refusal`'s, on test_placement.py's
-    stand-ins: `{through}` two kinds, and none."""
-    f, s, *_ = arith()
-    check(BadPlacement(placement_refusal(Note, "note", s)),
+    """`{through}` two kinds, and none."""
+    check(BadPlacement(kind="note", parent_id="session_Arith", within="theory", through=["section", "subsection"]),
           "A node of kind `note` cannot be placed under `session_Arith`; it stands inside a node of kind"
           " `theory`, directly or under nodes of kind `section` or `subsection`.")
-    check(BadPlacement(placement_refusal(Top, "top", f)),
+    check(BadPlacement(kind="top", parent_id="Sessions", within="theory", through=[]),
           "A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind"
           " `theory`, directly.")
 

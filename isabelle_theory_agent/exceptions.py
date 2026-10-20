@@ -112,9 +112,18 @@ _OPERATIONS = frozenset(
     {"append", "insert_before", "insert_after", "amend", "move", "delete"})
 
 
-def one_of(items: list[str]) -> str:
-    """The items joined as alternatives: "x", "x or y", "x, y or z"."""
-    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " or " + items[-1]
+def series(words: list[str], last: str) -> str:
+    """Words joined with commas and `last` before the last: `A`; `A and B`;
+    `A, B and C`."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
+
+
+def placement_rule(within: str, through: list[str]) -> str:
+    """The second half of both placement refusals (RENDER_BASELINES §2,
+    §3), from kind words: where a node of the class stands."""
+    return (f"it stands inside a node of kind `{within}`, "
+            + (f"directly or under nodes of kind {series([f'`{k}`' for k in through], 'or')}." if through
+               else "directly."))
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +142,7 @@ class NodeNotFound(ResolutionError):
     def _cause(self) -> str:
         sentence = f"`{self.id}` is not found."
         if self.near_matches:
-            sentence += f" Did you mean {one_of([f'`{m}`' for m in self.near_matches])}?"
+            sentence += f" Did you mean {series([f'`{m}`' for m in self.near_matches], 'or')}?"
         return sentence
 
 
@@ -447,15 +456,19 @@ class BadTheoryNodeParent(BadEdit):
 class BadPlacement(BadEdit):
     """A plugin's node placed under a `Session` or the forest root
     (EXCEPTIONS.md §3): raised by the framework at an insert, an amend and
-    a move, carrying the sentence of `model.placement_refusal`, the one
-    source of the placement refusals."""
+    a move.  `within` and `through` are the kind words of the class's
+    `placement` (`model.placement_kinds`)."""
 
-    def __init__(self, sentence: str):
+    def __init__(self, kind: str, parent_id: str, within: str, through: list[str]):
         super().__init__()
-        self.sentence = sentence
+        self.kind = kind
+        self.parent_id = parent_id
+        self.within = within
+        self.through = through
 
     def _cause(self) -> str:
-        return self.sentence
+        return (f"A node of kind `{self.kind}` cannot be placed under `{self.parent_id}`; "
+                + placement_rule(self.within, self.through))
 
 
 class MoveIntoOwnSubtree(BadEdit):
