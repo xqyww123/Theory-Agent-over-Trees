@@ -297,14 +297,14 @@ def test_the_recorded_field_reaches_the_store_and_the_mirror_catches_an_emit_end
     run(x.evaluate_to(None, False))
     rows = {n.name: f.store.fields(n.identity) for n in (p, both)}
     assert (rows["fset_size"]["opened"], rows["both"]["opened"]) == (["fset"], ["int"])
-    assert_store_mirrors(f, KINDS, shape=ts.shape)                           # as shipped: mirrored
+    assert_store_mirrors(f, shape=ts.shape)                           # as shipped: mirrored
     emit_ending = LiftingContext.emit_ending
 
     def off_the_live_status(self, indent, out):
         return emit_ending(self, indent, out) if isinstance(self.evaluation_status_ending, M.Ready) else indent
     monkeypatch.setattr(LiftingContext, "emit_ending", off_the_live_status)
     with pytest.raises(AssertionError, match="Arith/X.thy: the loaded forest writes another text"):
-        assert_store_mirrors(f, KINDS, shape=ts.shape)
+        assert_store_mirrors(f, shape=ts.shape)
 
 
 # --- what it prints (§8) -----------------------------------------------------
@@ -443,8 +443,7 @@ def test_section_9_s_id_properties():
     # after `Section`'s: test_ids.py's `Sec` inside the block holding a `fsize`, another `fsize` directly under the
     # theory — the section dropped, the block kept
     sec = test_ids.mk_block(test_ids.Sec, p, "B")
-    (inner,) = run(locked(f, edit.insert(sec, 0, [lift("fsize", "'a fset ⇒ nat", "λxs. card (set xs)", "The size")],
-                                         {**KINDS, "section": test_ids.Sec})))
+    (inner,) = run(locked(f, edit.insert(sec, 0, [lift("fsize", "'a fset ⇒ nat", "λxs. card (set xs)", "The size")])))
     (outer,) = insert(f, x, 1, [lift("fsize", "'a fset ⇒ nat", "λxs. card (set xs)", "The size")])
     assert f.id_of(inner) == "lifting_context_fset_size.lift_definition_fsize"
     assert f.resolve("section_B.lift_definition_fsize") is inner

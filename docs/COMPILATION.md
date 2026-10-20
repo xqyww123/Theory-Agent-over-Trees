@@ -409,8 +409,8 @@ status is `not_evaluated`. The rule is kept by the store-mirror
 invariant the test suites already run after every edit and walk
 (`assert_store_mirrors`, `test/invariants.py`), moved into the package
 — `isabelle_theory_agent/invariants.py` —
-as a helper that takes the forest and the kind table and nothing
-class-specific, which every class's suite calls on its own forests: it
+as a helper that takes the forest and nothing class-specific — the
+forest holds the kind table it reloads with —, which every class's suite calls on its own forests: it
 reloads the forest from the store beside the one in memory and
 requires, node by node, the same `last_evaluation_statuses()` in their
 stored form — each status's kind and its messages' `unicode`, as

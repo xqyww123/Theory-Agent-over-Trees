@@ -75,12 +75,12 @@ def forest(*sessions):
 
 
 def insert(f, parent, index, raws):
-    return run(locked(f, edit.insert(parent, index, raws, KINDS)))
+    return run(locked(f, edit.insert(parent, index, raws)))
 
 
 def inv(f):
     assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
+    assert_store_mirrors(f, shape=ts.shape)
 
 
 def deletes():
@@ -431,9 +431,9 @@ def test_each_tree_is_stored_at_its_end(tmp_path):
     kinds = KINDS | {"crashing": Crashing}
     path = tmp_path / "TAT.sqlite"
     f = ts.Forest_Under_Test(store=Forest_Store(path, stand_ins.log()), kinds=kinds)
-    run(locked(f, edit.insert(f, 0, [session("S", theory("A"), theory("B", "A"))], kinds)))
+    run(locked(f, edit.insert(f, 0, [session("S", theory("A"), theory("B", "A"))])))
     a, b = f.sub_nodes[0].sub_nodes
-    run(locked(f, edit.insert(b, 0, [{"kind": "crashing", "name": "z"}], kinds)))
+    run(locked(f, edit.insert(b, 0, [{"kind": "crashing", "name": "z"}])))
     with pytest.raises(ZeroDivisionError):
         run(b.evaluate_to(None, False))
     f.store.close()
@@ -528,7 +528,7 @@ def two_sessions():
 
 def test_renaming_a_tree():
     f, s, u, a, b, c = two_sessions()
-    (a2,) = run(locked(f, edit.amend(a, [theory("A2")], KINDS)))
+    (a2,) = run(locked(f, edit.amend(a, [theory("A2")])))
     not_evaluated(a2, b, c)
     assert tm.TABLE.theory_deletes == [("S.A",)] and tm.TABLE.theories == {"S.B", "U.C"}
     inv(f)
@@ -540,7 +540,7 @@ def test_the_record_holds_the_imported_nodes_not_their_names():
     # behind `A` does not
     f, s, u, a, b, c = two_sessions()
     old_a = f.full_id(a)
-    a2, a_new = run(locked(f, edit.amend(a, [theory("A2"), theory("A")], KINDS)))
+    a2, a_new = run(locked(f, edit.amend(a, [theory("A2"), theory("A")])))
     assert f._resolved_imports(b) == [a_new] and f._resolved_imports(c) == [a_new]
     not_evaluated(a2, a_new, b, c)
     assert tm.TABLE.theory_deletes == []
@@ -557,7 +557,7 @@ def test_the_record_holds_the_imported_nodes_not_their_names():
 
 def test_renaming_a_session():
     f, s, u, a, b, c = two_sessions()
-    run(locked(f, edit.amend(s, [session("S2")], KINDS)))
+    run(locked(f, edit.amend(s, [session("S2")])))
     not_evaluated(a, b, c)
     assert tm.TABLE.theory_deletes == [("S.A", "S.B")] and tm.TABLE.theories == {"U.C"}
     inv(f)
@@ -586,7 +586,7 @@ def test_amending_a_tree_invalidates_its_importers():
         d, e = insert(f, s, 2, [theory("D", "B"), theory("E", "D")])
         run(e.evaluate_to(None, False))
         tm.TABLE.theory_deletes.clear()
-        (b2,) = run(locked(f, edit.amend(b, [theory("B", *imports)], KINDS)))
+        (b2,) = run(locked(f, edit.amend(b, [theory("B", *imports)])))
         not_evaluated(b2, d, e)                                  # the importers, and theirs
         assert st(a) == (READY, READY) and st(c) == (READY, READY)
         assert tm.TABLE.theory_deletes == []
@@ -599,7 +599,7 @@ def test_amending_a_tree_invalidates_its_importers():
     a, b, c = f.sub_nodes[0].sub_nodes
     run(c.evaluate_to(None, False))
     assert mark(a) == "failed" and st(b) == NE and st(c) == NE
-    (a2,) = run(locked(f, edit.amend(a, [theory("A")], KINDS)))
+    (a2,) = run(locked(f, edit.amend(a, [theory("A")])))
     not_evaluated(a2, b, c)
     f.render(f, BRIEFING, stand_ins.agent(f.conversation))
     inv(f)
@@ -613,11 +613,11 @@ def test_amending_a_tree_invalidates_its_importers():
     (x,) = insert(f, a, 0, [t("x", fail=True)])
     run(c.evaluate_to(None, False))
     assert st(x) is CANNOT_EVALUATE and st(c) == NE
-    (b2,) = run(locked(f, edit.amend(b, [theory("B", "A")], KINDS)))
+    (b2,) = run(locked(f, edit.amend(b, [theory("B", "A")])))
     not_evaluated(b2, c)
     assert tm.TABLE.theory_deletes == []
     inv(f)
-    (b3,) = run(locked(f, edit.amend(b2, [theory("B", "A")], KINDS)))
+    (b3,) = run(locked(f, edit.amend(b2, [theory("B", "A")])))
     not_evaluated(b3, c)
     f.render(f, BRIEFING, stand_ins.agent(f.conversation))
     inv(f)
@@ -706,7 +706,7 @@ def test_amending_a_theory_node_invalidates_its_inherited_children():
     x, y = insert(f, a, 0, [t("x"), t("y")])
     run(b.evaluate_to(None, False))
     assert f.is_finished()
-    (a2,) = run(locked(f, edit.amend(a, [theory("A")], KINDS)))
+    (a2,) = run(locked(f, edit.amend(a, [theory("A")])))
     assert a2.sub_nodes == [x, y]
     not_evaluated(a2, b)
     inv(f)

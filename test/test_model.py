@@ -426,11 +426,10 @@ def test_d_invalidate_only():
 def test_insert_into_evaluated_tree():
     f, thy, sec, t1, t2, t3, t4 = build()
     run(t4.evaluate_to(None, False))
-    kinds = {"t": T}
 
     async def insert_and_run(parent, index, raws):     # the tool entry's flow
         async with f.lock:
-            nodes = await edit.insert(parent,index, raws, kinds)
+            nodes = await edit.insert(parent,index, raws)
             return nodes, await f._run(M.Evaluation(nodes[-1], False))
 
     (new,), r = run(insert_and_run(sec, 1, [{"kind": "t", "name": "N"}]))
@@ -440,7 +439,7 @@ def test_insert_into_evaluated_tree():
     assert st(sec) == (READY, NOT_EVALUATED) and st(thy) == (READY, NOT_EVALUATED)
     assert t1.runs == 1                                                  # the predecessor untouched
     # a predecessor not ready: the new slot stays empty, no copy
-    (new2,) = run(locked(f, edit.insert(sec,3, [{"kind": "t", "name": "N2"}], kinds)))
+    (new2,) = run(locked(f, edit.insert(sec,3, [{"kind": "t", "name": "N2"}])))
     assert new2.state.name not in TABLE.values and sec.sub_nodes == [t1, new, t2, new2]
 
 
@@ -616,7 +615,7 @@ def test_a_slot_of_the_classes_own_is_released_with_its_writers_result_and_delet
     (thy,) = run(locked(f, edit.insert(f, 0, [
         {"kind": "block", "name": "Theory", "children": [
             {"kind": "owning", "name": "o"}, {"kind": "owning", "name": "p"},
-            {"kind": "t", "name": "x"}]}], kinds)))
+            {"kind": "t", "name": "x"}]}])))
     o, p, x = thy.sub_nodes
     assert o._states_inside() == [o.state, o.goal_state]
     names = [s.name for s in thy._states_inside()]
@@ -636,7 +635,7 @@ def test_a_slot_of_the_classes_own_is_released_with_its_writers_result_and_delet
     assert p.goal_state.name in TABLE.deleted
     TABLE.deleted.clear()
     old = o.goal_state.name
-    (o2,) = run(locked(f, edit.amend(o, [{"kind": "owning", "name": "o2"}], kinds)))
+    (o2,) = run(locked(f, edit.amend(o, [{"kind": "owning", "name": "o2"}])))
     assert old in TABLE.deleted and o2.goal_state.name != old
     before = {s.name for s in thy._states_inside()}
     f.store.close()
@@ -663,7 +662,7 @@ def test_slots_released_counts_each_deleted_name_once():
     (thy,) = run(locked(f, edit.insert(f, 0, [
         {"kind": "block", "name": "Theory", "children": [
             {"kind": "t", "name": "d"},
-            {"kind": "owning_block", "name": "O", "children": [{"kind": "t", "name": "z"}]}]}], kinds)))
+            {"kind": "owning_block", "name": "O", "children": [{"kind": "t", "name": "z"}]}]}])))
     d, o = thy.sub_nodes
     run(thy.evaluate_to(None, False))
     assert st(o) == (READY, READY)
@@ -687,7 +686,7 @@ def test_a_nesting_class_names_the_operation_that_writes_its_slot():
         {"kind": "block", "name": "Theory", "children": [
             {"kind": "owning_block", "name": "P", "children": [
                 {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]},
-            {"kind": "t", "name": "d"}]}], kinds)))
+            {"kind": "t", "name": "d"}]}])))
     p, d = thy.sub_nodes
     a, b = p.sub_nodes
     run(d.evaluate_to(None, False))
@@ -722,7 +721,7 @@ def test_reopen_restores_the_forest_not_evaluated(tmp_path):
             {"kind": "block", "name": "Section", "children": [
                 {"kind": "t", "name": "T1", "fail": True},
                 {"kind": "t", "name": "T2"}]},
-            {"kind": "t", "name": "T3"}]}], KINDS)))
+            {"kind": "t", "name": "T3"}]}])))
     t3 = thy.sub_nodes[1]
     run(t3.evaluate_to(None, True))
     assert st(t3) is READY
@@ -746,7 +745,7 @@ def test_reopen_restores_the_forest_not_evaluated(tmp_path):
     assert st(thy2.sub_nodes[0].sub_nodes[0]) is CANNOT_EVALUATE      # T1 still fails
     assert_invariants(f2, TABLE)
     # a fresh identity after the reopen collides with no loaded one
-    (new,) = run(locked(f2, edit.insert(thy2,0, [{"kind": "t", "name": "N"}], KINDS)))
+    (new,) = run(locked(f2, edit.insert(thy2,0, [{"kind": "t", "name": "N"}])))
     assert new.identity not in {i for i, *_ in shape(f)}
 
 
@@ -765,7 +764,7 @@ def test_reopen_restores_the_stored_statuses_and_a_walk_reruns_what_it_reaches(t
             {"kind": "block", "name": "Section", "children": [
                 {"kind": "t", "name": "T2", "fail": True},
                 {"kind": "t", "name": "T3"}]},
-            {"kind": "t", "name": "T4"}]}], KINDS)))
+            {"kind": "t", "name": "T4"}]}])))
     t1, sec, t4 = thy.sub_nodes
     t2, t3 = sec.sub_nodes
     run(thy.evaluate_to(None, True))                        # the whole tree, past the obstacle
@@ -799,7 +798,7 @@ def test_reopen_restores_the_stored_statuses_and_a_walk_reruns_what_it_reaches(t
     assert by_name["Section"].last_evaluation_statuses() == (NOT_EVALUATED, NOT_EVALUATED)
     assert by_name["Theory"].last_evaluation_statuses() == (READY, NOT_EVALUATED)
     assert_invariants(f2, TABLE)
-    assert_store_mirrors(f2, KINDS)
+    assert_store_mirrors(f2)
 
 
 def test_a_beginning_failing_after_a_restart_invalidates_what_its_children_stored(tmp_path):
@@ -814,7 +813,7 @@ def test_a_beginning_failing_after_a_restart_invalidates_what_its_children_store
             {"kind": "block", "name": "Theory", "children": [
                 {"kind": "block", "name": "Section", "children": [
                     {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]},
-                {"kind": "t", "name": "c"}]}], KINDS)))
+                {"kind": "t", "name": "c"}]}])))
         run(thy.evaluate_to(None, False))
         sec = thy.sub_nodes[0]
         sec.fail_beginning = True                     # the verdict changes between the runs
@@ -837,7 +836,7 @@ def test_a_beginning_failing_after_a_restart_invalidates_what_its_children_store
             assert stored("Section") == (CANNOT_EVALUATE, NOT_EVALUATED)
             assert stored("c") == (NOT_EVALUATED,)
         assert_invariants(f2, TABLE)
-        assert_store_mirrors(f2, KINDS)
+        assert_store_mirrors(f2)
 
 
 def test_a_statuses_row_missing_or_short_reads_not_evaluated_and_a_malformed_one_is_refused(tmp_path):
@@ -846,7 +845,7 @@ def test_a_statuses_row_missing_or_short_reads_not_evaluated_and_a_malformed_one
     store = Forest_Store(path, stand_ins.log())
     f = OneTreeForest(CONN, store)
     (thy,) = run(locked(f, edit.insert(f,0, [
-        {"kind": "block", "name": "Theory", "children": [{"kind": "t", "name": "T1"}]}], KINDS)))
+        {"kind": "block", "name": "Theory", "children": [{"kind": "t", "name": "T1"}]}])))
     t1 = thy.sub_nodes[0]
     run(thy.evaluate_to(None, True))
     assert thy.last_evaluation_statuses() == (READY, READY)
@@ -879,7 +878,7 @@ def test_the_trees_keep_their_order_across_a_reopen(tmp_path):
     f = OneTreeForest(CONN, Forest_Store(path, stand_ins.log()))
     a, b = run(locked(f, edit.insert(f,0, [
         {"kind": "block", "name": "A", "children": [{"kind": "t", "name": "x"}]},
-        {"kind": "block", "name": "B"}], KINDS)))
+        {"kind": "block", "name": "B"}])))
     run(locked(f, edit.move(a, f, 1)))                      # -> [B, A]
     assert f.sub_nodes == [b, a]
     assert set(f.store.fields(f.identity)) == {"children"}       # the root's one row
@@ -894,12 +893,12 @@ def test_delete_and_amend_at_the_root_reach_the_store(tmp_path):
     f = OneTreeForest(CONN, Forest_Store(path, stand_ins.log()))
     a, b = run(locked(f, edit.insert(f,0, [
         {"kind": "block", "name": "A", "children": [{"kind": "t", "name": "x"}]},
-        {"kind": "block", "name": "B", "children": [{"kind": "t", "name": "y"}]}], KINDS)))
+        {"kind": "block", "name": "B", "children": [{"kind": "t", "name": "y"}]}])))
     gone = {b.identity, b.sub_nodes[0].identity}
     run(locked(f, edit.delete(b)))
     assert f.store.get(f.identity, "children") == [a.identity]
     assert not gone & set(f.store.nodes())
-    (a2,) = run(locked(f, edit.amend(a, [{"kind": "block", "name": "A2"}], KINDS)))
+    (a2,) = run(locked(f, edit.amend(a, [{"kind": "block", "name": "A2"}])))
     assert a2.identity == a.identity and [c.name for c in a2.sub_nodes] == ["x"]
     f.store.close()
     f2 = OneTreeForest(CONN, Forest_Store(path, stand_ins.log()))
@@ -916,7 +915,7 @@ def test_the_loader_places_the_node_whatever_from_store_passed():
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
     run(locked(f, edit.insert(f,0, [
-        {"kind": "block", "name": "B", "children": [{"kind": "t", "name": "a"}]}], KINDS)))
+        {"kind": "block", "name": "B", "children": [{"kind": "t", "name": "a"}]}])))
     f2 = OneTreeForest(CONN, store, kinds={"block": Block, "t": Careless})
     a = f2.sub_nodes[0].sub_nodes[0]
     assert isinstance(a, Careless) and a.parent is f2.sub_nodes[0]
@@ -940,7 +939,7 @@ def test_a_block_threads_the_indent_through_what_it_emits():
     kinds = {"t": Deepening, "block": Stepped}
     f = OneTreeForest(CONN, kinds=kinds)
     (blk,) = run(locked(f, edit.insert(f, 0, [{"kind": "block", "name": "B", "children": [
-        {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]}], kinds)))
+        {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]}])))
     out = io.StringIO()
     assert blk.emit(2, out) == 5
     assert out.getvalue() == (M.INDENT * 2 + "section ‹B›\n"
@@ -971,10 +970,10 @@ def test_a_store_failure_after_the_commit_is_a_disaster(tmp_path):
         def to_store(self, rows):
             raise ZeroDivisionError("to_store broke")
     path = tmp_path / "TAT.sqlite"
-    f = OneTreeForest(CONN, Forest_Store(path, stand_ins.log()))
-    (thy,) = run(locked(f, edit.insert(f,0, [{"kind": "block", "name": "Theory"}], KINDS)))
+    f = OneTreeForest(CONN, Forest_Store(path, stand_ins.log()), {**KINDS, "b": Broken})
+    (thy,) = run(locked(f, edit.insert(f,0, [{"kind": "block", "name": "Theory"}])))
     with pytest.raises(TAT_DisasterError, match="to_store broke") as e:
-        run(locked(f, edit.insert(thy,0, [{"kind": "b", "name": "x"}], {"b": Broken})))
+        run(locked(f, edit.insert(thy,0, [{"kind": "b", "name": "x"}])))
     assert isinstance(e.value.__cause__, ZeroDivisionError)
     assert [n.name for n in thy.sub_nodes] == ["x"]          # memory kept the change
     f.store.close()
@@ -983,17 +982,17 @@ def test_a_store_failure_after_the_commit_is_a_disaster(tmp_path):
 
 
 def test_a_class_without_to_store_fails_at_its_first_edit():
-    f = OneTreeForest(CONN)
+    f = OneTreeForest(CONN, kinds={"bare": Bare})
     # inside the store transaction, so a disaster whose cause is the class's bug
     with pytest.raises(TAT_DisasterError, match="Bare has no to_store") as e:
-        run(locked(f, edit.insert(f,0, [{"kind": "bare", "name": "x"}], {"bare": Bare})))
+        run(locked(f, edit.insert(f,0, [{"kind": "bare", "name": "x"}])))
     assert isinstance(e.value.__cause__, TAT_InternalError)
 
 
 def test_a_class_without_from_store_fails_at_the_reopen():
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store, kinds={"w": WriteOnly})
-    run(locked(f, edit.insert(f,0, [{"kind": "w", "name": "x"}], {"w": WriteOnly})))
+    run(locked(f, edit.insert(f,0, [{"kind": "w", "name": "x"}])))
     with pytest.raises(TAT_InternalError, match="WriteOnly has no from_store"):
         OneTreeForest(CONN, store, kinds={"w": WriteOnly})
 
@@ -1006,7 +1005,7 @@ def test_a_field_a_class_reads_but_the_database_lacks_is_a_startup_error():
             return super().from_store(config, rows)
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}], KINDS)))
+    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}])))
     with pytest.raises(TAT_StartupError, match=f"`colour` for node {x.identity}"):
         OneTreeForest(CONN, store, kinds={"t": Wants_More})
 
@@ -1016,7 +1015,7 @@ def test_a_field_a_class_reads_but_the_database_lacks_is_a_startup_error():
 def test_a_corrupt_field_value_is_a_startup_error(blob):
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}], KINDS)))
+    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}])))
     store._conn.execute("UPDATE fields SET value = ? WHERE node = ? AND field = 'name'",
                         (blob, x.identity))
     with pytest.raises(TAT_StartupError, match=f"`name` of node {x.identity} is not readable"):
@@ -1026,7 +1025,7 @@ def test_a_corrupt_field_value_is_a_startup_error(blob):
 def test_a_kind_that_is_not_a_string_is_a_startup_error():
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}], KINDS)))
+    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}])))
     with store.transaction():
         store.put(x.identity, "kind", [1])
     with pytest.raises(TAT_StartupError, match="kind `\\[1\\]`"):
@@ -1039,7 +1038,7 @@ def _damaged(children_of, value):
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
     (blk,) = run(locked(f, edit.insert(f,0, [
-        {"kind": "block", "name": "B", "children": [{"kind": "t", "name": "a"}]}], KINDS)))
+        {"kind": "block", "name": "B", "children": [{"kind": "t", "name": "a"}]}])))
     node = f.identity if children_of == "root" else blk.identity
     with store.transaction():
         store.put(node, "children", value(f, blk))
@@ -1064,7 +1063,7 @@ def test_a_damaged_children_row_is_refused_at_start(children_of, value, message)
 def test_a_missing_root_row_over_a_populated_database_is_refused():
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}], KINDS)))
+    run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}])))
     with store.transaction():
         store.delete_node(f.identity)
     with pytest.raises(TAT_StartupError, match="`children` for node 0"):
@@ -1074,7 +1073,7 @@ def test_a_missing_root_row_over_a_populated_database_is_refused():
 def test_a_kind_without_a_class_is_a_startup_error():
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}], KINDS)))
+    run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}])))
     with pytest.raises(TAT_StartupError, match="kind `t`"):
         OneTreeForest(CONN, store, kinds={"block": Block})
 
@@ -1082,7 +1081,7 @@ def test_a_kind_without_a_class_is_a_startup_error():
 def test_a_missing_row_is_a_startup_error():
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}], KINDS)))
+    (x,) = run(locked(f, edit.insert(f,0, [{"kind": "t", "name": "x"}])))
     with store.transaction():
         store.delete_node(x.identity)           # the root's `children` row still names it
     with pytest.raises(TAT_StartupError, match=f"`kind` for node {x.identity}"):
@@ -1098,7 +1097,7 @@ def test_from_store_may_not_return_children():
             return node
     store = Forest_Store(":memory:", stand_ins.log())
     f = OneTreeForest(CONN, store)
-    run(locked(f, edit.insert(f,0, [{"kind": "block", "name": "B"}], KINDS)))
+    run(locked(f, edit.insert(f,0, [{"kind": "block", "name": "B"}])))
     with pytest.raises(TAT_InternalError, match="returned children"):
         OneTreeForest(CONN, store, kinds={"block": Greedy, "t": T})
 
@@ -1129,7 +1128,7 @@ def test_operation_slots_answers_each_operation_s_input_and_resulting_slot():
     for node, operation in ((t1, "beginning"), (sec, None), (sec, "middle"), (f, None)):
         with pytest.raises(TAT_InternalError, match="runs no operation"):
             node.operation_slots(operation)
-    (t0,) = run(locked(f, edit.insert(sec, 0, [{"kind": "t", "name": "T0"}], KINDS)))
+    (t0,) = run(locked(f, edit.insert(sec, 0, [{"kind": "t", "name": "T0"}])))
     assert sec.operation_slots("beginning") == (sec.state, t0.state) and t0.state is not t1.state
 
 

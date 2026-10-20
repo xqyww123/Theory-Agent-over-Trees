@@ -147,15 +147,14 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proof():
     (p,) = x.sub_nodes
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
     p.with_code_dt = True                                   # as an evaluation recorded it
-    (p2,) = run(locked(f, edit.amend(p, [definition("dl_reverse", english="Another wording", syntax=INFIXR, code_dt=True)],
-                                     KINDS)))
+    (p2,) = run(locked(f, edit.amend(p, [definition("dl_reverse", english="Another wording", syntax=INFIXR, code_dt=True)])))
     assert p2.job().outcome == PROVED and p2.check_outcome() is None and p2.name == "dl_reverse"
     assert p2.with_code_dt is None                          # the recorded choice is the evaluation's to make again (COMMON §5)
     assert p2.goal_structure() == p.goal_structure() == ("'a dlist \\<Rightarrow> 'a dlist", "rev")
-    (p3,) = run(locked(f, edit.amend(p2, [definition("dl_reverse", is_="id")], KINDS)))
+    (p3,) = run(locked(f, edit.amend(p2, [definition("dl_reverse", is_="id")])))
     assert p3.job().outcome is NOT_STARTED                  # the term changed
     p3.job().outcome = PROVED
-    (p4,) = run(locked(f, edit.amend(p3, [definition("dl_reverse", type="'a dlist ⇒ 'a list", is_="id")], KINDS)))
+    (p4,) = run(locked(f, edit.amend(p3, [definition("dl_reverse", type="'a dlist ⇒ 'a list", is_="id")])))
     assert p4.job().outcome is NOT_STARTED                  # the type changed
     inv(f)
 
@@ -268,7 +267,7 @@ def test_the_recorded_field_reaches_the_store_and_the_option_is_emitted_from_it_
     run(x.evaluate_to(None, False))
     rows = {n.name: f.store.fields(n.identity) for n in (cons, tl_opt, wrap)}
     assert [rows[n]["with_code_dt"] for n in ("dl_cons", "dl_tl_opt", "dl_wrap")] == [False, True, False]
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
+    assert_store_mirrors(f, shape=ts.shape)
     out = io.StringIO()
     wrap.emit(0, out)
     assert (wrap.code_dt, wrap.with_code_dt) == (True, False)

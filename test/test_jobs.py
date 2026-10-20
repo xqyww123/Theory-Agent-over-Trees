@@ -693,14 +693,14 @@ def test_a_delete_or_an_amend_cancels_the_running_job_naming_the_node_it_belonge
         await locked(f, edit.delete(q))                      # after P: P's run stands
         assert q.job().outcome is NOT_STARTED and p.job().outcome is RUNNING
         assert records("construction_cancelled") == [{"node": Q, "reason": "NODE_DELETED"}]
-        (p2,) = await locked(f, edit.amend(p, [{"kind": "lemma", "name": "P2"}], KINDS))
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "lemma", "name": "P2"}]))
         assert p.job().outcome is NOT_STARTED and p2.job().outcome is NOT_STARTED
         assert records("construction_cancelled")[-1] == {"node": P, "reason": "NODE_AMENDED"}
         assert deliver(f, owner) == [
             f"The proof construction on `{Q}` was cancelled: the node was deleted.",
             f"The proof construction on `{P}` was cancelled: the node was amended."]
         assert p2.job().auto_construct is False
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
     run(scenario())
 
 
@@ -712,24 +712,24 @@ def test_an_amend_carries_the_old_jobs_image_where_the_class_says_so():
         f, thy, t1, p, q = build(Carrying)
         owner = stand_ins.agent(f.conversation)
         p.job().outcome = Succeeded("by simp")
-        (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}], KINDS))
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}]))
         assert p2.job().outcome == Succeeded("by simp") and f.store.get(p2.identity, "job") == ["SUCCEEDED", "by simp"]
         ready(p2)                                            # an amended node is not evaluated
         p2.job().start(owner)                                # settles during the next gen
         p2.job().release.set()
-        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}], KINDS))
+        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}]))
         assert p2.job().outcome == Succeeded("by simp") and p3.job().outcome == Succeeded("by simp")
         assert records("construction_cancelled") == []
         ready(p3)
         p3.job().start(owner)                                # still running at the commit
-        (p4,) = await locked(f, edit.amend(p3, [{"kind": "carrying", "name": "P4"}], KINDS))
+        (p4,) = await locked(f, edit.amend(p3, [{"kind": "carrying", "name": "P4"}]))
         assert p4.job().outcome is NOT_STARTED
         assert records("construction_cancelled") == [{"node": "block_Theory.carrying_P3", "reason": "NODE_AMENDED"}]
         r = add(thy, Lemma(thy, slot(), "R"), "lemma")
         r.job().outcome = Succeeded("by auto")
-        (r2,) = await locked(f, edit.amend(r, [{"kind": "lemma", "name": "R2"}], KINDS))
+        (r2,) = await locked(f, edit.amend(r, [{"kind": "lemma", "name": "R2"}]))
         assert r2.job().outcome is NOT_STARTED               # the default answer carries nothing
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
     run(scenario())
 
 
@@ -746,29 +746,29 @@ def test_the_carry_is_asked_of_a_replacement_of_the_old_nodes_own_class_alone():
         Asked_Jobless.questions.clear()
         # Lemma → Asked: the replacement's class a subclass of the old node's
         p.job().outcome = Succeeded("by simp")
-        (p2,) = await locked(f, edit.amend(p, [{"kind": "asked", "name": "P2"}], KINDS))
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "asked", "name": "P2"}]))
         assert Asked.questions == [] and p2.job().outcome is NOT_STARTED
         # Asked → Carrying: the old node's class a subclass of the replacement's, which would answer true
         p2.job().outcome = Succeeded("by simp")
-        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}], KINDS))
+        (p3,) = await locked(f, edit.amend(p2, [{"kind": "carrying", "name": "P3"}]))
         assert p3.job().outcome is NOT_STARTED
         # no construction job class: never asked
         u = add(thy, Asked_Jobless(thy, slot(), "U"), "asked_jobless")
-        (u2,) = await locked(f, edit.amend(u, [{"kind": "asked_jobless", "name": "U2"}], KINDS))
+        (u2,) = await locked(f, edit.amend(u, [{"kind": "asked_jobless", "name": "U2"}]))
         assert Asked_Jobless.questions == []
         # Asked → Asked, the old node's job running at the amend
-        (p4,) = await locked(f, edit.amend(p3, [{"kind": "asked", "name": "P4"}], KINDS))
+        (p4,) = await locked(f, edit.amend(p3, [{"kind": "asked", "name": "P4"}]))
         ready(p4)
         p4.job().start(owner)
         with pytest.raises(TAT_InternalError) as e:
-            await locked(f, edit.amend(p4, [{"kind": "asked", "name": "P5"}], KINDS))
+            await locked(f, edit.amend(p4, [{"kind": "asked", "name": "P5"}]))
         assert isinstance(e.value.__cause__, InvalidName)
         [(replacement, old)] = Asked.questions
         assert old is p4 and isinstance(replacement, Asked) and replacement.name == "P5"
         assert thy.sub_nodes == [t1, p4, q, u2] and p4.parent is thy
         assert p4.job().outcome is RUNNING and records("construction_cancelled") == []   # the completed events never ran
         p4.job().cancel(None)
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
     run(scenario())
 
 
@@ -783,17 +783,17 @@ def test_the_rows_across_a_reload():
         owner = stand_ins.agent(f.conversation)
         job = p.job()
         job.start(owner)
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
         job.auto_construct = True
         job.release.set()
         await until(owner,lambda: job.outcome is not RUNNING)
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
         twin = tm.OneTreeForest(CONN, f.store, KINDS)
         loaded = twin.sub_nodes[0].sub_nodes[1].job()
         assert (loaded.outcome, loaded.auto_construct) == (Succeeded("by simp"), True)
         job.ends_with = ends(Failed("no proof"))
         await run_to_end(job, owner)
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
         with f.store.transaction():                          # rows a database before the jobs lacks
             f.store.delete_node(q.identity)
             f.store.put(q.identity, "kind", "lemma")
@@ -1028,7 +1028,7 @@ def test_the_drops_and_the_stored_checks_clearings():
         assert CANCELS[-1] == [fourth.id]
         await p.start_evaluation_job(starter)
         fifth = p.evaluation_job()
-        (p2,) = await locked(f, edit.amend(p, [{"kind": "checked", "name": "P2"}], KINDS))
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "checked", "name": "P2"}]))
         assert fifth.ended and records("evaluation_dropped")[-1] == {"id": fifth.id, "dropped_by": "amend"}
         assert CANCELS[-1] == [fifth.id] and p2.evaluation_job() is None
         await p2.start_evaluation_job(starter)
@@ -1133,14 +1133,14 @@ def test_the_check_row_across_a_reload():
         f, thy, t1, p, q = build(Checked)
         starter = stand_ins.agent(f.conversation)
         await p.start_evaluation_job(starter)
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
         twin = tm.OneTreeForest(CONN, f.store, KINDS)
         loaded = twin.sub_nodes[0].sub_nodes[1]
         assert loaded.evaluation_job() is None and loaded.check_outcome() is None   # a run is not stored
         await report(p.evaluation_job(), ["no"])
         twin = tm.OneTreeForest(CONN, f.store, KINDS)
         assert twin.sub_nodes[0].sub_nodes[1].check_outcome() == Failed("no")
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
         with f.store.transaction():
             f.store.put(p.identity, "check", ["RUNNING"])
         with pytest.raises(TAT_StartupError, match="not a check's image"):
@@ -1476,7 +1476,7 @@ def test_an_amend_carries_a_failure_too():
     async def scenario():
         f, thy, t1, p, q = build(Carrying)
         p.job().outcome = Failed("no proof", "refute")
-        (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}], KINDS))
+        (p2,) = await locked(f, edit.amend(p, [{"kind": "carrying", "name": "P2"}]))
         assert p2.job().outcome == Failed("no proof", "refute")                  # the kind with it
         assert f.store.get(p2.identity, "job") == ["FAILED", "no proof", "refute"]
     run(scenario())
@@ -1546,7 +1546,7 @@ def test_a_start_stores_the_cleared_failure_and_the_cleared_check():
         job.start(owner)
         assert f.store.get(p.identity, "job") == ["NOT_STARTED"]
         assert "check" not in f.store.fields(p.identity)
-        invariants.assert_store_mirrors(f, KINDS)
+        invariants.assert_store_mirrors(f)
         job.cancel(None)
         await runs_unwound(job)
     run(scenario())
@@ -2054,7 +2054,7 @@ def test_a_child_edit_leaves_the_jobs_of_a_block_whose_jobs_read_its_beginning()
         job = q.job()
         job.start(me)
         me.seen.add((q.identity, "ending"))
-        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS))
+        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}]))
         assert job.outcome is RUNNING and records("construction_cancelled") == []
         assert tm.st(q) == (READY, M.NOT_EVALUATED) and q.last_evaluation_statuses() == (READY, M.NOT_EVALUATED)
         assert q.consumed_end is tm.NOT_RUN and (q.identity, "ending") not in me.seen   # told; the key forgotten
@@ -2064,20 +2064,20 @@ def test_a_child_edit_leaves_the_jobs_of_a_block_whose_jobs_read_its_beginning()
         job.cancel(None)
         assert job.can_start()                                              # the ending not evaluated
         await thy.evaluate_to(None, False)
-        invariants.assert_store_mirrors(f, BLOCK_KINDS)                     # the ending's rerun stored by the walk
+        invariants.assert_store_mirrors(f)                     # the ending's rerun stored by the walk
         await q.start_evaluation_job(me)
         check = q.evaluation_job()
         await report(check)
         assert q.check_outcome() is PASSED
-        await locked(f, edit.insert(q, 2, [{"kind": "t", "name": "C3"}], BLOCK_KINDS))
+        await locked(f, edit.insert(q, 2, [{"kind": "t", "name": "C3"}]))
         assert q.evaluation_job() is check and q.check_outcome() is PASSED and records("evaluation_dropped") == []
         assert tm.st(q) == (READY, M.NOT_EVALUATED)
-        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T2"}], BLOCK_KINDS))   # before the block
+        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T2"}]))   # before the block
         assert q.evaluation_job() is None and q.check_outcome() is None
         assert records("evaluation_dropped") == [{"id": check.id, "dropped_by": "status_write"}]
         await thy.evaluate_to(None, False)
         job.start(me)
-        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T3"}], BLOCK_KINDS))
+        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T3"}]))
         assert job.outcome is NOT_STARTED
         assert records("construction_cancelled")[-1] == {"node": f.full_id(q), "reason": "CONTEXT_CHANGED"}
         assert deliver(f, me) == [f"The proof construction on `{f.full_id(q)}` was cancelled: its context changed."]
@@ -2125,10 +2125,10 @@ def test_a_failed_construction_on_a_block_whose_jobs_read_its_beginning_is_start
         await thy.evaluate_to(None, False)
         q.job().outcome = Failed("no proof")
         q.job().auto_construct = True
-        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS))
+        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}]))
         await walk(thy, me)
         assert q.job().outcome == Failed("no proof")
-        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T2"}], BLOCK_KINDS))
+        await locked(f, edit.insert(thy, 1, [{"kind": "t", "name": "T2"}]))
         await walk(c1, me)
         assert q.job().outcome is RUNNING and q.job().owner is me
         q.job().cancel(None)
@@ -2147,7 +2147,7 @@ def test_a_block_that_declares_no_job_operation_has_jobs_depending_on_every_oper
         await thy.evaluate_to(None, False)
         job = q.job()
         job.start(me)
-        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS))
+        await locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}]))
         assert job.outcome is NOT_STARTED and not job.can_start() and tm.st(q) == (READY, M.NOT_EVALUATED)
         assert records("construction_cancelled") == [{"node": f.full_id(q), "reason": "CONTEXT_CHANGED"}]
         await thy.evaluate_to(None, False)
@@ -2155,7 +2155,7 @@ def test_a_block_that_declares_no_job_operation_has_jobs_depending_on_every_oper
         check = q.evaluation_job()
         await report(check)
         assert q.check_outcome() is PASSED
-        await locked(f, edit.insert(q, 2, [{"kind": "t", "name": "C3"}], BLOCK_KINDS))
+        await locked(f, edit.insert(q, 2, [{"kind": "t", "name": "C3"}]))
         assert q.evaluation_job() is None and q.check_outcome() is None
         assert records("evaluation_dropped") == [{"id": check.id, "dropped_by": "status_write"}]
     run(scenario())

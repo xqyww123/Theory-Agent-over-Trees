@@ -74,12 +74,12 @@ def forest(directory, *sessions, kinds=KINDS):
     log = stand_ins.log()
     f = M.Forest(M.Conversation(tm.CONN, directory, log, stand_ins.ending()),
                  Forest_Store(":memory:", log), kinds)
-    insert(f, f, 0, list(sessions), kinds)
+    insert(f, f, 0, list(sessions))
     return f
 
 
-def insert(f, parent, index, raws, kinds=KINDS):
-    return run(locked(f, edit.insert(parent, index, raws, kinds)))
+def insert(f, parent, index, raws):
+    return run(locked(f, edit.insert(parent, index, raws)))
 
 
 def listing(directory):
@@ -194,13 +194,13 @@ def test_the_store_mirror_catches_what_a_compile_could_not_read(tmp_path):
                      "renamed": Stores_Another_Name}
 
     sound = sorting(tmp_path / "sound")
-    invariants.assert_store_mirrors(sound, KINDS)
+    invariants.assert_store_mirrors(sound)
 
     def mirrored(case, tree, message, ignore_error=False):
         f = forest(tmp_path / case, session("S", tree), kinds=kinds)
         run(f.evaluate_to(None, ignore_error))
         with pytest.raises(AssertionError, match=message):
-            invariants.assert_store_mirrors(f, kinds)
+            invariants.assert_store_mirrors(f)
         return f
 
     f = mirrored("refusing", theory("A") | {"children": [{"kind": "refusing", "name": "x"}]},

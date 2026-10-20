@@ -177,15 +177,15 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proof():
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
     p.lifting = True
     (p2,) = run(locked(f, edit.amend(p, [definition("dl", english="Another wording", syntax=ERRORABLE_SYNTAX,
-                                                    rep_function_name="rep", abs_function_name="abs")], KINDS)))
+                                                    rep_function_name="rep", abs_function_name="abs")])))
     assert p2.job().outcome == PROVED and p2.check_outcome() is None and p2.name == "dl"
     assert p2.lifting is None                               # the recorded choice is the evaluation's to make again (COMMON §5)
     assert p2.goal_structure() == p.goal_structure() == ([("'a", None)], "{xs :: 'a list. distinct xs}")
-    (p3,) = run(locked(f, edit.amend(p2, [definition("dl", set="{xs :: 'a list. sorted xs}")], KINDS)))
+    (p3,) = run(locked(f, edit.amend(p2, [definition("dl", set="{xs :: 'a list. sorted xs}")])))
     assert p3.job().outcome is NOT_STARTED                  # the set changed
     p3.job().outcome = PROVED
     (p4,) = run(locked(f, edit.amend(p3, [definition("dl", set="{xs :: 'a list. sorted xs}",
-                                                     type_parameters=({"name": "'a", "sort": "linorder"},))], KINDS)))
+                                                     type_parameters=({"name": "'a", "sort": "linorder"},))])))
     assert p4.job().outcome is NOT_STARTED                  # a parameter's sort changed
     inv(f)
 
@@ -301,7 +301,7 @@ def test_the_recorded_lifting_reaches_the_store_and_the_mirror_catches_an_emit_o
     run(x.evaluate_to(None, False))
     rows = {n.name: f.store.fields(n.identity) for n in (p, q)}
     assert rows["dlist"]["lifting"] is True and rows["poly"]["lifting"] is False
-    assert_store_mirrors(f, KINDS, shape=ts.shape)                           # `emit` as shipped: mirrored
+    assert_store_mirrors(f, shape=ts.shape)                           # `emit` as shipped: mirrored
     emit = Typedef.emit
 
     def off_the_instant_status(self, indent, out):
@@ -312,7 +312,7 @@ def test_the_recorded_lifting_reaches_the_store_and_the_mirror_catches_an_emit_o
             self.lifting = recorded
     monkeypatch.setattr(Typedef, "emit", off_the_instant_status)
     with pytest.raises(AssertionError, match="Arith/X.thy: the loaded forest writes another text"):
-        assert_store_mirrors(f, KINDS, shape=ts.shape)
+        assert_store_mirrors(f, shape=ts.shape)
 
 
 def test_the_jobs_sentences_name_the_set():

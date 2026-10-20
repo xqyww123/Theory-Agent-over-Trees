@@ -164,7 +164,7 @@ def assert_invariants(forest, table):
                 assert instant == stored, f"{node}: instant {instant!r}, stored {stored!r}"
 
 
-def assert_store_mirrors(forest, kinds, shape=shape):
+def assert_store_mirrors(forest, shape=shape):
     """The same store, loaded again by the forest's own class, has the
     `shape` of this forest — what a round trip must preserve, node by node
     in tree order; and the package's helper holds: the stored statuses,
@@ -174,7 +174,7 @@ def assert_store_mirrors(forest, kinds, shape=shape):
     live = {n.identity for n in forest._all_nodes()}
     assert set(store.nodes()) - {forest.identity} == live, "rows of nodes not in the forest"
     assert set(store.fields(forest.identity)) <= {"children"}, "the root has one row"
-    twin = type(forest)(CONN, store, kinds)
+    twin = type(forest)(CONN, store, forest.kinds)
     assert shape(twin) == shape(forest)
     for n in twin._all_nodes():
         assert n.parent is not None and n in n.parent.sub_nodes
@@ -195,4 +195,4 @@ def assert_store_mirrors(forest, kinds, shape=shape):
             assert "check" not in store.fields(n.identity), f"{n}: a check row for no stored check"
         assert loaded[n.identity]._check_outcome == n._check_outcome
         assert loaded[n.identity].evaluation_job() is None
-    package_invariants.assert_store_mirrors(forest, kinds)
+    package_invariants.assert_store_mirrors(forest)

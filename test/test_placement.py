@@ -51,7 +51,7 @@ KINDS = {**ts.KINDS, "note": Note, "top": Top, "section": Section_Block, "subsec
 
 
 def insert(f, parent, index, raws):
-    return run(locked(f, edit.insert(parent, index, raws, KINDS)))
+    return run(locked(f, edit.insert(parent, index, raws)))
 
 
 def node(kind, name, *children, **fields):
@@ -71,7 +71,7 @@ def arith(theory_kind="theory"):
 
 def inv(f):
     assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
+    assert_store_mirrors(f, shape=ts.shape)
 
 
 # --- the function and its sentences -----------------------------------------
@@ -191,11 +191,11 @@ def test_an_amend_passing_children_on_checks_them_at_their_new_parent():
     (n,) = insert(f, sec, 0, [node("note", "n")])
     run(x.evaluate_to(None, True))
     assert n.runs == 1
-    (blk,) = run(locked(f, edit.amend(sec, [node("block", "S")], KINDS)))
+    (blk,) = run(locked(f, edit.amend(sec, [node("block", "S")])))
     assert n.parent is blk
     run(x.evaluate_to(None, True))
     assert n.runs == 1 and isinstance(n._status, M.CannotEvaluate)
-    (back,) = run(locked(f, edit.amend(blk, [node("section", "S")], KINDS)))
+    (back,) = run(locked(f, edit.amend(blk, [node("section", "S")])))
     assert n.parent is back
     run(x.evaluate_to(None, True))
     assert n.runs == 2 and n._status == READY_CLEAN
@@ -219,10 +219,10 @@ def test_under_a_session_or_the_root_every_edit_is_refused(kind):
         assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, parent_id, raw_ast_path)
         assert (e.value.within, e.value.through) == words
     for parent, parent_id in ((s, "session_Arith"), (f, "Sessions")):
-        refused(parent_id, edit.insert(parent, 0, [construct], KINDS))
+        refused(parent_id, edit.insert(parent, 0, [construct]))
     (y,) = insert(f, s, 1, [theory("Y")])
-    refused("session_Arith", edit.amend(y, [construct], KINDS))
-    refused("session_Other", edit.insert(f, 1, [session("Other", construct)], KINDS), "constructs[0].children[0]")
+    refused("session_Arith", edit.amend(y, [construct]))
+    refused("session_Other", edit.insert(f, 1, [session("Other", construct)]), "constructs[0].children[0]")
     (n,) = insert(f, x, 0, [construct])
     for parent, parent_id in ((s, "session_Arith"), (f, "Sessions")):
         refused(parent_id, edit.move(n, parent, 0), None)

@@ -589,7 +589,7 @@ async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatc
 
     async def insert(parent, index, raws):
         async with forest.lock:
-            return await edit.insert(parent, index, raws, kinds)
+            return await edit.insert(parent, index, raws)
 
     (sess,) = await insert(forest, 0, [
         {"kind": "session", "name": "TAT_E2E", "parent_session": "HOL",
@@ -705,7 +705,7 @@ async def test_a_theory_named_with_a_keyword_evaluates_compiles_and_builds_as_on
     async with forest.lock:
         (sess,) = await edit.insert(forest, 0, [
             {"kind": "session", "name": "TAT_E2E_W", "parent_session": "HOL",
-             "children": [theory("lemmas", "Main")]}], kinds)
+             "children": [theory("lemmas", "Main")]}])
     (t,) = sess.sub_nodes
     assert t.header() == 'theory "lemmas"\n  imports "Main"\nbegin'
     r = await t.evaluate_to(None, False)
@@ -734,7 +734,7 @@ async def test_a_session_folder_that_cannot_be_made_stops_the_header_before_it_r
             {"kind": "session", "name": "TAT_E2E_Blocked", "parent_session": "HOL",
              "children": [theory("TAT_E2E_D", "Main")]},
             {"kind": "session", "name": "TAT_E2E_Linked", "parent_session": "HOL",
-             "children": [theory("TAT_E2E_L", "Main")]}], conversation.kinds)
+             "children": [theory("TAT_E2E_L", "Main")]}])
     directory = forest.conversation.working_directory
     (directory / "TAT_E2E_Blocked").write_text("not a directory")
     (directory / "TAT_E2E_Linked").symlink_to(directory)

@@ -227,7 +227,7 @@ async def leave(harness, request, wd, session, *theories, evaluate):
         async with forest.lock:
             (created,) = await edit.insert(forest, 0, [
                 {"kind": "session", "name": session, "parent_session": "HOL",
-                 "children": list(theories)}], handle.kinds)
+                 "children": list(theories)}])
         result = await created.sub_nodes[evaluate - 1].evaluate_to(None, False)
         assert result.stopped_at is None, result
     finally:

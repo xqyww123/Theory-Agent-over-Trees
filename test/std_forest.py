@@ -30,7 +30,7 @@ KINDS = {**ts.KINDS,
 
 
 def insert(f, parent, index, raws):
-    return run(locked(f, edit.insert(parent, index, raws, KINDS)))
+    return run(locked(f, edit.insert(parent, index, raws)))
 
 
 def forest(*constructs, store=None):
@@ -42,7 +42,7 @@ def forest(*constructs, store=None):
 
 def inv(f):
     assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
+    assert_store_mirrors(f, shape=ts.shape)
 
 
 def refused(f, parent, raws, cls):

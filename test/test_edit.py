@@ -33,7 +33,7 @@ def table(monkeypatch):
 
 def inv(f):
     assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS)
+    assert_store_mirrors(f)
 
 
 def deletes():
@@ -93,9 +93,10 @@ class Nesting_RawAST(TypedDict):             # a declaration that nests itself, 
     child: NotRequired["Nesting_RawAST"]
 
 
-def rbuild():
-    """Theory > [Section > [a, b], c], every class recording."""
-    f = tm.OneTreeForest(tm.CONN)
+def rbuild(kinds=KINDS):
+    """Theory > [Section > [a, b], c], every class recording; `kinds` the
+    forest's kind table."""
+    f = tm.OneTreeForest(tm.CONN, kinds=kinds)
     thy = add(f, RBlock(f, slot(), "Theory"))
     sec = add(thy, RBlock(thy, slot(), "Section"))
     a = add(sec, RT(sec, slot(), "a")); b = add(sec, RT(sec, slot(), "b"))
@@ -125,7 +126,7 @@ def test_insert_nested_and_completed_order():
     raws = [{"kind": "block", "name": "S2",
              "children": [{"kind": "t", "name": "x"},
                           {"kind": "t", "name": "y"}]}]
-    (s2,) = run(locked(f, edit.insert(thy,2, raws, KINDS)))
+    (s2,) = run(locked(f, edit.insert(thy,2, raws)))
     assert thy.sub_nodes == [sec, c, s2]
     assert [n.name for n in s2.sub_nodes] == ["x", "y"]
     assert all(n.parent is s2 for n in s2.sub_nodes)
@@ -158,7 +159,7 @@ def test_batch_aborts_whole_with_the_path(  ):
             {"kind": "block", "name": "S2",
              "children": [{"kind": "wrong", "name": "x"}]}]
     with pytest.raises(UnknownKind) as e:
-        run(locked(f, edit.insert(thy,2, raws, KINDS)))
+        run(locked(f, edit.insert(thy,2, raws)))
     assert e.value.raw_ast_path == "constructs[1].children[0]"
     assert e.value.kind == "wrong" and e.value.available_kinds == ["t", "block"]
     assert thy.sub_nodes == before and EVENTS == []      # forest untouched
@@ -170,17 +171,17 @@ def test_duplicate_name_against_sibling_and_batch():
     f, thy, sec, a, b, c = rbuild()
     with pytest.raises(DuplicateName) as e:
         run(locked(f, edit.insert(thy,
-            2, [{"kind": "t", "name": "c"}], KINDS)))
+            2, [{"kind": "t", "name": "c"}])))
     assert e.value.taken_by == "block_Theory.t_c" and e.value.raw_ast_path == "constructs[0]"
     with pytest.raises(DuplicateName) as e:
         run(locked(f, edit.insert(thy,
-            2, [{"kind": "t", "name": "z"}, {"kind": "t", "name": "z"}], KINDS)))
+            2, [{"kind": "t", "name": "z"}, {"kind": "t", "name": "z"}])))
     assert e.value.taken_by == "constructs[0]" and e.value.raw_ast_path == "constructs[1]"
 
 def test_the_rawast_error_family():
     f, thy, sec, a, b, c = rbuild()
     def insert(raw):
-        return locked(f, edit.insert(thy,2, [raw], KINDS))
+        return locked(f, edit.insert(thy,2, [raw]))
     with pytest.raises(MalformedRawAST) as e:
         run(insert(42))
     assert not e.value.missing_kind
@@ -484,8 +485,7 @@ def test_children_field_must_be_a_list():
     for bad in (None, 5, {}, "xy"):
         with pytest.raises(InvalidField) as e:
             run(locked(f, edit.insert(thy,
-                2, [{"kind": "block", "name": "S2", "children": bad}],
-                KINDS)))
+                2, [{"kind": "block", "name": "S2", "children": bad}])))
         assert e.value.field == "children"
 
 class Undeclared_Block(RBlock):              # a nesting class whose construct declares no `children`
@@ -496,21 +496,19 @@ def test_given_later_stands_for_children_given_in_later_calls():
     """MCP_SPECIFICATION §3.1: `GivenLater` where the class declares
     `children` is a construct without them, nested or an amend's
     replacement; elsewhere it is refused as any `children` is."""
-    f, thy, sec, a, b, c = rbuild()
+    f, thy, sec, a, b, c = rbuild({**KINDS, "bare": Undeclared_Block})
     (s2, s3) = run(locked(f, edit.insert(thy, 2, [
         {"kind": "block", "name": "S2", "children": plugin.GIVEN_LATER},
         {"kind": "block", "name": "S3", "children": [
-            {"kind": "block", "name": "S4", "children": plugin.GIVEN_LATER}]}], KINDS)))
+            {"kind": "block", "name": "S4", "children": plugin.GIVEN_LATER}]}])))
     assert s2.sub_nodes == [] and [n.name for n in s3.sub_nodes] == ["S4"] and s3.sub_nodes[0].sub_nodes == []
-    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9", "children": plugin.GIVEN_LATER}],
-                                     KINDS)))
+    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9", "children": plugin.GIVEN_LATER}])))
     assert [n.name for n in s9.sub_nodes] == ["a", "b"]       # inherited
     with pytest.raises(UnexpectedChildren) as e:
-        run(locked(f, edit.insert(thy, 0, [{"kind": "t", "name": "L", "children": plugin.GIVEN_LATER}], KINDS)))
+        run(locked(f, edit.insert(thy, 0, [{"kind": "t", "name": "L", "children": plugin.GIVEN_LATER}])))
     assert e.value.is_leaf
     with pytest.raises(UnexpectedField) as e:
-        run(locked(f, edit.insert(thy, 0, [{"kind": "bare", "name": "U", "children": plugin.GIVEN_LATER}],
-                                  {**KINDS, "bare": Undeclared_Block})))
+        run(locked(f, edit.insert(thy, 0, [{"kind": "bare", "name": "U", "children": plugin.GIVEN_LATER}])))
     assert e.value.field == "children"
     inv(f)
 
@@ -519,7 +517,7 @@ def test_insert_moves_the_value_from_the_source_slot():
     f, thy, sec, a, b, c = rbuild()
     run(c.evaluate_to(None, False))
     (u,) = run(locked(f, edit.insert(thy,
-        1, [{"kind": "t", "name": "u"}], KINDS)))
+        1, [{"kind": "t", "name": "u"}])))
     # The predecessor's result moved: it is u's input now, and the slot it
     # came from — written by u after the commit — is empty.
     assert tm.TABLE.values[u.state.name] == "end Section"
@@ -530,7 +528,7 @@ def test_insert_after_an_obstacle_receives_the_written_input():
     run(t4.evaluate_to(None, True))
     assert st(t1) is CANNOT_EVALUATE
     (n,) = run(locked(f, edit.insert(sec,
-        1, [{"kind": "t", "name": "N"}], {"t": T})))
+        1, [{"kind": "t", "name": "N"}])))
     # An obstacle wrote its resulting state (the input copied through), so
     # the one ARCHITECTURE-§3.4 copy happens.
     assert tm.TABLE.values[n.state.name] == "begin Section"
@@ -543,13 +541,12 @@ class Fussy(RT):
         raise InvalidField("name", "never good enough")    # raised bare
 
 def test_gen_raises_bare_and_the_framework_prefixes_the_path():
-    f, thy, sec, a, b, c = rbuild()
+    f, thy, sec, a, b, c = rbuild(KINDS | {"fussy": Fussy})
     with pytest.raises(InvalidField) as e:
         run(locked(f, edit.insert(thy,
             2, [{"kind": "block", "name": "S2",
                  "children": [{"kind": "t", "name": "x"},
-                              {"kind": "fussy", "name": "y"}]}],
-            KINDS | {"fussy": Fussy})))
+                              {"kind": "fussy", "name": "y"}]}])))
     assert e.value.raw_ast_path == "constructs[0].children[1]"
 
 def test_duplicate_name_inside_a_children_list():
@@ -558,7 +555,7 @@ def test_duplicate_name_inside_a_children_list():
         run(locked(f, edit.insert(thy,
             2, [{"kind": "block", "name": "S2",
                  "children": [{"kind": "t", "name": "x"},
-                              {"kind": "t", "name": "x"}]}], KINDS)))
+                              {"kind": "t", "name": "x"}]}])))
     assert e.value.taken_by == "children[0]"
     assert e.value.raw_ast_path == "constructs[0].children[1]"
 
@@ -572,7 +569,7 @@ def test_amend_inherits_position_slot_identity_children():
         sec._state_before_ending.name
     EVENTS.clear()
     (s9,) = run(locked(f, edit.amend(
-        sec, [{"kind": "block", "name": "S9"}], KINDS)))
+        sec, [{"kind": "block", "name": "S9"}])))
     assert thy.sub_nodes[0] is s9 and s9.parent is thy
     assert s9.state.name == old_slot and s9.identity == old_identity
     assert s9.sub_nodes == [a, b] and a.parent is s9 and b.parent is s9
@@ -612,12 +609,12 @@ def test_amending_a_childless_block_counts_each_deleted_slot_once():
     names it once.  An edit's invalidation is no walk: it writes no
     `walk_started` (LOGGING.md §4)."""
     f, thy, sec, a, b, c = rbuild()
-    (e,) = run(locked(f, edit.insert(thy, 1, [{"kind": "block", "name": "E"}], KINDS)))
+    (e,) = run(locked(f, edit.insert(thy, 1, [{"kind": "block", "name": "E"}])))
     run(c.evaluate_to(None, False))
     assert st(e) == (READY, READY)
     tm.TABLE.calls.clear()
     walks = stand_ins.events("evaluation").count("walk_started")
-    run(locked(f, edit.amend(e, [{"kind": "block", "name": "E2"}], KINDS)))
+    run(locked(f, edit.amend(e, [{"kind": "block", "name": "E2"}])))
     [(_, names)] = deletes()
     assert len(names) == len(set(names)) == 3
     assert stand_ins.events("evaluation").count("walk_started") == walks
@@ -626,14 +623,13 @@ def test_amending_a_childless_block_counts_each_deleted_slot_once():
 def test_amend_may_keep_the_name():
     f, thy, sec, a, b, c = rbuild()
     (s,) = run(locked(f, edit.amend(
-        sec, [{"kind": "block", "name": "Section"}], KINDS)))
+        sec, [{"kind": "block", "name": "Section"}])))
     assert thy.sub_nodes[0] is s
 
 def test_amend_batch_follows_the_replacement():
     f, thy, sec, a, b, c = rbuild()
     s9, u = run(locked(f, edit.amend(
-        sec, [{"kind": "block", "name": "S9"}, {"kind": "t", "name": "u"}],
-        KINDS)))
+        sec, [{"kind": "block", "name": "S9"}, {"kind": "t", "name": "u"}])))
     assert thy.sub_nodes == [s9, u, c] and u.parent is thy
     assert u.state.name not in tm.TABLE.values    # its predecessor is fresh
     inv(f)
@@ -643,17 +639,17 @@ def test_gen_is_told_the_batch_before_it_and_the_batch_s_role():
     insertion's batch under `Insertion`, an amend's under `Amendment(old)`
     with only its first construct replacing `old`, and a construct's
     `children` a batch of their own, inserted."""
-    f, thy, sec, a, b, c = rbuild()
     kinds = KINDS | {"ct": CT}
+    f, thy, sec, a, b, c = rbuild(kinds)
     run(locked(f, edit.insert(thy, 1, [{"kind": "ct", "name": "p"},
-                                       {"kind": "ct", "name": "q"}], kinds)))
+                                       {"kind": "ct", "name": "q"}])))
     assert told() == [("p", [], M.Insertion(), None), ("q", ["p"], M.Insertion(), None)]
     EVENTS.clear()
     run(locked(f, edit.amend(c, [{"kind": "ct", "name": "c9"},
                                  {"kind": "block", "name": "B",
                                   "children": [{"kind": "ct", "name": "u"},
                                                {"kind": "ct", "name": "v"}]},
-                                 {"kind": "ct", "name": "r"}], kinds)))
+                                 {"kind": "ct", "name": "r"}])))
     assert told() == [("c9", [], M.Amendment(c), c),
                       ("u", [], M.Insertion(), None), ("v", ["u"], M.Insertion(), None),
                       ("r", ["c9", "B"], M.Amendment(c), None)]
@@ -662,10 +658,10 @@ def test_gen_is_told_the_batch_before_it_and_the_batch_s_role():
 
 def test_amend_across_kinds_leaves_no_field_of_the_old_class():
     f, thy, sec, a, b, c = rbuild()
-    (blk,) = run(locked(f, edit.insert(thy,2, [{"kind": "block", "name": "B"}], KINDS)))
+    (blk,) = run(locked(f, edit.insert(thy,2, [{"kind": "block", "name": "B"}])))
     assert set(f.store.fields(blk.identity)) == {
         "kind", "children", "last_evaluation_statuses", "name", "fail_beginning", "fail_ending"}
-    (leaf,) = run(locked(f, edit.amend(blk, [{"kind": "t", "name": "L"}], KINDS)))
+    (leaf,) = run(locked(f, edit.amend(blk, [{"kind": "t", "name": "L"}])))
     assert leaf.identity == blk.identity
     assert set(f.store.fields(leaf.identity)) == {
         "kind", "last_evaluation_statuses", "name", "fail"}
@@ -676,11 +672,11 @@ def test_amend_replacement_refuses_children_and_leaves():
     with pytest.raises(UnexpectedChildren) as e:
         run(locked(f, edit.amend(
             sec, [{"kind": "block", "name": "S9",
-                   "children": [{"kind": "t", "name": "x"}]}], KINDS)))
+                   "children": [{"kind": "t", "name": "x"}]}])))
     assert not e.value.is_leaf
     with pytest.raises(ChildrenNotInheritable) as e:
         run(locked(f, edit.amend(
-            sec, [{"kind": "t", "name": "L"}], KINDS)))
+            sec, [{"kind": "t", "name": "L"}])))
     assert (e.value.old_id, e.value.new_kind, e.value.children_count) == \
         ("block_Theory.block_Section", "t", 2)
 
@@ -731,10 +727,10 @@ class Buggy(RT):
         raise InvalidName("oops")                # a TAT_Error from a completed hook
 
 def test_completed_hook_raise_is_the_class_bug():
-    f, thy, sec, a, b, c = rbuild()
+    f, thy, sec, a, b, c = rbuild({**KINDS, "t": Buggy})
     with pytest.raises(TAT_InternalError):
         run(locked(f, edit.insert(thy,
-            2, [{"kind": "t", "name": "u"}], {"t": Buggy})))
+            2, [{"kind": "t", "name": "u"}])))
     # the commit had happened in memory; the bug ends the conversation
     # before the edit's one store transaction (MODULE_STRUCTURE §4.2)
     assert [n.name for n in thy.sub_nodes] == ["Section", "c", "u"]
@@ -753,53 +749,52 @@ class Labelled(RT):                     # a class in a namespace of its own
     namespace = M.Namespace("labels", DuplicateTheoryShortName)
 
 def test_a_namespaced_name_collides_across_the_forest_and_the_batch():
-    f, thy, sec, a, b, c = rbuild()
     kinds = KINDS | {"named": Named, "also_named": AlsoNamed, "labelled": Labelled}
-    (n1,) = run(locked(f, edit.insert(sec,0, [{"kind": "named", "name": "N"}], kinds)))
+    f, thy, sec, a, b, c = rbuild(kinds)
+    (n1,) = run(locked(f, edit.insert(sec,0, [{"kind": "named", "name": "N"}])))
     # the same name under another parent: no sibling collision, the namespace refuses
     with pytest.raises(DuplicateTheoryShortName) as e:
-        run(locked(f, edit.insert(thy,0, [{"kind": "named", "name": "N"}], kinds)))
+        run(locked(f, edit.insert(thy,0, [{"kind": "named", "name": "N"}])))
     assert (e.value.short_name, e.value.holder) == ("N", "block_Theory.block_Section.named_N")
     assert e.value.raw_ast_path == "constructs[0]"
     # it is the namespace that collides, not the class
     with pytest.raises(DuplicateTheoryShortName):
-        run(locked(f, edit.insert(thy,0, [{"kind": "also_named", "name": "N"}], kinds)))
-    run(locked(f, edit.insert(thy,0, [{"kind": "labelled", "name": "N"}], kinds)))
+        run(locked(f, edit.insert(thy,0, [{"kind": "also_named", "name": "N"}])))
+    run(locked(f, edit.insert(thy,0, [{"kind": "labelled", "name": "N"}])))
     # within one call, across different parents: the holder is a full path,
     # whichever way round (RENDER_BASELINES §2)
     with pytest.raises(DuplicateTheoryShortName) as e:
         run(locked(f, edit.insert(thy,0, [
             {"kind": "named", "name": "M"},
-            {"kind": "block", "name": "S2", "children": [{"kind": "named", "name": "M"}]}],
-            kinds)))
+            {"kind": "block", "name": "S2", "children": [{"kind": "named", "name": "M"}]}])))
     assert e.value.holder == "constructs[0]"
     assert e.value.raw_ast_path == "constructs[1].children[0]"
     with pytest.raises(DuplicateTheoryShortName) as e:
         run(locked(f, edit.insert(thy,0, [
             {"kind": "block", "name": "S2", "children": [{"kind": "named", "name": "M"}]},
-            {"kind": "named", "name": "M"}], kinds)))
+            {"kind": "named", "name": "M"}])))
     assert e.value.holder == "constructs[0].children[0]"
     assert e.value.raw_ast_path == "constructs[1]"
     # under one parent the sibling check comes first: DuplicateName, not the namespace's
     with pytest.raises(DuplicateName) as e:
         run(locked(f, edit.insert(thy,0, [
-            {"kind": "named", "name": "M"}, {"kind": "named", "name": "M"}], kinds)))
+            {"kind": "named", "name": "M"}, {"kind": "named", "name": "M"}])))
     assert e.value.taken_by == "constructs[0]"
     # a class without a namespace takes no forest-wide name, whatever its name
-    run(locked(f, edit.insert(thy,0, [{"kind": "t", "name": "N2"}], kinds)))
+    run(locked(f, edit.insert(thy,0, [{"kind": "t", "name": "N2"}])))
     # amend: the replaced node's name is not held against the call — not
     # against its replacement, nor against a later construct of the same call
     n2, n3 = run(locked(f, edit.amend(n1, [
         {"kind": "named", "name": "N"},
-        {"kind": "block", "name": "S3", "children": [{"kind": "t", "name": "z"}]}], kinds)))
+        {"kind": "block", "name": "S3", "children": [{"kind": "t", "name": "z"}]}])))
     assert n2.identity == n1.identity
     assert n3.sub_nodes[0].identity != n1.identity      # only the replacement takes the identity
     # the name the replaced node gives up is free to a later construct of the same call
     run(locked(f, edit.amend(n2, [
         {"kind": "named", "name": "N_new"},
-        {"kind": "block", "name": "S4", "children": [{"kind": "named", "name": "N"}]}], kinds)))
+        {"kind": "block", "name": "S4", "children": [{"kind": "named", "name": "N"}]}])))
     assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, kinds)
+    assert_store_mirrors(f)
 
 
 # --- one transaction per write operation, storing only what changed ----------
@@ -816,7 +811,7 @@ def test_each_edit_is_one_transaction_touching_what_it_changed():
         return stand_ins.records("store")[-1]["data"]["nodes_deleted"]
     f, thy, sec, a, b, c = rbuild()
     tm.TABLE.clear_writes()
-    (u,) = run(locked(f, edit.insert(sec,1, [{"kind": "t", "name": "u"}], KINDS)))
+    (u,) = run(locked(f, edit.insert(sec,1, [{"kind": "t", "name": "u"}])))
     assert tm.TABLE.transactions == 1 and tm.TABLE.touched == {u.identity, sec.identity}
     assert nodes_deleted() == []
     assert committed() == {"operation": "insert", "parent": f.full_id(sec), "index": 1,
@@ -837,7 +832,7 @@ def test_each_edit_is_one_transaction_touching_what_it_changed():
         f.full_id(sec), 0, [f.full_id(c)])
     tm.TABLE.clear_writes()
     old_sec, sec_index = f.full_id(sec), sec.index_of()
-    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}], KINDS)))
+    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}])))
     assert tm.TABLE.transactions == 1                    # the replacement, its parent, the inherited children
     assert tm.TABLE.touched == {s9.identity, thy.identity} | {n.identity for n in s9.sub_nodes}
     assert [n.name for n in s9.sub_nodes] == ["c", "a", "u", "b"]
@@ -923,7 +918,7 @@ def test_on_invalidated_fires_once_per_operation():
     run(c.evaluate_to(None, False))
     EVENTS.clear()
     run(locked(f, edit.insert(thy,         # everything after u leaves ready
-        0, [{"kind": "t", "name": "u"}], KINDS)))
+        0, [{"kind": "t", "name": "u"}])))
     inv = events("invalidated")
     assert inv.count(("Section", "invalidated", "beginning")) == 1
     assert inv.count(("Section", "invalidated", "ending")) == 1
@@ -993,7 +988,7 @@ def test_amend_with_a_nesting_first_child_invalidates_it_whole():
     b = add(sec, T(sec, slot(), "b"))
     run(b.evaluate_to(None, False)); inv(f)
     (s9,) = run(locked(f, edit.amend(
-        sec, [{"kind": "block", "name": "S9"}], {"block": Block, "t": T})))
+        sec, [{"kind": "block", "name": "S9"}])))
     assert s9.sub_nodes == [inner, b]
     assert st(inner) == (NOT_EVALUATED, NOT_EVALUATED) and st(a) is NOT_EVALUATED
     inv(f)
@@ -1045,8 +1040,8 @@ def test_on_invalidated_fires_before_the_other_completed_hooks():
     commit's invalidation, so before every other completed hook of the
     edit."""
     changes = {
-        "insert": lambda f, thy, sec, a: edit.insert(sec, 0, [{"kind": "t", "name": "u"}], KINDS),
-        "amend": lambda f, thy, sec, a: edit.amend(sec, [{"kind": "block", "name": "S9"}], KINDS),
+        "insert": lambda f, thy, sec, a: edit.insert(sec, 0, [{"kind": "t", "name": "u"}]),
+        "amend": lambda f, thy, sec, a: edit.amend(sec, [{"kind": "block", "name": "S9"}]),
         "delete": lambda f, thy, sec, a: edit.delete(a),
         "move": lambda f, thy, sec, a: edit.move(a, thy, 1),
     }
@@ -1111,19 +1106,19 @@ def test_what_a_completed_hook_records_is_stored_with_the_edit():
         {"kind": "block", "name": "Theory", "children": [
             {"kind": "block", "name": "Section", "children": [
                 {"kind": "t", "name": "a"}, {"kind": "t", "name": "b"}]},
-            {"kind": "t", "name": "c"}]}], kinds)))
+            {"kind": "t", "name": "c"}]}])))
     sec, c = thy.sub_nodes
     a, b = sec.sub_nodes
     def stored(node):
         return f.store.get(node.identity, "note")
     def mirrors():
-        assert_store_mirrors(f, kinds, shape=lambda forest: [
+        assert_store_mirrors(f, shape=lambda forest: [
             (n.identity, n.kind, n.name, n.note) for n in forest._all_nodes()])
     assert stored(sec) == "added b by insert_or_delete"        # a new node's own hooks, too
     # an amend: the inherited children and the parent; the replacement's
     # rows are its own — what `on_deleted` wrote on the node it replaced
     # is stored nowhere
-    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}], kinds)))
+    (s9,) = run(locked(f, edit.amend(sec, [{"kind": "block", "name": "S9"}])))
     assert stored(a) == stored(b) == "inherited from Section"
     assert stored(thy) == "added S9 by amend"
     assert sec.note == "deleted by amend" and stored(s9) == "added b by inheritance"
@@ -1160,7 +1155,6 @@ def test_a_node_outside_the_forest_is_not_stored():
 
 
 def test_random_interleavings_keep_the_invariants():
-    kinds = {"t": T, "block": Block}
     for seed in range(300):
         rng = random.Random(seed)
         f, thy, sec, t1, t2, t3, t4 = tm.build(T1=rng.random() < 0.3)
@@ -1192,7 +1186,7 @@ def test_random_interleavings_keep_the_invariants():
                 raws = [fresh(rng.choice(["t", "block"]))
                         for _ in range(rng.randint(1, 2))]
                 async with f.lock:
-                    await edit.insert(p,rng.randint(0, len(p.sub_nodes)), raws, kinds)
+                    await edit.insert(p,rng.randint(0, len(p.sub_nodes)), raws)
             elif op == "delete" and movable:
                 n = rng.choice(movable)
                 async with f.lock:
@@ -1206,7 +1200,7 @@ def test_random_interleavings_keep_the_invariants():
                 raws = [fresh(kind)] + [fresh(rng.choice(["t", "block"]))
                                         for _ in range(rng.randint(0, 1))]
                 async with f.lock:
-                    await edit.amend(n, raws, kinds)
+                    await edit.amend(n, raws)
             elif op == "move" and movable:
                 n = rng.choice(movable)
                 dests = [b for b in blocks if b not in n._tree_order()]

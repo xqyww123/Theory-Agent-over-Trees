@@ -147,20 +147,20 @@ def test_an_amend_with_the_same_structure_carries_the_proof():
     f, x = forest(lemma("p"))
     (p,) = x.sub_nodes
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
-    (p2,) = run(locked(f, edit.amend(p, [lemma("p", english="Another wording")], KINDS)))
+    (p2,) = run(locked(f, edit.amend(p, [lemma("p", english="Another wording")])))
     assert p2.job().outcome == PROVED and p2.check_outcome() is None and p2.statement.english == "Another wording"
-    (p3,) = run(locked(f, edit.amend(p2, [lemma("q", kind="theorem")], KINDS)))
+    (p3,) = run(locked(f, edit.amend(p2, [lemma("q", kind="theorem")])))
     assert p3.job().outcome == PROVED and (p3.kind, p3.name) == ("theorem", "q")
-    (p4,) = run(locked(f, edit.amend(p3, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs")], KINDS)))
+    (p4,) = run(locked(f, edit.amend(p3, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs")])))
     assert p4.job().outcome is NOT_STARTED
     p4.job().outcome = PROVED
     (p5,) = run(locked(f, edit.amend(p4, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs",
-                                                premises=({"name": "nonempty", "term": "xs ≠ []"},))], KINDS)))
+                                                premises=({"name": "nonempty", "term": "xs ≠ []"},))])))
     assert p5.job().outcome is NOT_STARTED                  # a premise renamed, its term unchanged
     p5.job().outcome = PROVED
     (p6,) = run(locked(f, edit.amend(p5, [lemma("q", kind="theorem", conclusion="rev (rev xs) = xs",
                                                 premises=({"name": "nonempty", "term": "xs ≠ []"},),
-                                                for_any=({"name": "xs", "type": "nat list"},))], KINDS)))
+                                                for_any=({"name": "xs", "type": "nat list"},))])))
     assert p6.job().outcome is NOT_STARTED                  # a variable's type changed
     inv(f)
 
@@ -505,11 +505,11 @@ def test_the_store_mirror_catches_a_proof_text_read_off_an_instant_status(monkey
     run(x.evaluate_to(None, False))
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
     p._store_alone()                                                         # as a settlement stores it
-    assert_store_mirrors(f, KINDS, shape=ts.shape)                           # `proof_text()` as shipped: mirrored
+    assert_store_mirrors(f, shape=ts.shape)                           # `proof_text()` as shipped: mirrored
     monkeypatch.setattr(Theorem, "proof_text", lambda self: "by aoa" if all(
         isinstance(st, M.Ready) for st in self.evaluation_statuses()) else "sorry")
     with pytest.raises(AssertionError, match="Arith/X.thy: the loaded forest writes another text"):
-        assert_store_mirrors(f, KINDS, shape=ts.shape)
+        assert_store_mirrors(f, shape=ts.shape)
 
 
 # --- the evaluation, in the plugin's run of the harness (§6, §8) -----------------

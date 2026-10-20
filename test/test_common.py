@@ -84,7 +84,7 @@ def test_every_registered_class_is_refused_under_a_session_or_the_root():
     kinds = {**ts.KINDS, **registered}
     f = Forest_Under_Test(kinds=kinds)
     (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X") | {"children": [
-        {"kind": "block", "name": "B", "children": [{"kind": "block", "name": "C"}]}]}, theory("Y"))], kinds)))
+        {"kind": "block", "name": "B", "children": [{"kind": "block", "name": "C"}]}]}, theory("Y"))])))
     x, y = s.sub_nodes
     (b,) = x.sub_nodes
     (c,) = b.sub_nodes
@@ -92,16 +92,16 @@ def test_every_registered_class_is_refused_under_a_session_or_the_root():
         cls = registered[kind]
         for parent in (s, f):
             with pytest.raises(BadPlacement) as e:
-                run(locked(f, edit.insert(parent, 0, [construct], kinds)))
+                run(locked(f, edit.insert(parent, 0, [construct])))
             assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, f.full_id(parent), "constructs[0]")
             assert (e.value.within, e.value.through) == M.placement_kinds(cls.placement, kinds)
-        (z,) = run(locked(f, edit.insert(s, 2, [theory("Z")], kinds)))
+        (z,) = run(locked(f, edit.insert(s, 2, [theory("Z")])))
         with pytest.raises(BadPlacement):
-            run(locked(f, edit.amend(z, [{k: v for k, v in construct.items() if k != "children"}], kinds)))
+            run(locked(f, edit.amend(z, [{k: v for k, v in construct.items() if k != "children"}])))
         with pytest.raises(BadPlacement):
-            run(locked(f, edit.insert(f, 1, [session("Other", construct)], kinds)))
+            run(locked(f, edit.insert(f, 1, [session("Other", construct)])))
         run(locked(f, edit.delete(z)))
-        (node,) = run(locked(f, edit.insert(c, 0, [construct], kinds)))
+        (node,) = run(locked(f, edit.insert(c, 0, [construct])))
         assert isinstance(node, cls) and node.enclosing(M.Theory) is x
         run(locked(f, edit.move(node, b, 0)))
         assert node.parent is b and node.enclosing(M.Theory) is x
@@ -169,7 +169,7 @@ def test_proof_obligation_reads_the_class_s_own_words_callback_message_and_recor
     kinds = {**ts.KINDS, "lemma": Stand_In}
     f = Forest_Under_Test(kinds=kinds)
     (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
-        lemma("p"), lemma("q")]})], kinds)))
+        lemma("p"), lemma("q")]})])))
     (x,) = s.sub_nodes
     p, q = x.sub_nodes
     calls = []
@@ -284,10 +284,10 @@ def test_the_goal_state_of_a_block_is_held_across_a_child_edit_and_released_with
     f, thy, q, (c1,) = block_forest()
     run(q.evaluate_to(None, False))
     assert tm.TABLE.values[q.goal_state.name] == "goal"
-    run(locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}], BLOCK_KINDS)))
+    run(locked(f, edit.insert(q, 1, [{"kind": "t", "name": "C2"}])))
     assert tm.TABLE.values[q.goal_state.name] == "goal" and tm.st(q) == (tm.READY, M.NOT_EVALUATED)
     assert isinstance(q.job_operation_status(), M.Ready)
-    run(locked(f, edit.insert(thy, 0, [{"kind": "t", "name": "T0"}], BLOCK_KINDS)))
+    run(locked(f, edit.insert(thy, 0, [{"kind": "t", "name": "T0"}])))
     assert q.goal_state.name not in tm.TABLE.values and q.goal_state.name in tm.TABLE.deleted
     assert tm.st(q) == (M.NOT_EVALUATED, M.NOT_EVALUATED)
 
@@ -369,7 +369,7 @@ def test_lifting_closing_text_writes_section_6_s_two_lines_and_the_ending_writes
     kinds = {**ts.KINDS, "quotient_type": quotient_type.QuotientType,
              **{kind: lift_definition.LiftDefinition for kind in lift_definition.KINDS}}
     f = Forest_Under_Test(kinds=kinds)
-    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X") | {"children": [FSET]})], kinds)))
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X") | {"children": [FSET]})])))
     (p,) = s.sub_nodes[0].sub_nodes
     out = io.StringIO()
     assert p.emit_ending(1, out) == 1 and out.getvalue() == "\n  lifting_update fset.lifting\n  lifting_forget fset.lifting\n"
@@ -653,7 +653,7 @@ def test_proof_mark_reads_the_three_words_of_a_class_that_defines():
     kinds = {**ts.KINDS, "lemma": Defining_Stand_In, "plain": Stand_In, "free": Owing_Nothing_Stand_In}
     f = Forest_Under_Test(kinds=kinds)
     (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
-        lemma("p"), lemma("q", kind="plain"), lemma("r", kind="free")]})], kinds)))
+        lemma("p"), lemma("q", kind="plain"), lemma("r", kind="free")]})])))
     (x,) = s.sub_nodes
     p, q, r = x.sub_nodes
     assert p.mark(M.BRIEFING, 0) == "not evaluated, proof not started" and not common.unverified(p)

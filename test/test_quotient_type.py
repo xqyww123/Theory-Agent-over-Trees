@@ -204,20 +204,20 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proof_and_keeps_the_c
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
     (p2,) = run(locked(f, edit.amend(p, [definition("pr", "'a × 'b", "λp q. fst p = fst q", "Another wording",
                                                     type_parameters=("'b", "'a"), syntax=FRACT_SYNTAX,
-                                                    rep_function_name="rep", abs_function_name="abs")], KINDS)))
+                                                    rep_function_name="rep", abs_function_name="abs")])))
     assert p2.job().outcome == PROVED and p2.check_outcome() is None and p2.name == "pr"
     assert p2.sub_nodes == [c] and c.parent is p2                                   # the children inherited
     assert p2.goal_structure() == p.goal_structure() == ("'a \\<times> 'b", False, "\\<lambda>p q. fst p = fst q")
     (p3,) = run(locked(f, edit.amend(p2, [definition("pr", "'a × 'b", "λp q. fst p = fst q", type_parameters=("'b", "'a"),
-                                                     partial=True)], KINDS)))
+                                                     partial=True)])))
     assert p3.job().outcome is NOT_STARTED and p3.sub_nodes == [c]                  # `partial` changed
     p3.job().outcome = PROVED
     (p4,) = run(locked(f, edit.amend(p3, [definition("pr", "'a × 'b", "λp q. snd p = snd q", type_parameters=("'b", "'a"),
-                                                     partial=True)], KINDS)))
+                                                     partial=True)])))
     assert p4.job().outcome is NOT_STARTED                                          # the relation changed
     p4.job().outcome = PROVED
     (p5,) = run(locked(f, edit.amend(p4, [definition("pr", "'b × 'a", "λp q. snd p = snd q", type_parameters=("'b", "'a"),
-                                                     partial=True)], KINDS)))
+                                                     partial=True)])))
     assert p5.job().outcome is NOT_STARTED                                          # the representation type changed
     inv(f)
 
@@ -335,14 +335,14 @@ def test_the_mirror_catches_an_emit_ending_off_the_live_status(monkeypatch):
     p, q = x.sub_nodes
     fake_wire(monkeypatch, lambda message: [[], [None, None]])
     run(x.evaluate_to(None, False))
-    assert_store_mirrors(f, KINDS, shape=ts.shape)                           # as shipped: mirrored
+    assert_store_mirrors(f, shape=ts.shape)                           # as shipped: mirrored
     emit_ending = QuotientType.emit_ending
 
     def off_the_live_status(self, indent, out):
         return emit_ending(self, indent, out) if isinstance(self.evaluation_status_ending, M.Ready) else indent
     monkeypatch.setattr(QuotientType, "emit_ending", off_the_live_status)
     with pytest.raises(AssertionError, match="Arith/X.thy: the loaded forest writes another text"):
-        assert_store_mirrors(f, KINDS, shape=ts.shape)
+        assert_store_mirrors(f, shape=ts.shape)
 
 
 def test_the_ending_calls_close_with_the_slot_after_the_last_child_the_resulting_slot_and_the_name(monkeypatch):
@@ -553,8 +553,7 @@ def test_section_9_s_id_properties():
     # after `Section`'s: test_ids.py's `Sec` inside the block holding a `fcard`, another `fcard` directly under the
     # theory — the section dropped, the block kept
     sec = test_ids.mk_block(test_ids.Sec, p, "B")
-    (inner,) = run(locked(f, edit.insert(sec, 0, [lift("fcard", "'a fset ⇒ nat", "λxs. card (set xs)", "The size")],
-                                         {**KINDS, "section": test_ids.Sec})))
+    (inner,) = run(locked(f, edit.insert(sec, 0, [lift("fcard", "'a fset ⇒ nat", "λxs. card (set xs)", "The size")])))
     (outer,) = insert(f, x, 1, [lift("fcard", "'a fset ⇒ nat", "λxs. card (set xs)", "The size")])
     assert f.id_of(inner) == "quotient_type_fset.lift_definition_fcard" and f.resolve("section_B.lift_definition_fcard") is inner
     assert f.id_of(outer) == "session_Arith.theory_X.lift_definition_fcard" and f.id_of(fempty) == "lift_definition_fempty"

@@ -169,7 +169,7 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proofs():
     f, x = forest(SUM_UPTO)
     (p,) = x.sub_nodes
     with_proof(p, M.READY_CLEAN, PROVED, PASSED)
-    (p2,) = run(locked(f, edit.amend(p, [definition(english="The naturals from i to N, summed", auto_reduction=True)], KINDS)))
+    (p2,) = run(locked(f, edit.amend(p, [definition(english="The naturals from i to N, summed", auto_reduction=True)])))
     assert p2.job().outcome == PROVED and p2.check_outcome() is None
     assert p2.goal_structure() == p.goal_structure() == (
         [("sum_upto", "nat \\<Rightarrow> nat \\<Rightarrow> nat", None)], ["sum_upto i N = (if N < i then 0 else i + sum_upto (Suc i) N)"])
@@ -179,7 +179,7 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proofs():
                                                    "syntax": {"form": "infixl", "symbol": "⊕", "priority": 65}}]}):
         x.sub_nodes[0].job().outcome = PROVED
         x.sub_nodes[0].failed_obligation = TERMINATION
-        (p3,) = run(locked(f, edit.amend(x.sub_nodes[0], [changed], KINDS)))
+        (p3,) = run(locked(f, edit.amend(x.sub_nodes[0], [changed])))
         assert p3.job().outcome is NOT_STARTED and p3.failed_obligation is None, changed    # neither carried
     inv(f)
     # the replacement records nothing else (§6; COMMON §5): `failed_obligation` goes with the carried failure, so
@@ -189,7 +189,7 @@ def test_an_amend_with_the_same_goal_structure_carries_the_proofs():
     evaluated(p, SEQUENTIAL, "pat_completeness auto", None)
     p.failed_obligation = TERMINATION
     with_proof(p, M.READY_CLEAN, Failed("gave up", "refute"))
-    (p2,) = run(locked(f, edit.amend(p, [definition(english="The naturals from i to N, summed")], KINDS)))
+    (p2,) = run(locked(f, edit.amend(p, [definition(english="The naturals from i to N, summed")])))
     assert p2.job().outcome == Failed("gave up", "refute") and p2.check_outcome() is None
     assert (p2.form, p2.completeness_method, p2.termination_method, p2.failed_obligation) == (None, None, None, TERMINATION)
     assert p2.message()[3] is None and p2.open_obligations() == ()
@@ -335,13 +335,13 @@ def test_the_recorded_fields_reach_the_store_and_the_mirror_catches_an_emit_off_
     rows = {n.name: f.store.fields(n.identity) for n in (fib, sum_upto)}
     assert (rows["fib"]["form"], rows["fib"]["termination_method"], rows["sum_upto"]["form"], rows["sum_upto"]["termination_method"]) == (
         SEQUENTIAL, "lexicographic_order", SEQUENTIAL, None)
-    assert_store_mirrors(f, KINDS, shape=ts.shape)
+    assert_store_mirrors(f, shape=ts.shape)
 
     def off_the_instant_status(self):       # the command from the instant status, not the records: `fun` while `ready`
         return "fun" if all(isinstance(st, M.Ready) for st in self.evaluation_statuses()) else SEQUENTIAL
     monkeypatch.setattr(Define, "_command", off_the_instant_status)
     with pytest.raises(AssertionError, match="Arith/X.thy: the loaded forest writes another text"):
-        assert_store_mirrors(f, KINDS, shape=ts.shape)
+        assert_store_mirrors(f, shape=ts.shape)
 
 
 # --- the jobs (§7) --------------------------------------------------------------

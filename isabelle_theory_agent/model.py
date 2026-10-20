@@ -1779,8 +1779,10 @@ class Forest(Unchained_Node):
         `not_evaluated` throughout, every slot fresh (ARCHITECTURE §4.1).
         A database TAT could not have written is refused (`TAT_StartupError`).
         `imports` are the theories the loaded plugins declare, which
-        `Theory.header` writes (PLUGIN_SYSTEM §1); `kinds` is kept, the
-        kind words of the placement refusals (`placement_refusal`)."""
+        `Theory.header` writes (PLUGIN_SYSTEM §1); `kinds` is kept, the one
+        kind table of the conversation: what an edit dispatches on, a load
+        rebuilds nodes with, and the placement refusals take their kind
+        words from."""
         super().__init__(None, Isar_State_Slot.assign(conversation))
         self.conversation = conversation
         self.kinds = dict(kinds)
@@ -1797,7 +1799,7 @@ class Forest(Unchained_Node):
             if store.nodes():
                 seen = {self.identity}
                 for identity in self._child_identities(self.identity, seen):
-                    self.sub_nodes.append(self._load_subtree(identity, self, kinds, seen))
+                    self.sub_nodes.append(self._load_subtree(identity, self, seen))
         except MissingRow as e:                # a framework row, or a field a class reads
             raise TAT_StartupError(
                 f"the forest database has no field `{e.field}` for node {e.node}") from e
@@ -1934,10 +1936,9 @@ class Forest(Unchained_Node):
             seen.add(child)
         return children
 
-    def _load_subtree(self, identity: int, parent: NonLeaf_Node,
-                      kinds: Mapping[str, type[Node]], seen: set[int]) -> Node:
+    def _load_subtree(self, identity: int, parent: NonLeaf_Node, seen: set[int]) -> Node:
         kind = self.store.get(identity, "kind")
-        cls = kinds.get(kind) if isinstance(kind, str) else None
+        cls = self.kinds.get(kind) if isinstance(kind, str) else None
         if cls is None:
             raise TAT_StartupError(
                 f"the forest database holds a node of kind `{kind}`, for which no"
@@ -1955,7 +1956,7 @@ class Forest(Unchained_Node):
         self._restore_jobs(node, identity)
         if isinstance(node, NonLeaf_Node):
             for child_identity in self._child_identities(identity, seen):
-                node.sub_nodes.append(self._load_subtree(child_identity, node, kinds, seen))
+                node.sub_nodes.append(self._load_subtree(child_identity, node, seen))
         return node
 
     # --- ids: resolution and shortest-form printing (MCP_SPECIFICATION §2.1).

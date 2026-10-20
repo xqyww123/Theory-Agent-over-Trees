@@ -129,7 +129,7 @@ def shape(forest):
 
 def inv(f):
     assert_invariants(f, tm.TABLE)
-    assert_store_mirrors(f, KINDS, shape=shape)
+    assert_store_mirrors(f, shape=shape)
 
 
 def theory(name, *imports, kind="theory", **fields):
@@ -144,7 +144,7 @@ def session(name, *children, **fields):
 
 
 def insert(f, parent, index, raws):
-    return run(locked(f, edit.insert(parent, index, raws, KINDS)))
+    return run(locked(f, edit.insert(parent, index, raws)))
 
 
 def arith():
@@ -512,7 +512,7 @@ def test_delete_and_amend_in_the_session_layer():
     inv(f)
     # amending the session: its theories are inherited, nothing is copied
     tm.TABLE.calls.clear()
-    (s2,) = run(locked(f, edit.amend(s, [session("Arith2", description="renamed")], KINDS)))
+    (s2,) = run(locked(f, edit.amend(s, [session("Arith2", description="renamed")])))
     assert f.sub_nodes == [s2] and s2.sub_nodes == [y] and y.parent is s2
     assert (s2.name, s2.description, s2.identity) == ("Arith2", "renamed", s.identity)
     assert f.id_of(a) == "t_a" and f.resolve("session_Arith2.theory_Y.t_a") is a
@@ -633,7 +633,7 @@ def test_a_theory_short_name_is_unique_everywhere():
         insert(f, f, 2, [session("More", theory("Queue")), session("Yet", theory("QUEUE"))])
     assert (e.value.short_name, e.value.holder) == ("QUEUE", "constructs[0].children[0]")
     # an amend may keep the short name: the node it replaces is leaving
-    (x2,) = run(locked(f, edit.amend(x, [theory("X", "Main", "HOL.Rat", description="renamed")], KINDS)))
+    (x2,) = run(locked(f, edit.amend(x, [theory("X", "Main", "HOL.Rat", description="renamed")])))
     assert x2.imports == ["Main", "HOL.Rat"] and x2.identity == x.identity and x2.description == "renamed"
     assert s.sub_nodes == [x2, y]
     inv(f)
@@ -726,7 +726,7 @@ def test_session_names_are_compared_without_regard_to_case():
         ("session_p", "constructs[0]", "constructs[1]")
     assert f.sub_nodes == [s]
     # an amend may keep the name, in any case
-    (arith2,) = run(locked(f, edit.amend(s, [session("ARITH")], KINDS)))
+    (arith2,) = run(locked(f, edit.amend(s, [session("ARITH")])))
     assert f.sub_nodes == [arith2] and arith2.name == "ARITH"
     inv(f)
 
@@ -746,14 +746,14 @@ def test_a_parent_session_is_one_the_call_keeps_or_adds_before_or_one_the_layout
     # an amend: the node it replaces is leaving, for every construct of the
     # batch; a kept name is back for the constructs after the first
     with pytest.raises(InvalidField) as e:
-        run(locked(f, edit.amend(app, [session("App2", parent_session="App")], KINDS)))
+        run(locked(f, edit.amend(app, [session("App2", parent_session="App")])))
     assert e.value.reason == "must name an existing session; `App` is not one"
     with pytest.raises(InvalidField) as e:
         run(locked(f, edit.amend(app, [session("App2", parent_session="Lib"),
-                                       session("B", parent_session="App")], KINDS)))
+                                       session("B", parent_session="App")])))
     assert e.value.raw_ast_path == "constructs[1]"
     app2, b = run(locked(f, edit.amend(app, [session("App", parent_session="Lib"),
-                                             session("B", parent_session="App")], KINDS)))
+                                             session("B", parent_session="App")])))
     assert (app2.parent_session, b.parent_session) == ("Lib", "App")
     assert app2.identity == app.identity
     assert f.sub_nodes == [s, lib, app2, b, p, q]

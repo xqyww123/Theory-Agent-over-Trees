@@ -1211,8 +1211,9 @@ forest root, register (COMPILATION.md §5); the sweep at the start of
 framework's two classes and the listed packages' — the assembled `edit`
 schema from it (PLUGIN_SYSTEM §1), and the compile hooks the listed
 packages define. The loader checks a hook is a plain function of one
-positional argument, neither a coroutine nor a generator. The table is what `edit`
-dispatches on. What the loader
+positional argument, neither a coroutine nor a generator. The forest keeps
+the table (§4.1): what `edit` dispatches on, what a load rebuilds nodes
+with, and where the placement refusals read their kind words. What the loader
 checks at registration and at assembly, and how it completes the `edit`
 schema, is PLUGIN_SYSTEM.md. `check_call` — given a schema, the holder,
 and whether it checks a construct — is the one checker: of a tool

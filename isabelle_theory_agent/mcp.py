@@ -59,10 +59,10 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
         async with forest.lock:
             with _operation(action, target_id) as what:
                 if action == "amend":
-                    nodes = await edit.amend(_resolve(forest, target_id), constructs, loaded.kinds, auto_construct)
+                    nodes = await edit.amend(_resolve(forest, target_id), constructs, auto_construct)
                 elif action in _ACTION_POSITION:
                     parent, index = _location(forest, _ACTION_POSITION[action], target_id)
-                    nodes = await edit.insert(parent, index, constructs, loaded.kinds, auto_construct)
+                    nodes = await edit.insert(parent, index, constructs, auto_construct)
                 else:
                     raise TAT_InternalError(f"unknown action {action!r}")
             ev = await _evaluate(forest, nodes[-1], agent) if arguments["evaluate"] else None

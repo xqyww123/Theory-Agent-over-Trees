@@ -282,7 +282,7 @@ async def leave(directory: Path, *theories: str) -> None:
             (session,) = await edit.insert(forest, 0, [
                 {"kind": "session", "name": "S", "parent_session": "HOL",
                  "children": [{"kind": "theory", "name": name, "imports": ["Main"]}
-                              for name in theories]}], loaded.kinds)
+                              for name in theories]}])
         await session.evaluate_to(None, True)
 
 

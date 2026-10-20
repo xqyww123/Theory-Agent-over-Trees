@@ -86,7 +86,7 @@ async def _after_commit(forest: Forest, ev: Evaluation, vanished: list[str]) -> 
 # The four entries
 
 async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
-                 kinds: Mapping[str, type[Node]], auto_construct: bool = False) -> list[Node]:
+                 auto_construct: bool = False) -> list[Node]:
     """`append`/`insert_before`/`insert_after`: construct the batch detached
     — `gen` is insertion's gate, there is no other — and commit it before
     position `index` of `parent`: invalidate, fire the completed events,
@@ -95,7 +95,7 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     every new node's construction job (CONSTRUCT_INTERACTION §3.2)."""
     forest = parent.forest()
     before = forest._record()
-    nodes = await _construct_siblings(parent, raws, "constructs", Edit_Call(forest, kinds, auto_construct),
+    nodes = await _construct_siblings(parent, raws, "constructs", Edit_Call(forest, auto_construct),
                                       Insertion())
     # Commit: first the one copy of ARCHITECTURE §3.4 into the first new
     # node's slot — only when the predecessor operation wrote it, judged
@@ -126,8 +126,7 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     return nodes
 
 
-async def amend(old: Node, raws: list[RawAST],
-                kinds: Mapping[str, type[Node]], auto_construct: bool = False) -> list[Node]:
+async def amend(old: Node, raws: list[RawAST], auto_construct: bool = False) -> list[Node]:
     """`amend`: `nodes[0]` is built as the replacement (`NodeConfig.replaces`)
     and takes `old`'s position, state slot, identity number and children;
     `nodes[1:]` follow it.  `auto_construct` as `insert`'s."""
@@ -135,7 +134,7 @@ async def amend(old: Node, raws: list[RawAST],
     forest = parent.forest()
     before = forest._record()
     removed = [forest.full_id(old)]
-    call = Edit_Call(forest, kinds, auto_construct, Amendment(old))
+    call = Edit_Call(forest, auto_construct, Amendment(old))
     nodes = await _construct_siblings(parent, raws, "constructs", call, call.role)
     replacement = nodes[0]
     inherited = list(old.sub_nodes) if isinstance(old, NonLeaf_Node) else []
@@ -331,7 +330,6 @@ def parent_of(node: Node) -> NonLeaf_Node:
 class Edit_Call:
     """What every construct built in one edit call shares."""
     forest: Forest
-    kinds: Mapping[str, type[Node]]
     auto_construct: bool             # written on every built node's construction job
                                      # (CONSTRUCT_INTERACTION §3.2); off when the call says nothing
     role: Role = Insertion()         # the call's: an amendment's `old` is left out
@@ -433,7 +431,8 @@ def _require_placement(cls: type[Node], kind: str, parent: NonLeaf_Node) -> None
 
 async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tuple[Node, ...],
                              role: Role, call: Edit_Call, path: str) -> Node:
-    forest, kinds = call.forest, call.kinds
+    forest = call.forest
+    kinds = forest.kinds
     if not isinstance(raw, Mapping):
         raise MalformedRawAST(missing_kind=False)
     if "kind" not in raw:

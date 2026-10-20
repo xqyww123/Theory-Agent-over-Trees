@@ -229,7 +229,7 @@ async def test_the_notes_jobs_over_the_wire(conversation):
 
     async def insert(parent, index, raws):
         async with forest.lock:
-            return await edit.insert(parent, index, raws, kinds)
+            return await edit.insert(parent, index, raws)
 
     (sess,) = await insert(forest, 0, [
         {"kind": "session", "name": "TAT_NOTES", "parent_session": "HOL",
