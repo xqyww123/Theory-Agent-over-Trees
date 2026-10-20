@@ -455,8 +455,9 @@ never interleave:
   the one that contains the destination, what follows being invalidated
   past the destination (§3.4);
   if it failed, or its placement refused it, it invalidates each of them
-  whole instead of running them (§3.3): when the destination lies under it the walk ends there, the
-  node is the stop the call reports when `ignore_error` is unset, and
+  whole instead of running them (§3.3): when the destination lies under
+  it the walk ends there, the node is the stop the call reports when
+  `ignore_error` is unset, and
   everything after the destination is invalidated (§3.4); otherwise its
   input stands as its result and the walk goes on after
   it. A nesting node is reached at its ending
