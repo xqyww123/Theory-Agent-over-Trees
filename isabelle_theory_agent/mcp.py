@@ -15,8 +15,7 @@ import jsoncomment
 from . import edit
 from .exceptions import (
     ConstructNotSupported, ConstructOwnedByAnother, HoldsNoChildren, MoveBesideItself, NoQuestionPending,
-    ProtectedNode, TAT_Error, TAT_InternalError)
-from .exceptions import series
+    ProtectedNode, TAT_Error, TAT_InternalError, series)
 from .jobs import RUNNING, Agent, Construction_Job, Job_Class, Standing, by_title, standing, state_lines
 from .mcp_server import Body, Tool, Trailer, With_Trailer
 from .model import (

@@ -5,9 +5,21 @@ LOGGING.md §4's tables, and the plugin's test pins each class's
 `placement` to node_classes/COMMON.md §1's table, so the code and the
 documents cannot drift apart."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
+
+
+def _section_lines(doc: Path, *section_prefixes: str) -> Iterator[str]:
+    """The lines inside the `## ` sections whose title starts with one of
+    `section_prefixes`, in document order, the headings left out."""
+    in_section = False
+    for line in doc.read_text().splitlines():
+        if line.startswith("## "):
+            in_section = line.removeprefix("## ").startswith(section_prefixes)
+        elif in_section:
+            yield line
 
 
 def fenced_blocks(doc: Path, *section_prefixes: str) -> list[list[str]]:
@@ -16,16 +28,14 @@ def fenced_blocks(doc: Path, *section_prefixes: str) -> list[list[str]]:
     inside a list item is indented: its lines are read less that indent,
     and it closes at a fence line of the same indent."""
     blocks: list[list[str]] = []
-    in_section, indent = False, None            # the open fence's indent; None outside one
-    for line in doc.read_text().splitlines():
-        if line.startswith("## "):
-            in_section = line.removeprefix("## ").startswith(section_prefixes)
-        elif in_section and indent is None and line.lstrip(" ").startswith("```"):
+    indent = None                               # the open fence's indent; None outside one
+    for line in _section_lines(doc, *section_prefixes):
+        if indent is None and line.lstrip(" ").startswith("```"):
             indent = " " * (len(line) - len(line.lstrip(" ")))
             blocks.append([])
-        elif in_section and indent is not None and line.startswith(indent + "```"):
+        elif indent is not None and line.startswith(indent + "```"):
             indent = None
-        elif in_section and indent is not None:
+        elif indent is not None:
             blocks[-1].append(line.removeprefix(indent))
     return blocks
 
@@ -42,14 +52,12 @@ def event_tables(doc: Path, section_prefix: str) -> dict[str, dict[str, str]]:
     (the first cell, its backticks stripped) to its level (the second
     cell) — LOGGING.md §4."""
     tables: dict[str, dict[str, str]] = {}
-    in_section, category = False, ""
-    for line in doc.read_text().splitlines():
-        if line.startswith("## "):
-            in_section = line.removeprefix("## ").startswith(section_prefix)
-        elif in_section and line.startswith("### "):
+    category = ""
+    for line in _section_lines(doc, section_prefix):
+        if line.startswith("### "):
             category = line.removeprefix("### ").strip("`")
             tables[category] = {}
-        elif in_section and category and line.startswith("| `"):
+        elif category and line.startswith("| `"):
             cells = _cells(line)
             tables[category][cells[0].strip("`")] = cells[1]
     return tables
@@ -58,14 +66,7 @@ def event_tables(doc: Path, section_prefix: str) -> dict[str, dict[str, str]]:
 def table_rows(doc: Path, *section_prefixes: str) -> list[list[str]]:
     """The cells of every table row opening with a backticked cell, within
     the `## ` sections whose title starts with one of `section_prefixes`."""
-    rows: list[list[str]] = []
-    in_section = False
-    for line in doc.read_text().splitlines():
-        if line.startswith("## "):
-            in_section = line.removeprefix("## ").startswith(section_prefixes)
-        elif in_section and line.startswith("| `"):
-            rows.append(_cells(line))
-    return rows
+    return [_cells(line) for line in _section_lines(doc, *section_prefixes) if line.startswith("| `")]
 
 
 def _cells(row: str) -> list[str]:

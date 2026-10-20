@@ -304,9 +304,10 @@ it in the tree is `not_evaluated`.
 
 A node standing where its class's placement does not admit it
 (PLUGIN_SYSTEM §2) is an obstacle too: its first own operation is
-`cannot_evaluate` without running, a leaf's one operation or a nesting
-node's beginning, and a move or an amend that invalidates it has it
-checked again at its new place.
+`cannot_evaluate` without running — a leaf's one operation, the leaf
+then an obstacle like any; a nesting node's beginning, the node then
+handled as one whose beginning command failed (below) — and a move or
+an amend that invalidates it has it checked again at its new place.
 
 A **nesting node whose beginning command failed** leaves its children no context
 to run in. Its beginning is `cannot_evaluate` and, like any obstacle, is not
@@ -453,8 +454,8 @@ never interleave:
   command succeeded, now or earlier, it calls its children in order up to
   the one that contains the destination, what follows being invalidated
   past the destination (§3.4);
-  if it failed, it invalidates each of them whole instead of running them
-  (§3.3): when the destination lies under it the walk ends there, the
+  if it failed, or its placement refused it, it invalidates each of them
+  whole instead of running them (§3.3): when the destination lies under it the walk ends there, the
   node is the stop the call reports when `ignore_error` is unset, and
   everything after the destination is invalidated (§3.4); otherwise its
   input stands as its result and the walk goes on after

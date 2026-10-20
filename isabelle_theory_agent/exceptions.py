@@ -120,7 +120,8 @@ def series(words: list[str], last: str) -> str:
 
 def placement_rule(within: str, through: list[str]) -> str:
     """The second half of both placement refusals (RENDER_BASELINES §2,
-    §3), from kind words: where a node of the class stands."""
+    §3), from the kinds a placement names: where a node of the class
+    stands."""
     return (f"it stands inside a node of kind `{within}`, "
             + (f"directly or under nodes of kind {series([f'`{k}`' for k in through], 'or')}." if through
                else "directly."))
@@ -456,8 +457,8 @@ class BadTheoryNodeParent(BadEdit):
 class BadPlacement(BadEdit):
     """A plugin's node placed under a `Session` or the forest root
     (EXCEPTIONS.md §3): raised by the framework at an insert, an amend and
-    a move.  `within` and `through` are the kind words of the class's
-    `placement` (`model.placement_kinds`)."""
+    a move.  `within` and `through` are the kinds of the classes the
+    class's `placement` names (`model.placement_kinds`)."""
 
     def __init__(self, kind: str, parent_id: str, within: str, through: list[str]):
         super().__init__()

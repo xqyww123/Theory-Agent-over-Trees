@@ -710,7 +710,7 @@ class Harness:
                                                ) as (forest, loaded, server):
                         self.serving = (request, forest.conversation.ending)
                         request.handed_over.set_result(Handle(
-                            self, request, forest=forest, kinds=loaded.kinds, url=server.url,
+                            self, request, forest=forest, url=server.url,
                             working_directory=request.working_directory,
                             log=forest.conversation.log))
                         await server.serve()

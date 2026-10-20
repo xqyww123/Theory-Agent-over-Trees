@@ -444,8 +444,8 @@ class Node(ABC):
     job_operation: ClassVar[Any]
 
     # Where a node of the class may stand (PLUGIN_SYSTEM §2), which the
-    # framework checks (`placement_refusal`); every plugin class declares
-    # one, the framework's classes none.
+    # framework checks (`placement_refusal` at evaluation, `BadPlacement` at
+    # an edit); every plugin class declares one, the framework's classes none.
     placement: ClassVar[Placement | None] = None
 
     @classmethod
@@ -1760,7 +1760,8 @@ Tree_Records: TypeAlias = dict[Identity, TreeRecord]
 
 class Forest(Unchained_Node):
     """The root above every `Session` (MODULE_STRUCTURE §4.1): holds the
-    lock, the store and the `Conversation`, resolves and prints ids."""
+    lock, the store, the `Conversation` and the kind table, resolves and
+    prints ids."""
 
     conversation: Conversation
     lock: asyncio.Lock                         # held across every evaluation and tree change
@@ -1781,8 +1782,8 @@ class Forest(Unchained_Node):
         `imports` are the theories the loaded plugins declare, which
         `Theory.header` writes (PLUGIN_SYSTEM §1); `kinds` is kept, the one
         kind table of the conversation: what an edit dispatches on, a load
-        rebuilds nodes with, and the placement refusals take their kind
-        words from."""
+        from the store rebuilds nodes with, and the placement refusals take
+        their kinds from."""
         super().__init__(None, Isar_State_Slot.assign(conversation))
         self.conversation = conversation
         self.kinds = dict(kinds)
@@ -2884,7 +2885,7 @@ def bears(cls: type[Node], name: str) -> bool:
 
 
 def placement_kinds(placement: Placement, kinds: Mapping[str, type[Node]]) -> tuple[str, list[str]]:
-    """The kind words of a `placement` in the kind table `kinds`: `within`'s
+    """The kinds a `placement` names, in the kind table `kinds`: `within`'s
     one kind, and the kinds of the classes `through` in the table's order —
     what both refusals name (RENDER_BASELINES §2, §3)."""
     within = next(k for k, c in kinds.items() if c.__name__ == placement.within)

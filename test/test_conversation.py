@@ -124,7 +124,7 @@ async def test_a_fresh_conversation_holds_nothing(conversation):
     `session`.  What `TAT.reset` forgets is the reset case's, below."""
     assert list(conversation.forest.sub_nodes) == []
     assert await isabelle_driver.state_exists(conversation.forest.conversation, "nobody") is False
-    assert "theory" in conversation.kinds and "session" in conversation.kinds
+    assert "theory" in conversation.forest.kinds and "session" in conversation.forest.kinds
     # the conversation's log (LOGGING.md §2): under the working directory,
     # the start recorded, the round trip just made recorded with its result
     assert conversation.log.directory.parent == conversation.working_directory / ".tat" / "log"
@@ -576,7 +576,7 @@ def theory(name, *imports):
 
 
 async def test_the_theory_node_class_end_to_end(conversation, probes, monkeypatch):
-    forest, kinds = conversation.forest, conversation.kinds
+    forest = conversation.forest
 
     # every theory_delete round trip recorded on its way to the wire
     theory_deletes: list[list[str]] = []
@@ -701,7 +701,7 @@ async def test_a_theory_named_with_a_keyword_evaluates_compiles_and_builds_as_on
     and the compile writes to the file; and the file's header stays one
     command span under the keyword table a build reads it with — the
     evaluated theory's — which a bare `lemmas` would cut in two."""
-    forest, kinds = conversation.forest, conversation.kinds
+    forest = conversation.forest
     async with forest.lock:
         (sess,) = await edit.insert(forest, 0, [
             {"kind": "session", "name": "TAT_E2E_W", "parent_session": "HOL",

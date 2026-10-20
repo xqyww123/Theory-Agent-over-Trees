@@ -223,7 +223,7 @@ async def test_the_notes_jobs_over_the_wire(conversation):
     or `FAILED` with the work's message posted to the starter; one dropped
     by an edit has its future cancelled on the Isabelle side; its
     construction job asks one question and settles by the answer."""
-    forest, kinds, log = conversation.forest, conversation.kinds, conversation.log.directory
+    forest, log = conversation.forest, conversation.log.directory
     conv = forest.conversation
     agent = stand_ins.agent(conv)
 

@@ -828,7 +828,10 @@ the same `Evaluation` (the invalidation functions, below).
   working directory's structure is TAT's alone, and nothing an agent
   can do repairs it.
 - `Forest(Unchained_Node)` — the root above every `Session`. Holds the
-  lock, the store (ARCHITECTURE §4.1) and the `Conversation`; resolves ids
+  lock, the store (ARCHITECTURE §4.1), the `Conversation` and the
+  conversation's kind table (§4.4) — what `edit` dispatches on, what
+  loading the forest from the store rebuilds nodes with, and where the
+  placement refusals read their kinds; resolves ids
   and prints their shortest form; and, in the walk, keeps the import graph
   (recomputed whenever needed, never stored), routes a walk to the tree it
   concerns, invalidates every tree that imports a changed one, and runs a
@@ -1212,8 +1215,7 @@ framework's two classes and the listed packages' — the assembled `edit`
 schema from it (PLUGIN_SYSTEM §1), and the compile hooks the listed
 packages define. The loader checks a hook is a plain function of one
 positional argument, neither a coroutine nor a generator. The forest keeps
-the table (§4.1): what `edit` dispatches on, what a load rebuilds nodes
-with, and where the placement refusals read their kind words. What the loader
+the table (§4.1). What the loader
 checks at registration and at assembly, and how it completes the `edit`
 schema, is PLUGIN_SYSTEM.md. `check_call` — given a schema, the holder,
 and whether it checks a construct — is the one checker: of a tool

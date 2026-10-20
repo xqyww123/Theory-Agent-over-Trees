@@ -529,8 +529,8 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
     plugin's declared import in the theory's header.
     Last, the callback alone: a failure empties a `goal_state` an earlier
     run had written."""
-    forest, kinds = std_conversation.forest, std_conversation.kinds
-    assert set(theorem.KINDS) <= set(kinds)
+    forest = std_conversation.forest
+    assert set(theorem.KINDS) <= set(forest.kinds)
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,

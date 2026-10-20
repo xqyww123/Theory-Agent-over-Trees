@@ -1,6 +1,7 @@
-"""Where a plugin's node may stand (PLUGIN_SYSTEM §2): `placement_refusal`
-on stand-ins, its two sentences against RENDER_BASELINES §2 and §3, the
-check at evaluation — a misplaced `Leaf` and a misplaced `StdBlock`, the
+"""Where a plugin's node may stand (PLUGIN_SYSTEM §2): the two refusal
+sentences against RENDER_BASELINES §2 (`BadPlacement`, from real edits)
+and §3 (`placement_refusal` on stand-ins), the walk, the check at
+evaluation — a misplaced `Leaf` and a misplaced `StdBlock`, the
 hook never run — and at edit time under a `Session` and under the root,
 against the fake state slot table.  The registration and load checks are
 test_plugin.py's; the shipped classes' declarations test_common.py's.
@@ -208,8 +209,8 @@ def test_an_amend_passing_children_on_checks_them_at_their_new_parent():
 def test_under_a_session_or_the_root_every_edit_is_refused(kind):
     """Under an `Unchained_Node`, which no evaluation reaches, an insert,
     an amend, a move and a session's inline child are refused with
-    `BadPlacement`, the parent's full id and the placement's kind words
-    its fields; the forest is unchanged."""
+    `BadPlacement`, the parent's full id and the placement's kinds its
+    fields; the forest is unchanged."""
     f, s, x, sec, b = arith()
     words = M.placement_kinds(KINDS[kind].placement, KINDS)
     construct = node(kind, "n")

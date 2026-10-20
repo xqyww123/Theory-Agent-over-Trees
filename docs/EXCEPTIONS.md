@@ -253,8 +253,9 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          forest root, where no placement admits it
 │  │                          (PLUGIN_SYSTEM §2), at an insert, an amend
 │  │                          and a move; within and through are the
-│  │                          placement's kind words, whose rule the
-│  │                          refusal at evaluation shares
+│  │                          kinds of the classes the placement names,
+│  │                          and the sentence's second half is also the
+│  │                          refusal's at evaluation
 │  │                          (RENDER_BASELINES §2, §3)           [framework]
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
