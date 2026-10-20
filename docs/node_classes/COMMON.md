@@ -12,16 +12,31 @@ class, and §4's check of a type parameter declared and not used.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
-this document's: the `english` field and its `text` line (§2), the base
-of the classes whose command opens a proof obligation (§3), the `$defs`
-several classes merge and the configuration option `typedef_overloaded`,
-which `TAT_Std.TAT_Std` sets for every theory of a forest (§4), the
-conventions their schemas and sentences follow (§5), and the ending of a
-block that closes a type's Lifting setup (§6). Its Python half is
+this document's: where each class stands (§1), the `english` field and
+its `text` line (§2), the base of the classes whose command opens a
+proof obligation (§3), the `$defs` several classes merge and the
+configuration option `typedef_overloaded`, which `TAT_Std.TAT_Std` sets
+for every theory of a forest (§4), the conventions their schemas and
+sentences follow (§5), and the ending of a block that closes a type's
+Lifting setup (§6). Its Python half is
 `isabelle_theory_agent/std/common.py`, its ML halves
 `Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` (§4),
 and `TAT_Lifting_Closing.ML` (§6). What a class makes of it is that
 class's own document's.
+
+## 1. Where a class stands
+
+Every class of the plugin stands inside a theory. Between a node and its
+theory may lie only nodes of the classes its `placement` lists, which the
+framework checks (PLUGIN_SYSTEM §2); a class reads its theory as
+`enclosing(Theory)`:
+
+| class | may stand under, inside its theory |
+| --- | --- |
+| `Theorem`, `Define`, `LiftDefinition`, `LiftingContext` | `QuotientType`, `LiftingContext` |
+| `Datatype`, `Typedef`, `Record`, `QuotientType` | nothing: directly in the theory |
+
+A test of the plugin holds every class's declaration to this table.
 
 ## 2. `english` and the `text` line
 

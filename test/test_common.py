@@ -55,21 +55,22 @@ EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: FSET for kind in quotient_type.KINDS}}
 
 
-# Where each class stands (PLUGIN_SYSTEM §2): within `Theory`, through the
-# classes listed; `Section`, `Locale` and a `Typedef` block join as they land.
-THROUGH = {theorem.Theorem: ("QuotientType", "LiftingContext"),
-           define.Define: ("QuotientType", "LiftingContext"),
-           lift_definition.LiftDefinition: ("QuotientType", "LiftingContext"),
-           lifting_context.LiftingContext: ("QuotientType", "LiftingContext"),
-           datatype.Datatype: (), typedef.Typedef: (), record.Record: (), quotient_type.QuotientType: ()}
-
-
-def test_each_registered_class_declares_where_it_stands():
+def test_each_registered_class_declares_section_1_s_placement():
+    """§1's table, read from the document: each row's classes stand
+    within `Theory` through the classes of its second cell, `nothing` for
+    none; every class the package registers is in one row."""
     loaded = plugin.load(["isabelle_theory_agent.std"])
-    registered = {cls for cls in loaded.kinds.values() if cls not in M.FRAMEWORK_NODE_CLASSES}
-    assert registered == set(THROUGH)
-    for cls, through in THROUGH.items():
-        assert cls.placement == M.Placement(within="Theory", through=through)
+    by_name = {cls.__name__: cls for cls in loaded.kinds.values() if cls not in M.FRAMEWORK_NODE_CLASSES}
+    declared = {}
+    for line in COMMON.read_text().split("## 1. ")[1].split("\n## ")[0].splitlines():
+        if line.startswith("| `"):
+            classes, through = (cell.strip() for cell in line.strip("|").split("|"))
+            names = tuple(n.strip("` ") for n in through.split(",")) if through.startswith("`") else ()
+            assert through.startswith("`") or through.startswith("nothing")
+            declared |= {name.strip("` "): names for name in classes.split(",")}
+    assert set(declared) == set(by_name)
+    for name, through in declared.items():
+        assert by_name[name].placement == M.Placement(within="Theory", through=through)
 
 
 def test_every_registered_class_is_refused_under_a_session_or_the_root():
