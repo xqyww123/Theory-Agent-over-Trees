@@ -1,12 +1,14 @@
 (*  Title:      Isabelle_Std/ML/TAT_Typedef.ML
 
 The ML half of the plugin's `Typedef` (isabelle_theory_agent/std/typedef.py;
-docs/node_classes/TYPEDEF.md §6): the subtype's definition as the Python class
-sends it, run as the `typedef` command's transition; after the admission,
-`setup_lifting` on the type's theorem as the recorded `lifting` says -- tried once
-with none, run with true, left out with false.  The callback is built by
+docs/node_classes/TYPEDEF.md §6), the block's beginning: the subtype's definition
+as the Python class sends it, run as the `typedef` command's transition; after the
+admission, `setup_lifting` on the type's theorem as the recorded `lifting` says --
+tried once with none, run with true, left out with false.  The callback is built by
 `TAT_Proof_Obligation.register` (COMMON.md §3); the admission, the proof
-construction and the proof check are that structure's too.
+construction and the proof check are that structure's too.  The block's ending is
+TAT_Lifting_Closing's, which the Python side runs only while a setup was made
+(COMMON.md §6).
 *)
 
 structure TAT_Typedef =

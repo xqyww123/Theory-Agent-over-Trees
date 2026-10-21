@@ -67,7 +67,7 @@ class LiftingContext(StdBlock):
         "additionalProperties": False,
     }
     argument_schema = LiftingContext_RawAST
-    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
+    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     output_omissible = input_omissible = True
     drop_priority = 1                       # after `Section`'s, with `Session`'s, before `Theory`'s (§9)
 

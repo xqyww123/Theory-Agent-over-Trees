@@ -57,6 +57,7 @@ def definition(name="dl_rev", type="'a dlist ⇒ 'a dlist", is_="rev", english="
     return {"kind": "lift_definition", "english": english, "name": name, "type": type, "is": is_, **fields}
 
 
+DLIST_ALONE = {k: v for k, v in DLIST.items() if k != "children"}                   # the block with no child
 DL_LENGTH = definition("dl_length", "'a dlist ⇒ nat", "length", "The length of a list without repetition")    # §5's fourth
 DL_WRAP = definition("dl_wrap", "'a dlist ⇒ 'a dlist dlist", "λxs. [xs]",
                      "A list without repetition as the one element of another", code_dt=True)             # §6's verdict without effect
@@ -411,7 +412,7 @@ def test_the_two_spellings_are_kept_apart():
 @pytest.mark.isabelle(deadline=600)
 async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std_conversation, std_harness, tmp_path):
     """§6 through `TAT.LiftDefinition.evaluate`: a theory of test_typedef's
-    `dlist` then §2's three functions, `dl_rev` and `dl_cons` asking for the
+    `dlist` block holding §2's three functions, `dl_rev` and `dl_cons` asking for the
     option and judged not needed — recorded false, nothing said —,
     `dl_tl_opt` undecided, its trial passing and the option kept,
     `dl_length`, whose goal opens with no subgoal, and `dl_wrap`, judged
@@ -422,8 +423,9 @@ async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std
     `construct` on `dl_length`: the product `-`, the check `PASSED`, the
     mark `valid definition` and no owing line, the emitted line ending `by
     aoa`.  Beside it a theory `Y`: test_quotient_type's `fset` block
-    holding `dl_pair`, undecided — a constructor step, no composition —
-    and its trial refused, the option dropped, nothing said.  Then the
+    holding, inside a `lifting_context` opening `dlist` — the one place
+    with both setups open —, `dl_pair`, undecided — a constructor step, no
+    composition — and its trial refused, the option dropped, nothing said.  Then the
     callback alone under a recorded `with_code_dt`: the command run as
     recorded, `[[], [a, nil]]` on the wire, a refused admission the
     refusal; `code_dt` false with nothing recorded, neither the verdict
@@ -438,24 +440,28 @@ async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std
             "action": "append", "target_id": "Sessions", "evaluate": True,
             "constructs": [ts.session("TAT_Suite",
                 ts.theory("X") | {"children": [
-                    DLIST, {**DL_REV, "code_dt": True}, {**DL_CONS, "code_dt": True}, DL_TL_OPT, DL_LENGTH, DL_WRAP,
+                    {**DLIST, "children": [{**DL_REV, "code_dt": True}, {**DL_CONS, "code_dt": True}, DL_TL_OPT, DL_LENGTH, DL_WRAP]},
                     lemma("uses_the_definitions", english="Every definition above parses",
                           for_any=({"name": "x", "type": "'a"}, {"name": "xs", "type": "'a dlist"}), premises=(),
                           conclusion="dl_rev (x ## xs) = dl_rev (x ## xs) ∧ dl_length xs = dl_length xs"
                                      " ∧ dl_tl_opt xs = dl_tl_opt xs ∧ dl_wrap xs = dl_wrap xs")]},
-                ts.theory("Y") | {"children": [DLIST, {**FSET, "children": [DL_PAIR]}]})]})
+                ts.theory("Y") | {"children": [DLIST_ALONE, {**FSET, "children": [
+                    {"kind": "lifting_context", "name": "with_dlist", "types": ["dlist"], "children": [DL_PAIR]}]}]})]})
         text = text_of(result)
         assert not result.isError and text.count("Error:") == 0 and text.count("Notice:") == 0, text
         (s,) = forest.sub_nodes
         x, y = s.sub_nodes
-        dlist, rev, cons, tl_opt, length, wrap, uses = x.sub_nodes
-        for node in x.sub_nodes:
+        dlist, uses = x.sub_nodes
+        rev, cons, tl_opt, length, wrap = dlist.sub_nodes
+        assert isinstance(dlist.evaluation_status_beginning, M.Ready) and dlist.evaluation_status_ending == M.READY_CLEAN
+        for node in (rev, cons, tl_opt, length, wrap, uses):
             assert isinstance(node._status, M.Ready) and node._status.messages == (), (node.name, node._status)
             assert await node.goal_state.is_initialized() and await node.resulting_state().is_initialized()
         assert [(n.code_dt, n.with_code_dt) for n in (rev, cons, tl_opt, length, wrap)] == [
             (True, False), (True, False), (True, True), (False, False), (True, False)]
         (_, fset) = y.sub_nodes
-        (pair,) = fset.sub_nodes
+        (with_dlist,) = fset.sub_nodes
+        (pair,) = with_dlist.sub_nodes
         assert isinstance(pair, LiftDefinition) and isinstance(pair._status, M.Ready) and pair._status.messages == ()
         assert (pair.code_dt, pair.with_code_dt) == (True, False)          # the trial refused: the option dropped, nothing said
         [cons_block, tl_opt_block, _, _] = fenced_blocks(LD, "8.")
@@ -464,18 +470,18 @@ async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std
         assert not recalled.isError and lines == [
             "- lift_definition_dl_tl_opt (unverified definition, proof not started)", *("  " + line for line in tl_opt_block),
             "  " + OWING_LINE], lines
-        recalled = await session.call_tool("recall", {"node_id": "theory_X"})       # the nodes at depth 1: no `english`, no option
-        shown = text_of(recalled).splitlines()
-        assert not recalled.isError and shown[5:21] == [
-            "  - lift_definition_dl_rev (unverified definition, proof not started)",
-            '    dl_rev :: "\'a dlist ⇒ \'a dlist" is rev', "    " + OWING_LINE,
-            "  - lift_definition_dl_cons (unverified definition, proof not started)", "    " + cons_block[0], "    " + OWING_LINE,
-            "  - lift_definition_dl_tl_opt (unverified definition, proof not started)",
-            "    " + tl_opt_block[0].removeprefix("(code_dt) "), "    " + OWING_LINE,
-            "  - lift_definition_dl_length (unverified definition, proof not started)",
-            '    dl_length :: "\'a dlist ⇒ nat" is length', "    " + OWING_LINE,
-            "  - lift_definition_dl_wrap (unverified definition, proof not started)",
-            '    dl_wrap :: "\'a dlist ⇒ \'a dlist dlist" is "λxs. [xs]"', "    " + OWING_LINE,
+        recalled = await session.call_tool("recall", {"node_id": "theory_X"})       # the nodes at depth 2: no `english`, no option,
+        shown = text_of(recalled).splitlines()                                       # no owing line (PRINT §2)
+        assert not recalled.isError and shown[5:16] == [
+            "    - lift_definition_dl_rev (unverified definition, proof not started)",
+            '      dl_rev :: "\'a dlist ⇒ \'a dlist" is rev',
+            "    - lift_definition_dl_cons (unverified definition, proof not started)", "      " + cons_block[0],
+            "    - lift_definition_dl_tl_opt (unverified definition, proof not started)",
+            "      " + tl_opt_block[0].removeprefix("(code_dt) "),
+            "    - lift_definition_dl_length (unverified definition, proof not started)",
+            '      dl_length :: "\'a dlist ⇒ nat" is length',
+            "    - lift_definition_dl_wrap (unverified definition, proof not started)",
+            '      dl_wrap :: "\'a dlist ⇒ \'a dlist dlist" is "λxs. [xs]"',
             "  - lemma_uses_the_definitions (valid statement, proof not started)"], shown
         # the theory rendered as §5 shows, with `sorry`, and its body read back whole under what it imports
         rendered = C.render(forest)
@@ -533,8 +539,8 @@ async def test_a_function_is_lifted_the_option_tried_and_a_proof_constructed(std
 
 @pytest.mark.isabelle(deadline=600)
 async def test_refused_definitions_and_a_refused_admission_are_obstacles(std_conversation):
-    """§6, §8, one theory per obstacle since a walk stops at the first: after
-    `dlist`, `dl_suc` and `dl_bad` are refused at the open goal with
+    """§6, §8, one theory per obstacle since a walk stops at the first: inside
+    `dlist`'s block, `dl_suc` and `dl_bad` are refused at the open goal with
     Isabelle's rendering, §6's second and third blocks — `dl_suc` asks for
     `(code_dt)`, undecided since `prove_quot_thm` raises, so the probe is
     refused at the open goal, the same as without the option, and no trial
@@ -552,15 +558,14 @@ async def test_refused_definitions_and_a_refused_admission_are_obstacles(std_con
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
             "constructs": [ts.session("TAT_Suite",
-                ts.theory("X") | {"children": [
-                    DLIST, DL_SUC]},
+                ts.theory("X") | {"children": [{**DLIST, "children": [DL_SUC]}]},
                 ts.theory("Y") | {"children": [
-                    DLIST, definition("dl_bad", "'a dlist ⇒ nat", "id", "A term whose type cannot be instantiated")]},
+                    {**DLIST, "children": [definition("dl_bad", "'a dlist ⇒ nat", "id", "A term whose type cannot be instantiated")]}]},
                 ts.theory("Z") | {"children": [
-                    DLIST, definition("dl_f", "'a dlist ⇒ 'a dlist", "λxs. g xs", "A term with a free variable")]},
+                    {**DLIST, "children": [definition("dl_f", "'a dlist ⇒ 'a dlist", "λxs. g xs", "A term with a free variable")]}]},
                 ts.theory("W") | {"children": [
-                    DLIST, tdf.definition("dl_rev", ("dl_rev = 0",), "A natural named dl_rev", type="nat", auto_reduction=True),
-                    DL_REV]},
+                    tdf.definition("dl_rev", ("dl_rev = 0",), "A natural named dl_rev", type="nat", auto_reduction=True),
+                    {**DLIST, "children": [DL_REV]}]},
                 ts.theory("V") | {"children": [definition("dl_open", "'a dlist ⇒", "rev", "A type that does not parse")]},
                 ts.theory("U") | {"children": [
                     definition("int_swap", "int ⇒ int", "λ(a, b). (b, a)", "An integer with its halves swapped")]})]})
@@ -568,7 +573,8 @@ async def test_refused_definitions_and_a_refused_admission_are_obstacles(std_con
         assert not result.isError and text.count("Error:") == 6, text
         (s,) = forest.sub_nodes
         x, y, z, w, v, u = s.sub_nodes
-        (dlist, suc), (_, bad), (_, f_), (_, defined, rev), (open_,), (int_swap,) = (t.sub_nodes for t in (x, y, z, w, v, u))
+        (dlist,), (dlist_y,), (dlist_z,), (defined, dlist_w), (open_,), (int_swap,) = (t.sub_nodes for t in (x, y, z, w, v, u))
+        (suc,), (bad,), (f_,), (rev,) = (d.sub_nodes for d in (dlist, dlist_y, dlist_z, dlist_w))
         [_, quot_thm, check_rty, sentences, extra] = fenced_blocks(LD, "6.")
         messages = {node.name: [m.unicode for m in node._status.messages] for node in (suc, bad, f_, rev, int_swap)}
         assert messages == {"dl_suc": ["\n".join(quot_thm)], "dl_bad": ["\n".join(check_rty)], "dl_f": ["\n".join(extra)],
@@ -578,7 +584,8 @@ async def test_refused_definitions_and_a_refused_admission_are_obstacles(std_con
         for node in (suc, bad, f_, rev, open_, int_swap):
             assert isinstance(node._status, M.CannotEvaluate) and not await node.goal_state.is_initialized(), node.name
             assert node.with_code_dt is None                  # nothing recorded by a failure (COMMON §5)
-        assert isinstance(dlist._status, M.Ready) and isinstance(defined._status, M.Ready)
+        assert isinstance(dlist.evaluation_status_beginning, M.Ready) and isinstance(defined._status, M.Ready)
+        assert dlist.evaluation_status_ending is M.NOT_EVALUATED                 # the walk stopped at the child
         recalled = await session.call_tool("recall", {"node_id": "lift_definition_int_swap"})     # §8's `Error:` block shape
         assert not recalled.isError and text_of(recalled).splitlines() == [
             "- lift_definition_int_swap (invalid definition)", '  int_swap :: "int ⇒ int" is "λ(a, b). (b, a)"',

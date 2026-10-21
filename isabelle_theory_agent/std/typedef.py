@@ -1,10 +1,15 @@
 """`Typedef`, the node class of the plugin `Isabelle_Std` for `typedef`
 (node_classes/TYPEDEF.md): a subtype — a new type whose values stand for
 the elements of a non-empty subset of an existing type, with a function
-each way between the two — a `Proof_Obligation` (COMMON.md §3) whose one
-goal is the subset's non-emptiness; its evaluation records, once,
-whether Isabelle set lifting up for the type, which every later
-evaluation keeps to (COMMON.md §5)."""
+each way between the two — a block whose beginning is the command with
+`setup_lifting` after its proof, a `Beginning_Proof_Obligation` (COMMON.md
+§3) whose one goal is the subset's non-emptiness, whose children are the
+subtype's `lift_definition`s and the lemmas proved by `transfer`, and
+whose ending, `Lifting_Closing`'s (COMMON.md §6), closes the subtype's
+Lifting setup.  The beginning records, once, whether lifting was set up,
+which every later evaluation keeps to (COMMON.md §5); while it was not,
+the block refuses children and its ending runs nothing and writes
+nothing."""
 
 from __future__ import annotations
 
@@ -13,13 +18,13 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, Leaf, Placement, Theory, emit_lines, print_name
+from ..model import INDENT, RECALL, Placement, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
-    TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Proof_Obligation, Type_Parameter, TypeMixfix,
-    TypeMixfix_RawAST, TypeParameter_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of,
-    mixfix_wire, morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
-    type_parameters_wire, unverified)
+    LIFTING_CHILDREN_DESCRIPTION, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Beginning_Proof_Obligation, Lifting_Closing,
+    Type_Parameter, TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_type_parameters_used, function_names,
+    function_names_of, mixfix_of, mixfix_wire, morphisms_clause, normalised, require_id_name, text_line,
+    type_head_text, type_parameters_of, type_parameters_wire, unverified)
 
 KINDS = ("typedef",)
 LIFTING_NOTICE = "Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype."   # §6
@@ -39,7 +44,7 @@ class Typedef_RawAST(TypedDict):
 
 
 @TAT_node
-class Typedef(Proof_Obligation, Leaf):
+class Typedef(Beginning_Proof_Obligation, Lifting_Closing):
     construct_schema = {
         "type": "object",
         "description": "defines a subtype: a new type whose values stand for the elements of a non-empty subset of an"
@@ -61,6 +66,8 @@ class Typedef(Proof_Obligation, Leaf):
                                   "description": "the name of the function that sends a representation in the existing"
                                                  " type back to the value of the subtype it represents; Abs_ followed"
                                                  " by the type name when left out. Example: dlist_of_list"},
+            "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},
+                         "description": LIFTING_CHILDREN_DESCRIPTION},
         },
         "required": ["kind", "english", "type_name", "set"],
         "additionalProperties": False,
@@ -71,6 +78,8 @@ class Typedef(Proof_Obligation, Leaf):
     evaluation_callback = "TAT.Typedef.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed
+    output_omissible = input_omissible = True
+    drop_priority = 1                       # after `Section`'s, with `Session`'s, before `Theory`'s (§9)
 
     english: str
     type_parameters: tuple[Type_Parameter, ...]
@@ -151,6 +160,12 @@ class Typedef(Proof_Obligation, Leaf):
         _, self.lifting = what
         return () if self.lifting else (IsaTerm.from_agent(LIFTING_NOTICE),)
 
+    def is_lifting_setup_made(self):
+        """§6: false exactly when `lifting` is recorded false — the block
+        then refuses children and its ending runs nothing and writes
+        nothing (COMMON.md §6); true while none is recorded."""
+        return self.lifting is not False
+
     def owing_line(self):
         """§7: what the node owes, while its line reads `unverified
         definition`."""
@@ -185,10 +200,11 @@ class Typedef(Proof_Obligation, Leaf):
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
 
-    def emit(self, indent, out):
+    def emit_beginning(self, indent, out):
         """§5: the `text` line; the command, the `morphisms` line and the
         terminal proof under it; then `setup_lifting` when the recorded
-        `lifting` is true."""
+        `lifting` is true; one empty line when the block has children —
+        the framework writes the empty lines between siblings."""
         assert self.lifting is not None     # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
         keywords = self.enclosing(Theory).keywords or ()
@@ -200,4 +216,6 @@ class Typedef(Proof_Obligation, Leaf):
         if self.lifting:
             lines.append(f"setup_lifting {print_name(f'type_definition_{self.name}', keywords)}")
         emit_lines(indent, out, "\n".join(lines))
+        if self.sub_nodes:
+            out.write("\n")
         return indent

@@ -675,3 +675,46 @@ def test_proof_mark_reads_the_three_words_of_a_class_that_defines():
     assert Proof_Obligation.unverified_word is None and theorem.Theorem.unverified_word is None
     assert typedef.Typedef.unverified_word == "unverified definition"
     assert common.With_Proof_Obligations.owes_proof(p) and Proof_Obligation.owes_proof(p)      # the default: always
+
+
+# --- `Lifting_Closing`'s two sentences and its hook (§6)
+
+def test_lifting_closing_s_two_sentences_are_section_6_s_and_a_base_whose_setup_is_not_made_refuses_children():
+    """§6: the refusal sentence and the `children` description, the one home
+    of each, verbatim §6's two blocks, the description taken by both
+    classes' schemas; on the base `is_lifting_setup_made()` is true, so
+    `children_refusal()` is None and the ending's two hooks do their work
+    — `close` called, the two lines written —; a class on it answering
+    false refuses children with the sentence, its ending the copy and
+    nothing written, `StdBlock`'s defaults."""
+    [refusal, description] = fenced_blocks(COMMON, "6.")
+    assert [common.LIFTING_REFUSAL] == refusal and [common.LIFTING_CHILDREN_DESCRIPTION] == description
+    for schema in (typedef.Typedef.construct_schema, quotient_type.QuotientType.construct_schema):
+        assert schema is not None and schema["properties"]["children"]["description"] == common.LIFTING_CHILDREN_DESCRIPTION
+
+    class Unmade(quotient_type.QuotientType):           # a block on the base whose beginning made no setup
+        def is_lifting_setup_made(self):
+            return False
+    loaded = plugin.load(["isabelle_theory_agent.std"])
+    kinds = {**ts.KINDS, **{k: c for k, c in loaded.kinds.items() if c not in M.FRAMEWORK_NODE_CLASSES}, "unmade": Unmade}
+    f = Forest_Under_Test(kinds=kinds)
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
+        FSET, {**FSET, "kind": "unmade", "type_name": "gset", "children": []}]})])))
+    (x,) = s.sub_nodes
+    made, unmade = x.sub_nodes
+    assert made.is_lifting_setup_made() is True and made.children_refusal() is None
+    assert unmade.is_lifting_setup_made() is False and unmade.children_refusal() == common.LIFTING_REFUSAL
+    calls = []
+
+    async def call(conversation, name, args):
+        calls.append((name, args))
+        return [] if name == "TAT.Lifting_Closing.close" else [[], [None, None]]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(isabelle_driver, "call", call)
+        assert run(made._eval_ending_opr()) == M.READY_CLEAN and run(unmade._eval_ending_opr()) == M.READY_CLEAN
+    assert [args[2] for name, args in calls if name == "TAT.Lifting_Closing.close"] == ["fset"]
+    assert ("copy", unmade._state_before_ending.name, unmade.resulting_state().name) in tm.TABLE.calls
+    out = io.StringIO()
+    assert made.emit_ending(1, out) == 1 and out.getvalue() == "\n  lifting_update fset.lifting\n  lifting_forget fset.lifting\n"
+    out = io.StringIO()
+    assert unmade.emit_ending(1, out) == 1 and out.getvalue() == ""

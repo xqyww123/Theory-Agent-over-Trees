@@ -186,8 +186,9 @@ The class's construct schema:
                              "description": "the name of the function that sends a value of the quotient type to one of its representatives in the existing type; rep_ followed by the type name when left out. Example: list_of_fset" },
     "abs_function_name":   { "type": "string",
                              "description": "the name of the function that sends a value of the existing type to its equivalence class, a value of the quotient type; abs_ followed by the type name when left out. Example: fset_of_list" },
+    // COMMON.md §6's description
     "children":            { "type": "array", "items": { "$ref": "#/$defs/Construct" },
-                             "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }   // COMMON.md §6's description
+                             "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }
   },
   "required": ["kind", "english", "type_name", "representation_type", "equiv_relation"],
   "additionalProperties": false,

@@ -249,7 +249,7 @@ class Define(With_Proof_Obligations, Leaf):
         },
     }
     argument_schema = Define_RawAST
-    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
+    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     construction_job_class = Define_Proof_Job
     evaluation_job_class = Define_Proof_Check
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's words (§7) ...

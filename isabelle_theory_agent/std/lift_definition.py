@@ -61,7 +61,7 @@ class LiftDefinition(Proof_Obligation, Leaf):
         "$defs": {**MIXFIX_DEFS},
     }
     argument_schema = LiftDefinition_RawAST
-    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
+    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     evaluation_callback = "TAT.LiftDefinition.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed

@@ -626,10 +626,11 @@ class Node(ABC):
                       ) -> tuple[_T | CannotEvaluate, float | None]:
         """The node's first own operation, run where the node may stand
         (PLUGIN_SYSTEM §2): the hook's answer and how long it ran; at a
-        place the class does not admit, a `CannotEvaluate` carrying the
-        refusal, the hook never called."""
+        place the class does not admit, or under a parent that refuses
+        children (`children_refusal`, the placement checked first), a
+        `CannotEvaluate` carrying the refusal, the hook never called."""
         assert self.parent is not None
-        refusal = placement_refusal(type(self), self.kind, self.parent)
+        refusal = placement_refusal(type(self), self.kind, self.parent) or child_refusal(self)
         if refusal is not None:
             return CannotEvaluate((IsaTerm.from_agent(refusal),)), None
         return await _timed(hook())
@@ -901,10 +902,11 @@ class Node(ABC):
         the parentheses — then `print_fields` (never in the briefing), the
         messages, the owing line, the failure blocks, the children one level
         deeper — for a nesting node with none, where they would be shown,
-        the empty node's line — and under `Recall` the summary below an
-        `incomplete` nesting node at the last printed depth (PRINT.md §1,
-        §2).  The root's only child, reached from the root, writes its line
-        without the dash and its body at the same indent (§6)."""
+        the empty node's line, unless the node refuses children — and under
+        `Recall` the summary below an `incomplete` nesting node at the last
+        printed depth (PRINT.md §1, §2).  The root's only child, reached
+        from the root, writes its line without the dash and its body at the
+        same indent (§6)."""
         forest = self.forest()
         mark = self.mark(mode, depth)
         inside = [part for part in (mark, *self._tags(forest.agent)) if part]
@@ -919,7 +921,8 @@ class Node(ABC):
         self._print_failures(below, out, mode, depth)
         for child, child_mode in self._children_to_print(mode, depth):
             child.print(below, out, child_mode, depth + 1)
-        if isinstance(self, NonLeaf_Node) and not self.sub_nodes and _shows_children(mode, depth):
+        if (isinstance(self, NonLeaf_Node) and not self.sub_nodes and _shows_children(mode, depth)
+                and self.children_refusal() is None):
             out.write(INDENT * below + EMPTY_NODE.format(id=forest.id_of(self)) + "\n")
         if (mode is RECALL and depth == LAST_PRINTED_DEPTH and isinstance(self, NonLeaf_Node)
                 and self._default_mark() == "incomplete"):
@@ -1108,11 +1111,11 @@ class Node(ABC):
         a tree every node of which answered `can_emit`."""
 
     # --- Event hooks (MODULE_STRUCTURE §4.1), empty by default, driven by
-    # the framework; two more, on_removing_child and on_added_child, live on
-    # NonLeaf_Node.  The tense is the contract: a progressive hook is a gate
-    # — it fires before the commit, is free of side effects, and `BadEdit`
-    # is its only veto; a completed hook is for effect, and raising there is
-    # the class's bug (EXCEPTIONS.md §1).
+    # the framework; three more, on_removing_child, on_adding_child and
+    # on_added_child, live on NonLeaf_Node.  The tense is the contract: a
+    # progressive hook is a gate — it fires before the commit, is free of
+    # side effects, and `BadEdit` is its only veto; a completed hook is for
+    # effect, and raising there is the class's bug (EXCEPTIONS.md §1).
 
     def on_invalidated(self, operation: Any) -> None:
         """Completed: an operation's status truly left `ready`
@@ -1358,6 +1361,22 @@ class NonLeaf_Node(Node):
                                         "inheritance", "amend"]) -> None:
         """Gate: `child` is to leave this node's `sub_nodes`; `mode` says
         why the membership changes (MODULE_STRUCTURE §4.1)."""
+
+    def on_adding_child(self, child: Node,
+                        mode: Literal["insert_or_delete", "move",
+                                      "inheritance", "amend"]) -> None:
+        """Gate: `child` is to enter this node's `sub_nodes`, the framework
+        having asked `children_refusal()` first; fires before the commit
+        wherever `on_added_child` fires after it (MODULE_STRUCTURE §4.1)."""
+
+    def children_refusal(self) -> str | None:
+        """Why this node refuses children now — a sentence, which the
+        framework renders at an edit as `ChildRefused`, at a child's first
+        own operation as its `CannotEvaluate`, and under which it writes no
+        empty node's line — or None, the default (MODULE_STRUCTURE §4.1;
+        PLUGIN_SYSTEM §2).  The answer changes only with the node's
+        beginning, never with the child."""
+        return None
 
     def on_added_child(self, child: Node,
                        mode: Literal["insert_or_delete", "move",
@@ -2909,6 +2928,19 @@ def placement_refusal(cls: type[Node], kind: str, place: NonLeaf_Node) -> str | 
             return (f"A node of kind `{kind}` cannot stand inside `{forest.full_id(n)}`,"
                     f" a node of kind `{n.kind}`; " + placement_rule(*placement_kinds(placement, forest.kinds)))
     raise TAT_InternalError("a node outside every theory")
+
+
+def child_refusal(child: Node) -> str | None:
+    """Why `child` cannot run under its parent, a node that refuses children
+    now (`children_refusal`, MODULE_STRUCTURE §4.1), or None: the parent's
+    sentence after the framework's own (RENDER_BASELINES §3)."""
+    parent = child.parent
+    assert parent is not None
+    reason = parent.children_refusal()
+    if reason is None:
+        return None
+    return (f"A node of kind `{child.kind}` cannot stand inside `{parent.forest().full_id(parent)}`,"
+            f" a node of kind `{parent.kind}`. {reason}")
 
 
 FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]

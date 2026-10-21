@@ -18,9 +18,10 @@ from Isabelle_RPC_Host.unicode import IsaTerm
 from ..model import INDENT, RECALL, Placement, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
-    TYPE_MIXFIX_DEFS, Beginning_Proof_Obligation, Lifting_Closing, Type_Parameter, TypeMixfix,
-    TypeMixfix_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of, mixfix_wire,
-    morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_variables_of, unverified)
+    LIFTING_CHILDREN_DESCRIPTION, TYPE_MIXFIX_DEFS, Beginning_Proof_Obligation, Lifting_Closing, Type_Parameter,
+    TypeMixfix, TypeMixfix_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of,
+    mixfix_wire, morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_variables_of,
+    unverified)
 
 KINDS = ("quotient_type",)
 OWING_LINE = "The definition is unverified until the relation is proven an equivalence."                   # §7
@@ -72,10 +73,7 @@ class QuotientType(Beginning_Proof_Obligation, Lifting_Closing):
                                                  " its equivalence class, a value of the quotient type; abs_ followed"
                                                  " by the type name when left out. Example: fset_of_list"},
             "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},
-                         "description": "lift_definitions and lemmas whose proofs transfer the defined type to its"
-                                        " representation type. Outside this block the defined type is opaque — its"
-                                        " representation is closed to lift_definition and the transfer tactic — unless"
-                                        " a lifting_context opens it again"},
+                         "description": LIFTING_CHILDREN_DESCRIPTION},
         },
         "required": ["kind", "english", "type_name", "representation_type", "equiv_relation"],
         "additionalProperties": False,

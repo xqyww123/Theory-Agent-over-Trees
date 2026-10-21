@@ -734,7 +734,8 @@ class Proof_Obligation(With_Proof_Obligations):
 
 class Beginning_Proof_Obligation(Proof_Obligation):
     """`Proof_Obligation` whose goal opens on a `StdBlock`'s beginning (§3):
-    `class QuotientType(Beginning_Proof_Obligation, Lifting_Closing)`.  The
+    `class QuotientType(Beginning_Proof_Obligation, Lifting_Closing)`,
+    `class Typedef(Beginning_Proof_Obligation, Lifting_Closing)`.  The
     jobs depend on the beginning alone, so the children and the class's
     own ending leave the proof standing."""
 
@@ -756,22 +757,44 @@ def lifting_closing_text(name: str) -> str:
     return f"lifting_update {name}.lifting\nlifting_forget {name}.lifting"
 
 
+# §6's two sentences, the one home of each: what a block on the base says while it refuses children, and the
+# description its `children` field carries
+LIFTING_REFUSAL = ("For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or"
+                   " lift_definitions on this type.")
+LIFTING_CHILDREN_DESCRIPTION = ("lift_definitions and lemmas whose proofs transfer the defined type to its representation"
+                                " type. Outside this block the defined type is opaque — its representation is closed to"
+                                " lift_definition and the transfer tactic — unless a lifting_context opens it again")
+
+
 class Lifting_Closing(StdBlock):
     """The plugin's `StdBlock` whose ending closes the Lifting setup its
     beginning made (§6): `lifting_update t.lifting` then `lifting_forget
     t.lifting`, `t` the node's `name`.  It defines the ending's two hooks
-    together (PLUGIN_SYSTEM §5); a class on it writes neither.  A class
-    takes it as its framework base, after the class that sets its
-    `job_operation`: `class QuotientType(Beginning_Proof_Obligation,
-    Lifting_Closing)`; listed before that class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
-    the class cannot be instantiated."""
+    together (PLUGIN_SYSTEM §5); a class on it writes neither.  While
+    `is_lifting_setup_made()` answers false the block refuses children and
+    its ending runs nothing and writes nothing.  A class takes it as its
+    framework base, after the class that sets its `job_operation`: `class
+    QuotientType(Beginning_Proof_Obligation, Lifting_Closing)`; listed
+    before that class, it puts `StdBlock`'s abstract `_eval_beginning_opr`
+    first, and the class cannot be instantiated."""
+
+    def is_lifting_setup_made(self) -> bool:
+        """§6: whether the beginning made the setup — true on the base;
+        `Typedef` answers false exactly when its recorded `lifting` is
+        false."""
+        return True
+
+    def children_refusal(self):
+        return None if self.is_lifting_setup_made() else LIFTING_REFUSAL
 
     @final
     async def _eval_ending_opr(self):
         """`TAT.Lifting_Closing.close` with the ending's two slots and the
         type's name, the two transitions as one operation into the
         resulting slot (§6): its messages make the ending an obstacle,
-        none is `Ready`."""
+        none is `Ready`; with no setup made, `StdBlock`'s copy."""
+        if not self.is_lifting_setup_made():
+            return await super()._eval_ending_opr()
         input_slot, resulting_slot = self.operation_slots("ending")
         messages = await isabelle_driver.call(
             self.forest().conversation, "TAT.Lifting_Closing.close",
@@ -781,7 +804,10 @@ class Lifting_Closing(StdBlock):
     @final
     def emit_ending(self, indent, out):
         """§6: one empty line, then the two commands by `lifting_closing_text`,
-        each on its own line at the block's indent."""
+        each on its own line at the block's indent; with no setup made,
+        nothing."""
+        if not self.is_lifting_setup_made():
+            return super().emit_ending(indent, out)
         out.write("\n")
         emit_lines(indent, out, lifting_closing_text(self.name))
         return indent

@@ -5,8 +5,8 @@ reviews and the owner's rulings (ai-artifacts/review/TYPEDEF_REVIEW.md);
 committed 2026-10-14; implemented 2026-10-15; the block shape — the
 children, the ending that closes the subtype's Lifting setup, and the
 block that refuses children when lifting could not be set up — settled
-with the owner on 2026-10-20 (ai-artifacts/review/typedef_block/), to be
-implemented as plan step 20.
+with the owner on 2026-10-20 (ai-artifacts/review/typedef_block/),
+implemented 2026-10-21.
 
 A `Typedef` defines a subtype: a new type whose values stand for the
 elements of a non-empty subset of an existing type, with a function each
@@ -158,8 +158,9 @@ The class's construct schema:
                            "description": "the name of the function that sends a value of the subtype to its representation in the existing type; Rep_ followed by the type name when left out. Example: list_of_dlist" },
     "abs_function_name": { "type": "string",
                            "description": "the name of the function that sends a representation in the existing type back to the value of the subtype it represents; Abs_ followed by the type name when left out. Example: dlist_of_list" },
+    // COMMON.md §6's description
     "children":          { "type": "array", "items": { "$ref": "#/$defs/Construct" },
-                           "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }   // COMMON.md §6's description
+                           "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }
   },
   "required": ["kind", "english", "type_name", "set"],
   "additionalProperties": false,

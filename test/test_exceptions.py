@@ -8,7 +8,7 @@ cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadAnswer, BadEdit, BadPlacement, BadSessionNodeParent, BadTheoryNodeParent,
+    AmbiguousId, BadAnswer, BadEdit, BadPlacement, BadSessionNodeParent, BadTheoryNodeParent, ChildRefused,
     ChildrenNotInheritable, ConstructionError,
     ConstructNotSupported, ConstructOwnedByAnother, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
@@ -234,6 +234,15 @@ def test_bad_placement():
           "A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind"
           " `theory`, directly.")
 
+def test_child_refused():
+    """The parent's sentence after a period."""
+    check(ChildRefused(kind="lift_definition", parent_id="session_S.theory_T.typedef_fm",
+                       reason="For technical reasons, this subtype does not support lifting; you cannot use the transfer"
+                              " tactic or lift_definitions on this type."),
+          "A node of kind `lift_definition` cannot be placed under `session_S.theory_T.typedef_fm`. For technical"
+          " reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on"
+          " this type.")
+
 
 def test_move_into_own_subtree():
     check(MoveIntoOwnSubtree(id="theory_X.section_Basics",
@@ -345,6 +354,7 @@ def test_groups():
     assert issubclass(BadSessionNodeParent, BadEdit)
     assert issubclass(BadTheoryNodeParent, BadEdit)
     assert issubclass(BadPlacement, BadEdit)
+    assert issubclass(ChildRefused, BadEdit)
     for cls in (ConstructNotSupported, ConstructOwnedByAnother, NoQuestionPending):
         assert issubclass(cls, ConstructionError)
     for group in (ResolutionError, RawASTError, BadEdit, ConstructionError):

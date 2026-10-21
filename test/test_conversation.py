@@ -24,11 +24,12 @@ from isabelle_theory_agent.isabelle_driver import call
 from isabelle_theory_agent.model import EMPTY_NODE, NOT_EVALUATED, Isar_State_Slot
 from test_model import CANNOT_EVALUATE, READY
 
-# RENDER_BASELINES §3's five fenced lines, in order: the order constraint's
+# RENDER_BASELINES §3's six fenced lines, in order: the order constraint's
 # two (test_forest_walk.py), the loader's refusal — asserted verbatim for
-# `TAT_Nowhere.Nope` and derived for every other name — and the placement
-# pair (test_placement.py).  A sixth line, or a missing one, fails here.
-_, _, NOT_FOUND, _, _ = fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")
+# `TAT_Nowhere.Nope` and derived for every other name —, the placement
+# pair (test_placement.py) and the child refused by its parent
+# (test_child_refusal.py).  A seventh line, or a missing one, fails here.
+_, _, NOT_FOUND, _, _, _ = fenced_lines(DOCS / "RENDER_BASELINES.md", "3.")
 assert NOT_FOUND.count("`TAT_Nowhere.Nope`") == 1, NOT_FOUND
 
 

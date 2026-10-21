@@ -472,6 +472,23 @@ class BadPlacement(BadEdit):
                 + placement_rule(self.within, self.through))
 
 
+class ChildRefused(BadEdit):
+    """A node placed under a nesting node that refuses children now, its
+    `children_refusal()` answering `reason` (EXCEPTIONS.md §3;
+    MODULE_STRUCTURE §4.1): raised by the framework at an insert, an amend
+    and a move, just before the parent's `on_adding_child`.  The refusal
+    at evaluation carries `reason` too (RENDER_BASELINES §3)."""
+
+    def __init__(self, kind: str, parent_id: str, reason: str):
+        super().__init__()
+        self.kind = kind
+        self.parent_id = parent_id
+        self.reason = reason
+
+    def _cause(self) -> str:
+        return f"A node of kind `{self.kind}` cannot be placed under `{self.parent_id}`. {self.reason}"
+
+
 class MoveIntoOwnSubtree(BadEdit):
     def __init__(self, id: str, destination: str):
         super().__init__()

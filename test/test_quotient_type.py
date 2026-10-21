@@ -76,7 +76,7 @@ def test_the_schema_and_the_descriptions_are_the_documents():
     assert QuotientType.construct_schema == expected
     assert list(quotient_type.KINDS) == ["quotient_type"]
     assert sorted(descriptions(QuotientType.construct_schema)) == sorted(
-        fenced_lines(QT, "3.") + descriptions(common.TYPE_MIXFIX_DEFS))
+        fenced_lines(QT, "3.") + descriptions(common.TYPE_MIXFIX_DEFS) + [common.LIFTING_CHILDREN_DESCRIPTION])   # §3; COMMON §6's
     assert FSET == definition(rep_function_name="list_of_fset", abs_function_name="fset_of_list", children=[FEMPTY, FMEMBER])
     assert INT == definition("int", "nat × nat", "λ(a, b) (c, d). a + d = c + b",
                              "The integers, as pairs of naturals up to a common summand", type_parameters=None)

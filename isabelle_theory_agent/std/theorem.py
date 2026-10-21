@@ -98,7 +98,7 @@ class Theorem(Proof_Obligation, Leaf):
         "$defs": STATEMENT_DEFS,
     }
     argument_schema = Theorem_RawAST
-    placement = Placement(within="Theory", through=("QuotientType", "LiftingContext"))
+    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     evaluation_callback = "TAT.Theorem.evaluate"
     valid_word, invalid_word = "valid statement", "invalid statement"       # the mark's first slot (§7)
 
