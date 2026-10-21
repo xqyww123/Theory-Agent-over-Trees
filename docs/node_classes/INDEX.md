@@ -40,7 +40,7 @@ COMMON.md.
 | `Sublocale` | `sublocale` | `Leaf` | the locale's assumptions | not yet |
 | `Datatype` | `datatype`, `codatatype` | `Leaf` | none | DATATYPE.md |
 | `Record` | `record` | `Leaf` | none | RECORD.md |
-| `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two | `Leaf` | the set is non-empty | TYPEDEF.md |
+| `Typedef` | `typedef`, which carves a new type out of a non-empty subset of an existing type, `Rep` and `Abs` mapping between the two, with `setup_lifting` after its proof | `StdBlock`, beginning and ending | the set is non-empty, on the beginning | TYPEDEF.md |
 | `QuotientType` | `quotient_type` | `StdBlock`, beginning and ending | the relation is an equivalence, a partial equivalence under `partial`, on the beginning | QUOTIENT_TYPE.md |
 | `LiftDefinition` | `lift_definition` | `Leaf` | the term respects the representation | LIFT_DEFINITION.md |
 | `Define` | `definition`, `fun`, `function` with `termination`, the `form` recorded at evaluation | `Leaf` | pattern completeness and termination, under `function` | DEFINE.md |
@@ -57,8 +57,8 @@ Commands no row covers whose fate is settled when the named class is
 designed: `text_raw` with `Text`; `termination`, which `Define` emits
 (ARCHITECTURE §2.2); `setup_lifting`, which `Typedef` emits
 (TYPEDEF.md §5); and `lifting_update` and `lifting_forget`, which
-`QuotientType`'s ending emits (QUOTIENT_TYPE.md §5) and
-`LiftingContext`'s (LIFTING_CONTEXT.md §5).
+`Typedef`'s and `QuotientType`'s endings emit (TYPEDEF.md §5,
+QUOTIENT_TYPE.md §5) and `LiftingContext`'s (LIFTING_CONTEXT.md §5).
 
 ## 3. Not in the plugin
 

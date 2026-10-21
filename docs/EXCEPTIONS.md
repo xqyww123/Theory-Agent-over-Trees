@@ -257,6 +257,16 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          and the sentence's second half is also the
 │  │                          refusal's at evaluation
 │  │                          (RENDER_BASELINES §2, §3)           [framework]
+│  ├─ ChildRefused            kind, parent_id, reason — a node placed
+│  │                          under a nesting node that refuses children
+│  │                          now, its `children_refusal()` answering
+│  │                          `reason` (MODULE_STRUCTURE §4.1), at an
+│  │                          insert, an amend and a move, raised by the
+│  │                          framework just before the parent's
+│  │                          `on_adding_child`; `reason` is a sentence
+│  │                          of the parent's class, and the refusal at
+│  │                          evaluation carries it too
+│  │                          (RENDER_BASELINES §2, §3)           [framework]
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
 │  ├─ MoveBesideItself        id — the move is `before` or `after` the

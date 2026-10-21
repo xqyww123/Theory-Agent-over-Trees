@@ -161,7 +161,9 @@ briefing, which writes nothing under a line but the empty forest's hint
 The fifth: a nesting node with no children, in a mode that shows its
 children — `Briefing`, `Relative_Focus`, `Recall` while `depth < 3` —
 writes where its children would go the **empty node's line**, its id the
-one its own line prints:
+one its own line prints — unless the node refuses children,
+`children_refusal()` answering a sentence (MODULE_STRUCTURE §4.1), when
+nothing is written there:
 
 ```
 - theory_X (not evaluated)

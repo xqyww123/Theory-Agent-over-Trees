@@ -221,6 +221,16 @@ A node of kind `note` cannot be placed under `session_Arith`; it stands inside a
 A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind `theory`, directly.
 ```
 
+`ChildRefused`, a node placed under a nesting node that refuses children
+now (MODULE_STRUCTURE §4.1), composed by the framework from the parent's
+full id and the sentence the parent's class answers, a sentence of its
+own after a period — here `Lifting_Closing`'s, for a subtype whose
+lifting could not be set up (node_classes/COMMON.md §6):
+
+```
+A node of kind `lift_definition` cannot be placed under `session_S.theory_T.typedef_fm`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
+```
+
 `MoveIntoOwnSubtree`:
 
 ```
@@ -302,6 +312,16 @@ its kind. The two classes of §2's example:
 ```
 A node of kind `note` cannot stand inside `session_Arith.theory_X.section_S.block_B`, a node of kind `block`; it stands inside a node of kind `theory`, directly or under nodes of kind `section` or `subsection`.
 A node of kind `top` cannot stand inside `session_Arith.theory_X.section_S`, a node of kind `section`; it stands inside a node of kind `theory`, directly.
+```
+
+A node under a nesting node that refuses children now
+(MODULE_STRUCTURE §4.1): its first own operation's `CannotEvaluate`,
+the hook never run, composed by the framework as `ChildRefused`'s
+sentence is, in the form of the placement refusal above — the parent's
+full id and its kind, then the parent's sentence:
+
+```
+A node of kind `lift_definition` cannot stand inside `session_S.theory_T.typedef_fm`, a node of kind `typedef`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
 ```
 
 ## 4. Server text

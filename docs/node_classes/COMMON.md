@@ -17,8 +17,8 @@ its `text` line (§2), the base of the classes whose command opens a
 proof obligation (§3), the `$defs` several classes merge and the
 configuration option `typedef_overloaded`, which `TAT_Std.TAT_Std` sets
 for every theory of a forest (§4), the conventions their schemas and
-sentences follow (§5), and the ending of a block that closes a type's
-Lifting setup (§6). Its Python half is
+sentences follow (§5), and the block whose ending closes a type's
+Lifting setup, with its hook and its two sentences (§6). Its Python half is
 `isabelle_theory_agent/std/common.py`, its ML halves
 `Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` (§4),
 and `TAT_Lifting_Closing.ML` (§6). What a class makes of it is that
@@ -33,7 +33,7 @@ framework checks (PLUGIN_SYSTEM §2); a class reads its theory as
 
 | class | may stand under, inside its theory |
 | --- | --- |
-| `Theorem`, `Define`, `LiftDefinition`, `LiftingContext` | `QuotientType`, `LiftingContext` |
+| `Theorem`, `Define`, `LiftDefinition`, `LiftingContext` | `Typedef`, `QuotientType`, `LiftingContext` |
 | `Datatype`, `Typedef`, `Record`, `QuotientType` | nothing: directly in the theory |
 
 A test of the plugin holds every class's declaration to this table.
@@ -92,10 +92,10 @@ standing decides for every such class: the mark's three words and `mark`
 `_carries_job_from` (the amend, below) and the hook `owes_proof()` —
 true by default, `Define`'s whether an obligation is open —; it derives
 from `Node`, so that its abstract methods, `goal_structure()` and
-`message()`, are enforced. `Theorem`, `Typedef` and `LiftDefinition`
-derive from `Proof_Obligation` (THEOREM.md, TYPEDEF.md,
-LIFT_DEFINITION.md) and `QuotientType` from `Beginning_Proof_Obligation`
-(INDEX.md); `Interpretation` and `Sublocale` are expected to derive from
+`message()`, are enforced. `Theorem` and `LiftDefinition` derive from
+`Proof_Obligation` (THEOREM.md, LIFT_DEFINITION.md), `Typedef` and
+`QuotientType` from `Beginning_Proof_Obligation` (TYPEDEF.md,
+QUOTIENT_TYPE.md); `Interpretation` and `Sublocale` are expected to derive from
 it, each confirming it in its own document; `Instantiation`, whose goal
 opens on a `StdBlock`'s ending, decides in its own document how it
 discharges its own, and extends `Proof_Obligation` then, if it uses it,
@@ -727,9 +727,10 @@ The field `type_parameters[1]` declares `'b`, which is not used.
 - A class's own sentences — its descriptions, its `gen`'s refusals,
   the words of its mark — are in its own document, pinned by the
   baseline tests. Every shared sentence — a shared `$defs`
-  description, a shared refusal sentence — has one home, §4, and one
-  test pin there; a class document lists its own sentences alone and
-  names that home for the rest.
+  description, a shared refusal sentence — has one home, §4, or §6 for
+  the two sentences of a `Lifting_Closing` block, and one test pin
+  there; a class document lists its own sentences alone and names that
+  home for the rest.
   A framework exception's whole rendering is RENDER_BASELINES §2's own.
 - A choice the evaluation makes between commands, or between a
   command's options — `Define`'s `definition`, `function (sequential,
@@ -757,15 +758,14 @@ The field `type_parameters[1]` declares `'b`, which is not used.
 
 `Lifting_Closing` is the plugin's `StdBlock` whose ending closes the
 Lifting setup its beginning made: the base of a block whose beginning,
-whenever it is `Ready`, has defined a type and made its Lifting setup,
-the bundle `t.lifting` with it — `QuotientType` (QUOTIENT_TYPE.md).
-`Typedef` takes it when it takes the block shape; what the ending does
-for a `Typedef` whose `setup_lifting` Isabelle refused, `lifting` false
-and no bundle made (TYPEDEF.md §6), is decided with that conversion.
-`t` is the node's `name`, the type's name. The ending is the two
-commands `lifting_update t.lifting` and `lifting_forget t.lifting`,
-Isabelle's own discipline for a type whose construction is finished
-(HOL's `Multiset.thy` and `FSet.thy` end so): `lifting_update` stores
+whenever it is `Ready`, has defined a type and, as a rule, made its
+Lifting setup, the bundle `t.lifting` with it — `QuotientType`, always
+(QUOTIENT_TYPE.md); `Typedef`, when `setup_lifting` was accepted
+(TYPEDEF.md §6). `t` is the node's `name`, the type's name. The ending
+is the two commands `lifting_update t.lifting` and `lifting_forget
+t.lifting`, Isabelle's own discipline for a type whose construction is
+finished (HOL's `Multiset.thy`, `FSet.thy` and `Dlist.thy` do so):
+`lifting_update` stores
 into the type's lifting bundle every transfer rule of the context whose
 relation mentions the type's, the setup's own and those `lift_definition`
 declared inside the block, so that `context includes t.lifting`, which
@@ -779,15 +779,46 @@ Lifting_Closing)`; listed before that
 class, it puts `StdBlock`'s abstract `_eval_beginning_opr` first, and
 the class cannot be instantiated.
 
-It defines the ending's two hooks together, as PLUGIN_SYSTEM §5
-requires: `_eval_ending_opr` and `emit_ending`; a class on it writes
-neither. The two commands' transitions and their two lines are one
+Whether the beginning made the setup is the base's hook
+`is_lifting_setup_made()`: true, the base's own answer; `Typedef`
+answers false exactly when its recorded `lifting` is false (TYPEDEF.md
+§6). While `is_lifting_setup_made()` answers false the block refuses
+children, and its ending runs nothing and writes nothing (the
+evaluation and the emission, below). It refuses them through the
+framework's `children_refusal()` (MODULE_STRUCTURE §4.1), which the
+base answers with the sentence below while `is_lifting_setup_made()`
+answers false, and with `None` otherwise: the framework refuses a node
+placed inside the block at the edit, as `ChildRefused`, refuses a child
+the block holds already at that child's first own operation, as its
+`CannotEvaluate`, and
+prints no empty node's line under the block (PLUGIN_SYSTEM §2;
+RENDER_BASELINES §2, §3; PRINT.md §2). The sentence, a constant of
+common.py pinned by the plugin's test (§5):
+
+```
+For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
+```
+
+The `children` field of a block on the base carries one description,
+a constant of common.py which both classes' schemas
+take and the plugin's test pins once (§5):
+
+```
+lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again
+```
+
+`Lifting_Closing` defines the ending's two hooks together, as
+PLUGIN_SYSTEM §5 requires: `_eval_ending_opr` and `emit_ending`; a
+class on it writes neither. The two commands' transitions and their two lines are one
 function each of its two halves, which `LiftingContext`'s ending — `end`,
 then the two commands for each type it opened — runs and writes too
 (LIFTING_CONTEXT.md §5, §6).
 
-**The evaluation.** `_eval_ending_opr` calls the callback
-`TAT.Lifting_Closing.close` with the ending's two slots —
+**The evaluation.** While `is_lifting_setup_made()` answers false,
+`_eval_ending_opr` runs nothing: the slot after the last child is copied
+into the block's resulting slot and the ending is `Ready` with no
+messages, `StdBlock`'s default (MODULE_STRUCTURE §4.1). Otherwise it
+calls the callback `TAT.Lifting_Closing.close` with the ending's two slots —
 `operation_slots("ending")`, the slot after the last child and the
 block's resulting slot (MODULE_STRUCTURE §4.1) — and the type's name.
 The callback runs, as one operation into the resulting slot
@@ -809,7 +840,9 @@ ending's input through — in practice a proper interrupt's `Interrupt`
 made. Inside a `Context` or `Locale` the two commands name the bundle as
 the hand-written text does, `t.lifting`.
 
-**The emission.** `emit_ending` writes one empty line, then
+**The emission.** While `is_lifting_setup_made()` answers false,
+`emit_ending` writes nothing and returns the block's indent, `StdBlock`'s
+default. Otherwise it writes one empty line, then
 `lifting_update t.lifting` and `lifting_forget t.lifting`, each on its
 own line at the block's indent, the bundle's name bare: `t`, in the id
 grammar, is an identifier, so `t.lifting` is a long identifier, which

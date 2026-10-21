@@ -21,7 +21,7 @@ whose proofs transfer the type to its representation type are its
 children; its ending closes the type's Lifting setup, `lifting_update
 fset.lifting` then `lifting_forget fset.lifting`, Isabelle's own
 discipline for a type whose construction is finished (HOL's
-`Multiset.thy` and `FSet.thy` end so). It is a `StdBlock` of the plugin
+`Multiset.thy` and `FSet.thy` do so). It is a `StdBlock` of the plugin
 `Isabelle_Std` deriving from the plugin's `Beginning_Proof_Obligation`
 and `Lifting_Closing`, the plugin's `StdBlock` whose ending closes the
 Lifting setup (COMMON.md §3, §6) — `class
@@ -34,7 +34,8 @@ leaves the proof standing. Its Python half is
 `Lifting_Closing`'s (COMMON.md §6). Its agent-facing wording lives here
 — the `description` texts of its construct schema (§3), the sentences
 its `gen` renders, the words on its line and its owing line (§7) —
-pinned by the baseline tests the way TYPEDEF.md's are.
+pinned by the baseline tests the way TYPEDEF.md's are; the `children`
+description is `Lifting_Closing`'s (COMMON.md §6).
 
 One kind, `quotient_type`, which heads the id component:
 `quotient_type_fset`; a child's id carries it, `quotient_type_fset.lift_definition_fmember`
@@ -186,7 +187,7 @@ The class's construct schema:
     "abs_function_name":   { "type": "string",
                              "description": "the name of the function that sends a value of the existing type to its equivalence class, a value of the quotient type; abs_ followed by the type name when left out. Example: fset_of_list" },
     "children":            { "type": "array", "items": { "$ref": "#/$defs/Construct" },
-                             "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }
+                             "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }   // COMMON.md §6's description
   },
   "required": ["kind", "english", "type_name", "representation_type", "equiv_relation"],
   "additionalProperties": false,
@@ -247,13 +248,8 @@ the name of the function that sends a value of the quotient type to one of its r
 the name of the function that sends a value of the existing type to its equivalence class, a value of the quotient type; abs_ followed by the type name when left out. Example: fset_of_list
 ```
 
-`children`:
-
-```
-lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again
-```
-
-The descriptions of `TypeMixfix` and of its arms' fields are COMMON.md
+`children`'s description is COMMON.md §6's, pinned there alone; the
+descriptions of `TypeMixfix` and of its arms' fields are COMMON.md
 §4's, pinned there alone.
 
 ## 4. `gen`

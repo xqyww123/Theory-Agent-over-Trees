@@ -12,8 +12,9 @@ A `LiftingContext` opens the Lifting setup of one or more types again,
 inside its block alone: `context includes fset.lifting begin … end`.
 The Lifting setup of a quotient type or a subtype — made by
 `quotient_type` or `setup_lifting` — is what `lift_definition` and the
-`transfer` method work through; a `QuotientType`'s block closes its
-type's at its end (QUOTIENT_TYPE.md §6; COMMON.md §6), and Isabelle's
+`transfer` method work through; a `QuotientType`'s or a `Typedef`'s
+block closes its type's at its end (QUOTIENT_TYPE.md §6, TYPEDEF.md §6;
+COMMON.md §6), and Isabelle's
 library closes a type's once its construction is finished, as `Int.thy`
 closes `int`'s. Inside the block a `LiftDefinition` on an opened type
 defines its function and a `Theorem` about the type is proved by
@@ -119,15 +120,13 @@ is `str`.
 
 Where the block stands is COMMON.md §1's; the framework checks it
 (PLUGIN_SYSTEM §2). A type whose setup is open
-where the block stands already — the type a `QuotientType` block
-defines, inside that block; the type a `Typedef` whose recorded
-`lifting` is true defines — a `Leaf` that closes nothing (TYPEDEF.md
-§5) — anywhere after it, until the `Typedef` takes the block shape
-(COMMON.md §6) — the block leaves as it is, silently: it neither opens
-nor closes it (§6). A type with no Lifting setup to open — a
-`datatype`, a name no setup bears, a type whose `quotient_type` stands
-later — is refused at evaluation (§6). `gen` checks neither: each needs
-the context where the block stands.
+where the block stands already — the type a `QuotientType` or a
+`Typedef` block defines, inside that block — the block leaves as it is,
+silently: it neither opens nor closes it (§6). A type with no Lifting
+setup to open — a `datatype`, a name no setup bears, a subtype whose
+lifting could not be set up (TYPEDEF.md §6), a type whose
+`quotient_type` stands later — is refused at evaluation (§6). `gen`
+checks neither: each needs the context where the block stands.
 
 What stands inside the block: a node whose class's `placement` names
 `LiftingContext` in its `through` (PLUGIN_SYSTEM §2; this plugin's,

@@ -2,23 +2,43 @@
 
 Status: proposed 2026-10-13; revised 2026-10-14 after two adversarial
 reviews and the owner's rulings (ai-artifacts/review/TYPEDEF_REVIEW.md);
-committed 2026-10-14; implemented 2026-10-15.
+committed 2026-10-14; implemented 2026-10-15; the block shape — the
+children, the ending that closes the subtype's Lifting setup, and the
+block that refuses children when lifting could not be set up — settled
+with the owner on 2026-10-20 (ai-artifacts/review/typedef_block/), to be
+implemented as plan step 20.
 
 A `Typedef` defines a subtype: a new type whose values stand for the
 elements of a non-empty subset of an existing type, with a function each
-way between the two. Its one command opens one proof obligation
-(INDEX.md), that the subset is non-empty, which it discharges the way
-`Theorem` does: it is a `Leaf` of the plugin `Isabelle_Std` deriving
-from the plugin's `Proof_Obligation` (COMMON.md §3) — `class
-Typedef(Proof_Obligation, Leaf)` — whose job
-classes `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s. Its
-Python half is `isabelle_theory_agent/std/typedef.py`, its ML half
-`Isabelle_Std/ML/TAT_Typedef.ML`. Its agent-facing wording lives here —
-the `description` texts of its construct schema (§3), the sentences its
-`gen` renders, the notice of §6, the words on its line and its owing
-line (§7) — pinned by the baseline tests the way DATATYPE.md's are.
+way between the two. Its command opens one proof obligation (INDEX.md),
+that the subset is non-empty, which it discharges the way `Theorem`
+does. It is a block: the command, with `setup_lifting` after its proof,
+is its beginning; the `lift_definition`s on the subtype and the lemmas
+whose proofs transfer it to the existing type are its children; its
+ending closes the subtype's Lifting setup, `lifting_update
+dlist.lifting` then `lifting_forget dlist.lifting`, Isabelle's own
+discipline for a type whose construction is finished (HOL's `Dlist.thy`
+and `Float.thy` do so). When lifting could not be set up for the
+subtype (§6), the block refuses children, and its ending runs nothing
+and writes nothing. It is a `StdBlock` of the plugin
+`Isabelle_Std` deriving from the plugin's `Beginning_Proof_Obligation`
+and `Lifting_Closing`, the plugin's `StdBlock` whose ending closes the
+Lifting setup (COMMON.md §3, §6) — `class
+Typedef(Beginning_Proof_Obligation, Lifting_Closing)` — whose job
+classes `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s and
+depend on the beginning alone (CONSTRUCT_INTERACTION §3.1): a child
+inserted, amended or deleted leaves the proof standing. Its Python half
+is `isabelle_theory_agent/std/typedef.py`, its ML half
+`Isabelle_Std/ML/TAT_Typedef.ML`; the ending's two halves are
+`Lifting_Closing`'s (COMMON.md §6). Its agent-facing wording lives here
+— the `description` texts of its construct schema (§3), the sentences
+its `gen` renders, the notice of §6, the words on its line and its owing
+line (§7) — pinned by the baseline tests the way DATATYPE.md's are; the
+`children` description and the refusal sentence are `Lifting_Closing`'s
+(COMMON.md §6).
 
-One kind, `typedef`, which heads the id component: `typedef_dlist`.
+One kind, `typedef`, which heads the id component: `typedef_dlist`; a
+child's id carries it, `typedef_dlist.lift_definition_dl_rev` (§9).
 
 ## 1. Fields
 
@@ -32,28 +52,35 @@ One kind, `typedef`, which heads the id component: `typedef_dlist`.
 | `set` | the subset, `IsaTerm` | authored |
 | `rep_function_name` | `IsaTerm`, optional; `Rep_` before `type_name` when left out | authored |
 | `abs_function_name` | `IsaTerm`, optional; `Abs_` before `type_name` when left out | authored |
-| `lifting` | `bool`, or none until an evaluation has recorded one: whether `setup_lifting` follows the command — Isabelle set lifting up for the subtype —, decided by the first evaluation that goes through and kept to by every later one (§6; COMMON.md §5); stored, since `setup_lifting` is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `set` is — the class is born with the row, None-valued | recorded |
+| `lifting` | `bool`, or none until an evaluation has recorded one: whether `setup_lifting` follows the command — lifting set up for the subtype —, decided by the first evaluation that goes through and kept to by every later one (§6; COMMON.md §5); stored, since `setup_lifting` is written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `set` is — the class is born with the row, None-valued | recorded |
+| `children` | the nodes inside the block, the framework's row (PLUGIN_SYSTEM §3; ARCHITECTURE §4.1) | — |
 
 `syntax`, `rep_function_name` and `abs_function_name` left out are
 stored as a None-valued row, so that every row of the class is read with
 `rows.get` and any row missing is refused at start.
 
-What the last evaluation reported travels on the status the evaluation
-hook returns, as for every class (COMPILATION.md §4): `CannotEvaluate
-(messages)` when the definition failed, `Ready` when it went through —
-with no messages, or with the one notice of §6 when lifting could not be
-set up. The two jobs' outcomes and the construction job's
-automatic-construction setting are recorded by the framework
-(CONSTRUCT_INTERACTION §3.2); `proof`, its product, the proof check's
-outcome, the slot `goal_state` and the compulsory construction job are
-`Proof_Obligation`'s (COMMON.md §3).
+The node has two operations, the beginning and the ending
+(MODULE_STRUCTURE §4.1). What the beginning's last evaluation reported
+travels on its status, as for every class (COMPILATION.md §4):
+`CannotEvaluate (messages)` when the definition failed, `Ready` when it
+went through — with no messages, or with the one notice of §6 when
+lifting could not be set up; the ending's likewise, `Ready` with no
+messages or `CannotEvaluate (messages)` (§6). The two jobs' outcomes and
+the construction job's automatic-construction setting are recorded by
+the framework (CONSTRUCT_INTERACTION §3.2); `proof`, its product, the
+proof check's outcome, the slot `goal_state` and the compulsory
+construction job are `Proof_Obligation`'s (COMMON.md §3), bound to the
+beginning (CONSTRUCT_INTERACTION §3.1). Its constructor takes the
+parent, the input slot and its fields; `StdBlock` builds it with no
+children and mints its slot before the ending (MODULE_STRUCTURE §4.1).
 
 ## 2. The definition
 
 A subtype is a name, its type parameters, the subset of the existing
 type its values stand for, and the names of the two functions between
 the two types — `Rep`, from the subtype to the existing type, and
-`Abs`, back — with an optional syntax, a mixfix annotation on the type:
+`Abs`, back — with an optional syntax, a mixfix annotation on the type;
+and its children, the `lift_definition`s and lemmas inside the block:
 
 ```json
 {
@@ -63,7 +90,13 @@ the two types — `Rep`, from the subtype to the existing type, and
   "type_name": "dlist",
   "set": "{xs :: 'a list. distinct xs}",
   "rep_function_name": "list_of_dlist",
-  "abs_function_name": "dlist_of_list"
+  "abs_function_name": "dlist_of_list",
+  "children": [
+    {"kind": "lift_definition", "english": "Reversal of a list without repetition", "name": "dl_rev",
+     "type": "'a dlist ⇒ 'a dlist", "is": "rev"},
+    {"kind": "lift_definition", "english": "The length of a list without repetition", "name": "dl_length",
+     "type": "'a dlist ⇒ nat", "is": "length"}
+  ]
 }
 ```
 
@@ -71,8 +104,11 @@ the two types — `Rep`, from the subtype to the existing type, and
 is optional and empty when left out; `syntax`, `rep_function_name` and
 `abs_function_name` are optional and absent when left out — a function
 name left out is Isabelle's default, `Rep_dlist` or `Abs_dlist`; an
-empty `sort` is no sort. A sort constraint may be written on the
-parameter (`"sort": "zero"`) or inside `set` (`'a::zero`), as Isabelle
+empty `sort` is no sort; `children` is optional, as for every nesting
+class (PLUGIN_SYSTEM §3), and contents come later through `edit` as
+well — never into a block that refuses children (§6). A sort
+constraint may be written on the parameter (`"sort": "zero"`) or inside
+`set` (`'a::zero`), as Isabelle
 takes either. The node's name is `type_name`. `gen` normalises every
 piece of Isabelle text and `english` once, when the construct is
 accepted: newlines become spaces and runs of whitespace one space — in
@@ -87,6 +123,22 @@ stored text.
 
 `TypeParameter` is shared through `TYPE_PARAMETER_DEFS` and `TypeMixfix`
 through `TYPE_MIXFIX_DEFS`, both the plugin's (COMMON.md §4).
+
+What stands inside the block: a node whose class's `placement` names
+`Typedef` in its `through` (PLUGIN_SYSTEM §2; this plugin's, COMMON.md
+§1). The subtype's Lifting setup is open inside the block and closed at
+its end (§6), so a `LiftDefinition` on the subtype stands here or inside
+a `LiftingContext`, which opens the setup again (LIFTING_CONTEXT.md);
+lemmas about the subtype proved by `transfer` likewise, since
+`lifting_forget` deletes the subtype's transfer rules. A node that uses
+the subtype by name alone — a `Datatype` with an `'a dlist` field, a
+`Theorem` proved without `transfer` — needs no open setup, so the block
+does not bound it: it stands wherever its class's `placement` admits it
+(COMMON.md §1). A block whose `lifting` is recorded false (§6) refuses
+children: a node placed inside it is refused with COMMON.md §6's
+refusal sentence — at the edit once `lifting` is recorded false, at the
+node's first own operation when it was placed before (RENDER_BASELINES
+§2, §3).
 
 The class's construct schema:
 
@@ -105,7 +157,9 @@ The class's construct schema:
     "rep_function_name": { "type": "string",
                            "description": "the name of the function that sends a value of the subtype to its representation in the existing type; Rep_ followed by the type name when left out. Example: list_of_dlist" },
     "abs_function_name": { "type": "string",
-                           "description": "the name of the function that sends a representation in the existing type back to the value of the subtype it represents; Abs_ followed by the type name when left out. Example: dlist_of_list" }
+                           "description": "the name of the function that sends a representation in the existing type back to the value of the subtype it represents; Abs_ followed by the type name when left out. Example: dlist_of_list" },
+    "children":          { "type": "array", "items": { "$ref": "#/$defs/Construct" },
+                           "description": "lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again" }   // COMMON.md §6's description
   },
   "required": ["kind", "english", "type_name", "set"],
   "additionalProperties": false,
@@ -114,7 +168,8 @@ The class's construct schema:
 ```
 
 `TYPE_PARAMETER_DEFS` and `TYPE_MIXFIX_DEFS`, the two definitions the
-schema refers to, with their checks and writers, are COMMON.md §4's.
+schema refers to, with their checks and writers, are COMMON.md §4's;
+`#/$defs/Construct` is the framework's (PLUGIN_SYSTEM §4).
 
 The class carries a description, its name alone not saying what the
 type is made of; `kind` and `type_name` carry none (COMMON.md §5).
@@ -124,9 +179,10 @@ What the class does not take: `(overloaded)` — the forest's theories
 have `typedef_overloaded` set once, in TAT_Std.thy (COMMON.md §4), so
 no `typedef` carries the option; the name of the
 theorem `type_definition_dlist`, which Isabelle fixes; `setup_lifting`'s
-optional reflexivity and parametricity theorems; `lifting_forget` and
-`lifting_update`, which a block's ending emits (COMMON.md §6; INDEX.md
-§2).
+optional reflexivity and parametricity theorems; the bundle
+`dlist.lifting`, which `setup_lifting` names; `lifting_update
+dlist.lifting` and `lifting_forget dlist.lifting`, which the ending
+writes (§5).
 
 ## 3. Descriptions
 
@@ -156,8 +212,9 @@ the name of the function that sends a value of the subtype to its representation
 the name of the function that sends a representation in the existing type back to the value of the subtype it represents; Abs_ followed by the type name when left out. Example: dlist_of_list
 ```
 
-The descriptions of `TypeParameter.sort`, of `TypeMixfix` and of its
-arms' fields are COMMON.md §4's, pinned there alone.
+`children`'s description is COMMON.md §6's, pinned there alone; the
+descriptions of `TypeParameter.sort`, of `TypeMixfix` and of its arms'
+fields are COMMON.md §4's, pinned there alone.
 
 ## 4. `gen`
 
@@ -185,13 +242,17 @@ parses and has a set type, whether every type variable in it is a
 parameter, and whether the mixfix annotation is well-formed with one `_`
 per parameter, are Isabelle's business at evaluation (MODULE_STRUCTURE
 §4.1); what Isabelle rejects is an evaluation failure, not an exception.
+The children are the framework's: built by their own classes' `gen`s
+and placed under the node (MODULE_STRUCTURE §4.2).
 
 `Typedef`'s `goal_structure()` (COMMON.md §3) is `type_parameters` and
 `set`, each `IsaTerm` as its `ascii`: the goal, `∃x. x ∈ S`, is made of
 them alone, and a proof of it names neither the type nor the two
 functions. On an amend, a changed `set` or type parameter discards the
 stored proof; a changed `type_name`, function name, `syntax` or
-`english` keeps it.
+`english` keeps it, and so do the children, which the amend's
+replacement inherits (MODULE_STRUCTURE §4.2) — the replacement, a fresh
+node, deciding `lifting` again at its first evaluation (§6).
 
 The `InvalidField` sentences — the type parameters', the unused
 parameter's and the function names' — are COMMON.md §4's, pinned there
@@ -200,9 +261,13 @@ alone (COMMON.md §5).
 ## 5. Emission
 
 The node emits, when its `can_emit` holds — `Typedef` keeps the
-framework's default (COMPILATION.md §3) — the `text` line, the
-definition with its proof and, when the recorded `lifting` is true,
-`setup_lifting`:
+framework's default, both stored statuses `Ready` (COMPILATION.md §3) —
+the beginning: the `text` line, the definition with its proof, when the
+recorded `lifting` is true `setup_lifting`, then one empty line when the
+block has children; the children in order, one empty line between
+siblings, at the block's own indent, the framework's (COMPILATION.md
+§3); the ending: one empty line, then the two commands that close the
+subtype's Lifting setup — nothing at all when `lifting` is false:
 
 ```
 text ‹Lists without repetition.›
@@ -210,10 +275,20 @@ typedef 'a dlist = "{xs :: 'a list. distinct xs}"
   morphisms list_of_dlist dlist_of_list
   by aoa
 setup_lifting type_definition_dlist
+
+text ‹Reversal of a list without repetition.›
+lift_definition dl_rev :: "'a dlist ⇒ 'a dlist" is rev by aoa
+
+text ‹The length of a list without repetition.›
+lift_definition dl_length :: "'a dlist ⇒ nat" is length by aoa
+
+lifting_update dlist.lifting
+lifting_forget dlist.lifting
 ```
 
-and, with `rep_function_name` alone given, then with a syntax and no
-function name given:
+and, with no child and `rep_function_name` alone given, then with a
+syntax and no function name given, then one whose lifting could not be
+set up (§6):
 
 ```
 text ‹Polynomials, as their coefficient sequences.›
@@ -221,6 +296,9 @@ typedef 'a poly = "{f :: nat ⇒ 'a::zero. ∀⇩∞ n. f n = 0}"
   morphisms coeff Abs_poly
   by aoa
 setup_lifting type_definition_poly
+
+lifting_update poly.lifting
+lifting_forget poly.lifting
 ```
 
 ```
@@ -228,6 +306,15 @@ text ‹A type with an error value added.›
 typedef 'a errorable ("_⇩⊥" [21] 21) = "UNIV :: 'a option set"
   by aoa
 setup_lifting type_definition_errorable
+
+lifting_update errorable.lifting
+lifting_forget errorable.lifting
+```
+
+```
+text ‹Finite maps from naturals to naturals, as a type of their own.›
+typedef fm = "UNIV :: (nat, nat) fmap set"
+  by aoa
 ```
 
 - The `text` line: `english` alone, no lead (COMMON.md §2).
@@ -251,11 +338,19 @@ setup_lifting type_definition_errorable
 - The terminal proof, `by aoa` or `sorry`, indented two spaces, is
   `Proof_Obligation`'s `proof_text()` (COMMON.md §3); the `aoa` method's
   import is the plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
-- `setup_lifting type_definition_dlist` at the left margin, the theorem
-  named after `type_name`, when the recorded `lifting` is true (§6),
-  nothing otherwise: it sets the Lifting and Transfer packages up for
-  the type, so that `lift_definition` can define its functions and
+- `setup_lifting type_definition_dlist` at the block's indent, the
+  theorem named after `type_name`, when the recorded `lifting` is true
+  (§6), nothing otherwise: it sets the Lifting and Transfer packages up
+  for the type, so that `lift_definition` can define its functions and
   `transfer` can prove about it.
+- The children's text is their own, each class's `emit`, at the block's
+  indent: the block opens no Isabelle scope, and the file reads as the
+  library's do.
+- `lifting_update dlist.lifting` and `lifting_forget dlist.lifting`,
+  each on its own line at the block's indent, the bundle's name —
+  `type_name` followed by `.lifting` — written bare, when the recorded
+  `lifting` is true; nothing, not even the empty line, when it is false:
+  `Lifting_Closing`'s `emit_ending` (COMMON.md §6).
 - Every piece of Isabelle text — a name, the set, a sort — is written
   through the theory's `print_name` (SESSION_AND_THEORY §2): bare when
   its `ascii` is an Isabelle identifier (`is_identifier`, COMMON.md §5)
@@ -269,23 +364,29 @@ setup_lifting type_definition_errorable
 
 ## 6. Evaluation
 
-The evaluator runs the definition, admits its goal, and sets lifting
-up as the recorded `lifting` says; it never runs a proof (ARCHITECTURE
-§3.6) and never the `text` command. It goes through the ML interfaces.
-`Proof_Obligation`'s `_eval_opr` (COMMON.md §3) sends the class's
-callback — `evaluation_callback`, `TAT.Typedef.evaluate` — the input
-slot, `goal_state`, the resulting slot, and its `message()`: the
-definition — `type_name`, the syntax (absent when left out), the two
-function names with the defaults filled in, then `goal_structure()` —
-the type parameters with their sorts, and `set` — whole, as its goal
-part (§4), each `IsaTerm` as its `ascii` — and the recorded `lifting`,
-`None` until an evaluation has recorded one (COMMON.md §5); a test
-pins the order, as THEOREM.md's does. The callback is built by
-`TAT_Proof_Obligation` (COMMON.md §3) from `Typedef`'s two steps:
-`open_goal`, the `typedef` command's transition, yielding nothing;
-`after_admission`, the `setup_lifting` transition under the recorded
-`lifting`, yielding `lifting`. What the two steps yield
-`_eval_opr` hands the class's `record_from_evaluation` (COMMON.md §3).
+The beginning runs the definition, admits its goal, and sets lifting up
+as the recorded `lifting` says; the ending closes the subtype's Lifting
+setup, or runs nothing when none was set up; neither runs a proof
+(ARCHITECTURE §3.6) nor the `text` command. Both go through the ML
+interfaces.
+
+**The beginning.** `Beginning_Proof_Obligation`'s `_eval_beginning_opr`
+(COMMON.md §3) sends the class's callback — `evaluation_callback`,
+`TAT.Typedef.evaluate` — the beginning's input slot, `goal_state`, the
+beginning's resulting slot — the first child's input, or the slot before
+the ending when there is no child (MODULE_STRUCTURE §4.1) — and its
+`message()`: the definition — `type_name`, the syntax (absent when left
+out), the two function names with the defaults filled in, then
+`goal_structure()` — the type parameters with their sorts, and `set` —
+whole, as its goal part (§4), each `IsaTerm` as its `ascii` — and the
+recorded `lifting`, `None` until an evaluation has recorded one
+(COMMON.md §5); a test pins the order, as THEOREM.md's does. The
+callback is built by `TAT_Proof_Obligation` (COMMON.md §3) from
+`Typedef`'s two steps: `open_goal`, the `typedef` command's transition,
+yielding nothing; `after_admission`, the `setup_lifting` transition
+under the recorded `lifting`, yielding `lifting`. What the two steps
+yield `_eval_beginning_opr` hands the class's `record_from_evaluation`
+(COMMON.md §3).
 
 `Typedef`'s `open_goal` builds the `typedef` command's transition and
 runs it — the shape of `begin_theory`, through `apply_transition` — no
@@ -353,27 +454,57 @@ and the two functions global all the same, and a `set` naming the
 context's parameters refused by Isabelle, `Illegal variables in
 representing set`, like any other failure.
 
-A failure anywhere is `Proof_Obligation`'s (COMMON.md §3): `goal_state` is
-emptied and no state is written into the resulting slot, the callback
-answers the messages and nothing to record, and `_eval_opr` returns
-`CannotEvaluate` with them: the node is an obstacle, and its
+A failure anywhere is `Proof_Obligation`'s (COMMON.md §3): `goal_state`
+is emptied and no state is written into the beginning's resulting slot,
+the callback answers the messages and nothing to record, and the
+beginning's status is `CannotEvaluate` with them: the node is an
+obstacle, its children have no context and are `not_evaluated`, the
+ending is `Ready` by the framework's copy of the block's input to its
+result when the walk goes on past the block (ARCHITECTURE §3.3), and
 `lifting` stays what the last successful evaluation recorded, or none,
-which `can_emit` keeps out of a file (ARCHITECTURE §6.1).
-Otherwise `_eval_opr` returns `Ready` with the messages `Typedef`'s
-`record_from_evaluation` answers once it has set `lifting`: none when
-`lifting` is true, the one notice when it is false
-—
+which `can_emit` keeps out of a file (ARCHITECTURE §6.1). Otherwise the
+status is `Ready` with the messages `Typedef`'s `record_from_evaluation`
+answers once it has set `lifting`: none when `lifting` is true, the one
+notice when it is false —
 
 ```
 Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype.
 ```
 
 — a constant of typedef.py, which the framework prints as a `Notice:`
-block (PRINT.md §3); the mark (§7) is unchanged, the node owing
-nothing. The proof check and the
-proof construction, with their callbacks `TAT.Proof_Obligation.check`
-and `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s
-(COMMON.md §3): the goal they work on has one subgoal, always.
+block (PRINT.md §3); the mark (§7) is unchanged, the node owing nothing.
+With `lifting` recorded false `Typedef`'s answer to `Lifting_Closing`'s
+hook `is_lifting_setup_made()` is false — true while `lifting` is none
+or true —, on which the block refuses children and its ending runs
+nothing (COMMON.md §6). A child the block holds already is refused at
+its first own operation, its status a `CannotEvaluate` carrying the
+framework's refusal with COMMON.md §6's refusal sentence after it
+(PLUGIN_SYSTEM §2; RENDER_BASELINES §3); a node placed inside the block
+later is refused at the edit, as `ChildRefused` (RENDER_BASELINES §2).
+The proof check and the proof construction, with their callbacks
+`TAT.Proof_Obligation.check` and
+`TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s (COMMON.md
+§3): the goal they work on has one subgoal, always.
+
+**Inside the block.** The children run in order from the beginning's
+resulting slot, each in the state the one before it left (ARCHITECTURE
+§3.5), with the subtype's Lifting setup open: a `LiftDefinition` on the
+subtype defines its function and declares its transfer rule, a `Theorem`
+may be proved by `transfer`. A child's failure is the child's; it stops
+the walk inside the block as a failure stops it anywhere (ARCHITECTURE
+§3.3), and the ending runs when the walk reaches it. A child inserted,
+amended or deleted invalidates what follows it in the block and the
+ending, never the beginning, so the goal, `goal_state`, the proof and
+the recorded `lifting` stand (CONSTRUCT_INTERACTION §3.1); an edit of
+the node's own fields invalidates the block whole.
+
+**The ending.** `Lifting_Closing`'s `_eval_ending_opr` (COMMON.md §6)
+runs, from the slot after the last child into the block's resulting
+slot, the two transitions `lifting_update dlist.lifting` and
+`lifting_forget dlist.lifting` make while `is_lifting_setup_made()`
+answers true, and nothing while it answers false; what they do to the
+setup and to the children's transfer rules (§2), and the ending's
+status and its refusal, are COMMON.md §6's.
 
 ## 7. The jobs and the mark
 
@@ -417,11 +548,23 @@ While the line reads `unverified definition`, the node's owing line
 The definition is unverified until the set is proven non-empty.
 ```
 
+The ending's status is not on the line: a refused ending shows as its
+`Error:` block under a line whose first slot is `valid definition` or
+`unverified definition` (PRINT.md §1), and the jobs run as before, the
+beginning being the one operation they depend on (CONSTRUCT_INTERACTION
+§3.1). In an ancestor's Recall summary (PRINT.md §2) the node is counted
+by its own operations, not by its line: among the failed nodes while its
+ending is refused; with its beginning `ready` and its ending not yet
+run, under the title its `Unfinished` carries while its proof is
+unfinished, and in no group once it is proven.
+
 ## 8. What it prints
 
 `print_fields` (PRINT.md §3) writes the definition, and only under
-`Recall`; wherever it is called the framework writes the evaluation's
-messages after it:
+`Recall`; wherever it is called the framework writes the two operations'
+messages after it, then the owing line while the definition is
+unverified (§7), then the failure blocks, then the children (PRINT.md
+§2):
 
 | mode | `print_fields` writes |
 | --- | --- |
@@ -441,7 +584,10 @@ identifier, whatever keywords the theory recorded, without a round trip
 to Isabelle; `english` follows at depth 0 alone; no line carries a key.
 The line is the private helper's that writes the emitted text (§5),
 given no keyword set. `setup_lifting` is not printed: it is not
-authored.
+authored. The children are the framework's to print, one level deeper,
+in the mode PRINT.md §2's table gives them; a block with none shows the
+empty node's line — none under a block that refuses children (PRINT.md
+§2).
 
 ```
 'a dlist = "{xs :: 'a list. distinct xs}" morphisms list_of_dlist dlist_of_list
@@ -449,9 +595,9 @@ Lists without repetition
 ```
 
 The evaluation's messages are the framework's to print (PRINT.md
-§3–§4): an `Error:` block while the node is an obstacle, a `Notice:`
-block when its `Ready` carries the notice of §6; after them, while the
-node is unverified, its owing line (§7). A node under `recall`
+§3–§4): an `Error:` block while an operation is an obstacle, a `Notice:`
+block when the beginning's `Ready` carries the notice of §6; after them,
+while the node is unverified, its owing line (§7). A node under `recall`
 whose definition Isabelle refused — a predicate where a set is
 expected:
 
@@ -462,10 +608,15 @@ expected:
   Error:
     Not a set type: "'a list ⇒ bool"
     The error(s) above occurred in typedef "dlist"
+  - lift_definition_dl_rev (not evaluated, proof not started)
+    dl_rev :: "'a dlist ⇒ 'a dlist" is rev
+  - lift_definition_dl_length (not evaluated, proof not started)
+    dl_length :: "'a dlist ⇒ nat" is length
 ```
 
 A node under `recall` whose definition went through, its proof found
-and checked, but for which Isabelle could not set lifting up (§6):
+and checked, but for which lifting could not be set up (§6) — it
+refuses children, so no empty node's line stands under it:
 
 ```
 - typedef_fm (valid definition)
@@ -473,6 +624,21 @@ and checked, but for which Isabelle could not set lifting up (§6):
   Finite maps from naturals to naturals, as a type of their own
   Notice:
     Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype.
+```
+
+The same block when a `lift_definition` was submitted with it, refused
+at its first own operation (§6; RENDER_BASELINES §3):
+
+```
+- typedef_fm (valid definition)
+  fm = "UNIV :: (nat, nat) fmap set"
+  Finite maps from naturals to naturals, as a type of their own
+  Notice:
+    Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype.
+  - lift_definition_fm_empty (invalid definition)
+    fm_empty :: fm is fmempty
+    Error:
+      A node of kind `lift_definition` cannot stand inside `session_S.theory_T.typedef_fm`, a node of kind `typedef`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
 ```
 
 The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under
@@ -484,9 +650,19 @@ The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under
   Lists without repetition
   The definition is unverified until the set is proven non-empty.
   The proof no longer holds.
+  - lift_definition_dl_rev (valid definition)
+    dl_rev :: "'a dlist ⇒ 'a dlist" is rev
+  - lift_definition_dl_length (valid definition)
+    dl_length :: "'a dlist ⇒ nat" is length
 ```
 
 ## 9. Id properties
 
-None declared: a leaf's component is the last of every id, and the
-framework's defaults stand (MCP_SPECIFICATION §2.1).
+Omissible in both directions, as `QuotientType` is, with drop priority
+1: its component goes after `Section`'s and with `Session`'s, the
+outermost of the two first, before `Theory`'s (MCP_SPECIFICATION §2.1)
+— the block is a scope to TAT and none to Isabelle, a child's qualified
+name not carrying it, `X.dl_rev`. A child's id prints as short as the
+forest allows, `lift_definition_dl_rev`, and is accepted with or without
+the component; the node's own component, `typedef_dlist`, ends its own
+id and is never dropped from it.

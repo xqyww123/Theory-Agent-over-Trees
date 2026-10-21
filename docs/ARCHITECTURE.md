@@ -229,7 +229,7 @@ its beginning and its ending, and so two statuses.
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
 | `ready` | the operation ran and its resulting slot is current |
-| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the node standing where its class's placement does not admit it (PLUGIN_SYSTEM §2): the node is an obstacle (§3.3) |
+| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the node standing where its class's placement does not admit it (PLUGIN_SYSTEM §2) or under a node that refuses children (MODULE_STRUCTURE §4.1): the node is an obstacle (§3.3) |
 
 Every operation has a second field beside `evaluation_status`, its
 **stored status** `last_evaluation_status`: the value `evaluation_status`
@@ -303,7 +303,9 @@ failed has no theory value. Such a node **stops** evaluation: everything after
 it in the tree is `not_evaluated`.
 
 A node standing where its class's placement does not admit it
-(PLUGIN_SYSTEM §2) is an obstacle too: its first own operation is
+(PLUGIN_SYSTEM §2), or under a nesting node that refuses children
+(`children_refusal()`, MODULE_STRUCTURE §4.1), is an obstacle too: its
+first own operation is
 `cannot_evaluate` without running — a leaf's one operation, the leaf
 then an obstacle like any; a nesting node's beginning, the node then
 handled as one whose beginning command failed (below) — and a move or

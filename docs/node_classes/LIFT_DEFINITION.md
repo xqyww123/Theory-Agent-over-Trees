@@ -5,9 +5,7 @@ Status: proposed 2026-10-16, from the design discussion in the session
 (ai-artifacts/review/LIFT_DEFINITION_REVIEW.md); committed and
 implemented 2026-10-17; `(code_dt)` judged by §6's heuristic first and
 the choice recorded once, 2026-10-18 (017326a); every piece of
-agent-facing wording below is the owner's. The class is implemented before `QuotientType`,
-`LiftingContext` and `Typedef`'s block shape, which its description and
-§6's sentence name.
+agent-facing wording below is the owner's.
 
 A `LiftDefinition` defines a function on a subtype or a quotient type
 from a term on its representation type: `lift_definition dl_rev :: "'a
@@ -105,16 +103,16 @@ optional and absent when left out; `code_dt` is optional and false when
 left out. The node's name is `name`.
 
 Where the node stands: `lift_definition` needs the Lifting setup of the
-subtype or quotient type open — the setup `quotient_type` and
-`setup_lifting` make, which Isabelle's library closes with
+subtype or quotient type open — the setup `setup_lifting` and
+`quotient_type` make, which Isabelle's library closes with
 `lifting_update` and `lifting_forget` once a type's construction is
-finished, and which `QuotientType`'s block closes at its end
-(QUOTIENT_TYPE.md). `Typedef`, a `Leaf`, closes nothing (TYPEDEF.md
-§5), so a `LiftDefinition` on its type stands after the `Typedef`, in
-its theory or in a theory importing it; one on a quotient type stands
-inside the `QuotientType`'s block; where a closed setup is wanted again
-a `LiftingContext` opens it (LIFTING_CONTEXT.md) and the
-`LiftDefinition` stands inside it. `gen` does not check the place: a `LiftDefinition`
+finished, and which the `Typedef`'s and the `QuotientType`'s blocks
+close at their ends (TYPEDEF.md, QUOTIENT_TYPE.md). So a
+`LiftDefinition` on a subtype stands inside the `Typedef`'s block, one
+on a quotient type inside the `QuotientType`'s block; where a closed
+setup is wanted again a `LiftingContext` opens it (LIFTING_CONTEXT.md)
+and the `LiftDefinition` stands inside it. `gen` does not check the
+place: a `LiftDefinition`
 standing where a setup it needs is closed is refused at evaluation,
 with the sentence of §6, as everything Isabelle judges is; a term whose
 type Isabelle can take at the closed type itself, `id` at `'a dlist ⇒

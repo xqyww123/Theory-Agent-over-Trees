@@ -426,7 +426,7 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 | `Theorem` | `TAT.Theorem.evaluate`: built by `TAT_Proof_Obligation` from the statement's transition with, on the open goal, the undeclared-variable check, yielding nothing, and the identity after the admission (THEOREM.md §6) |
 | `Define` | `TAT.Define.evaluate`: the arguments the input slot, the two goal slots, the resulting slot and the definition with its recorded form or none; one `operation'` into the resulting slot — with no recorded form the command decided here, the equations read with the constants fixed, `definition` by their shape, else `function (sequential, no_partials)`, `fun`'s configuration, and, when that command refuses them, plain `function`; with a recorded form that command alone (node_classes/COMMON.md §5) —, then `definition`'s `declare`, or the function command and `termination`, each goal opened into its slot and closed by `fun`'s own method as a terminal proof, the slot emptied, or admitted through `TAT_Proof_Obligation.admit` with the goal left in the slot, then the `declare` of the `simps`; answering the command run and the two methods; a refusal empties both goal slots (node_classes/DEFINE.md §6); its jobs are `TAT_Proof_Obligation`'s, one call per open obligation under the call's setup |
 | `Datatype` | `TAT.Datatype.evaluate`: one transition, `co_datatype_cmd` on the structure built inside the local theory's function, each mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), under `operation` (DATATYPE.md §6) |
-| `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition, its structure built inside the local theory's function and the type's mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), yielding nothing — and `after_admission` — the `setup_lifting` transition as the recorded `lifting` says: tried once with none, its state kept when Isabelle accepts it and the admitted one otherwise; run with true, a refusal the failure; nothing with false — yielding `lifting` (node_classes/TYPEDEF.md §6) |
+| `Typedef` | `TAT.Typedef.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `typedef` transition, its structure built inside the local theory's function and the type's mixfix annotation read as the plugin wrote it by `Parse.mixfix` through `TAT_Mixfix` (node_classes/COMMON.md §4), yielding nothing — and `after_admission` — the `setup_lifting` transition as the recorded `lifting` says: tried once with none, its state kept when Isabelle accepts it and the admitted one otherwise; run with true, a refusal the failure; nothing with false — yielding `lifting` (node_classes/TYPEDEF.md §6); its ending is `Lifting_Closing`'s, which runs nothing while the recorded `lifting` is false (node_classes/COMMON.md §6) |
 | `LiftDefinition` | `TAT.LiftDefinition.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `lift_definition` transition through `TAT_Lift_Definition_Command`, its structure built inside the local theory's function, the function's mixfix annotation read as the plugin wrote it through `TAT_Mixfix`, its option `(code_dt)` decided through `decide` under the recorded-choice convention: as recorded, or, with none, without it when `code_dt` is false and otherwise by `TAT_Lift_Definition_Command.code_dt_verdict` on the function with its type and the term — not needed or without effect, without the option; undecided, the probe with the option, the admission tried on its state through `admit`, and the real run as the trial decided —; the command's two refusals at the open goal rendered as the class's sentence naming the Lifting setups the definition needs or as Isabelle renders them; yielding `with_code_dt` — and `after_admission`, the identity (node_classes/LIFT_DEFINITION.md §6) |
 | `Lifting_Closing` | the plugin's shared base of a block whose ending closes a type's Lifting setup, `TAT_Lifting_Closing` (§4.5; node_classes/COMMON.md §6): `TAT.Lifting_Closing.close`, the two transitions of `lifting_update` and `lifting_forget` on the bundle's pointer, read from the bundle `t.lifting`'s one attribute as the two commands read it, as one `operation` from the slot after the last child into the block's resulting slot, answering its messages |
 | `QuotientType` | `TAT.QuotientType.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `quotient_type` transition, its mixfix read through `TAT_Mixfix`, yielding nothing — and `after_admission` — the identity, `Accepted` with the state it was given and `()` (node_classes/QUOTIENT_TYPE.md §6); its ending is `Lifting_Closing`'s |
@@ -614,13 +614,13 @@ on the Isabelle side is never blamed on the class. It must not write:
 an aborted edit undoes nothing remotely. It raises `TAT_Error`s bare; the
 framework prefixes the `raw_ast_path` (EXCEPTIONS.md §5).
 
-**Events.** Ten hooks, empty by default, driven by the framework — a class
-only ever speaks for its own node. The tense is the contract:
+**Events.** Eleven hooks, empty by default, driven by the framework — a
+class only ever speaks for its own node. The tense is the contract:
 
 - **A progressive hook is a gate.** It fires before the commit, while
   nothing has changed, and must be free of side effects. Raising `BadEdit`
   vetoes the whole call; raising anything else is the class's bug.
-  Insertion's gate is `gen` itself, so there is no `on_inserting`.
+  The inserted node's own gate is `gen`, so there is no `on_inserting`.
 - **A completed hook is for effect.** It fires inside the commit's one
   synchronous block, after the pointer surgery and the in-memory
   invalidation and before the store write (§4.2), so what it changes on
@@ -638,6 +638,7 @@ only ever speaks for its own node. The tense is the contract:
 | `on_deleted(reason)` | completed | it left; the Python object is still whole — cancel running work here |
 | `on_inserted()` | completed | linked in, children and all |
 | `on_removing_child(child, mode)` | gate | `child` is to leave this node's `sub_nodes` |
+| `on_adding_child(child, mode)` | gate | `child` is to enter this node's `sub_nodes`: it fires before the commit wherever `on_added_child` fires after it, with the same `child` and `mode`, and only once the framework has asked the node's `children_refusal()` (below). A class that refuses by the child overrides it |
 | `on_added_child(child, mode)` | completed | `child` entered this node's `sub_nodes` |
 | `on_inheriting(new_parent)` | gate | on each direct child of a replaced node; never recursive — grandchildren see nothing |
 | `on_inherited(old_parent)` | completed | the reparenting happened |
@@ -665,6 +666,20 @@ jobs depend on (CONSTRUCT_INTERACTION §3.1) — a rerun's rewrite of
 through `_completed`, so whatever it raises, a `TAT_Error` included, is
 its class's bug (EXCEPTIONS.md §1). Its default cancels the job
 (CONSTRUCT_INTERACTION §3.2).
+
+Beside the events, a nesting node answers `children_refusal()`: why it
+refuses children now, a sentence — `Lifting_Closing`'s while
+`is_lifting_setup_made()` answers false (node_classes/COMMON.md §6) —,
+or `None`, the default. The framework asks it in three places: just
+before it fires `on_adding_child`, raising `ChildRefused` on the
+sentence (EXCEPTIONS.md §3); the child's first own operation, once the
+placement check has admitted the child — the operation is
+`cannot_evaluate` without running, its message the sentence after the
+framework's own (RENDER_BASELINES §3; ARCHITECTURE §3.3) —; and
+`print`, which writes no empty node's line under a node answering one
+(PRINT.md §2). The answer changes only with the node's beginning and
+never with the child: a parent that would take one child and not
+another overrides `on_adding_child` instead.
 
 No hook fires on an aborted call. In any hook, as in `gen`, a state slot
 may hold nothing; the only code that may assume its slot holds a state is
