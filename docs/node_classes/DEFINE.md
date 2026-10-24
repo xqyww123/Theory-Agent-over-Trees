@@ -4,7 +4,9 @@ Status: proposed 2026-10-14, from the design discussion of 2026-10-10 to
 2026-10-14 (the owner's rulings in the session `Define`); the
 agent-facing wording below is the owner's, the mark's three states, the
 owing line, the failure header and the layout of §8 ruled on 2026-10-17;
-implemented on 2026-10-17.
+implemented on 2026-10-17; revised 2026-10-24 with the `Inductive`
+design (INDUCTIVE.md): §2–§4's `Constant` moved to COMMON.md §4, read by
+`constants_of`; not implemented.
 
 A `Define` defines one or more constants by equations, and lets Isabelle
 choose how: a plain `definition` when the equations are one non-recursive
@@ -117,9 +119,9 @@ space — in a syntax's `symbol` or `template` newlines and tabs alone,
 since runs of spaces there are layout; printing, emission and
 evaluation all use the stored text.
 
-`constants[].type`, a syntax's `symbol` or `template`, and each equation
-are `IsaTerm`s (MODULE_STRUCTURE §4.3); `constants[].name` and `english`
-are `str`. `Mixfix` is shared through `MIXFIX_DEFS`, the plugin's
+`constants[].name`, `constants[].type`, a syntax's `symbol` or
+`template`, and each equation are `IsaTerm`s (MODULE_STRUCTURE §4.3);
+`english` is `str`. `Mixfix` is shared through `MIXFIX_DEFS`, the plugin's
 (COMMON.md §4): a constant's syntax, infix, binder or template, as a
 `Datatype`'s constructor's is.
 
@@ -142,25 +144,16 @@ The class's construct schema:
   "required": ["kind", "english", "constants", "equations", "auto_reduction"],
   "additionalProperties": false,
   "$defs": {
-    "Constant": {
-      "type": "object",
-      "properties": {
-        "name":   { "type": "string" },
-        "type":   { "type": "string", "description": "the constant's type; left out, Isabelle infers it from the equations" },
-        "syntax": { "$ref": "#/$defs/Mixfix" }
-      },
-      "required": ["name"],
-      "additionalProperties": false
-    },
-    ...MIXFIX_DEFS   // Mixfix
+    ...CONSTANT_DEFS,   // Constant
+    ...MIXFIX_DEFS      // Mixfix
   }
 }
 ```
 
-`Constant` is `Define`'s own definition, used by no other class; what
-the node keeps of one is `common.py`'s `Variable_With_Syntax`, with its
-wire and its writer `fixes_text`, and `MIXFIX_DEFS`, with its writer, is
-COMMON.md §4's.
+`CONSTANT_DEFS`, which `Inductive` shares, and `MIXFIX_DEFS`, with its
+writer, are COMMON.md §4's; what the node keeps of a constant is
+`common.py`'s `Variable_With_Syntax`, with its wire and its writer
+`fixes_text`.
 
 The class carries a description, its name not saying which commands it
 stands for; `constants[].name` carries none (COMMON.md §5). The
@@ -191,11 +184,10 @@ defines constants by (recursive) equations
 what is defined, in English, as LaTeX text
 ```
 
-`constants` and `constants[].type`:
+`constants`:
 
 ```
 the constants defined; several for mutually recursive functions
-the constant's type; left out, Isabelle infers it from the equations
 ```
 
 `equations` and `auto_reduction`:
@@ -205,21 +197,23 @@ the defining equations, one Isabelle equation each, the constant applied to patt
 whether to add the defining equations to the system simplification set
 ```
 
-The descriptions of `Mixfix` and of its arms' fields are COMMON.md §4's,
-pinned there alone.
+The descriptions of `Constant`, of `Mixfix` and of its arms' fields are
+COMMON.md §4's, pinned there alone.
 
 ## 4. `gen`
 
 Where a `Define` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`Define.gen` checks: each constant's `name` against §1's grammar
+`Define.gen` checks each constant's `name` against §1's grammar by
+`constants_of` (COMMON.md §4)
 (`InvalidName` with `grammar` = `constant name`, the grammar of the
 framework's `GRAMMARS` that `LiftDefinition` checks its name against too
-(LIFT_DEFINITION.md §4), rendered as RENDER_BASELINES §2's line); no two
-constants the same (`InvalidField` with the plugin's one sentence for a
-name bound twice, COMMON.md §5); `constants` and `equations` non-empty,
-which the schema's `minItems` refuses before `gen` (MODULE_STRUCTURE
+(LIFT_DEFINITION.md §4), rendered as RENDER_BASELINES §2's line); then
+no two constants the same, by `check_not_bound_twice` over the names
+read (`InvalidField` with the plugin's one sentence for a name bound
+twice, COMMON.md §5). `constants` and `equations` non-empty
+is the schema's `minItems`, refused before `gen` (MODULE_STRUCTURE
 §4.4). A sibling already bearing the node's id component is the
 framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of a
 constant's name is Isabelle's at evaluation. Whether the equations

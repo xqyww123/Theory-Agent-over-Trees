@@ -15,7 +15,13 @@ reader, `LOCALE_INSTANCE_DEFS` with `dotted_name_of`,
 `VARIABLE_WITH_SYNTAX_DEFS` with `TAT_Mixfix.arm_of`, the arm
 `NoSyntax`, §5's clauses on
 the dotted names and `Define`'s constants' names and its one-home
-sentence; not implemented.
+sentence; not implemented; revised 2026-10-24 with the `Inductive`
+design (INDUCTIVE.md): §1's `Inductive` entry; §4's `CONSTANT_DEFS`
+moved from `Define`, with `constants_of`, `VARIABLE_DEFS`,
+`variables_of` and `check_variables` taken out of statement.py's
+statement, and the
+`VariableWithSyntax` paragraph's sharers; §5's constants' names and its
+recorded-choice bullet; not implemented.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -40,7 +46,7 @@ framework checks (PLUGIN_SYSTEM §2); a class reads its theory as
 
 | class | may stand under, inside its theory |
 | --- | --- |
-| `Theorem`, `Define`, `LiftDefinition`, `LiftingContext` | `Typedef`, `QuotientType`, `LiftingContext`, `Locale` |
+| `Theorem`, `Define`, `Inductive`, `LiftDefinition`, `LiftingContext` | `Typedef`, `QuotientType`, `LiftingContext`, `Locale` |
 | `Datatype`, `Typedef`, `Record`, `QuotientType` | `Locale` |
 | `Locale` | `Section` |
 
@@ -503,22 +509,32 @@ stores no row of its own: `proof` and the check are the framework's
 ## 4. Shared `$defs`
 
 A structure several classes use is defined once and merged by name
-(PLUGIN_SYSTEM §4–§5): `STATEMENT_DEFS` in `std/statement.py`, which
-also holds `Statement`, what a node keeps of a statement, its reader —
-taking the field's path, `statement` for a `Theorem`,
-`assumes[i].statement` for a `Locale`'s axiom — and the proposition
-`Theorem` prints under `recall`, shared by `Theorem` and `Locale`
-(THEOREM.md); the other five here, in `common.py`. A class's `$defs`
+(PLUGIN_SYSTEM §4–§5): `VARIABLE_DEFS` and `STATEMENT_DEFS` in
+`std/statement.py`, which also holds `Statement`, what a node keeps of a
+statement, its reader — taking the field's path, `statement` for a
+`Theorem`, `assumes[i].statement` for a `Locale`'s axiom — and the
+proposition `Theorem` prints under `recall`, shared by `Theorem` and
+`Locale`, `variables_of(raw)`, which reads a `for_any` list into
+`Variable`s, each name and type normalised, and judges nothing, and
+`check_variables(variables, path)`, which judges the `Variable`s read —
+each name by `check_identifier` with `in_term` true, a repeat included —
+with THEOREM.md §4's sentences under `path.for_any[j].name`.
+`Statement`'s reader calls the one and then the other; `Inductive.gen`
+calls the reader, and `Inductive`'s evaluation-time field check the
+check, under `inductive_rules[i]` (THEOREM.md, INDUCTIVE.md); the other
+six here, in `common.py`. A class's `$defs`
 spreads only the definitions its schema reaches (PLUGIN_SYSTEM §5).
 
 | definition | holds | used by |
 | --- | --- | --- |
-| `STATEMENT_DEFS` | `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem`; `Locale` for its axioms |
+| `VARIABLE_DEFS` | `Variable` (THEOREM.md §2) | `Inductive` for a rule's `for_any` |
+| `STATEMENT_DEFS` | `VARIABLE_DEFS`'s `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem`; `Locale` for its axioms |
 | `TYPE_PARAMETER_DEFS` | `TypeParameter` | `Datatype`, `Record`, `Typedef` |
 | `TYPE_MIXFIX_DEFS` | `TypeMixfix` | `Typedef`, `QuotientType`, and `Datatype` for a type's syntax |
-| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, `Define`, `LiftDefinition` and `Notation` for a constant's, and `Locale` for a parameter's |
+| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, `Define`, `Inductive`, `LiftDefinition` and `Notation` for a constant's, and `Locale` for a parameter's |
 | `LOCALE_INSTANCE_DEFS` | `LocaleInstance` | `Locale`; `Interpretation` and `Sublocale` expected |
 | `VARIABLE_WITH_SYNTAX_DEFS` | `VariableWithSyntax` | `Locale` |
+| `CONSTANT_DEFS` | `Constant` | `Define`, `Inductive` |
 
 `QuotientType`'s parameters take no sort (`Parse.type_args`): type
 variables written bare, read by `type_variables_of`, which runs the
@@ -809,7 +825,7 @@ annotation, a `Locale`'s parameter (LOCALE.md §2):
 }
 ```
 
-`VariableWithSyntax` is `STATEMENT_DEFS`'s `Variable` with the
+`VariableWithSyntax` is `VARIABLE_DEFS`'s `Variable` with the
 annotation, its `type` carrying `Variable.type`'s description.
 `common.py` holds `Variable_With_Syntax`, what the node keeps of one —
 its name an `IsaTerm`, its type an optional `IsaTerm`, and its
@@ -823,12 +839,10 @@ for both `NoSyntax` and none. Its writer, `fixes_text(variables,
 write)`: the variables joined by ` and `, each its name, its type after
 `::` and its annotation through `mixfix_text`, nothing for `NoSyntax`,
 each piece of Isabelle text through `write` — `f :: "'a ⇒ 'a ⇒ 'a"
-(infixl "⊗" 70)` with `print_name`. `Define`'s constants are such
-variables: they take `Variable_With_Syntax`, its wire and its writer,
-the file and `Locale`'s recall passing
-`print_name`, `Define`'s recall the stored text bare (DEFINE.md §5,
-§8). The ML half reads the wire with `TAT_Mixfix.fixes`
-(`Isabelle_Std/ML/TAT_Mixfix.ML`), which `Define` and `Locale` share;
+(infixl "⊗" 70)` with `print_name`; `Locale`'s recall passes
+`print_name` too. The ML half reads the wire with `TAT_Mixfix.fixes`
+(`Isabelle_Std/ML/TAT_Mixfix.ML`), which every class keeping
+`Variable_With_Syntax` shares;
 its converse, `TAT_Mixfix.arm_of`, takes Isabelle's `mixfix` to the
 construct's arm in `ascii` or none — none for `NoSyn` and for the
 forms `MIXFIX_DEFS` leaves out, a template's default priorities
@@ -837,6 +851,37 @@ symbol or template built with `IsaTerm.from_isabelle`;
 `TAT_Mixfix.read` of `mixfix_wire` of the arm is `Mixfix.equal` to the
 original, which test_common pins for every form of `MIXFIX_DEFS`
 against Isabelle (LOCALE.md §6).
+
+`CONSTANT_DEFS` — a constant a class defines, with an optional type and
+an optional mixfix annotation (DEFINE.md §2, INDUCTIVE.md §2):
+
+```jsonc
+{
+  "Constant": {
+    "type": "object",
+    "properties": {
+      "name":   { "type": "string" },
+      "type":   { "type": "string", "description": "the constant's type; left out, Isabelle infers it from its definition" },
+      "syntax": { "$ref": "#/$defs/Mixfix" }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  }
+}
+```
+
+`Constant` has `VariableWithSyntax`'s shape and its own description of
+`type`: a constant is defined, a `Locale`'s parameter is fixed. What
+the node keeps of one is `Variable_With_Syntax`, with its wire and its
+writer `fixes_text` (above): the file passes `print_name`, the recall
+the stored text bare (DEFINE.md §5, §8; INDUCTIVE.md §5, §8).
+`common.py`'s `constants_of(raw)` reads the construct's list and judges
+only each name's grammar, the id grammar without hyphens (`InvalidName`
+with `grammar` = `constant name`, §5), since the node's name is computed
+from them. No two constants the same is `check_not_bound_twice` over the
+names read, under `constants[i].name`: `Define.gen` runs it (DEFINE.md
+§4), `Inductive`'s evaluation-time field check runs it (INDUCTIVE.md
+§4).
 
 ## 5. Conventions
 
@@ -861,8 +906,8 @@ against Isabelle (LOCALE.md §6).
   it has no grammar text of its own; a `LiftingContext`'s `types` entry
   and a `Locale`'s `imports[].locale` are an Isabelle identifier or
   identifiers joined by dots, each part judged as one, by
-  `dotted_name_of` (§4); `Define`'s constants' names, from which its node's name
-  is computed, are in the id grammar too, as `IsaTerm`s, since
+  `dotted_name_of` (§4); `Define`'s and `Inductive`'s constants' names,
+  from which each node's name is computed, are in the id grammar too, as `IsaTerm`s, since
   `Variable_With_Syntax` keeps them (§4); every other name is an
   Isabelle identifier: on the `ascii` form of its
   normalised text, a letter or
@@ -883,8 +928,8 @@ against Isabelle (LOCALE.md §6).
   the words of its mark — are in its own document, pinned by the
   baseline tests. Every shared sentence — a shared `$defs`
   description, a shared refusal sentence — has one home, §4,
-  THEOREM.md for `STATEMENT_DEFS`'s descriptions (§3) and its reader's
-  sentences (§4), or §6 for the two sentences of a `Lifting_Closing`
+  THEOREM.md for `STATEMENT_DEFS`'s descriptions (§3) and the sentences
+  of its reader and of the `for_any` check (§4), or §6 for the two sentences of a `Lifting_Closing`
   block, and one test pin
   there; a class document lists its own sentences alone and names that
   home for the rest.
@@ -893,15 +938,18 @@ against Isabelle (LOCALE.md §6).
   command's options — `Define`'s `definition`, `function (sequential,
   no_partials)` or `function` (DEFINE.md §6), `Typedef`'s
   `setup_lifting` (TYPEDEF.md §6), `LiftDefinition`'s `(code_dt)`
-  (LIFT_DEFINITION.md §6) — is decided once per set of the
+  (LIFT_DEFINITION.md §6), `Inductive`'s `for` clause (INDUCTIVE.md §6)
+  — is decided once per set of the
   authored fields it depends on, and recorded: the class's message
   carries the recorded choice, `None` until an evaluation has recorded
   one — on a fresh node, on the one an amend makes, after evaluations
   that all failed —; under `None` the
-  evaluation decides — a first form tried and a second on its refusal,
-  a command tried once and kept exactly when accepted, or a heuristic
-  on the authored fields that decides where it can and, where it
-  cannot, a probe run whose result decides — and records the choice;
+  evaluation decides — a first form tried and a second on its refusal;
+  a command tried once and kept exactly when accepted; a heuristic on
+  the authored fields that decides where it can and, where it cannot, a
+  probe run whose result decides; or a computation on the authored
+  fields as Isabelle reads them, which always decides — and records the
+  choice;
   under a
   recorded choice it runs that alone, and a refusal is the operation's
   failure, never a switch. So the text the evaluation ran is the text
