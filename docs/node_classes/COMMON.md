@@ -8,7 +8,14 @@ goal with no subgoal; revised 2026-10-17 with the `QuotientType` design
 (QUOTIENT_TYPE.md; ai-artifacts/review/quotient_type/QUOTIENT_TYPE_REVIEW.md):
 §6, and §4's helpers for type parameters without a sort, a pair of
 function names and a type's head, implemented 2026-10-18 with that
-class, and §4's check of a type parameter declared and not used.
+class, and §4's check of a type parameter declared and not used;
+revised 2026-10-21 with the `Locale` design (LOCALE.md): §1's `Locale`
+entries, §2's writer of an `english` in a cartouche, §4's statement
+reader, `LOCALE_INSTANCE_DEFS` with `dotted_name_of`,
+`VARIABLE_WITH_SYNTAX_DEFS` with `TAT_Mixfix.arm_of`, the arm
+`NoSyntax`, §5's clauses on
+the dotted names and `Define`'s constants' names and its one-home
+sentence; not implemented.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -33,10 +40,12 @@ framework checks (PLUGIN_SYSTEM §2); a class reads its theory as
 
 | class | may stand under, inside its theory |
 | --- | --- |
-| `Theorem`, `Define`, `LiftDefinition`, `LiftingContext` | `Typedef`, `QuotientType`, `LiftingContext` |
-| `Datatype`, `Typedef`, `Record`, `QuotientType` | nothing: directly in the theory |
+| `Theorem`, `Define`, `LiftDefinition`, `LiftingContext` | `Typedef`, `QuotientType`, `LiftingContext`, `Locale` |
+| `Datatype`, `Typedef`, `Record`, `QuotientType` | `Locale` |
+| `Locale` | `Section` |
 
 A test of the plugin holds every class's declaration to this table.
+`Section` joins the other rows when that class is designed.
 
 ## 2. `english` and the `text` line
 
@@ -50,12 +59,16 @@ field of its construct, its description in the class's own document
 
 `gen` normalises it as it does Isabelle text: newlines become spaces
 and runs of whitespace one space. Emission writes it as a `text`
-command before the class's own command, through one function of
-`common.py`, `text_line(english, lead=None)`: a period added when it
-ends without `.`, `!` or `?`, the text through the framework's
+command before the class's own command, through `text_line(english,
+lead=None)` of `common.py`: `text` before the `english` written by
+`english_cartouche(english, lead=None)` of `common.py` — a period added when it ends without `.`, `!` or `?`, the
+lead before it when there is one, the text through the framework's
 `cartouche` (COMPILATION.md §3). A class may put a lead before it:
 `Theorem` writes the kind capitalised and the name, `Lemma
-rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5). Evaluation never runs the `text` command. Under
+rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5).
+A `Locale`'s axiom carries its statement's `english` as a formal
+comment, `―` before `english_cartouche`'s text (LOCALE.md §5).
+Evaluation never runs the `text` command. Under
 `recall` a class prints `english` at the depths its own table names
 (PRINT.md §3).
 
@@ -490,17 +503,22 @@ stores no row of its own: `proof` and the check are the framework's
 ## 4. Shared `$defs`
 
 A structure several classes use is defined once and merged by name
-(PLUGIN_SYSTEM §4–§5): `STATEMENT_DEFS` in `std/statement.py`, with
-its check and its writer, which are `Theorem`'s (THEOREM.md); the
-other three here, in `common.py`. A class's `$defs` spreads only the
-definitions its schema reaches (PLUGIN_SYSTEM §5).
+(PLUGIN_SYSTEM §4–§5): `STATEMENT_DEFS` in `std/statement.py`, which
+also holds `Statement`, what a node keeps of a statement, its reader —
+taking the field's path, `statement` for a `Theorem`,
+`assumes[i].statement` for a `Locale`'s axiom — and the proposition
+`Theorem` prints under `recall`, shared by `Theorem` and `Locale`
+(THEOREM.md); the other five here, in `common.py`. A class's `$defs`
+spreads only the definitions its schema reaches (PLUGIN_SYSTEM §5).
 
 | definition | holds | used by |
 | --- | --- | --- |
-| `STATEMENT_DEFS` | `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem` |
+| `STATEMENT_DEFS` | `Variable`, `LongStatement` (THEOREM.md §2) | `Theorem`; `Locale` for its axioms |
 | `TYPE_PARAMETER_DEFS` | `TypeParameter` | `Datatype`, `Record`, `Typedef` |
 | `TYPE_MIXFIX_DEFS` | `TypeMixfix` | `Typedef`, `QuotientType`, and `Datatype` for a type's syntax |
-| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, `LiftDefinition` for the function's, and `Notation` for a constant's |
+| `MIXFIX_DEFS` | `Mixfix` | `Datatype` for a constructor's syntax, `Define`, `LiftDefinition` and `Notation` for a constant's, and `Locale` for a parameter's |
+| `LOCALE_INSTANCE_DEFS` | `LocaleInstance` | `Locale`; `Interpretation` and `Sublocale` expected |
+| `VARIABLE_WITH_SYNTAX_DEFS` | `VariableWithSyntax` | `Locale` |
 
 `QuotientType`'s parameters take no sort (`Parse.type_args`): type
 variables written bare, read by `type_variables_of`, which runs the
@@ -575,7 +593,11 @@ empty `sort` is no sort.
           "template":            { "type": "string" },
           "argument_priorities": { "type": "array", "items": { "type": "integer" }, "description": "one per _; 0 when left out" },
           "priority":            { "type": "integer", "description": "the result's; 1000 when left out" } },
-        "required": ["form", "template"], "additionalProperties": false }
+        "required": ["form", "template"], "additionalProperties": false },
+      { "type": "object", "description": "no syntax",
+        "properties": {
+          "form":     { "type": "string", "enum": ["NoSyntax"] } },
+        "required": ["form"], "additionalProperties": false }
     ]
   }
 }
@@ -602,7 +624,11 @@ declaration`, mixfix.ML `syn_ext_types`):
           "template":            { "type": "string" },
           "argument_priorities": { "type": "array", "items": { "type": "integer" }, "description": "one per _; 0 when left out" },
           "priority":            { "type": "integer", "description": "the result's; 1000 when left out" } },
-        "required": ["form", "template"], "additionalProperties": false }
+        "required": ["form", "template"], "additionalProperties": false },
+      { "type": "object", "description": "no syntax",
+        "properties": {
+          "form":     { "type": "string", "enum": ["NoSyntax"] } },
+        "required": ["form"], "additionalProperties": false }
     ]
   }
 }
@@ -610,7 +636,11 @@ declaration`, mixfix.ML `syn_ext_types`):
 
 `Mixfix` and `TypeMixfix` are unions told apart by `form`, which
 `check_call` judges against the construct schema (MODULE_STRUCTURE
-§4.4). `symbol` and `template` are `IsaTerm`s, normalised at `gen` for
+§4.4). The form `NoSyntax`, one arm shared by the two unions, is no
+annotation: `mixfix_of` reads it as none, and nothing is written for
+it. It is the same as leaving the field out everywhere but on a
+`Locale`'s parameter, where a field left out may take an imported
+parameter's annotation (LOCALE.md §2). `symbol` and `template` are `IsaTerm`s, normalised at `gen` for
 newlines and tabs alone, since runs of spaces in a template are layout;
 no `gen` refuses one. Whether a priority lies within 0 and 1000,
 whether there are more argument priorities than the template has
@@ -646,8 +676,23 @@ definitions is defined and emitted as any other, which the
 Isabelle-backed tests of `Typedef` (`'a poly` on `zero`) and
 `QuotientType` (`'a fract` on `idom`) pin.
 
-Four helpers of `common.py` with no definition of their own
-(QUOTIENT_TYPE.md §4–§5). The
+Five helpers of `common.py` with no definition of their own
+(QUOTIENT_TYPE.md §4–§5; LOCALE.md §4). `dotted_name_of(text, field,
+earlier, noun)`, in `check_identifier`'s shape, judges one name that is
+an Isabelle identifier or identifiers joined by dots — each part on its
+`ascii` an identifier (§5) not ending with an underscore —, not among
+the `earlier` ones, and answers it normalised as an `IsaTerm`; the
+noun is what the name names, `locale` for a `Locale_Instance`'s
+`locale` (LOCALE.md §4), `type` for a `LiftingContext`'s `types` entry
+(LIFTING_CONTEXT.md §4); its one `InvalidField` sentence, pinned here
+under both nouns:
+
+```
+The field `imports[0].locale` must be a locale's name: an Isabelle identifier, or identifiers joined by dots, each of which starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+The field `types[0]` must be a type's name: an Isabelle identifier, or identifiers joined by dots, each of which starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+```
+
+The
 type-parameter check above takes the field's path: `type_parameters_of`
 runs it under `type_parameters[i].name`, and `type_variables_of(raw)`,
 over type variables written bare, under `type_parameters[i]`, answering
@@ -686,6 +731,112 @@ pinned here:
 The field `type_parameters[1]` declares `'b`, which is not used.
 ```
 
+`LOCALE_INSTANCE_DEFS` — a locale instance, a locale a `Locale`
+extends with every parameter instantiated (LOCALE.md §2):
+
+```jsonc
+{
+  "LocaleInstance": {
+    "type": "object",
+    "properties": {
+      "locale":         { "type": "string", "description": "the name of the locale" },
+      "qualifier":      { "type": "string", "description": "when two imports are the same locale or declare the same constant or type, use prefixes to qualify them in separate name spaces: the prefix M renames the import's element name as M.name" },
+      "instantiations": { "type": "array",
+        "items": { "type": "object",
+                   "properties": {
+                     "name": { "type": "string", "description": "the parameter's name" },
+                     "term": { "type": "string", "description": "Isabelle/HOL term with all literal numbers annotated with types" } },
+                   "required": ["name", "term"], "additionalProperties": false },
+        "description": "one instantiation for each parameter of the imported locale. Example: the carrier of the monoid is instantiated to the carrier of the group. For a parameter defined by a `defines` clause (rare), write `_`" }
+    },
+    "required": ["locale", "instantiations"],
+    "additionalProperties": false
+  }
+}
+```
+
+An instantiation is an inline object of `LocaleInstance`, used
+nowhere else; its `term` carries the term description and
+`VariableWithSyntax.type` the type description that `common.py` holds
+as constants and `STATEMENT_DEFS` takes too, THEOREM.md §3 their home;
+`statement.py` builds on `common.py`, never the reverse. `common.py`
+holds `Locale_Instance`, what the node keeps of an instance; its wire,
+the locale's name, the qualifier or none, and the instantiations in
+their order, each its name and its term, every piece as its `ascii`;
+its reader and its writer. The reader judges, under the class's path
+of the field: the locale's name by `dotted_name_of` under the noun
+`locale` (above); the qualifier, when given, an Isabelle identifier;
+each instantiation's name an Isabelle identifier not ending with an
+underscore, no two the same, refused with the type parameters'
+`repeats` sentence above under its own path. Its own sentences, pinned
+here:
+
+```
+The field `imports[0].qualifier` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+The field `imports[0].instantiations[1].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+```
+
+The writer, `locale_instance_text(instance, keywords)`, writes an
+instance as a locale expression writes it: the qualifier through
+`print_name` and a colon when given; the locale's name through
+`print_name`, bare when it has a dot, Isabelle's lexer reading
+`Group.monoid` as one token (§6); then `where` and the instantiations
+in their order joined by ` and `, each the parameter's name through
+`print_name`, `=` and the term through `print_name`, the
+instantiation `_` bare — `S: semigroup where f = f`, `padic_integers
+where Zp = _ and p = p`, and against a theory whose keywords include
+`is` and `open`, `"is": A where "open" = m` —; the name alone when
+there is no instantiation. `Interpretation` and `Sublocale` are expected to take
+`LocaleInstance`, each confirming it in its own document, which settles
+how it instantiates a parameter the locale defines: the `_` of the
+`instantiations` description is the light locale header's alone.
+
+`VARIABLE_WITH_SYNTAX_DEFS` — a variable with an optional mixfix
+annotation, a `Locale`'s parameter (LOCALE.md §2):
+
+```jsonc
+{
+  "VariableWithSyntax": {
+    "type": "object",
+    "properties": {
+      "name":   { "type": "string" },
+      "type":   { "type": "string", "description": "An Isabelle type expression. Leave empty (\"\") if unsure" },
+      "syntax": { "$ref": "#/$defs/Mixfix" }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  }
+}
+```
+
+`VariableWithSyntax` is `STATEMENT_DEFS`'s `Variable` with the
+annotation, its `type` carrying `Variable.type`'s description.
+`common.py` holds `Variable_With_Syntax`, what the node keeps of one —
+its name an `IsaTerm`, its type an optional `IsaTerm`, and its
+annotation one of three values: a `Mixfix`; `NoSyntax`, when the
+authored `syntax` is that form; or none, when `syntax` is left out.
+Its reader takes an absent key to none, the arm `NoSyntax` to
+`NoSyntax` and any other arm through `mixfix_of`; its store image keeps
+`{"form": "NoSyntax"}` and has no key for none. Its wire is the name
+and type in `ascii` and the annotation as `mixfix_wire` sends it, none
+for both `NoSyntax` and none. Its writer, `fixes_text(variables,
+write)`: the variables joined by ` and `, each its name, its type after
+`::` and its annotation through `mixfix_text`, nothing for `NoSyntax`,
+each piece of Isabelle text through `write` — `f :: "'a ⇒ 'a ⇒ 'a"
+(infixl "⊗" 70)` with `print_name`. `Define`'s constants are such
+variables: they take `Variable_With_Syntax`, its wire and its writer,
+the file and `Locale`'s recall passing
+`print_name`, `Define`'s recall the stored text bare (DEFINE.md §5,
+§8). The ML half reads the wire with `TAT_Mixfix.fixes`
+(`Isabelle_Std/ML/TAT_Mixfix.ML`), which `Define` and `Locale` share;
+its converse, `TAT_Mixfix.arm_of`, takes Isabelle's `mixfix` to the
+construct's arm in `ascii` or none — none for `NoSyn` and for the
+forms `MIXFIX_DEFS` leaves out, a template's default priorities
+dropped —, which `mixfix_of` reads, each symbol or template built
+with `IsaTerm.from_isabelle`; `TAT_Mixfix.read` of `mixfix_wire` of
+the arm is `Mixfix.equal` to the original, which test_common pins for
+every form of `MIXFIX_DEFS` against Isabelle (LOCALE.md §6).
+
 ## 5. Conventions
 
 - Whether a field carries a description is decided field by field, by
@@ -707,8 +858,11 @@ The field `type_parameters[1]` declares `'b`, which is not used.
   (LIFTING_CONTEXT.md §4); a type parameter's name is a type variable,
   shown in its refusal by Isabelle's own example, `such as 'a`, since
   it has no grammar text of its own; a `LiftingContext`'s `types` entry
-  is an Isabelle identifier or identifiers joined by dots, each part
-  judged as one (LIFTING_CONTEXT.md §4); every other name is an
+  and a `Locale`'s `imports[].locale` are an Isabelle identifier or
+  identifiers joined by dots, each part judged as one, by
+  `dotted_name_of` (§4); `Define`'s constants' names, from which its node's name
+  is computed, are in the id grammar too, as `IsaTerm`s, since
+  `Variable_With_Syntax` keeps them (§4); every other name is an
   Isabelle identifier: on the `ascii` form of its
   normalised text, a letter or
   one of Isabelle's letter symbols, then letters, digits, underscores,
@@ -727,8 +881,10 @@ The field `type_parameters[1]` declares `'b`, which is not used.
 - A class's own sentences — its descriptions, its `gen`'s refusals,
   the words of its mark — are in its own document, pinned by the
   baseline tests. Every shared sentence — a shared `$defs`
-  description, a shared refusal sentence — has one home, §4, or §6 for
-  the two sentences of a `Lifting_Closing` block, and one test pin
+  description, a shared refusal sentence — has one home, §4,
+  THEOREM.md for `STATEMENT_DEFS`'s descriptions (§3) and its reader's
+  sentences (§4), or §6 for the two sentences of a `Lifting_Closing`
+  block, and one test pin
   there; a class document lists its own sentences alone and names that
   home for the rest.
   A framework exception's whole rendering is RENDER_BASELINES §2's own.

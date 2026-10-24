@@ -31,7 +31,7 @@ COMMON.md.
 | --- | --- | --- | --- | --- |
 | `Section` | `chapter`, `section`, `subsection`, `subsubsection`, `paragraph`, `subparagraph` | `StdBlock`, beginning only | none | not yet; its nesting is ARCHITECTURE §2.0, its id properties MCP_SPECIFICATION §2.1 |
 | `Text` | `text` | `Leaf` | none | not yet |
-| `Locale` | `locale` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
+| `Locale` | `light_locale`, the locale command of the light locale component (contrib/light_locale), with its block | `StdBlock`, beginning and ending | none | LOCALE.md |
 | `Context` | `context` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
 | `LiftingContext` | `context includes t.lifting … begin … end`, which opens the Lifting setup of one or more types again; its ending emits `lifting_update` and `lifting_forget` for each type it opened | `StdBlock`, beginning and ending | none | LIFTING_CONTEXT.md |
 | `TypeClass` | `class` | `StdBlock`, beginning and ending | none | not yet |
@@ -56,9 +56,14 @@ COMMON.md.
 Commands no row covers whose fate is settled when the named class is
 designed: `text_raw` with `Text`; `termination`, which `Define` emits
 (ARCHITECTURE §2.2); `setup_lifting`, which `Typedef` emits
-(TYPEDEF.md §5); and `lifting_update` and `lifting_forget`, which
+(TYPEDEF.md §5); `lifting_update` and `lifting_forget`, which
 `Typedef`'s and `QuotientType`'s endings emit (TYPEDEF.md §5,
-QUOTIENT_TYPE.md §5) and `LiftingContext`'s (LIFTING_CONTEXT.md §5).
+QUOTIENT_TYPE.md §5) and `LiftingContext`'s (LIFTING_CONTEXT.md §5);
+and `set_implicit_structure`, the light locale's command, with `Context`
+and `Instantiation`: a block at the theory level may carry it, a block
+inside a locale's never, and a `class` has no implicit structure —
+`Locale` leaves it out, the header element `implicit_structure`
+standing for it (LOCALE.md §2).
 
 ## 3. Not in the plugin
 
@@ -74,6 +79,8 @@ Every command inside a proof, since a tree holds no proof (ARCHITECTURE
   what they derive, a `Theorem` states.
 - **For experiment or inside proofs**: `txt`, `experiment`, `notepad`,
   `schematic_goal`.
+- **Replaced by the light locale**: `locale`, whose place `Locale`
+  fills with `light_locale` (LOCALE.md).
 - **Of narrower use**: `subclass`, `overloading`, `specification`,
   `bundle`, `open_bundle`, `unbundle`, `named_theorems`,
   `adhoc_overloading`, `no_adhoc_overloading`, `alias`, `type_alias`,

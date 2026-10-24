@@ -3,9 +3,9 @@
 Status: proposed 2026-10-18 and revised the same day after its review
 (ai-artifacts/review/lifting_context/LIFTING_CONTEXT_REVIEW.md); the
 agent-facing wording below is the owner's (the rulings of 2026-10-18):
-the four descriptions of §3, the `types[i]` sentence of §4, the
-sentence of §6, and `name` under the framework's name grammar; the
-`repeats` sentence is COMMON.md §4's under this class's path;
+the four descriptions of §3, the sentence of §6, and `name` under the
+framework's name grammar; the `types[i]` and `repeats` sentences of §4
+are COMMON.md §4's under this class's path;
 implemented the same day, with `Lifting_Closing` (COMMON.md §6).
 
 A `LiftingContext` opens the Lifting setup of one or more types again,
@@ -197,12 +197,10 @@ the lift_definitions on the opened types, and any other declarations whose proof
 
 ## 4. `gen`
 
-`LiftingContext.gen` checks each entry of `types`, normalised: an Isabelle
-identifier, or identifiers joined by dots, each part an identifier on
-its `ascii` (COMMON.md §5) not ending with an underscore, refused on
-the path `types[i]` with the class's own sentence below
-(`InvalidField`), and no two entries the same, the shared sentence for
-a repeat (COMMON.md §4). A `name` outside the framework's
+`LiftingContext.gen` checks each entry of `types`, normalised, by
+COMMON.md §4's `dotted_name_of` under the noun `type` and the path
+`types[i]` (`InvalidField`), and no two entries the same, the shared
+sentence for a repeat (COMMON.md §4). A `name` outside the framework's
 name grammar is the framework's `InvalidName`, and a sibling already
 bearing the node's id component its `DuplicateName` (MCP_SPECIFICATION
 §2); an empty `types` is refused by the framework's check of the
@@ -224,9 +222,9 @@ The field `types[0]` must be a type's name: an Isabelle identifier, or identifie
 The field `types[1]` repeats `fset`.
 ```
 
-The first is this class's own, its grammar text the framework's
-(COMMON.md §5); the second is COMMON.md §4's; the path of both this
-class's own, `types[i]`.
+Both are COMMON.md §4's — the first `dotted_name_of`'s under the noun
+`type`, its grammar text the framework's (COMMON.md §5) —; the path of
+both this class's own, `types[i]`.
 
 ## 5. Emission
 
@@ -347,9 +345,8 @@ the beginning's failure with its messages — a bundle whose quotient
 Isabelle's sanity check rejects, or one for a type registered with
 another quotient (`lifting_restore`), in practice never. At theory
 level these are the steps the hand-written
-text takes; inside a `Context` or `Locale` the block and its ending
-are those classes' to settle when they are designed (INDEX.md), the
-locale's qualifier on a bundle's name among them.
+text takes; inside a `Locale` the same (LOCALE.md §6); inside a
+`Context` that class's to settle when it is designed (INDEX.md).
 
 A refusal anywhere is the beginning's `CannotEvaluate` with its
 messages: no state is written into the beginning's resulting slot, the

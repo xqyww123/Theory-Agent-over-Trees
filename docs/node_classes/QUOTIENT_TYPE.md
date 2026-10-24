@@ -484,7 +484,8 @@ package cannot make, which a `Typedef` turns into its notice and a
 a step after it. At theory level these
 are the steps the hand-written text takes; inside a `Context` or
 `Locale` the definition is made in that context — the type and the two
-functions global all the same.
+functions global all the same; inside a `Locale`, its Lifting setup
+as LOCALE.md §6 says.
 
 A failure anywhere is `Proof_Obligation`'s (COMMON.md §3): `goal_state`
 is emptied and no state is written into the beginning's resulting slot,

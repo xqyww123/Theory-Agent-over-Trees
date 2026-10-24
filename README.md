@@ -47,10 +47,12 @@ driving Isabelle one command at a time.
 
 ### How to use
 
-Once, from the repository root, register the six Isabelle components
+Once, from the repository root, register the seven Isabelle components
 TAT's sessions build on:
 
-    isabelle components -u contrib/Theory-Agent-over-Trees -u contrib/Isabelle_RPC -u contrib/Performant_Isabelle_ML -u contrib/auto_sledgehammer -u contrib/Isa-Mini -u contrib/Semantic_Embedding
+    isabelle components -u contrib/Theory-Agent-over-Trees -u contrib/Isabelle_RPC -u contrib/Performant_Isabelle_ML -u contrib/auto_sledgehammer -u contrib/Isa-Mini -u contrib/Semantic_Embedding -u contrib/light_locale
+
+The Isabelle in use must be Isabelle2025-2 with the light locale's patches to the Isabelle tree applied (contrib/light_locale/patches/Isabelle2025-2/).
 
 Then:
 

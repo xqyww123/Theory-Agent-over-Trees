@@ -431,7 +431,8 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 | `Lifting_Closing` | the plugin's shared base of a block whose ending closes a type's Lifting setup, `TAT_Lifting_Closing` (§4.5; node_classes/COMMON.md §6): `TAT.Lifting_Closing.close`, the two transitions of `lifting_update` and `lifting_forget` on the bundle's pointer, read from the bundle `t.lifting`'s one attribute as the two commands read it, as one `operation` from the slot after the last child into the block's resulting slot, answering its messages |
 | `QuotientType` | `TAT.QuotientType.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `quotient_type` transition, its mixfix read through `TAT_Mixfix`, yielding nothing — and `after_admission` — the identity, `Accepted` with the state it was given and `()` (node_classes/QUOTIENT_TYPE.md §6); its ending is `Lifting_Closing`'s |
 | `LiftingContext` | `TAT.LiftingContext.open`: each entry's pointer read from the bundle `t.lifting` as `Lifting_Closing`'s is, and its restore data looked up, the class's sentence answered for an entry with none; an entry whose quotient is registered already left out of `opened`, silently; then the `context` transition, `Toplevel.begin_nested_target` of `Target_Context.context_begin_nested_cmd` on every entry's bundle, under `operation'` into the beginning's resulting slot, answering `opened` beside the messages; `TAT.LiftingContext.close`: the `end` transition, `Toplevel.end_nested_target`, then, for each entry of `opened`, the pointer read again and `Lifting_Closing`'s two transitions on it, as one operation into the block's resulting slot (node_classes/LIFTING_CONTEXT.md §6) |
-| `Section`, `Context`, `Locale`, … | unspecified (OPEN_QUESTIONS §1) |
+| `Locale` | `TAT.Locale.open`: the imports judged on the input state — each locale's name through `Locale.check`, then its parameters less those instantiated and those it defines, one sentence per import that leaves any —; then, in the same `operation'`, the `light_locale` transition into the beginning's resulting slot and, in the state it leaves, the readings of the axioms, the notice and the cancelled implicit structures, answering `annotations`, `parenthesised_conclusions`, and the cancellation's message and the notice beside the messages; `TAT.Locale.close`: the `end` transition, `Toplevel.end_main_target`, under `operation` into the block's resulting slot (node_classes/LOCALE.md §6) |
+| `Section`, `Context`, … | unspecified (OPEN_QUESTIONS §1) |
 
 `Theory`'s evaluator is registered like every other class's. `Session`
 registers no evaluator: it runs no Isabelle commands — its evaluation is
@@ -459,7 +460,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); typedef.py, Typedef (TYPEDEF.md); quotient_type.py, QuotientType (QUOTIENT_TYPE.md); lifting_context.py, LiftingContext (LIFTING_CONTEXT.md); lift_definition.py, LiftDefinition (LIFT_DEFINITION.md); define.py, Define with its two AoA tasks (DEFINE.md); statement.py, the statement's schema definitions
+  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class: theorem.py, Theorem (THEOREM.md); datatype.py, Datatype (DATATYPE.md); typedef.py, Typedef (TYPEDEF.md); quotient_type.py, QuotientType (QUOTIENT_TYPE.md); lifting_context.py, LiftingContext (LIFTING_CONTEXT.md); lift_definition.py, LiftDefinition (LIFT_DEFINITION.md); define.py, Define with its two AoA tasks (DEFINE.md); locale.py, Locale (LOCALE.md); statement.py, the statement's schema definitions, Statement, its reader and the proposition Theorem prints under recall, shared by Theorem and Locale
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -1328,8 +1329,9 @@ forest's structure, are the framework's and live in `model.py`
 (ai-artifacts/FIRST_END_TO_END_RUN_PLAN.md §6). The plugin's theories
 and ML live under `Isabelle_Std/`. TAT's own `ROOT` declares two
 sessions whose parent is `Minilang_AoA`: `TAT_Std in
-"Isabelle_Std/TAT_Std"`, one theory importing
-`Minilang_AoA.Minilang_AoA`, registering the AoA tasks `Define`'s
+"Isabelle_Std/TAT_Std"`, which names the session `Light_Locale` among
+its `sessions`, one theory importing `Minilang_AoA.Minilang_AoA` and
+`Light_Locale.Light_Locale`, registering the AoA tasks `Define`'s
 constructions run under and setting the configuration option
 `typedef_overloaded` (node_classes/COMMON.md §4), nothing of the
 framework; and `TAT_Isabelle_Std
@@ -1337,7 +1339,10 @@ in Isabelle_Std`, which imports the sessions `Theory_Agent_over_Trees`
 and `TAT_Std`. The parent being `Minilang_AoA`, TAT's whole session
 structure requires `Minilang_AoA` to resolve — so TAT requires Isa-Mini
 present, which is no loss, since the `aoa` proof method the plugin needs
-lives there and TAT without it does nothing (EVALUATOR_DESIGN §5). Its
+lives there and TAT without it does nothing (EVALUATOR_DESIGN §5); and
+TAT requires the light locale component (contrib/light_locale) with its
+patches to the Isabelle tree, where the `light_locale` command a `Locale` emits lives
+(node_classes/LOCALE.md). Its
 theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and `TAT_Std.TAT_Std`
 and loads from `Isabelle_Std/ML/` the plugin's shared ML —
@@ -1345,7 +1350,9 @@ and loads from `Isabelle_Std/ML/` the plugin's shared ML —
 then one ML file per node class,
 `TAT_Lift_Definition.ML` after `TAT_Lift_Definition_Command.ML`, which
 runs the `lift_definition` command with its refusals rendered
-(node_classes/LIFT_DEFINITION.md §6); the Python half is the subpackage `isabelle_theory_agent.std`, which the theory's
+(node_classes/LIFT_DEFINITION.md §6), and `TAT_Locale.ML` after
+`TAT_Theorem.ML`, whose writer of the head of `Theorem`'s sentence on
+undeclared variables it calls (node_classes/LOCALE.md §6); the Python half is the subpackage `isabelle_theory_agent.std`, which the theory's
 registrations name (§2.5), `common.py` and one module per class
 (node_classes/COMMON.md). A working directory takes the plugin with `-P
 TAT_Isabelle_Std.TAT_Isabelle_Std` to `isabelle TAT_new` or `isabelle

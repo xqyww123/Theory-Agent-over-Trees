@@ -105,8 +105,9 @@ beginning command and no ending one.
 
 `Context` and `Locale` also contain nodes, and unlike `Section` they carry
 **operational behaviour**: they open an Isabelle context, so their children are
-checked inside it and the facts they declare are qualified by it. Both are
-unspecified (OPEN_QUESTIONS §1); a `Theorem`'s evaluation is already one
+checked inside it and the facts they declare are qualified by it. `Locale`
+is node_classes/LOCALE.md; `Context` is unspecified (OPEN_QUESTIONS §1); a
+`Theorem`'s evaluation is already one
 transition on its input slot's state, so it is checked inside whatever
 context that state holds (THEOREM.md §6).
 

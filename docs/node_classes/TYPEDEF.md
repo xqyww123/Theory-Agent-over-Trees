@@ -453,7 +453,8 @@ hand-written text takes; inside a
 `Context` or `Locale` the definition is made in that context — the type
 and the two functions global all the same, and a `set` naming the
 context's parameters refused by Isabelle, `Illegal variables in
-representing set`, like any other failure.
+representing set`, like any other failure; inside a `Locale`, its
+Lifting setup as LOCALE.md §6 says.
 
 A failure anywhere is `Proof_Obligation`'s (COMMON.md §3): `goal_state`
 is emptied and no state is written into the beginning's resulting slot,

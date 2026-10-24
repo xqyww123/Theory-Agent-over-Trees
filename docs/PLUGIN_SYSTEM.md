@@ -61,6 +61,8 @@ A plugin's package may also declare imports: theories that the forest's
 theories import besides what the agent wrote — `Isabelle_Std`'s declares
 `TAT_Std.TAT_Std`, the one theory of TAT's session `TAT_Std`, which
 imports `Minilang_AoA.Minilang_AoA`, where the `aoa` method is defined,
+and `Light_Locale.Light_Locale`, where the `light_locale` command is
+defined (node_classes/LOCALE.md),
 registers the AoA tasks `Define`'s constructions run under
 (node_classes/COMMON.md §3, DEFINE.md §7), and sets the configuration
 option `typedef_overloaded` (node_classes/COMMON.md §4); a finished

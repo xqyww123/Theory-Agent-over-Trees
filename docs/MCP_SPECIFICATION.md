@@ -166,7 +166,8 @@ external name.
 
 The id is TAT's name for a node: its ancestors' id components and its own,
 joined (§2). The qualified name is Isabelle's name for what the node declares:
-`theory_X.lemma_P` declares `X.P`, and under `locale foo` it declares `foo.P`.
+`theory_X.lemma_P` declares `X.P`, and `theory_X.locale_foo.lemma_P` declares
+`X.foo.P`.
 A `Section` is in the id, being an ancestor, and not in the qualified name,
 being no scope to Isabelle.
 
@@ -333,5 +334,5 @@ wants them before its next edit calls it; a blocked stop's reason
 
 ## 6. Undecided
 
-- **The omissibility flags for `Locale` and `Context`**, along with the rest of
-  those two node classes (OPEN_QUESTIONS §1).
+- **The omissibility flags for `Context`**, along with the rest of that
+  node class (OPEN_QUESTIONS §1).
