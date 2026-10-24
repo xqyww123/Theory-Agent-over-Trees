@@ -214,7 +214,8 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          name's [Theory.gen]; the session name's
 │  │                          [Session.gen]; the fact name's
 │  │                          [Theorem.gen]; the type name's
-│  │                          [Datatype.gen, Typedef.gen]; the constant
+│  │                          [Datatype.gen, Record.gen, Typedef.gen,
+│  │                          QuotientType.gen]; the constant
 │  │                          name's [LiftDefinition.gen, Define.gen];
 │  │                          the locale name's [Locale.gen]; the seven
 │  │                          grammars are RENDER_BASELINES §2's

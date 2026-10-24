@@ -1391,7 +1391,8 @@ def test_json_null_is_an_arm_of_an_any_of_and_nothing_else():
                       required=["v"], defs={"Nil": {"type": "null"}}),
             r"\$defs\.Nil: not of one JSON type of the construct schema grammar")
     refused(declaring("N7", {"v": {"anyOf": [{"type": "string"}, {"type": "null", "enum": [None]}]}}, Nullable,
-                      required=["v"]), "construct_schema.v<1>: not of one JSON type")     # with a keyword: no null arm
+                      required=["v"]),
+            r"construct_schema\.v<1>: \['enum'\] is outside the construct schema grammar")      # a keyword on the null arm
     refused(declaring("N8", {"v": {"anyOf": [{"type": "string"}, {"type": "null"}, {"type": "null"}]}}, Nullable,
                       required=["v"]), "2 `anyOf` arms of JSON type null against 1 of the union's")
     with pytest.raises(TAT_InternalError, match="not of one JSON type of the tool schema grammar"):

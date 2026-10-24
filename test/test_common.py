@@ -823,13 +823,13 @@ def test_variable_with_syntax_holds_the_three_annotations_and_fixes_text_writes_
 
 # --- TAT_Mixfix.arm_of (§4), on a raw ML process of the heap the plugin runs on: the structure's file from source
 
-ARM_FORMS = [                                                      # every form of `MIXFIX_DEFS`, priorities given and not
+ARM_FORMS = [                                       # every form of `MIXFIX_DEFS`, priorities given and not, `NoSyntax` too
     {"form": "infixr", "symbol": "#", "priority": 65}, {"form": "infix", "symbol": "+", "priority": 0},
     {"form": "infixl", "symbol": "⊗", "priority": 70}, {"form": "binder", "symbol": "∀", "priority": 10},
     {"form": "mixfix", "template": "⟨_, _⟩"},
     {"form": "mixfix", "template": "_ ! _", "argument_priorities": [100, 101], "priority": 100},
     {"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21]}, {"form": "mixfix", "template": "_!", "priority": 999},
-    {"form": "mixfix", "template": "_", "argument_priorities": [0], "priority": 0}]
+    {"form": "mixfix", "template": "_", "argument_priorities": [0], "priority": 0}, {"form": "NoSyntax"}]
 ARM_NONE = ['(binder "\\<forall>" [5] 10)', "(structure)"]           # the forms `MIXFIX_DEFS` leaves out: none
 
 ARM_CASES = r"""
@@ -838,7 +838,7 @@ ARM_CASES = r"""
     | show (SOME (form, text, ps, p)) =
         form ^ " " ^ quote text ^ " " ^ (case ps of NONE => "-" | SOME ps => "[" ^ commas (map string_of_int ps) ^ "]")
         ^ " " ^ (case p of NONE => "-" | SOME p => string_of_int p);
-  fun arm (i, text) = writeln ("ARM " ^ string_of_int i ^ ": " ^ show (TAT_Mixfix.arm_of (TAT_Mixfix.read ctxt (SOME text))));
+  fun arm (i, text) = writeln ("ARM " ^ string_of_int i ^ ": " ^ show (TAT_Mixfix.arm_of (TAT_Mixfix.read ctxt text)));
   val _ = List.app arm [%s];
   val _ = writeln "ARM DONE";
 """
@@ -846,14 +846,16 @@ ARM_CASES = r"""
 
 async def test_tat_mixfix_arm_of_is_the_converse_of_read_for_every_form(std_harness, tmp_path):
     """§4: for every form of `MIXFIX_DEFS`, `arm_of` of the annotation
-    `read` gives for `mixfix_wire`'s text is the arm itself, read back by
-    `mixfix_of_wire` — so `mixfix_wire` of that arm is the text `read`
-    took, and `read` of it the same annotation —; a structure and a
-    binder with a body priority of its own are none."""
+    `read` gives for `mixfix_wire`'s text — none for `NoSyntax`, `NoSyn` —
+    is the arm itself, read back by `mixfix_of_wire` — so `mixfix_wire` of
+    that arm is the text `read` took, and `read` of it the same annotation
+    —; a structure and a binder with a body priority of its own are none."""
     arms = [common.mixfix_of(raw) for raw in ARM_FORMS]
     texts = [common.mixfix_wire(a) for a in arms]
-    assert all(t is not None for t in texts)
-    listed = ", ".join(f"({i}, {ml_string(t)})" for i, t in enumerate([*texts, *ARM_NONE]))      # type: ignore[arg-type]
+
+    def option(text):
+        return "NONE" if text is None else f"SOME {ml_string(text)}"
+    listed = ", ".join(f"({i}, {option(t)})" for i, t in enumerate([*texts, *ARM_NONE]))
     cases = tmp_path / "arm_cases.ML"
     cases.write_text(ARM_CASES % listed)
     files = ", ".join(ml_string(f) for f in [str(ROOT / "Isabelle_Std" / "ML" / "TAT_Mixfix.ML"), str(cases)])
@@ -864,11 +866,13 @@ async def test_tat_mixfix_arm_of_is_the_converse_of_read_for_every_form(std_harn
     shown = {int(m[1]): m[2] for m in (re.fullmatch(r"ARM (\d+): (.*)", line) for line in lines) if m}
     pattern = re.compile(r'(\S+) "(.*)" (-|\[[^\]]*\]) (-|\d+)')
     for i, (raw, arm) in enumerate(zip(ARM_FORMS, arms)):
-        m = pattern.fullmatch(shown[i])
-        assert m is not None, shown[i]
-        form, text, ps, p = m.groups()
-        wire = (form, text, None if ps == "-" else [int(n) for n in ps[1:-1].split(",") if n.strip()],
-                None if p == "-" else int(p))
+        if shown[i] == "NONE":
+            wire = None
+        else:
+            m = pattern.fullmatch(shown[i])
+            assert m is not None, shown[i]
+            form, text, ps, p = m.groups()
+            wire = (form, text, None if ps == "-" else [int(n) for n in ps[1:-1].split(",") if n.strip()],
+                    None if p == "-" else int(p))
         assert common.mixfix_of_wire(wire) == arm, (raw, shown[i])
     assert [shown[len(arms) + i] for i in range(len(ARM_NONE))] == ["NONE", "NONE"]
-    assert common.mixfix_of_wire(None) is None

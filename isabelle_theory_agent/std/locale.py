@@ -18,8 +18,8 @@ from ..model import INDENT, RECALL, Placement, Ready, StdBlock, Theory, emit_lin
 from ..plugin import TAT_node
 from .common import (
     LOCALE_INSTANCE_DEFS, MIXFIX_DEFS, VARIABLE_WITH_SYNTAX_DEFS, Locale_Instance, LocaleInstance_RawAST, Mixfix,
-    Variable_With_Syntax, VariableWithSyntax_RawAST, check_identifier, english_cartouche, fixes_text,
-    locale_instance_of, locale_instance_text, mixfix_of_wire, normalised, require_id_name, text_line)
+    Mixfix_RawAST, Variable_With_Syntax, VariableWithSyntax_RawAST, check_identifier, english_cartouche, fixes_text,
+    locale_instance_of, locale_instance_text, mixfix_of, mixfix_of_wire, normalised, require_id_name, text_line)
 from .statement import STATEMENT_DEFS, LongStatement_RawAST, Statement, statement_of
 
 KINDS = ("locale",)
@@ -191,14 +191,14 @@ class Locale(StdBlock):
     @classmethod
     def from_store(cls, config, rows):
         structure: str | None = rows.get("implicit_structure")
-        annotations: list[dict[str, Any] | None] | None = rows.get("annotations")
+        annotations: list[Mixfix_RawAST | None] | None = rows.get("annotations")
         parenthesised: list[bool] | None = rows.get("parenthesised_conclusions")
         return cls(config.parent, config.state, rows.get("english"), rows.get("name"),
                    tuple(Locale_Instance.of_image(i) for i in rows.get("imports")),
                    tuple(Variable_With_Syntax.of_image(v) for v in rows.get("fixes")),
                    tuple(Axiom.of_image(a) for a in rows.get("assumes")),
                    IsaTerm.from_agent(structure) if structure is not None else None,
-                   tuple(_mixfix_of_image(a) for a in annotations) if annotations is not None else None,
+                   tuple(mixfix_of(a) if a is not None else None for a in annotations) if annotations is not None else None,
                    tuple(parenthesised) if parenthesised is not None else None)
 
     # --- evaluation (§6)
@@ -320,9 +320,3 @@ class Locale(StdBlock):
         out.write("\n")
         emit_lines(indent, out, "end")
         return indent
-
-
-def _mixfix_of_image(image: dict[str, Any] | None) -> Mixfix | None:
-    """A recorded annotation's image read back: None for none."""
-    from .common import mixfix_of
-    return mixfix_of(image) if image is not None else None  # type: ignore[arg-type]

@@ -20,14 +20,14 @@ import re
 from abc import abstractmethod
 from collections.abc import Callable, Container, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, NotRequired, TypedDict, final, overload
+from typing import Any, ClassVar, Literal, NotRequired, TypedDict, cast, final, overload
 
 import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§3)
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, symbol_explode
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
-from ..exceptions import GRAMMARS, InvalidField, InvalidName, TAT_InternalError
+from ..exceptions import ID_NAME_TEXT, Id_Name_Grammar, InvalidField, InvalidName, TAT_InternalError
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
     CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Node, NonLeaf_Node, Ready, StdBlock, cartouche, emit_lines,
@@ -77,7 +77,7 @@ def layout_normalised(text: str) -> str:
 _ID_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_']*")      # the id grammar without hyphens (§5)
 
 
-def require_id_name(name: str, grammar: Literal["fact name", "type name", "constant name", "locale name"]) -> None:
+def require_id_name(name: str, grammar: Id_Name_Grammar) -> None:
     """`InvalidName` unless `name` is in the id grammar without hyphens and
     does not end with an underscore (§5): a node's own name, and each
     authored field a class computes it from."""
@@ -92,7 +92,7 @@ def check_identifier(text: str, field: str, earlier: Iterable[IsaTerm], *, in_te
     among `earlier`."""
     name = IsaTerm.from_agent(normalised(text))
     if not is_identifier(name.ascii) or (in_term and name.ascii.endswith("_")):
-        raise InvalidField(field, f"must be an Isabelle identifier: it {GRAMMARS['fact name']}")
+        raise InvalidField(field, f"must be an Isabelle identifier: it {ID_NAME_TEXT}")
     check_not_bound_twice(name, field, earlier)
     return name
 
@@ -114,7 +114,7 @@ def dotted_name_of(text: str, field: str, earlier: Iterable[IsaTerm], noun: str)
     name = IsaTerm.from_agent(normalised(text))
     if not all(is_identifier(part) and not part.endswith("_") for part in name.ascii.split(".")):
         raise InvalidField(field, f"must be a {noun}'s name: an Isabelle identifier, or identifiers joined by dots,"
-                                  f" each of which {GRAMMARS['fact name']}")
+                                  f" each of which {ID_NAME_TEXT}")
     check_not_bound_twice(name, field, earlier)
     return name
 
@@ -473,21 +473,15 @@ def mixfix_wire(syntax: Mixfix | None) -> str | None:
 
 def mixfix_of_wire(wire: tuple[str, str, list[int] | None, int | None] | None) -> Mixfix | None:
     """`TAT_Mixfix.arm_of`'s answer read back (§4): None for none; else the
-    arm — its form, its symbol or template in `ascii`, a template's
-    priorities when sent — built with `IsaTerm.from_isabelle` and read by
-    `mixfix_of`."""
+    arm — its form, its symbol or template in `ascii`, its priorities when
+    sent — built with `IsaTerm.from_isabelle` and read by `mixfix_of`."""
     if wire is None:
         return None
     form, text, argument_priorities, priority = wire
-    text = IsaTerm.from_isabelle(text).unicode
-    if form == "mixfix":
-        raw: Mixfix_RawAST = {"form": "mixfix", "template": text,
-                              **({"argument_priorities": argument_priorities} if argument_priorities is not None else {}),
-                              **({"priority": priority} if priority is not None else {})}  # type: ignore[typeddict-item]
-    else:
-        assert priority is not None     # the ML sends every other form with its one priority
-        raw = {"form": form, "symbol": text, "priority": priority}  # type: ignore[typeddict-item]
-    return mixfix_of(raw)
+    raw = {"form": form, "template" if form == "mixfix" else "symbol": IsaTerm.from_isabelle(text).unicode,
+           **({"argument_priorities": argument_priorities} if argument_priorities is not None else {}),
+           **({"priority": priority} if priority is not None else {})}
+    return mixfix_of(cast(Mixfix_RawAST, raw))
 
 
 def type_head_text(parameters: Sequence[Type_Parameter], name: str, syntax: TypeMixfix | None,

@@ -12,7 +12,6 @@ import json
 import sys
 
 import jsoncomment
-import pytest
 
 import stand_ins
 import test_session_theory as ts
@@ -25,7 +24,7 @@ from isabelle_theory_agent.std import common, locale, statement
 from isabelle_theory_agent.std.common import Infix, Instantiation, Locale_Instance, NoSyntax, Variable_With_Syntax
 from isabelle_theory_agent.std.locale import Axiom, Locale, cancellation_sentence, proposition_text
 from isabelle_theory_agent.store import Forest_Store
-from std_forest import KINDS as STD_KINDS, assert_a_missing_row_is_refused_at_start, insert, inv
+from std_forest import KINDS as STD_KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -44,19 +43,7 @@ IDEMPOTENT, COMMUTATIVE = (json.loads("\n".join(b)) for b in fenced_blocks(LD, "
 (IDEM_TWICE,) = IDEMPOTENT["children"]
 ROWS = ("english", "name", "imports", "fixes", "assumes", "implicit_structure", "annotations", "parenthesised_conclusions")
 G = IsaTerm.from_agent("G")
-
-
-def forest(*constructs, store=None):
-    """session_Arith > theory_X > the constructs; the forest and the theory."""
-    f = Forest_Under_Test(store=store, kinds=KINDS)
-    (s,) = insert(f, f, 0, [session("Arith", theory("X") | {"children": list(constructs)})])
-    return f, s.sub_nodes[0]
-
-
-def refused(f, parent, raws, cls):
-    with pytest.raises(cls) as e:
-        insert(f, parent, 0, raws)
-    return e.value
+OTIMES = Infix("infix", IsaTerm.from_agent("⊗"), 70)       # an annotation as a beginning records it: the fake wire's answer
 
 
 def bounded(**fields):
@@ -100,7 +87,7 @@ def test_the_schema_and_the_descriptions_are_the_documents():
 # --- `gen` (§2, §4) ----------------------------------------------------------
 
 def test_gen_keeps_the_fields_normalised_as_isaterms_and_names_the_node():
-    f, x = forest(IDEMPOTENT, COMMUTATIVE, bounded(english="A positive\n  bound ", implicit_structure=" n "))
+    f, x = forest(IDEMPOTENT, COMMUTATIVE, bounded(english="A positive\n  bound ", implicit_structure=" n "), kinds=KINDS)
     i, c, b = x.sub_nodes
     assert isinstance(i, Locale) and i.kind == "locale" and f.id_of(i) == "locale_idempotent_semigroup"
     assert i.english == "A semigroup whose operation is idempotent" and i.name == "idempotent_semigroup"
@@ -135,11 +122,10 @@ def test_gen_refuses_as_section_4_says():
     `for_any` variable that is a parameter; a blank implicit structure;
     the framework's: a missing field, a value of another type, a recorded
     field authored, a sibling of the same name."""
-    f, x = forest(COMMUTATIVE)
+    f, x = forest(COMMUTATIVE, kinds=KINDS)
     [identifier, repeats_f, axiom_identifier, repeats_idem, clash, blank] = fenced_blocks(LD, "4.")[0]
     [invalid] = [line for line in fenced_lines(RB, "2.") if line.startswith("`idempotent-semigroup` is not a valid locale")]
-    e = refused(f, x, [bounded(name="idempotent-semigroup", imports=[{"locale": "semi-group", "instantiations": []}])],
-                InvalidName)
+    e = refused(f, x, [bounded(name="idempotent-semigroup")], InvalidName)
     assert (e.name, e.grammar) == ("idempotent-semigroup", "locale name") and invalid in str(e)
     for name in ("bounded_", "Bounded-1", "1st", "x y", "a.b", "ε", ""):
         assert refused(f, x, [bounded(name=name)], InvalidName).grammar == "locale name", name
@@ -167,6 +153,16 @@ def test_gen_refuses_as_section_4_says():
     assert str(e) == "At `constructs[0]`: " + clash
     for structure in ("", "  \n"):
         assert str(refused(f, x, [bounded(implicit_structure=structure)], InvalidField)) == "At `constructs[0]`: " + blank
+    # §4's order under two faults: the name, then the imports, the parameters, the axioms — every axiom read before the
+    # `for_any` clash is looked for —, then the implicit structure
+    bad_import = [{"locale": "semi-group", "instantiations": []}]
+    bad_fix = [{"name": "1g"}]
+    clashing = {**ax, "statement": {**ax["statement"], "for_any": [{"name": "n"}]}}
+    assert refused(f, x, [bounded(name="idempotent-semigroup", imports=bad_import)], InvalidName).grammar == "locale name"
+    assert refused(f, x, [bounded(imports=bad_import, fixes=bad_fix)], InvalidField).field == "imports[0].locale"
+    assert refused(f, x, [bounded(fixes=bad_fix, assumes=[{**ax, "name": "1x"}])], InvalidField).field == "fixes[0].name"
+    assert refused(f, x, [bounded(assumes=[clashing, {**ax, "name": "1x"}])], InvalidField).field == "assumes[1].name"
+    assert refused(f, x, [bounded(assumes=[clashing], implicit_structure="")], InvalidField).field == "assumes[0].statement.for_any[0].name"
     # the framework's: `implicit_structure` required and a string or null; no recorded field authored; `english` required
     e = refused(f, x, [{k: v for k, v in bounded().items() if k != "implicit_structure"}], RawASTError)
     assert "implicit_structure" in str(e)
@@ -185,7 +181,7 @@ def test_gen_refuses_as_section_4_says():
 
 def test_the_fields_are_stored_and_a_missing_row_is_refused_at_start(tmp_path):
     path = tmp_path / "TAT.sqlite"
-    f, x = forest(IDEMPOTENT, COMMUTATIVE, bounded(), store=Forest_Store(path, ts.stand_ins.log()))
+    f, x = forest(IDEMPOTENT, COMMUTATIVE, bounded(), store=Forest_Store(path, ts.stand_ins.log()), kinds=KINDS)
     i, c, b = x.sub_nodes
     recorded(c, annotations=(Infix("infixl", IsaTerm.from_agent("⊗"), 70),), parenthesised=(True,))     # as a beginning records
     recorded(b)
@@ -222,7 +218,7 @@ def test_emit_writes_section_5_s_three_examples():
     ` +`, the `for` clause or the `fixes` element, the implicit structure,
     the axioms with their comments, `begin`, the children, `end`; the
     recorded annotation and parentheses read."""
-    f, x = forest(IDEMPOTENT, COMMUTATIVE, bounded())
+    f, x = forest(IDEMPOTENT, COMMUTATIVE, bounded(), kinds=KINDS)
     i, c, b = x.sub_nodes
     for node in (i, c, b):
         recorded(node)
@@ -231,30 +227,33 @@ def test_emit_writes_section_5_s_three_examples():
         out = io.StringIO()
         node.emit(0, out)
         assert out.getvalue().splitlines() == block, node.name
-    # an annotation taken from an import where `syntax` is left out; `NoSyntax` and none write nothing; two imports
+    # an annotation taken from an import where `syntax` is left out; `NoSyntax` and none write nothing; two imports; an
+    # implicit structure that is not an identifier, quoted
     (r,) = insert(f, x, 3, [bounded(name="r", imports=[
         {"locale": "A", "qualifier": "P", "instantiations": [{"name": "f", "term": "f"}]},
         {"locale": "B", "instantiations": [{"name": "g", "term": "g"}, {"name": "h", "term": "_"}]}],
         fixes=[{"name": "f"}, {"name": "g", "type": "'a", "syntax": {"form": "NoSyntax"}}, {"name": "h"}],
-        implicit_structure="f")])
+        implicit_structure="padic_int p")])
     recorded(r, annotations=(Infix("infixr", IsaTerm.from_agent("⊕"), 60), None, None))
     out = io.StringIO()
     assert r.emit_beginning(1, out) == 1
     assert out.getvalue().splitlines() == [
         "  text ‹A positive bound.›", "  light_locale r =", "    P: A where f = f +", "    B where g = g and h = _",
-        '    for f (infixr "⊕" 60) and g :: "\'a" and h +', "    implicit_structure f", '    assumes pos: "0 < n"',
+        '    for f (infixr "⊕" 60) and g :: "\'a" and h +', '    implicit_structure "padic_int p"', '    assumes pos: "0 < n"',
         "      ―‹The bound is positive.›", "  begin"]
-    # two imports and no parameter: ` +` on both; a parenthesised conclusion; a keyword quoted
+    # two imports and no parameter: ` +` on both; a parenthesised conclusion; the theory's keywords quoted — the name, the
+    # implicit structure, the axiom's name
     (q,) = insert(f, x, 4, [bounded(name="q", imports=[{"locale": "A", "instantiations": []}, {"locale": "B", "instantiations": []}],
                                     fixes=[], assumes=[{"name": "ax", "statement": {"english": "Both", "for_any": [{"name": "x"}, {"name": "y", "type": "nat"}],
                                                                                         "premises": [{"name": "h1", "term": "P x"}, {"name": "h2", "term": "Q y"}],
-                                                                                        "conclusion": "R x y"}}])])
+                                                                                        "conclusion": "R x y"}}],
+                                    implicit_structure="ax")])
     recorded(q, parenthesised=(True,))
     x.keywords = frozenset({"q", "ax"})
     out = io.StringIO()
     q.emit_beginning(0, out)
     assert out.getvalue().splitlines() == [
-        "text ‹A positive bound.›", 'light_locale "q" =', "  A +", "  B +", "  no_implicit_structure",
+        "text ‹A positive bound.›", 'light_locale "q" =', "  A +", "  B +", '  implicit_structure "ax"',
         '  assumes "ax": "⋀x (y::nat). ⟦P x; Q y⟧ ⟹ (R x y)"', "    ―‹Both.›", "begin"]
     out = io.StringIO()
     assert q.emit_ending(2, out) == 2 and out.getvalue() == "\n    end\n"
@@ -289,28 +288,36 @@ def test_eval_beginning_opr_sends_the_declaration_and_records_what_the_callback_
     declaration as structure — the name, each import's wire, each parameter's
     wire with whether its `syntax` was left out, each axiom's name and its
     two forms, the implicit structure or None, every piece in `ascii`; the
-    answer's records recorded, its cancelled structures and notice the
-    `Ready`'s messages, in that order; messages an obstacle with the
+    answer's records recorded, its cancelled structures — each with its
+    import, one giving none left out, the term in `unicode` — and notice
+    the `Ready`'s messages, in that order; messages an obstacle with the
     records untouched, the children `not_evaluated`, the ending the copy."""
     f = Forest_Under_Test(kinds=KINDS)
     (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
         IDEMPOTENT, COMMUTATIVE, bounded(name="lf", imports=[{"locale": "padic_integers", "instantiations": [
-            {"name": "Zp", "term": "_"}, {"name": "p", "term": "p"}]}], fixes=[{"name": "p", "type": "int"}], assumes=[]),
-        bounded(name="bad", imports=[{"locale": "semigrp", "instantiations": []}])]})])
+            {"name": "Zp", "term": "_"}, {"name": "p", "term": "p"}]}],
+            fixes=[{"name": "p", "type": "int", "syntax": {"form": "NoSyntax"}}], assumes=[]),
+        bounded(name="gr", imports=[{"locale": "semigrp", "instantiations": []},
+                                    {"locale": "group", "qualifier": "M", "instantiations": []},
+                                    {"locale": "ring", "qualifier": "R", "instantiations": []}]),
+        bounded(name="sym", imports=[{"locale": "monoid", "instantiations": []}]),
+        bounded(name="bad", imports=[{"locale": "semigrp", "instantiations": []}]) | {"children": [IDEM_TWICE]}]})])
     (x,) = s.sub_nodes
-    i, c, lf, bad = x.sub_nodes
+    i, c, lf, gr, sym, bad = x.sub_nodes
     notice = ("The following definitions from `padic_integers` are unfolded.\n  Zp \\<equiv> padic_int p\n"
               "The names `Zp` are not bound and shouldn't be used any more. Write their unfolded terms instead.")
     answers = {
         "idempotent_semigroup": [[], [[None], [False]], [None], None],
         "commutative_monoid": [[], [[["infix", "\\<otimes>", None, 70]], [True]], [None], None],
         "lf": [[], [[None], []], ["padic_int p"], notice],
+        "gr": [[], [[None], [False]], [None, "G", "R"], None],
+        "sym": [[], [[None], [False]], ["\\<one>"], None],
         "bad": [['Undefined locale: "semigrp"'], None, None, None]}
     calls = fake_wire(monkeypatch, lambda declaration: answers[declaration[0]])
     run(x.evaluate_to(None, False))
     mine = [args for name, args in calls if name == "TAT.Locale.open"]
     assert [(a[0], a[1]) for a in mine] == [(n.state.to_msgpack(), n.operation_slots("beginning")[1].to_msgpack())
-                                            for n in (i, c, lf, bad)]
+                                            for n in (i, c, lf, gr, sym, bad)]
     assert mine[0][1] == i.sub_nodes[0].state.to_msgpack() and mine[1][1] == c._state_before_ending.to_msgpack()
     arrow = "\\<Rightarrow>"
     assert mine[0][2] == ("idempotent_semigroup", [("semigroup", "S", [("f", "f")])],
@@ -321,25 +328,28 @@ def test_eval_beginning_opr_sends_the_declaration_and_records_what_the_callback_
     bare = ascii_of_unicode("⋀(x::'a) (y::'a). ⟦x ∈ carrier G; y ∈ carrier G⟧ ⟹ x ⊗ y = y ⊗ x")
     assert mine[1][2] == ("commutative_monoid", [("monoid", "M", [("G", "G")])],
                           [(("G", "('a, 'b) monoid_scheme", None), True)], [("comm", declared, bare)], "G")
-    assert mine[2][2] == ("lf", [("padic_integers", None, [("Zp", "_"), ("p", "p")])], [(("p", "int", None), True)], [], None)
+    assert mine[2][2] == ("lf", [("padic_integers", None, [("Zp", "_"), ("p", "p")])], [(("p", "int", None), False)], [], None)
     # the records and the messages
     assert i.evaluation_status_beginning == M.READY_CLEAN and i.annotations == (None,) and i.parenthesised_conclusions == (False,)
-    assert c.annotations == (Infix("infix", IsaTerm.from_agent("⊗"), 70),) and c.parenthesised_conclusions == (True,)
+    assert c.annotations == (OTIMES,) and c.parenthesised_conclusions == (True,)
     assert c.evaluation_status_beginning == M.READY_CLEAN
     assert isinstance(lf.evaluation_status_beginning, M.Ready) and lf.annotations == (None,) and lf.parenthesised_conclusions == ()
-    [cancellation, _, _] = [b for b in fenced_blocks(LD, "6.") if b[0].startswith("`null` cancels")][0]
+    [cancellation, two, _] = [b for b in fenced_blocks(LD, "6.") if b[0].startswith("`null` cancels")][0]
     assert [m.unicode for m in lf.evaluation_status_beginning.messages] == [
         cancellation, notice.replace("\\<equiv>", "≡")]
+    assert [m.unicode for m in gr.evaluation_status_beginning.messages] == [two]       # `semigrp` gives none: left out
+    assert [m.unicode for m in sym.evaluation_status_beginning.messages] == [
+        '`null` cancels the implicit structure "𝟭" inherited from locale monoid.']
     assert isinstance(bad.evaluation_status_beginning, M.CannotEvaluate) and bad.annotations is None
     assert [m.unicode for m in bad.evaluation_status_beginning.messages] == ['Undefined locale: "semigrp"']
     assert bad.evaluation_status_ending == M.READY_CLEAN and i.evaluation_status_ending == M.READY_CLEAN
-    assert i.sub_nodes[0]._status == M.READY_CLEAN
-    assert [name for name, _ in calls].count("TAT.Locale.close") == 3                    # `bad`'s ending is the copy
+    assert i.sub_nodes[0]._status == M.READY_CLEAN and bad.sub_nodes[0]._status is M.NOT_EVALUATED
+    assert [name for name, _ in calls].count("TAT.Locale.close") == 5                    # `bad`'s ending is the copy
     assert (i.mark(M.BRIEFING, 0), c.mark(M.BRIEFING, 0), bad.mark(M.BRIEFING, 0)) == ("incomplete", "complete", "failed")
     # a refusal leaves the records; recorded anew by a beginning that goes through
     answers["commutative_monoid"] = [["Interrupt"], None, None, None]
     status = run(c._eval_beginning_opr())
-    assert isinstance(status, M.CannotEvaluate) and c.parenthesised_conclusions == (True,)
+    assert isinstance(status, M.CannotEvaluate) and c.annotations == (OTIMES,) and c.parenthesised_conclusions == (True,)
     answers["commutative_monoid"] = [[], [[None], [False]], [None], None]
     assert run(c._eval_beginning_opr()) == M.READY_CLEAN and c.annotations == (None,) and c.parenthesised_conclusions == (False,)
 
@@ -347,7 +357,7 @@ def test_eval_beginning_opr_sends_the_declaration_and_records_what_the_callback_
 def test_the_cancellation_s_message_is_section_6_s_in_its_three_forms():
     """§6: each cancelled structure through `print_name` against no keyword,
     with its import's authored locale name, joined by `, ` and ` and `;
-    the noun in number; an import giving none left out."""
+    the noun in number."""
     [one, two, three] = [b for b in fenced_blocks(LD, "6.") if b[0].startswith("`null` cancels")][0]
     padic = (IsaTerm.from_agent("padic_integers"), IsaTerm.from_agent("padic_int p"))
     assert cancellation_sentence([padic]) == one
@@ -380,15 +390,17 @@ def test_print_fields_writes_the_declaration_by_depth_and_recall_renders_section
     """§8: the keyed sections under `Recall` to depth 2, `english` and the
     axioms' `english` at depth 0, nothing elsewhere; `print_fields`
     answering whether it wrote a keyed line; the recorded parentheses while
-    the beginning is `Ready`; `children_header` the phrase; the section's
-    five renderings whole."""
+    the beginning is `Ready`; `children_header` the phrase; the recorded
+    annotation and the theory's keywords not read; the section's five
+    renderings whole."""
     f, x = forest(COMMUTATIVE | {"children": [{"kind": "lemma", "name": "comm_inv", "statement": {
         "english": "The inverse of an element commutes with it", "for_any": [{"name": "x", "type": "'a"}],
         "premises": [{"name": "hx", "term": "x ∈ carrier G"}], "conclusion": "inv x ⊗ x = x ⊗ inv x"}}]},
         IDEMPOTENT | {"imports": [{"locale": "semigrp", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]}]},
         bounded(name="LF", english="The p-adic integers for a prime p", imports=[{"locale": "padic_integers", "instantiations": [
-            {"name": "Zp", "term": "_"}, {"name": "p", "term": "p"}]}], fixes=[{"name": "p", "type": "int"}], assumes=[]))
-    c, i, lf = x.sub_nodes
+            {"name": "Zp", "term": "_"}, {"name": "p", "term": "p"}]}], fixes=[{"name": "p", "type": "int"}], assumes=[]),
+        bounded(name="pb", implicit_structure="padic_int p"), kinds=KINDS)
+    c, i, lf, pb = x.sub_nodes
     [recall_c, recall_i, recall_lf, quick_lf, quick_c] = fenced_blocks(LD, "8.")
 
     def fields(node, mode, depth):
@@ -401,16 +413,21 @@ def test_print_fields_writes_the_declaration_by_depth_and_recall_renders_section
     assert fields(c, M.RECALL, 2) == fields(c, M.RECALL, 1) and fields(c, M.RECALL, 3) == (False, [])
     for mode in (M.OUT_FOCUS, M.Relative_Focus(frozenset({c}), 0), M.Relative_Focus(frozenset({x}), -1)):
         assert fields(c, mode, 0) == (False, [])
+    for keywords in (None, frozenset(), frozenset({"comm", "G", "M"})):     # the stored text, whatever the theory recorded
+        x.keywords = keywords
+        assert fields(c, M.RECALL, 1) == (True, [line for line in declaration[1:] if not line.startswith("    ")])
+    x.keywords = None
     assert fields(lf, M.RECALL, 1) == (True, ["imports:", "  padic_integers where Zp = _ and p = p", "fixes:", "  p :: int",
                                             "implicit_structure: null"])
+    assert fields(pb, M.RECALL, 1) == (True, ["fixes:", "  n :: nat", 'implicit_structure: "padic_int p"', "assumes:", '  pos: "0 < n"'])
     assert Locale.children_header(c) == "locale context" == locale.CHILDREN_HEADER
     # the parentheses: the recorded ones under a `Ready` beginning, none otherwise
     recorded(c, parenthesised=(True,))
     assert fields(c, M.RECALL, 2)[1][-1] == '  comm: "⋀(x::\'a) (y::\'a). ⟦x ∈ carrier G; y ∈ carrier G⟧ ⟹ (x ⊗ y = y ⊗ x)"'
     c.evaluation_status_beginning = M.CannotEvaluate((IsaTerm.from_agent("e"),))
     assert fields(c, M.RECALL, 2)[1][-1] == recall_c[8][2:]
-    # §8's renderings whole
-    recorded(c)
+    # §8's renderings whole; the recorded annotation is not printed (§8): the fence's `G :: "('a, 'b) monoid_scheme"` carries none
+    recorded(c, annotations=(OTIMES,))
     with_proof(c.sub_nodes[0], M.READY_CLEAN, RUNNING)
     me = stand_ins.agent(f.conversation)
     assert f.render(c, M.RECALL, me).splitlines() == recall_c

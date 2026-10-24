@@ -175,11 +175,16 @@ def test_gen_refuses_as_section_4_says():
         {"name": "A", "arguments": [{"type": "'a", "selector": "get"}]},
         {"name": "B", "arguments": [{"type": "'a", "selector": "get"}, {"type": "nat"}]}]})])
     run(locked(f, edit.delete(q)))
-    # the framework's integer bound (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's line, the forest unchanged
+    # the framework's integer bound and its choice of a union's arm (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's two
+    # lines, the forest unchanged
     [bound] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line.endswith("must be a 64-bit integer.")]
     e = refused(f, x, [definition({"type_name": "list", "constructors": [
         {"name": "Nil"}, {"name": "Cons", "syntax": {"form": "infixr", "symbol": "#", "priority": 2**64}}]})], InvalidField)
     assert str(e) == "At `constructs[0]`: " + bound and e.field == "types[0].constructors[1].syntax.priority"
+    [form] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line.endswith("`mixfix`, `NoSyntax`.")]
+    e = refused(f, x, [definition({"type_name": "list", "constructors": [
+        {"name": "Nil"}, {"name": "Cons", "syntax": {"form": "postfix", "symbol": "#"}}]})], InvalidField)
+    assert str(e) == "At `constructs[0]`: " + form and e.field == "types[0].constructors[1].syntax.form"
     for raw in ({"kind": "datatype", "english": "e", "types": []},
                 {"kind": "datatype", "english": "e", "types": [{"type_name": "t", "constructors": []}]},
                 {"kind": "datatype", "english": "e", "types": [{"type_name": "t", "constructors": [{"name": "C", "syntax": {"form": "infix", "symbol": "+"}}]}]},

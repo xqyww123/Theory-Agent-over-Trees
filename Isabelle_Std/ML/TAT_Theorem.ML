@@ -42,11 +42,11 @@ fun statement_transition ((kind, name, for_any, premises, conclusion) : statemen
   declare and the input state's context does not fix (a `Locale`'s parameters
   inside its block, LOCALE.md §6), which Isabelle fixed by itself; sorted*)
 fun undeclared ((_, _, for_any, _, _) : statement) st_input st =
-  let val {context, goal, ...} = Proof.goal (Toplevel.proof_of st)
-      val props = Thm.prop_of goal :: map Thm.prop_of (Assumption.all_prems_of context)
+  let val ctxt0 = Toplevel.context_of st_input
+      val {context, goal, ...} = Proof.goal (Toplevel.proof_of st)
+      val props = Thm.prop_of goal :: map Thm.prop_of (Assumption.local_prems_of context ctxt0)
       val frees = distinct (op =) (map #1 (fold Term.add_frees props []))
-      val fixed = Variable.is_fixed (Toplevel.context_of st_input)
-   in sort_strings (filter_out fixed (subtract (op =) (map #1 for_any) frees)) end
+   in sort_strings (filter_out (Variable.is_fixed ctxt0) (subtract (op =) (map #1 for_any) frees)) end
 
 (*names joined by `, ` with `last` before the final one, the twin of the
   framework's `exceptions.series` (LOCALE.md §6)*)

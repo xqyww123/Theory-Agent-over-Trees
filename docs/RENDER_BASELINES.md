@@ -87,7 +87,7 @@ The argument `action` must be one of `append`, `insert_before`, `insert_after`, 
 The argument `constructs` must not be empty.
 The argument `constructs` must not be nested deeper than 100 levels.
 The field `types` must not be empty.
-The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`.
+The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`, `NoSyntax`.
 The field `types[0].constructors[1].syntax.priority` must be a 64-bit integer.
 ```
 
@@ -113,8 +113,9 @@ The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constru
 framework's check), against the theory name's grammar (`Theory.gen`'s
 check), against the session name's (`Session.gen`'s check), against
 the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4),
-against the type name's (`Datatype.gen`'s and `Typedef.gen`'s check,
-node_classes/DATATYPE.md §4, TYPEDEF.md §4), against the constant
+against the type name's (`Datatype.gen`'s, `Record.gen`'s, `Typedef.gen`'s
+and `QuotientType.gen`'s check, node_classes/DATATYPE.md §4, RECORD.md §4,
+TYPEDEF.md §4, QUOTIENT_TYPE.md §4), against the constant
 name's (`LiftDefinition.gen`'s and `Define.gen`'s check,
 node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4) and against the
 locale name's (`Locale.gen`'s check, node_classes/LOCALE.md §4);

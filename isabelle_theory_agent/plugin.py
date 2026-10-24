@@ -519,8 +519,8 @@ def _validate_node(schema: Any, top: bool, grammar: str, refuse: Callable[[str],
 # --- the argument schema grammar (MODULE_STRUCTURE §4.4) ----------------------
 # `str`, `bool`, `int`, `float`, `Literal[...]` of strings, `list[X]`, a
 # non-empty list `Annotated[list[X], NON_EMPTY]`, a TypedDict, and unions of
-# `str`, `bool`, `int`, `float`, `list[X]` and TypedDicts — no two of one
-# JSON type (`int` and `float` both numbers), but TypedDicts told apart by
+# `str`, `bool`, `int`, `float`, `list[X]`, TypedDicts and `None` — no two of
+# one JSON type (`int` and `float` both numbers), but TypedDicts told apart by
 # one `Literal` field — each field
 # optionally wrapped in `NotRequired[X]` or `Required[X]`.  Closed, so that
 # every construct schema the agreement below admits is one `check_call`
@@ -675,9 +675,10 @@ def _validate_construct_schema(cls: type[Node]) -> None:
     """The construct schema on its own (PLUGIN_SYSTEM §5): `$defs` keys
     identifiers, every entry a schema and none a bare `$ref`; every `$ref`
     outside the top-level `children` of the form `#/$defs/<Name>` naming
-    an own entry; no `anyOf` arm, its `$ref` followed, an `anyOf`; no
-    keyword besides the grammar's, `description`, and `$defs` at the top
-    alone; every entry reached by a `$ref` outside the top-level
+    an own entry; no `anyOf` arm, its `$ref` followed, an `anyOf`;
+    `{"type": "null"}`, JSON null, an arm of an `anyOf` and nothing else;
+    no keyword besides the grammar's, `description`, and `$defs` at the
+    top alone; every entry reached by a `$ref` outside the top-level
     `children`, and none reaching itself — recursion happens only at
     `children`.  `kind` and `children` have rules of their own
     (`_kinds_of`, `_check_class`)."""
@@ -721,7 +722,8 @@ def _validate_construct_schema(cls: type[Node]) -> None:
         if isinstance(s, dict) and "anyOf" in s:
             allowed(s, {"anyOf"}, where)
             for i, arm in enumerate(s["anyOf"]):
-                if _is_null(arm):                      # JSON null: an arm of an `anyOf`, and nothing else
+                if isinstance(arm, dict) and arm.get("type") == "null":     # JSON null: an arm of an `anyOf`, and nothing else
+                    allowed(arm, {"type"}, f"{where}<{i}>")
                     continue
                 walk(arm, f"{where}<{i}>")             # a schema, its `$ref` naming an own entry
                 if "anyOf" in _resolved(arm, defs):
@@ -740,12 +742,6 @@ def _validate_construct_schema(cls: type[Node]) -> None:
     if unreached:
         raise _refuse(cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` outside the"
                            " top-level `children`")
-
-
-def _is_null(schema: Any) -> bool:
-    """`{"type": "null"}` with at most a `description`: JSON null, admitted
-    as an arm of a construct schema's `anyOf` alone (PLUGIN_SYSTEM §5)."""
-    return isinstance(schema, dict) and schema.get("type") == "null" and set(schema) <= {"type", "description"}
 
 
 def _required_enum_fields(arms: list[JSON_Schema]) -> list[str]:

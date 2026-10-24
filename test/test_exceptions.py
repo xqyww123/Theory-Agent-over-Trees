@@ -111,9 +111,9 @@ def test_invalid_field():
     check(InvalidField(field="types[0].constructors[1].syntax.priority", reason="must be a 64-bit integer"),
           "The field `types[0].constructors[1].syntax.priority` must be a 64-bit integer.")
     check(InvalidField(field="types[0].constructors[1].syntax.form",
-                       reason="must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`"),
+                       reason="must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`, `NoSyntax`"),
           "The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`,"
-          " `binder`, `mixfix`.")
+          " `binder`, `mixfix`, `NoSyntax`.")
 
 
 def test_unexpected_field():

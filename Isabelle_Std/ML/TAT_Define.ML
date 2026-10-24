@@ -49,10 +49,6 @@ fun config_of command =
 val read_methods = TAT_Mixfix.read_text (Method.parse -- Scan.option Method.parse) "method"
 val read_attribs = TAT_Mixfix.read_text Parse.attribs "attributes"
 
-(*the constants as the commands take them: `Variable_With_Syntax`'s wire, the
-  annotation read under the local theory's keywords (COMMON.md §4)*)
-val fixes = TAT_Mixfix.fixes
-
 (*** the form (DEFINE.md §6) ***)
 
 (*the equations read with the constants fixed at their types and syntax:
@@ -63,11 +59,9 @@ val fixes = TAT_Mixfix.fixes
   read that fails raises, the definition's failure*)
 fun is_definition ctxt ((constants, equations, _, _) : definition) =
   (case (constants, equations) of
-    ([(name, typ, syntax)], [equation]) =>
+    ([(name, _, _)], [equation]) =>
       let
-        val (_, ctxt') =
-          Proof_Context.add_fixes
-            [(Binding.name name, Option.map (Syntax.read_typ ctxt) typ, TAT_Mixfix.read ctxt syntax)] ctxt
+        val (_, ctxt') = Proof_Context.add_fixes_cmd (TAT_Mixfix.fixes ctxt constants) ctxt
         val prop = Syntax.read_prop ctxt' equation
         fun is_the_constant (Free (x, _)) = x = name
           | is_the_constant _ = false
@@ -91,7 +85,7 @@ fun is_definition ctxt ((constants, equations, _, _) : definition) =
 fun definition_transition ((constants, equations, _, _) : definition) =
   Toplevel.make "definition" Position.none
   |> Toplevel.local_theory NONE NONE (fn lthy =>
-      Specification.definition_cmd (SOME (the_single (fixes lthy constants))) [] []
+      Specification.definition_cmd (SOME (the_single (TAT_Mixfix.fixes lthy constants))) [] []
         (Binding.empty_atts, the_single equations) false lthy |> #2)
 
 (*`function (sequential, no_partials)` under `fun`'s configuration (fun.ML,
@@ -99,7 +93,7 @@ fun definition_transition ((constants, equations, _, _) : definition) =
 fun function_transition command ((constants, equations, _, _) : definition) =
   Toplevel.make "function" Position.none
   |> Toplevel.local_theory_to_proof NONE NONE (fn lthy =>
-      Function.function_cmd (fixes lthy constants) (map (fn eq => ((Binding.empty_atts, eq), [], [])) equations)
+      Function.function_cmd (TAT_Mixfix.fixes lthy constants) (map (fn eq => ((Binding.empty_atts, eq), [], [])) equations)
         (config_of command) false lthy)
 
 val termination_transition =

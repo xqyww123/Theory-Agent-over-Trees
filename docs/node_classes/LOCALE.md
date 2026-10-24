@@ -666,8 +666,12 @@ writes the conclusion bare, otherwise in parentheses — recorded as
 `parenthesised_conclusions`.
 
 Third, the notice: the light locale's function that writes its
-warnings, over the locale, so that the notice and the warning are the
-same text, gives the lines it prints when the declaration unfolds a
+warnings, `Expression.unfolded_definitions_message`, over the context
+the `light_locale … begin` transition leaves — `Toplevel.context_of` of
+the state after it, the context the command prints in, which the
+printing depends on — and the locale's full name, so that the notice
+and the warning are the same text, gives the lines it prints when the
+declaration unfolds a
 definition of an imported locale — a parameter that locale defines by
 a `defines` clause, replaced by its definition and no longer bound, as
 `Zp` under `padic_integers` — and, for each such name that `fixes`

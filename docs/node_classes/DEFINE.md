@@ -359,8 +359,9 @@ through, and a
 re-evaluation under a changed context never switches it. With `None`
 the callback decides: it reads the equations in the input state's
 context with the constants fixed at their types and syntax —
-`Syntax.read_prop` after `Proof_Context.add_fixes`, a type left out
-open — and takes `definition` when there is one constant and one
+`Syntax.read_prop` after `Proof_Context.add_fixes_cmd` on the list
+`TAT_Mixfix.fixes` builds (COMMON.md §4), a type left out open — and
+takes `definition` when there is one constant and one
 equation, the equation is an unconditional equality whose left side is
 the constant applied to distinct variables or to nothing, and its right
 side does not mention the constant; otherwise `function (sequential,

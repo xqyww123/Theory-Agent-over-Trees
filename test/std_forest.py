@@ -33,9 +33,9 @@ def insert(f, parent, index, raws):
     return run(locked(f, edit.insert(parent, index, raws)))
 
 
-def forest(*constructs, store=None):
+def forest(*constructs, store=None, kinds=KINDS):
     """session_Arith > theory_X > the constructs; the forest and the theory."""
-    f = Forest_Under_Test(store=store, kinds=KINDS)
+    f = Forest_Under_Test(store=store, kinds=kinds)
     (s,) = insert(f, f, 0, [session("Arith", theory("X") | {"children": list(constructs)})])
     return f, s.sub_nodes[0]
 

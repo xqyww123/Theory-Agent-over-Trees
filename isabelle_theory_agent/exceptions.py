@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from typing import Literal
+from typing import Literal, get_args
 
 
 class TAT_Error(Exception, ABC):
@@ -297,48 +297,42 @@ class DuplicateName(BadEdit):
                 f" `{self.taken_by}`. Amend that node, or give this one another name.")
 
 
-class InvalidName(BadEdit):
-    """Raised against one of seven grammars, which `grammar` names: the
-    framework's name grammar (MCP_SPECIFICATION §2), by the framework; the
-    theory name's, by `Theory.gen`; the session name's, by `Session.gen`;
-    the fact name's, by `Theorem.gen` (node_classes/THEOREM.md §4); the
-    type name's, by `Datatype.gen` and `Typedef.gen` (node_classes/DATATYPE.md
-    §4, TYPEDEF.md §4); the constant name's, by `LiftDefinition.gen` and
-    `Define.gen` (node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4); the
-    locale name's, by `Locale.gen` (node_classes/LOCALE.md §4).  Each
-    renders its own grammar, so the agent can correct the name from the
-    message."""
-
-    def __init__(self, name: str,
-                 grammar: Literal["name", "theory name", "session name", "fact name", "type name",
-                                  "constant name", "locale name"] = "name"):
-        super().__init__()
-        self.name = name
-        self.grammar = grammar
-
-    def _cause(self) -> str:
-        return f"`{self.name}` is not a valid {self.grammar}: a {self.grammar} {GRAMMARS[self.grammar]}."
-
-
-# Each grammar's text, a predicate of the name, rendered by `InvalidName`
-# after its subject.  The fact name's, the type name's, the constant
-# name's and the locale name's are one text (RENDER_BASELINES §2), which
-# `Isabelle_Std` also renders when it refuses a field that is no Isabelle
-# identifier (node_classes/COMMON.md §5).
-_FACT_OR_TYPE_NAME = ("starts with a letter and continues with letters, digits, underscores and primes ('), and"
-                      " does not end with an underscore")
-GRAMMARS = {
+# The grammars `InvalidName` renders (EXCEPTIONS.md §3), each a predicate of
+# the name after its subject: the framework's three, and the id grammar
+# without hyphens (node_classes/COMMON.md §5) under the noun of each class
+# of `Isabelle_Std` that checks its node's name against it — one text
+# (RENDER_BASELINES §2), which the plugin also renders when it refuses a
+# field that is no Isabelle identifier.
+Id_Name_Grammar = Literal["fact name", "type name", "constant name", "locale name"]
+Grammar = Literal["name", "theory name", "session name", Id_Name_Grammar]
+ID_NAME_TEXT = ("starts with a letter and continues with letters, digits, underscores and primes ('), and"
+                " does not end with an underscore")
+GRAMMARS: dict[Grammar, str] = {
     "name": "starts with a letter and continues with letters, digits, underscores, primes (') and interior"
             " hyphens, and does not end with a hyphen or an underscore",
     "theory name": "starts with a letter and continues with letters, digits and underscores, with no hyphen"
                    " and no dot",
     "session name": "starts with a letter and continues with letters, digits, underscores and interior"
                     " hyphens, and does not end with a hyphen or an underscore",
-    "fact name": _FACT_OR_TYPE_NAME,
-    "type name": _FACT_OR_TYPE_NAME,
-    "constant name": _FACT_OR_TYPE_NAME,
-    "locale name": _FACT_OR_TYPE_NAME,
+    **dict.fromkeys(get_args(Id_Name_Grammar), ID_NAME_TEXT),
 }
+
+
+class InvalidName(BadEdit):
+    """Raised against one of `GRAMMARS`, which `grammar` names — by the
+    framework against its name grammar (MCP_SPECIFICATION §2), by `Theory.gen`
+    and `Session.gen` against the theory name's and the session name's, by
+    the classes of `Isabelle_Std` against the id grammar without hyphens
+    (EXCEPTIONS.md §3).  Each renders its own grammar, so the agent can
+    correct the name from the message."""
+
+    def __init__(self, name: str, grammar: Grammar = "name"):
+        super().__init__()
+        self.name = name
+        self.grammar: Grammar = grammar
+
+    def _cause(self) -> str:
+        return f"`{self.name}` is not a valid {self.grammar}: a {self.grammar} {GRAMMARS[self.grammar]}."
 
 
 class DuplicateTheoryShortName(BadEdit):
