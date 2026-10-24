@@ -111,16 +111,13 @@ The `edit` tool has no argument `kind`; it takes `action`, `target_id`, `constru
 
 `InvalidName`, against the name grammar of MCP_SPECIFICATION §2 (the
 framework's check), against the theory name's grammar (`Theory.gen`'s
-check), against the session name's (`Session.gen`'s check), against
-the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4),
-against the type name's (`Datatype.gen`'s, `Record.gen`'s, `Typedef.gen`'s
-and `QuotientType.gen`'s check, node_classes/DATATYPE.md §4, RECORD.md §4,
-TYPEDEF.md §4, QUOTIENT_TYPE.md §4), against the constant
-name's (`LiftDefinition.gen`'s and `Define.gen`'s check,
-node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4) and against the
-locale name's (`Locale.gen`'s check, node_classes/LOCALE.md §4);
-`grammar` selects the rendering, the fact name's, the type name's, the
-constant name's and the locale name's sharing one text:
+check), against the session name's (`Session.gen`'s check), and
+against the fact name's, the type name's, the constant name's and the
+locale name's — a plugin node's own name, checked by its class's `gen`
+against the id grammar without hyphens (node_classes/COMMON.md §5; the
+class's document, §4); `grammar` selects the rendering, the fact
+name's, the type name's, the constant name's and the locale name's
+sharing one text:
 
 ```
 `Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.

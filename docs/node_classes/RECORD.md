@@ -262,10 +262,12 @@ each `(name, sort option)`; `name` the type's name as a binding;
 
 A `parent` authored bare took the record's type parameters as its
 arguments (§2), which fits the parent record only when it takes as
-many. Before the command runs, the ML side reads the parent record's
-parameters (`Record.get_info`, the name resolved in the local theory)
-and, when their number differs from the record's, refuses the run with
-one message, the definition's failure:
+many. Before the command runs, the ML side parses the applied type in
+the local theory (`Syntax.parse_typ`, arities unchecked), reads the
+record under its head (`Record.get_info`) and, when the number of its
+parameters differs from the record's, refuses the run with one
+message, the definition's failure — the parent's name in it as the
+context prints it:
 
 ```
 The parent record `point` takes 1 type argument; `cpoint` declares 2: you must specify `parent` with its type arguments.

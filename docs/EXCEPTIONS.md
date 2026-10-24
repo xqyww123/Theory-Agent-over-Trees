@@ -212,13 +212,12 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          MCP_SPECIFICATION §2, checked where
 │  │                          DuplicateName is [framework]; the theory
 │  │                          name's [Theory.gen]; the session name's
-│  │                          [Session.gen]; the fact name's
-│  │                          [Theorem.gen]; the type name's
-│  │                          [Datatype.gen, Record.gen, Typedef.gen,
-│  │                          QuotientType.gen]; the constant
-│  │                          name's [LiftDefinition.gen, Define.gen];
-│  │                          the locale name's [Locale.gen]; the seven
-│  │                          grammars are RENDER_BASELINES §2's
+│  │                          [Session.gen]; the fact, type, constant
+│  │                          and locale names' — a plugin node's own
+│  │                          name, the id grammar without hyphens
+│  │                          (node_classes/COMMON.md §5) [the class's
+│  │                          gen]; the seven grammars are
+│  │                          RENDER_BASELINES §2's
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
 │  │                          (its full path in the call) already uses
