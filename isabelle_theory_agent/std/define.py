@@ -442,6 +442,7 @@ class Define(With_Proof_Obligations, Leaf):
                 out.write(INDENT * (indent + 1) + e.unicode + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
+        return False
 
     def _command(self) -> str:
         """The command the file carries (§5): `fun` when the recorded form is

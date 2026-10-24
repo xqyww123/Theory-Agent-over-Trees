@@ -900,13 +900,14 @@ class Node(ABC):
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
         """The line at `indent` — the mark and the framework's tags inside
         the parentheses — then `print_fields` (never in the briefing), the
-        messages, the owing line, the failure blocks, the children one level
-        deeper — for a nesting node with none, where they would be shown,
-        the empty node's line, unless the node refuses children — and under
-        `Recall` the summary below an `incomplete` nesting node at the last
-        printed depth (PRINT.md §1, §2).  The root's only child, reached
-        from the root, writes its line without the dash and its body at the
-        same indent (§6)."""
+        messages, the owing line, the failure blocks, the children — one
+        level deeper, or two under the children header when a keyed line
+        was written and the class answers one; for a nesting node with no
+        children, where they would be shown, the empty node's line, unless
+        the node refuses children — and under `Recall` the summary below
+        an `incomplete` nesting node at the last printed depth (PRINT.md
+        §1, §2).  The root's only child, reached from the root, writes its
+        line without the dash and its body at the same indent (§6)."""
         forest = self.forest()
         mark = self.mark(mode, depth)
         inside = [part for part in (mark, *self._tags(forest.agent)) if part]
@@ -914,16 +915,22 @@ class Node(ABC):
         alone = self.parent is forest and len(forest.sub_nodes) == 1 and depth >= 1
         out.write(INDENT * indent + ("" if alone else "- ") + line + "\n")
         below = indent if alone else indent + 1
-        if mode is not BRIEFING:
-            self.print_fields(below, out, mode, depth)
-        self._print_messages(below, out, mode, depth)
+        keyed = mode is not BRIEFING and self.print_fields(below, out, mode, depth)
+        keyed |= self._print_messages(below, out, mode, depth)
         self._print_owing_line(below, out, mode, depth)
-        self._print_failures(below, out, mode, depth)
-        for child, child_mode in self._children_to_print(mode, depth):
-            child.print(below, out, child_mode, depth + 1)
-        if (isinstance(self, NonLeaf_Node) and not self.sub_nodes and _shows_children(mode, depth)
-                and self.children_refusal() is None):
-            out.write(INDENT * below + EMPTY_NODE.format(id=forest.id_of(self)) + "\n")
+        keyed |= self._print_failures(below, out, mode, depth)
+        children = self._children_to_print(mode, depth)
+        empty = (isinstance(self, NonLeaf_Node) and not self.sub_nodes and _shows_children(mode, depth)
+                 and self.children_refusal() is None)
+        header = self.children_header() if keyed and (children or empty) else None
+        children_indent = below
+        if header is not None:
+            out.write(INDENT * below + header + ":\n")
+            children_indent += 1
+        for child, child_mode in children:
+            child.print(children_indent, out, child_mode, depth + 1)
+        if empty:
+            out.write(INDENT * children_indent + EMPTY_NODE.format(id=forest.id_of(self)) + "\n")
         if (mode is RECALL and depth == LAST_PRINTED_DEPTH and isinstance(self, NonLeaf_Node)
                 and self._default_mark() == "incomplete"):
             self._print_summary(below, out)
@@ -958,16 +965,17 @@ class Node(ABC):
             out.write(INDENT * indent + line + "\n")
 
     @final
-    def _print_failures(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+    def _print_failures(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> bool:
         """The failure blocks (PRINT.md §2; CONSTRUCT_INTERACTION §6): where
         the node is detailed, the construction job's `failure_header` over
         its message while its outcome is `FAILED`, and the check's class's
         over the check's while `check_outcome()` is `FAILED` — unless an
         operation the node's jobs depend on is an obstacle, which makes the
         failure stale; a None header prints nothing; the seen set does not
-        apply."""
+        apply.  Answers whether it wrote a keyed line: a header with its
+        colon, over a message (PRINT.md §2)."""
         if mode is BRIEFING or not self.detailed(mode, depth):
-            return
+            return False
         failures: list[tuple[Any, Failed]] = []        # the header's bearer: the job, or the check's class
         job = self.job()
         if job is not None and isinstance(job.outcome, Failed):
@@ -977,12 +985,15 @@ class Node(ABC):
             failures.append((job_class, check))
         # an Unchained_Node has no failure (its class names no job class) and no job_operation_status()
         if not failures or isinstance(self.job_operation_status(), CannotEvaluate):
-            return
+            return False
+        keyed = False
         for bearer, failure in failures:
             header = bearer.failure_header(failure)
             if header is not None:
                 for line in with_message(header, failure.message).splitlines():
                     out.write(INDENT * indent + line + "\n")
+                keyed = keyed or bool(failure.message)
+        return keyed
 
     @final
     def _print_summary(self, indent: int, out: TextIO) -> None:
@@ -1032,28 +1043,42 @@ class Node(ABC):
         chain.reverse()
         return chain
 
-    def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
+    def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> bool:
         """The class's: its fields, one per line at `indent`, under `Recall`
-        alone, chosen by depth (PRINT.md §3).  Nothing by default."""
+        alone, chosen by depth; whether a line it wrote is keyed, a `key:
+        value` (PRINT.md §2, §3).  Nothing and false by default."""
+        return False
 
-    def _print_messages(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
-        """The framework's (PRINT.md §3): each own operation's messages, the
+    def children_header(self) -> str | None:
+        """The class's: the phrase the framework writes, with a colon, over
+        the children where a keyed line stands under this node's line — a
+        field, a message block, a failure block with its colon (PRINT.md
+        §2); None, the default, puts the children directly under what was
+        written."""
+        return None
+
+    def _print_messages(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> bool:
+        """The framework's (PRINT.md §3): each own operation's messages, one
         block headed `Error:` under a `CannotEvaluate` and `Notice:` under
-        a `Ready` — whole under `recall` below depth 2, once per run
-        elsewhere (the agent's seen set, §4), never in the briefing."""
+        a `Ready`, every message of the status under it — whole under
+        `recall` below depth 2, once per run elsewhere (the agent's seen
+        set, §4), never in the briefing.  Answers whether it wrote a
+        block."""
         if mode is BRIEFING:
-            return
+            return False
         seen = self.forest().agent.seen
         whole = mode is RECALL and depth < 2
+        written = False
         for operation, status in zip(self._operation_names(), self.evaluation_statuses()):
             if isinstance(status, NotEvaluated) or not status.messages:
                 continue
             key = (self.identity, operation)
             if whole or key not in seen:
                 header = "Error:" if isinstance(status, CannotEvaluate) else "Notice:"
-                for message in status.messages:
-                    print_error(indent, out, message.unicode, header)
+                print_error(indent, out, "\n".join(m.unicode.rstrip("\n") for m in status.messages), header)
                 seen.add(key)
+                written = True
+        return written
 
     def detailed(self, mode: PrintMode, depth: int) -> bool:
         """A helper for a class's `print_fields`: this node is a focus, or
@@ -2646,15 +2671,20 @@ class Session(Unchained_Node):
     def print_fields(self, indent, out, mode, depth):
         """SESSION_AND_THEORY §4: under `Recall`, `parent_session` and
         `options` at depths 0 and 1, `description` at depth 0; `options`
-        and `description` when there are any."""
+        and `description` when there are any; every line keyed."""
         if mode is not RECALL or depth > 1:
-            return
+            return False
         out.write(INDENT * indent + f"parent_session: {self.parent_session}\n")
         if self.options:
             out.write(INDENT * indent + "options: "
                       + ", ".join(f"{o['name']} = {o['value']}" for o in self.options) + "\n")
         if depth == 0 and self.description:
             print_error(indent, out, self.description, "description:")
+        return True
+
+    def children_header(self):
+        """SESSION_AND_THEORY §4: `theories`."""
+        return "theories"
 
     async def _evaluate(self, ev, mode):
         raise TAT_InternalError(
@@ -2845,12 +2875,18 @@ class Theory(StdBlock):
 
     def print_fields(self, indent, out, mode, depth):
         """SESSION_AND_THEORY §4: under `Recall`, `description` at depth 0
-        when there is one, `imports` to depth 2.  The operations' messages
-        are the framework's (PRINT.md §3)."""
+        when there is one, `imports` to depth 2, every line keyed.  The
+        operations' messages are the framework's (PRINT.md §3)."""
         if mode is RECALL and depth == 0 and self.description:
             print_error(indent, out, self.description, "description:")
         if mode is RECALL and depth <= 2:
             out.write(INDENT * indent + f"imports: {' '.join(self.imports)}\n")
+            return True
+        return False
+
+    def children_header(self):
+        """SESSION_AND_THEORY §4: `declarations`."""
+        return "declarations"
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
     # operation's errors, empty when it passed (ARCHITECTURE §6.2) — the

@@ -297,7 +297,8 @@ def test_the_readiness_and_the_line_are_the_frameworks_and_rendering_is_synchron
     misbased = type("Misbased", (Persisted, M.NonLeaf_Node), {      # none of the three bases: `Node`'s `_own_statuses`
         "construct_schema": leaf_schema(["misbased"]), "argument_schema": Empty, "__module__": __name__})
     refused(misbased, "overrides `_own_statuses`")
-    refused(leaf("Liner", ["liner"], print=lambda self, i, o, m, d: None), "overrides `print`")
+    refused(leaf("Liner", ["liner"], print=lambda self, i, o, m, d: None),
+            "overrides `print`; `print_fields`, `children_header`, `owing_line` and `mark` are the override points")
 
     async def fields(self, indent, out, mode, depth): ...
     async def mark(self, mode, depth): ...

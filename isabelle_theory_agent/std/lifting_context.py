@@ -18,7 +18,7 @@ from .. import isabelle_driver
 from ..exceptions import GRAMMARS, InvalidField
 from ..model import INDENT, NON_EMPTY, RECALL, Placement, StdBlock, emit_lines, status_of_errors
 from ..plugin import TAT_node
-from .common import check_not_bound_twice, lifting_closing_text, normalised
+from .common import LIFTING_CHILDREN_HEADER, check_not_bound_twice, lifting_closing_text, normalised
 
 KINDS = ("lifting_context",)
 
@@ -140,9 +140,15 @@ class LiftingContext(StdBlock):
         return "context includes " + " and ".join(f"{t.unicode}.lifting" for t in self.types) + " begin"
 
     def print_fields(self, indent, out, mode, depth):
-        """Under `Recall` alone, at depths 0 to 2 (§8): the beginning command."""
+        """Under `Recall` alone, at depths 0 to 2 (§8): the beginning command,
+        which carries no key."""
         if mode is RECALL and depth <= 2:
             out.write(INDENT * indent + self._beginning_text() + "\n")
+        return False
+
+    def children_header(self):
+        """§8: `Lifting_Closing`'s phrase (COMMON.md §6)."""
+        return LIFTING_CHILDREN_HEADER
 
     def emit_beginning(self, indent, out):
         """§5: the command; one empty line when the block has children — the

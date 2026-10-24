@@ -812,15 +812,15 @@ async def test_recall_through_the_wire(conversation):
             "session_TAT_RECALL (incomplete)","- theory_TAT_RECALL_A (complete)", empty("theory_TAT_RECALL_A"),
             "- theory_TAT_RECALL_B (failed)", empty("theory_TAT_RECALL_B")], text_of(briefing)
         sessions = await session.call_tool("recall", {"node_id": "Sessions"})
-        assert not sessions.isError and text_of(sessions).splitlines() == [
-            "session_TAT_RECALL (incomplete)","parent_session: HOL",
-            "- theory_TAT_RECALL_A (complete)", "  imports: Main", empty("theory_TAT_RECALL_A"),
-            "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope", empty("theory_TAT_RECALL_B")
+        assert not sessions.isError and text_of(sessions).splitlines() == [   # the children headers (PRINT.md §2)
+            "session_TAT_RECALL (incomplete)", "parent_session: HOL", "theories:",
+            "  - theory_TAT_RECALL_A (complete)", "    imports: Main", "    declarations:", "    " + empty("theory_TAT_RECALL_A"),
+            "  - theory_TAT_RECALL_B (failed)", "    imports: TAT_Nowhere.Nope", "    declarations:", "    " + empty("theory_TAT_RECALL_B")
             ], text_of(sessions)
         failed = await session.call_tool("recall", {"node_id": "theory_TAT_RECALL_B"})
         assert not failed.isError and text_of(failed).splitlines() == [
             "- theory_TAT_RECALL_B (failed)", "  imports: TAT_Nowhere.Nope",
-            "  Error:", "    " + NOT_FOUND, empty("theory_TAT_RECALL_B")], text_of(failed)
+            "  Error:", "    " + NOT_FOUND, "  declarations:", "  " + empty("theory_TAT_RECALL_B")], text_of(failed)
 
 
 async def test_a_fresh_conversation_forgets_the_previous_ones_state(conversation, probes):

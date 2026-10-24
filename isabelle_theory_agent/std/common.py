@@ -764,6 +764,8 @@ LIFTING_REFUSAL = ("For technical reasons, this subtype does not support lifting
 LIFTING_CHILDREN_DESCRIPTION = ("lift_definitions and lemmas whose proofs transfer the defined type to its representation"
                                 " type. Outside this block the defined type is opaque — its representation is closed to"
                                 " lift_definition and the transfer tactic — unless a lifting_context opens it again")
+# §6's children header, the base's and `LiftingContext`'s (PRINT.md §2)
+LIFTING_CHILDREN_HEADER = "lifting context"
 
 
 class Lifting_Closing(StdBlock):
@@ -786,6 +788,9 @@ class Lifting_Closing(StdBlock):
 
     def children_refusal(self):
         return None if self.is_lifting_setup_made() else LIFTING_REFUSAL
+
+    def children_header(self):
+        return LIFTING_CHILDREN_HEADER
 
     @final
     async def _eval_ending_opr(self):

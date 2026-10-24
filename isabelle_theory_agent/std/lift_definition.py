@@ -168,6 +168,7 @@ class LiftDefinition(Proof_Obligation, Leaf):
             out.write(INDENT * indent + option + self._definition(()) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
+        return False
 
     def emit(self, indent, out):
         """§5: the `text` line; then the command, `(code_dt)` when the recorded

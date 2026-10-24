@@ -288,3 +288,12 @@ line in the ROOT's own spelling; `description` is a block, one indent
 deeper, since it may run to several lines, the same form for both
 classes; `imports` is one line, the items the agent wrote, separated by
 spaces, without the imports the plugins declare (§2).
+
+Every line above is keyed, so wherever a class wrote one, or the
+framework wrote a message block, the children stand one level deeper
+under the class's children header (PRINT.md §2). `Session` answers
+`theories` and `Theory` `declarations`: under `Recall` the theories
+stand under `theories:` to depth 1 and a theory's children under
+`declarations:` to depth 2; in a quickview a `Session` writes nothing,
+so its theories follow its line directly, and a theory's children stand
+under `declarations:` only when a message block stands above them.

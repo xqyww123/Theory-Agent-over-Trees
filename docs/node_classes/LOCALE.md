@@ -5,9 +5,7 @@ adversarial reviews (ai-artifacts/review/locale/; runs wf_bc80f426-db4,
 wf_9adf83e4-932, wf_68676e20-274 and wf_a0477420-c81) and the owner's
 rulings; the agent-facing sentences below are the owner's, but for
 the forms §6 derives from them by its stated rules and the descriptions
-shared with the other classes. Not implemented; §8's `locale context:`
-header and `print_fields`' answer wait on PRINT.md §2's rule for the
-children header, which comes with its own commit. Its
+shared with the other classes. Not implemented. Its
 implementation also makes the amendment of `Theorem`'s check of
 undeclared variables, with the writer of its sentence's head, which
 the axioms' sentences of §6 share, and the ML joiner of a list
@@ -809,8 +807,7 @@ the nodes not evaluated while its beginning is not evaluated.
 
 `print_fields` (PRINT.md §3) writes the declaration, and only under
 `Recall`; wherever it is called the framework writes the two
-operations' messages after it, then the children under the header
-`locale context:` (PRINT.md §2):
+operations' messages after it, then the children (PRINT.md §2):
 
 | mode | `print_fields` writes |
 | --- | --- |
@@ -842,12 +839,14 @@ the beginning's instant status is `Ready` and `false` otherwise, so
 that a node whose beginning was refused prints its axioms too.
 
 `children_header()` answers `locale context`, and `print_fields`
-answers that it wrote keyed lines (PRINT.md §2), so that under
-`Recall` the children, or the empty node's line, always stand under
-`locale context:` one level deeper; where the declaration is not
-written — a focus, the path, the briefing — the header stands only
-when the framework wrote a message block, and the children follow the
-line directly otherwise. A node under `recall`, with one child:
+answers that it wrote keyed lines wherever it wrote the declaration —
+under `Recall` to depth 2 — and false elsewhere (PRINT.md §2), so that
+there the children, or the empty node's line, stand under `locale
+context:` one level deeper; where the declaration is not written — a
+focus, the path — the children header stands only when the framework
+wrote a message block, and the children follow the line directly
+otherwise, as they always do in the briefing. A node under `recall`,
+with one child:
 
 ```
 - locale_commutative_monoid (incomplete)
@@ -913,8 +912,9 @@ no child — the two messages of §6 under one `Notice:`:
 
 In a quickview the node as a focus writes no field: its line, the
 message blocks once per run (PRINT.md §4), and the children — the
-same `LF` just added by `edit`, and `commutative_monoid` added with
-its child, whose beginning reported nothing:
+same `LF` just added by an `edit` with `evaluate` true, and
+`commutative_monoid` added with its child, whose beginning reported
+nothing:
 
 ```
   - locale_LF (complete)

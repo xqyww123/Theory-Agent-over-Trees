@@ -963,6 +963,17 @@ take and the plugin's test pins once (§5):
 lift_definitions and lemmas whose proofs transfer the defined type to its representation type. Outside this block the defined type is opaque — its representation is closed to lift_definition and the transfer tactic — unless a lifting_context opens it again
 ```
 
+A block on the base writes no keyed field (TYPEDEF.md §8,
+QUOTIENT_TYPE.md §8), so its children follow its line directly unless a
+message block or a failure block with its colon stands above them, when
+the framework writes them one level deeper under the children header the
+base answers (PRINT.md §2), `lifting context`, a constant of common.py
+which `LiftingContext` answers too (LIFTING_CONTEXT.md §8):
+
+```
+lifting context:
+```
+
 `Lifting_Closing` defines the ending's two hooks together, as
 PLUGIN_SYSTEM §5 requires: `_eval_ending_opr` and `emit_ending`; a
 class on it writes neither. The two commands' transitions and their two lines are one

@@ -19,8 +19,9 @@ class Relative_Focus:                       # the quickview: every node of `node
 class Recall: ...                           # the recalled node and what is under it
 PrintMode = Out_Focus | Briefing | Relative_Focus | Recall
 
-def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None         # the framework's: the line, print_fields, the messages, the owing line, the jobs' blocks, the children, the summary
-def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None  # the class's: its fields; nothing by default
+def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None         # the framework's: the line, print_fields, the messages, the owing line, the jobs' blocks, the children header, the children, the summary
+def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> bool  # the class's: its fields, answering whether it wrote a keyed line (§2); nothing and false by default
+def children_header(self) -> str | None                                                # the class's: the phrase over its children where a keyed line stands above them (§2); None by default
 def mark(self, mode: PrintMode, depth: int) -> str                                     # the framework's default (§1); a class may override
 def owing_line(self) -> str | None                                                     # the class's: one sentence on what the node owes, under the line where detailed (§2); None by default
 def detailed(self, mode: PrintMode, depth: int) -> bool                                # a helper: true for a focus and for Recall below depth 2
@@ -94,11 +95,30 @@ own document's.
 
 The framework writes the line at `indent`, calls `print_fields` at
 `indent + 1`, writes the messages, the owing line and the blocks
-(below), then the children at `indent + 1` and `depth + 1`. A line
+(below), then the children at `depth + 1`: at `indent + 1`, directly
+under what was written, unless a **keyed line** stands among it — a
+line carrying a key and a colon, its value on the line (`imports:
+Main`) or on the lines below (`description:`, an `Error:` or `Notice:`
+header, a failure block's header over its message); a field written
+bare, such as `english`, the owing line and a failure header closed
+with a period are none —, when the
+framework first writes the **children header**, the phrase the class's
+`children_header()` answers and a colon, at `indent + 1`, and the
+children one level deeper. `print_fields` answers whether it wrote a
+keyed line; `children_header()` answers the phrase, `None` on `Node`,
+and a class under whose line a keyed line can stand answers its own —
+`Session` `theories` and `Theory` `declarations`
+(node_classes/SESSION_AND_THEORY.md §4),
+`Lifting_Closing` and `LiftingContext` `lifting context`
+(node_classes/COMMON.md §6, node_classes/LIFTING_CONTEXT.md §8),
+`Locale` `locale context` (node_classes/LOCALE.md §8). The header is
+written only where the children would be (the table below): never under
+a leaf, a node in `Out_Focus` or one at `Recall`'s last depth, and
+never under a node answering `None`, whose children follow directly. A line
 that carries no dash is not a list item and opens no level — the forest
 root's header and the lone session's line (§6) — so what a node writes under it,
-its fields and its children alike, stays at `indent` while `depth` still
-rises. The forest root writes no fields; the empty forest's hint, the
+its fields, its children header and its children alike, stays at `indent` while `depth` still
+rises, the children under a header one level in. The forest root writes no fields; the empty forest's hint, the
 only line it writes under `Sessions:`, sits one level in (§6).
 
 | mode | `print_fields` | children |
@@ -118,7 +138,7 @@ empty `nodes`, a node of `nodes` outside the rendered node, and one
 under another node of `nodes`.
 
 The descent is the framework's; what a class writes under its line is
-the class's, by mode and depth (§3). Five more things the framework
+the class's, by mode and depth (§3). Six more things the framework
 writes under a line: after `print_fields`, the operations' messages
 (§3); then, when the node is detailed, the **owing line**, the one
 sentence the class's `owing_line()` answers about what the node still
@@ -133,7 +153,8 @@ when `check_outcome()` is `FAILED`, in that order — the construction
 job's `failure_header`, the check's class's, then the
 message one level deeper, the header's colon a period when the message
 is empty; a `None` header prints nothing; on
-every detailed rendering, the seen set aside — and, under `Recall`, below
+every detailed rendering, the seen set aside —; then the children
+header, where a keyed line stands above the children (above); and, under `Recall`, below
 an `incomplete` nesting node at the last printed depth, the **summary**:
 one line per group that has members — the nodes below it that are not
 `failed` and whose `job_operation_status()` is `ready`
@@ -158,23 +179,36 @@ detailed — a focus, or `Recall` below depth 2 — and never in the
 briefing, which writes nothing under a line but the empty forest's hint
 (§6) and the empty node's line.
 
-The fifth: a nesting node with no children, in a mode that shows its
+The sixth: a nesting node with no children, in a mode that shows its
 children — `Briefing`, `Relative_Focus`, `Recall` while `depth < 3` —
 writes where its children would go the **empty node's line**, its id the
-one its own line prints — unless the node refuses children,
-`children_refusal()` answering a sentence (MODULE_STRUCTURE §4.1), when
-nothing is written there:
+one its own line prints, under the children header when there is one —
+unless the node refuses children, `children_refusal()` answering a
+sentence (MODULE_STRUCTURE §4.1), when neither is written:
 
 ```
 - theory_X (not evaluated)
   Empty so far. Call `edit` with action `append` and target_id `theory_X` to add children.
 ```
 
+The same theory, one of whose imports is found nowhere (RENDER_BASELINES
+§3), in a quickview: the `Error:` block is a keyed line, so the empty
+node's line stands under the theory's children header:
+
+```
+- theory_X (failed)
+  Error:
+    Fail to load `Nowhere.Nope` because it is not found.
+  declarations:
+    Empty so far. Call `edit` with action `append` and target_id `theory_X` to add children.
+```
+
 ## 3. Fields and messages
 
 A class writes its fields in `print_fields`, one per line, and only under
 `Recall`, choosing by the depth what to write — everything at the depths
-its own document names, a short form or nothing deeper; under
+its own document names, a short form or nothing deeper — and answers
+whether a line it wrote is keyed (§2); under
 `Relative_Focus` and `Out_Focus` it writes nothing, the framework
 writing the operations' messages (below) and, for a focus, its owing
 line and its jobs' blocks (§2); `Briefing` calls nothing. What `Session` and `Theory` write
@@ -186,9 +220,10 @@ The messages are the framework's to write, wherever it calls
 the messages its status value carries (COMPILATION.md §4) — under the
 header `Error:` for a `CannotEvaluate`, and `Notice:` for a `Ready` that
 reported something, a run that failed in part and carried on or one that
-warned. It writes them with `print_error(indent, out, message, header)`,
-the header line at `indent` and every line of the message one level
-deeper:
+warned. One block per operation: the header line at `indent`, then every
+message of the status, each of its lines one level deeper — written with
+`print_error(indent, out, message, header)`, the messages joined by a
+line break:
 
 ```
 Error:

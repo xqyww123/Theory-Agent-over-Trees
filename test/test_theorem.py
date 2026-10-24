@@ -557,20 +557,21 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
         assert r._status.messages[0].unicode.startswith("Type unification failed"), r._status.messages
         recalled = await session.call_tool("recall", {"node_id": "theory_TAT_Std_A"})
         lines = text_of(recalled).splitlines()
-        assert not recalled.isError and lines[:12] == [
+        assert not recalled.isError and lines[:13] == [
             "- theory_TAT_Std_A (incomplete)",
             "  imports: Main",
-            "  - lemma_rev_length (valid statement, proof not started)",
-            "    ⋀xs::'a list. xs ≠ [] ⟹ length (rev xs) = length xs",
-            "    The length of a reversed list",
-            "  - lemma_shows_it (valid statement, proof not started)",
-            "    ⋀shows::'a list. length (rev shows) = length shows",
-            "    A reserved name",
-            "  - lemma_clash (invalid statement)",
-            "    ⋀xs::'a list. xs = (0::nat)",
-            "    Refused",
-            "    Error:"], lines
-        assert lines[12].startswith("      Type unification failed"), lines
+            "  declarations:",
+            "    - lemma_rev_length (valid statement, proof not started)",
+            "      ⋀xs::'a list. xs ≠ [] ⟹ length (rev xs) = length xs",
+            "      The length of a reversed list",
+            "    - lemma_shows_it (valid statement, proof not started)",
+            "      ⋀shows::'a list. length (rev shows) = length shows",
+            "      A reserved name",
+            "    - lemma_clash (invalid statement)",
+            "      ⋀xs::'a list. xs = (0::nat)",
+            "      Refused",
+            "      Error:"], lines
+        assert lines[13].startswith("        Type unification failed"), lines
     messages, what = await isabelle_driver.call(
         forest.conversation, "TAT.Theorem.evaluate",
         (p.state.to_msgpack(), p.goal_state.to_msgpack(), p.resulting_state().to_msgpack(),

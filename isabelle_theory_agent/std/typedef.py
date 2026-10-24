@@ -194,11 +194,12 @@ class Typedef(Beginning_Proof_Obligation, Lifting_Closing):
 
     def print_fields(self, indent, out, mode, depth):
         """Under `Recall` alone (§8): the definition on one line at depths 0
-        to 2, against no keyword; `english` at 0."""
+        to 2, against no keyword; `english` at 0; no line keyed."""
         if mode is RECALL and depth <= 2:
             out.write(INDENT * indent + " ".join(filter(None, self._definition(()))) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
+        return False
 
     def emit_beginning(self, indent, out):
         """§5: the `text` line; the command, the `morphisms` line and the

@@ -736,24 +736,24 @@ async def test_a_subtype_is_defined_lifting_set_up_and_the_block_closed(std_conv
             "  A copy of the naturals", *notice[3:5], "  " + OWING_LINE], lines
         recalled = await session.call_tool("recall", {"node_id": "theory_TAT_Std_A"})      # the nodes at depth 1: no `english`;
         shown = text_of(recalled).splitlines()                                              # at depth 2 no owing line (PRINT §2)
-        expected = [
-            "- theory_TAT_Std_A (incomplete)", "  imports: Main",
-            "  - typedef_dlist (unverified definition, proof not started)", "    " + one[0], "    " + OWING_LINE,
-            "    - lift_definition_dl_rev (unverified definition, proof not started)",
-            '      dl_rev :: "\'a dlist ⇒ \'a dlist" is rev',
-            "    - lift_definition_dl_length (unverified definition, proof not started)",
-            '      dl_length :: "\'a dlist ⇒ nat" is length',
-            "    - lemma_dl_length_rev (valid statement, proof not started)",
-            "      ⋀xs::'a dlist. dl_length (dl_rev xs) = dl_length xs",
-            "  - typedef_poly (unverified definition, proof not started)",
-            '    \'a poly = "{f :: nat ⇒ \'a::zero. ∀⇩∞ n. f n = 0}" morphisms coeff Abs_poly', "    " + OWING_LINE,
-            "    " + M.EMPTY_NODE.format(id="typedef_poly"),                        # a block with no child, open to children
-            "  - typedef_errorable (unverified definition, proof not started)",
-            '    \'a errorable ("_⇩⊥" [21] 21) = "UNIV :: \'a option set"', "    " + OWING_LINE,
-            "    " + M.EMPTY_NODE.format(id="typedef_errorable"),
-            "  - typedef_t2 (unverified definition, proof not started)",            # refusing children: no empty node's line
-            '    t2 = "UNIV :: nat set" morphisms domain Abs_t2', "    Notice:", "      " + LIFTING_NOTICE, "    " + OWING_LINE,
-            "  - typedef_zero_only (unverified definition, proof not started)"]
+        expected = [                                                                # the theory's children under `declarations:`
+            "- theory_TAT_Std_A (incomplete)", "  imports: Main", "  declarations:",   # (PRINT.md §2); a typedef writes no keyed line
+            "    - typedef_dlist (unverified definition, proof not started)", "      " + one[0], "      " + OWING_LINE,
+            "      - lift_definition_dl_rev (unverified definition, proof not started)",
+            '        dl_rev :: "\'a dlist ⇒ \'a dlist" is rev',
+            "      - lift_definition_dl_length (unverified definition, proof not started)",
+            '        dl_length :: "\'a dlist ⇒ nat" is length',
+            "      - lemma_dl_length_rev (valid statement, proof not started)",
+            "        ⋀xs::'a dlist. dl_length (dl_rev xs) = dl_length xs",
+            "    - typedef_poly (unverified definition, proof not started)",
+            '      \'a poly = "{f :: nat ⇒ \'a::zero. ∀⇩∞ n. f n = 0}" morphisms coeff Abs_poly', "      " + OWING_LINE,
+            "      " + M.EMPTY_NODE.format(id="typedef_poly"),                      # a block with no child, open to children
+            "    - typedef_errorable (unverified definition, proof not started)",
+            '      \'a errorable ("_⇩⊥" [21] 21) = "UNIV :: \'a option set"', "      " + OWING_LINE,
+            "      " + M.EMPTY_NODE.format(id="typedef_errorable"),
+            "    - typedef_t2 (unverified definition, proof not started)",          # refusing children: no header, no empty node's line
+            '      t2 = "UNIV :: nat set" morphisms domain Abs_t2', "      Notice:", "        " + LIFTING_NOTICE, "      " + OWING_LINE,
+            "    - typedef_zero_only (unverified definition, proof not started)"]
         assert not recalled.isError and shown[:len(expected)] == expected, shown
         # a node hung into `t2`'s block: refused at the edit with §2's sentence, the parent's full id (RENDER_BASELINES §2)
         [edit_time] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("A node of kind `lift_definition`")]

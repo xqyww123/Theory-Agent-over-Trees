@@ -425,8 +425,11 @@ The beginning command is one line, the text §5 emits — `context
 includes`, the bundles joined by ` and `, `begin` — assembled from the
 stored text by the one private helper of lifting_context.py that §5's
 line uses too; no line carries a key. The children are the framework's
-to print, one level deeper, in the mode PRINT.md §2's table gives them;
-a block with none shows the empty node's line.
+to print, in the mode PRINT.md §2's table gives them: directly under
+what was written, or one level deeper under `lifting context:` — the
+children header the class answers, the phrase `Lifting_Closing` answers
+(COMMON.md §6) — when a message block stands above them; a block with
+none shows the empty node's line.
 
 ```
 context includes fset.lifting begin
@@ -442,11 +445,12 @@ setup where the block stands:
   context includes fset.lifting begin
   Error:
     There is no lifting of `fset` to open here.
-  - lift_definition_fcard (not evaluated, proof not started)
-    fcard :: "'a fset ⇒ nat" is "λxs. card (set xs)"
-  - lemma_fcard_fempty (not evaluated, proof not started)
-    fcard fempty = 0
-    The empty finite set has no element
+  lifting context:
+    - lift_definition_fcard (not evaluated, proof not started)
+      fcard :: "'a fset ⇒ nat" is "λxs. card (set xs)"
+    - lemma_fcard_fempty (not evaluated, proof not started)
+      fcard fempty = 0
+      The empty finite set has no element
 ```
 
 A node under `recall` whose beginning went through and whose ending was
@@ -457,11 +461,12 @@ refused:
   context includes fset.lifting begin
   Error:
     Interrupt
-  - lift_definition_fcard (valid definition)
-    fcard :: "'a fset ⇒ nat" is "λxs. card (set xs)"
-  - lemma_fcard_fempty (valid statement, proven)
-    fcard fempty = 0
-    The empty finite set has no element
+  lifting context:
+    - lift_definition_fcard (valid definition)
+      fcard :: "'a fset ⇒ nat" is "λxs. card (set xs)"
+    - lemma_fcard_fempty (valid statement, proven)
+      fcard fempty = 0
+      The empty finite set has no element
 ```
 
 ## 9. Id properties

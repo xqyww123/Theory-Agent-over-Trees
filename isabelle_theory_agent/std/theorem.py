@@ -145,6 +145,7 @@ class Theorem(Proof_Obligation, Leaf):
             out.write(INDENT * indent + self.statement.proposition() + "\n")
         if mode is RECALL and depth <= 1:
             out.write(INDENT * indent + self.statement.english + "\n")
+        return False
 
     # --- emission (§5)
 

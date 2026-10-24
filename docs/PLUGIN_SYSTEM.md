@@ -262,7 +262,7 @@ registration, per class:
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
   `job_operation_status` nor
   `_own_statuses` (MODULE_STRUCTURE §4.1), nor `print` nor
-  `_children_to_print` — `print_fields` and `mark` are (PRINT.md); the
+  `_children_to_print` — `print_fields`, `children_header`, `owing_line` and `mark` are (PRINT.md); the
   methods a class never overrides carry `typing.final` as well, so the
   type checker says it before the loader does;
 - a `StdBlock` class does not override `emit` — the children are the
@@ -271,7 +271,7 @@ registration, per class:
   say whether the class has an ending command;
 - an override is a coroutine function exactly when the method it
   overrides is — the framework's, or one of the plugin's own base
-  classes: `print_fields` and `mark` are plain, as rendering is
+  classes: `print_fields`, `children_header`, `owing_line` and `mark` are plain, as rendering is
   synchronous (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning`
   and `emit_ending`; the evaluation hooks are coroutines;
 - the class defines neither `__eq__` nor `__hash__`: a node is equal to,

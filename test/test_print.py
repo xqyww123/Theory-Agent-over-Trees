@@ -241,11 +241,16 @@ def test_the_root_forms_of_print_md_section_6():
 
 
 def test_the_lines_of_render_baselines_section_5():
-    """RB §5's six blocks: the default marks' four lines; the two tags, for
+    """RB §5's seven blocks: the default marks' four lines; the two tags, for
     every agent and for the owner alone; the error and notice blocks; a
-    job's failure block; the summary under a cut-off nesting node."""
-    node_lines, tag_lines, error_block, notice_block, failure_block, summary = fenced_blocks(
+    job's failure block; the children header; the summary under a cut-off
+    nesting node."""
+    node_lines, tag_lines, error_block, notice_block, failure_block, children_header, summary = fenced_blocks(
         DOCS / "RENDER_BASELINES.md", "5.")
+    g = new_forest()                                   # the header: a theory's `imports` over its one lemma, under recall
+    gx = theory(session(g, "A"), "X", beginning=READY, ending=READY)
+    proven(leaf(Lemma, gx, "lemma", "A", status=READY))
+    assert render(g, gx, RECALL)[2:] == children_header
     f = new_forest()
     a = session(f, "A")
     x = theory(a, "X", beginning=READY, ending=READY)
@@ -298,8 +303,8 @@ def test_the_lines_of_render_baselines_section_5():
     leaf(Lemma, s, "lemma", "E")
     leaf(Lemma, s, "lemma", "F")
     rendered = render(f, f, RECALL)
-    at = rendered.index("  - section_Summary (incomplete)")
-    assert [line[2:] for line in rendered[at + 1:at + 5]] == summary    # the block, less the section's own indent
+    at = rendered.index("      - section_Summary (incomplete)")          # under `theories:` and `declarations:`
+    assert [line[6:] for line in rendered[at + 1:at + 5]] == summary    # the block, less the section's own indent
     assert len(rendered) == at + 5                                        # nothing below depth 3
 
 
@@ -335,17 +340,19 @@ def test_the_field_lines_of_session_and_theory_section_4():
                                  {"name": "document", "value": "false"}],
                 description="Sorting, verified.")
     x = theory(a, "X", imports=("Main", "HOL-Library.Multiset"), description="Sorting, verified.")
-    assert render(f, f, RECALL)[1:] == lines[:2] + ["- theory_X (not evaluated)", "  " + lines[4],
-                                                    empty("theory_X")]
+    assert render(f, f, RECALL)[1:] == lines[:2] + ["theories:", "  - theory_X (not evaluated)", "    " + lines[4],
+                                                    "    declarations:", empty("theory_X", 3)]
     assert render(f, a, RECALL)[1:] == ["  " + line for line in lines[:4]] + [   # depth 0: the description too
-        "  - theory_X (not evaluated)", "    " + lines[4], empty("theory_X", 2)]  # the theory at depth 1: imports alone
-    assert render(f, x, RECALL)[1:] == ["  " + line for line in lines[2:]] + [empty("theory_X")]   # depth 0 likewise
+        "  theories:", "    - theory_X (not evaluated)", "      " + lines[4],      # the theory at depth 1: imports alone
+        "      declarations:", empty("theory_X", 4)]
+    assert render(f, x, RECALL)[1:] == ["  " + line for line in lines[2:]] + [   # depth 0 likewise; `imports` keyed:
+        "  declarations:", empty("theory_X", 2)]                                  # the header (PRINT.md §2)
     x.description = ""
-    assert render(f, x, RECALL)[1:] == ["  " + lines[4], empty("theory_X")]  # left out when empty
+    assert render(f, x, RECALL)[1:] == ["  " + lines[4], "  declarations:", empty("theory_X", 2)]   # left out when empty
     bare = new_forest()
     session(bare, "B")
     assert render(bare, bare, RECALL) == ["session_B (complete)", "parent_session: HOL",   # the lone session: no dash
-                                          empty("session_B", 0)]
+                                          "theories:", empty("session_B", 1)]
 
 
 def test_a_class_may_say_more_than_the_default():
@@ -389,8 +396,8 @@ def test_the_empty_node_s_line_stands_where_its_children_would():
     assert lines(render(f, f, BRIEFING)) == [empty(t_id, 2), empty("theory_Y")]
     assert lines(render(f, f, focus(x))) == []         # t and y out of focus
     assert lines(render(f, f, focus(y))) == [empty("theory_Y")]
-    assert lines(render(f, f, RECALL)) == [empty("theory_Y")]   # t at the last printed depth
-    assert lines(render(f, x, RECALL)) == [empty(t_id, 2)]
+    assert lines(render(f, f, RECALL)) == [empty("theory_Y", 3)]   # t at the last printed depth; y under two headers
+    assert lines(render(f, x, RECALL)) == [empty(t_id, 3)]   # t under the theory's `declarations:`; its own line unkeyed
     g = new_forest()
     b = session(g, "B")
     assert render(g, g, focus(b)) == ["session_B (complete)", empty("session_B", 0)]
@@ -416,6 +423,7 @@ def test_the_briefing_calls_no_print_fields():
         def print_fields(self, indent, out, mode, depth):
             calls.append((type(mode).__name__, depth))
             out.write(M.INDENT * indent + "field: value\n")
+            return True
     loud = Loud(s, slot()); loud.name = "Q"; loud._status = NOT_EVALUATED
     enter(s, loud, "lemma")
     assert render(f, f, BRIEFING)[-1] == "    - lemma_Q (not evaluated, proof not started)" and calls == []
@@ -446,10 +454,12 @@ def test_recall_descends_three_levels_with_the_fields_thinning_out():
         "session_A (incomplete)",
         "parent_session: HOL",
         "options: quick_and_dirty = true",
-        "- theory_X (incomplete)",
-        "  imports: Main HOL-Library.Multiset",
-        "  - section_S (incomplete)",                  # depth 3: a line, and the summary of what is below
-        "    1 proof construction incomplete: lemma_P",
+        "theories:",                                   # the lone session's header at its own indent (PRINT.md §2, §6)
+        "  - theory_X (incomplete)",
+        "    imports: Main HOL-Library.Multiset",
+        "    declarations:",
+        "      - section_S (incomplete)",              # depth 3: a line, and the summary of what is below
+        "        1 proof construction incomplete: lemma_P",
     ]
     assert render(f, a, RECALL) == [                   # the session at depth 0: its description too,
         "- session_A (incomplete)",                    # and the dash, not reached from the root
@@ -458,16 +468,19 @@ def test_recall_descends_three_levels_with_the_fields_thinning_out():
         "  description:",
         "    Sorting,",
         "    verified.",
-        "  - theory_X (incomplete)",
-        "    imports: Main HOL-Library.Multiset",
-        "    - section_S (incomplete)",
-        "      - lemma_P (valid statement, proof not started)",
+        "  theories:",
+        "    - theory_X (incomplete)",
+        "      imports: Main HOL-Library.Multiset",
+        "      declarations:",
+        "        - section_S (incomplete)",
+        "          - lemma_P (valid statement, proof not started)",
     ]
-    assert render(f, x, RECALL) == [                   # the theory: itself and its children detailed
+    assert render(f, x, RECALL) == [                   # the theory: itself and its children detailed, under its header
         "- theory_X (incomplete)",
         "  imports: Main HOL-Library.Multiset",
-        "  - section_S (incomplete)",
-        "    - lemma_P (valid statement, proof not started)",
+        "  declarations:",
+        "    - section_S (incomplete)",
+        "      - lemma_P (valid statement, proof not started)",
     ]
 
 
@@ -542,22 +555,22 @@ def failing_theory():
 
 def test_a_theory_prints_its_error_once_per_run_in_a_quickview_and_whole_in_recall():
     f, a, x = failing_theory()
-    block = ["  Error:", "    header broke", empty("theory_X")]
+    block = ["  Error:", "    header broke", "  declarations:", empty("theory_X", 2)]   # the block keyed: the header (PRINT.md §2)
     first = render(f, f, focus(x))
-    assert first[-3:] == block and (x.identity, "beginning") in agent(f).seen
-    assert render(f, f, focus(x)) == ["session_A (incomplete)", "- theory_X (failed)",   # seen: not again
+    assert first[-4:] == block and (x.identity, "beginning") in agent(f).seen
+    assert render(f, f, focus(x)) == ["session_A (incomplete)", "- theory_X (failed)",   # seen: not again, and nothing keyed
                                       empty("theory_X")]
-    assert render(f, x, RECALL)[-3:] == block                         # whole under recall
-    assert render(f, x, RECALL)[-3:] == block                         # every time
+    assert render(f, x, RECALL)[-4:] == block                         # whole under recall
+    assert render(f, x, RECALL)[-4:] == block                         # every time
     assert "Error:" not in "".join(render(f, f, BRIEFING))
     agent(f).seen.clear()                                             # the context replaced
-    assert render(f, f, focus(x))[-3:] == block
+    assert render(f, f, focus(x))[-4:] == block
 
 
 def test_a_recall_that_writes_an_error_whole_records_it():
     """RECALL.md §2: the quickview after a `recall` does not repeat it."""
     f, a, x = failing_theory()
-    assert render(f, x, RECALL)[-3:] == ["  Error:", "    header broke", empty("theory_X")]
+    assert render(f, x, RECALL)[-4:] == ["  Error:", "    header broke", "  declarations:", empty("theory_X", 2)]
     assert render(f, f, focus(x)) == ["session_A (incomplete)", "- theory_X (failed)", empty("theory_X")]
 
 
@@ -572,8 +585,9 @@ def test_a_theory_reports_its_error_where_the_agent_is_not_looking():
     beside = render(f, f, focus(y))       # x in Out_Focus
     assert beside[1:5] == ["- theory_X (failed)", *block, "- theory_Y (not evaluated)"]
     agent(f).seen.clear()
-    on_the_path = render(f, f, focus(p))   # x with a non-empty path
-    assert on_the_path[1:5] == ["- theory_X (failed)", *block, "  - lemma_P (not evaluated, proof not started)"]
+    on_the_path = render(f, f, focus(p))   # x with a non-empty path: the block keyed, its child under the header
+    assert on_the_path[1:6] == ["- theory_X (failed)", *block, "  declarations:",
+                                "    - lemma_P (not evaluated, proof not started)"]
     assert "Error:" not in "".join(render(f, f, focus(p)))   # once per run
 
 
@@ -583,15 +597,15 @@ def test_a_message_shown_to_one_agent_is_shown_again_to_another_and_forget_reach
     record `agent.seen` (LOGGING.md §4)."""
     f, a, x = failing_theory()
     other = stand_ins.agent(f.conversation, "a9f3c2d1e4b5", main=False)
-    block = ["  Error:", "    header broke", empty("theory_X")]
+    block = ["  Error:", "    header broke", "  declarations:", empty("theory_X", 2)]
     key = (x.identity, "beginning")
-    assert render(f, f, focus(x))[-3:] == block
-    assert render(f, f, focus(x), to=other)[-3:] == block
+    assert render(f, f, focus(x))[-4:] == block
+    assert render(f, f, focus(x), to=other)[-4:] == block
     assert key in agent(f).seen and key in other.seen
     assert "Error:" not in "".join(render(f, f, focus(x)) + render(f, f, focus(x), to=other))
     f.conversation.forget(key)
     assert key not in agent(f).seen and key not in other.seen
-    assert render(f, f, focus(x))[-3:] == block
+    assert render(f, f, focus(x))[-4:] == block
     assert [r["data"]["key"] for r in stand_ins.records("agent") if r["event"] == "seen"] \
         == [list(key)] * 3
 
@@ -620,13 +634,13 @@ def test_a_rerun_of_the_ending_shows_its_messages_again(monkeypatch):
     inside = []
 
     async def fails_the_same_way(conversation, name, arg):
-        inside.append(render(f, x, RECALL)[-3:])      # a recall inside the round trip
+        inside.append(render(f, x, RECALL)[-4:])      # a recall inside the round trip
         return ["end broke"]
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "ending")
-    assert inside == [["  Error:", "    end broke", empty("theory_X")]]   # the previous run's, still standing
+    assert inside == [["  Error:", "    end broke", "  declarations:", empty("theory_X", 2)]]   # the previous run's, still standing
     assert (x.identity, "ending") not in agent(f).seen
-    assert render(f, f, focus(x))[-3:] == ["  Error:", "    end broke", empty("theory_X")]
+    assert render(f, f, focus(x))[-4:] == ["  Error:", "    end broke", "  declarations:", empty("theory_X", 2)]
 
 
 def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
@@ -639,7 +653,7 @@ def test_a_rerun_shows_the_messages_again_identical_or_not(monkeypatch):
     monkeypatch.setattr(isabelle_driver, "call", fails_the_same_way)
     rerun(x, "beginning")
     assert (x.identity, "beginning") not in agent(f).seen and x.keywords is None   # recorded on a pass alone
-    assert render(f, f, focus(x))[-3:] == ["  Error:", "    header broke", empty("theory_X")]
+    assert render(f, f, focus(x))[-4:] == ["  Error:", "    header broke", "  declarations:", empty("theory_X", 2)]
 
 
 def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypatch):
@@ -657,8 +671,8 @@ def test_a_rendering_inside_the_rerun_reads_the_previous_run_s_messages(monkeypa
     monkeypatch.setattr(isabelle_driver, "call", fails_anew)
     rerun(x, "beginning")
     assert inside == [["- theory_X (failed)", "  imports: Main", "  Error:", "    header broke",   # a recall: depth 0
-                       empty("theory_X")]]
-    assert render(f, f, focus(x))[-3:] == ["  Error:", "    header broke anew", empty("theory_X")]
+                       "  declarations:", empty("theory_X", 2)]]
+    assert render(f, f, focus(x))[-4:] == ["  Error:", "    header broke anew", "  declarations:", empty("theory_X", 2)]
 
 
 def test_messages_follow_the_status_that_stands():
@@ -671,16 +685,18 @@ def test_messages_follow_the_status_that_stands():
         assert "header broke" not in "".join(render(f, x, RECALL))
     assert "Error:" not in "".join(render(f, x, RECALL))   # the ending is READY: copied through
     x.evaluation_status_ending = M.Ready((IsaTerm.from_agent("end warned"),))
-    assert render(f, x, RECALL)[-3:] == ["  Notice:", "    end warned", empty("theory_X")]
+    assert render(f, x, RECALL)[-4:] == ["  Notice:", "    end warned", "  declarations:", empty("theory_X", 2)]
     x.evaluation_status_ending = failing("end broke")
-    assert render(f, x, RECALL)[-3:] == ["  Error:", "    end broke", empty("theory_X")]
+    assert render(f, x, RECALL)[-4:] == ["  Error:", "    end broke", "  declarations:", empty("theory_X", 2)]
 
 
 def test_recall_shows_a_theory_s_errors_whole_at_depth_one_and_once_per_run_at_depth_two():
     f, a, x = failing_theory()
-    assert render(f, f, RECALL)[-3:] == ["  Error:", "    header broke", empty("theory_X")]   # depth 2: once
+    assert render(f, f, RECALL)[-4:] == ["    Error:", "      header broke", "    declarations:",   # depth 2: once
+                                         empty("theory_X", 3)]
     assert "Error:" not in "".join(render(f, f, RECALL))
-    assert render(f, a, RECALL)[-3:] == ["    Error:", "      header broke", empty("theory_X", 2)]   # depth 1: whole
+    assert render(f, a, RECALL)[-4:] == ["      Error:", "        header broke", "      declarations:",   # depth 1: whole
+                                         empty("theory_X", 4)]
 
 
 # --- Forest.render and the id index ----------------------------------------
@@ -696,6 +712,7 @@ def test_the_index_lives_as_long_as_the_rendering_and_changes_no_id():
         def print_fields(self, indent, out, mode, depth):
             seen_index["index"] = f._index
             seen_index["ids"] = {n: f.id_of(n) for n in f._all_nodes()}
+            return False
     peek = Peek(s, slot()); peek.name = "R"; peek._status = NOT_EVALUATED
     enter(s, peek, "lemma")
     without[peek] = f.id_of(peek)
@@ -718,6 +735,12 @@ def test_the_index_lives_as_long_as_the_rendering_and_changes_no_id():
 
 # --- the summary's bounds and the check's failure block (the review of steps 10–11, §3) --
 
+# A section at depth 3 under the lone session, recalled from the root: under `theories:` and `declarations:`
+# (PRINT.md §2), and its summary one level deeper
+SECTION_S = M.INDENT * 3 + "- section_S (incomplete)"
+UNDER_S = M.INDENT * 4
+
+
 def test_the_summary_names_five_ids_and_counts_six_each_title_in_its_number():
     """PRINT.md §2: ids up to five, the count alone past five; a group of
     one node in the singular."""
@@ -731,11 +754,11 @@ def test_the_summary_names_five_ids_and_counts_six_each_title_in_its_number():
         leaf(Lemma, s, "lemma", f"K{i}", status=READY).job().outcome = jobs.Succeeded("by simp")   # owes its check
     leaf(Lemma, s, "lemma", "E")
     rendered = render(f, f, RECALL)
-    at = rendered.index("  - section_S (incomplete)")
+    at = rendered.index(SECTION_S)
     assert rendered[at + 1:] == [
-        "    5 proof constructions incomplete: lemma_A0, lemma_A1, lemma_A2, lemma_A3, lemma_A4",
-        "    6 proof checks incomplete",
-        "    1 node not evaluated: lemma_E"]
+        UNDER_S + "5 proof constructions incomplete: lemma_A0, lemma_A1, lemma_A2, lemma_A3, lemma_A4",
+        UNDER_S + "6 proof checks incomplete",
+        UNDER_S + "1 node not evaluated: lemma_E"]
 
 
 def test_the_summary_s_groups_come_construction_titles_first_whatever_the_tree_order():
@@ -750,9 +773,9 @@ def test_the_summary_s_groups_come_construction_titles_first_whatever_the_tree_o
     leaf(Lemma, s, "lemma", "K", status=READY).job().outcome = jobs.Succeeded("by simp")   # owes its check
     leaf(Lemma, s, "lemma", "A", status=READY)                                             # owes its construction
     rendered = render(f, f, RECALL)
-    at = rendered.index("  - section_S (incomplete)")
-    assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_A",
-                                 "    1 proof check incomplete: lemma_K"]
+    at = rendered.index(SECTION_S)
+    assert rendered[at + 1:] == [UNDER_S + "1 proof construction incomplete: lemma_A",
+                                 UNDER_S + "1 proof check incomplete: lemma_K"]
 
 
 class Constructed_Section(Section):     # a nesting node that owes a construction of its own
@@ -774,8 +797,8 @@ def test_the_summary_reads_a_nesting_node_stopped_inside_as_in_no_group():
     enter(s, u, "section")
     leaf(Lemma, s, "lemma", "P", status=READY)
     rendered = render(f, f, RECALL)
-    at = rendered.index("  - section_S (incomplete)")
-    assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_P"]
+    at = rendered.index(SECTION_S)
+    assert rendered[at + 1:] == [UNDER_S + "1 proof construction incomplete: lemma_P"]
 
 
 def test_the_checks_failure_block_under_its_own_header_after_the_constructions():
@@ -851,12 +874,12 @@ def test_the_summary_counts_a_nesting_node_whose_jobs_can_start_under_its_job_s_
     enter(s, u, "section")
     leaf(Lemma, s, "lemma", "P", status=READY)
     rendered = render(f, f, RECALL)
-    at = rendered.index("  - section_S (incomplete)")
-    assert rendered[at + 1:] == ["    2 proof constructions incomplete: section_U, lemma_P"]
+    at = rendered.index(SECTION_S)
+    assert rendered[at + 1:] == [UNDER_S + "2 proof constructions incomplete: section_U, lemma_P"]
     u.evaluation_status_ending = failing("end broke")
     rendered = render(f, f, RECALL)
-    at = rendered.index("  - section_S (incomplete)")
-    assert rendered[at + 1:] == ["    1 proof construction incomplete: lemma_P", "    1 node failed: section_U"]
+    at = rendered.index(SECTION_S)
+    assert rendered[at + 1:] == [UNDER_S + "1 proof construction incomplete: lemma_P", UNDER_S + "1 node failed: section_U"]
 
 
 # --- the owing line (PRINT.md §2; node_classes/COMMON.md §3) -----------------
@@ -888,9 +911,9 @@ def test_the_owing_line_stands_after_the_messages_and_before_the_failure_blocks_
                                     "  " + line, "  No proof was found:", "    Sledgehammer timed out."]
     assert render(f, q, RECALL) == ["- lemma_Q (not evaluated, proof not started)"]
     assert M.Node.owing_line(p) is None and leaf(Lemma, x, "lemma", "T", status=READY).owing_line() is None
-    whole = render(f, x, RECALL)
-    assert whole.count("    " + line) == 1 and "      " + line not in whole        # P at depth 1; R at depth 2 is not detailed
-    assert whole.index("    " + line) == whole.index("      Lifting is off.") + 1 == whole.index("    No proof was found:") - 1
+    whole = render(f, x, RECALL)                                                  # the children under `declarations:`
+    assert whole.count("      " + line) == 1 and "        " + line not in whole    # P at depth 1; R at depth 2 is not detailed
+    assert whole.index("      " + line) == whole.index("        Lifting is off.") + 1 == whole.index("      No proof was found:") - 1
     assert all(line not in l for l in render(f, x, focus(x)))                     # the children in Out_Focus: lines only
     quickview = render(f, x, focus(p))                              # P a focus; its notice was seen in the recall above
     assert [l.strip() for l in quickview].count(line) == 1
@@ -899,3 +922,137 @@ def test_the_owing_line_stands_after_the_messages_and_before_the_failure_blocks_
     assert "      " + line in deep and "    " + line not in deep
     assert all(line not in l for l in render(f, x, M.BRIEFING))
     assert all(line not in l for l in render(f, a, focus(a, depth=0)))
+
+
+# --- the children header (PRINT.md §2) ---------------------------------------
+
+class Keyed_Section(Section):
+    """A nesting node writing a keyed field under `Recall` and answering a
+    children header, as `Theory` does."""
+    def print_fields(self, indent, out, mode, depth):
+        if mode is not RECALL:
+            return False
+        out.write(M.INDENT * indent + "parameter: x\n")
+        return True
+
+    def children_header(self):
+        return "contents"
+
+
+class Keyed_Goal_Section(Goal_Section):
+    def children_header(self):
+        return "contents"
+
+
+def keyed_section(parent, name, cls=Keyed_Section, beginning=READY, ending=READY):
+    k = cls(parent, slot()); k.name = name
+    k.evaluation_status_beginning, k.evaluation_status_ending = beginning, ending
+    return enter(parent, k, "section")
+
+
+def test_the_children_header_stands_over_the_children_where_a_keyed_line_was_written():
+    """PRINT.md §2: a keyed line — a field, a message block — puts the
+    children one level deeper under the class's phrase and a colon;
+    nothing keyed puts them directly under what was written; the header is
+    written only where the children would be — not at `Out_Focus`, not at
+    `Recall`'s last depth — and never under a class answering None,
+    `Node`'s default."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    k = keyed_section(x, "K")
+    leaf(Lemma, k, "lemma", "P", status=READY)
+    p_line = "- lemma_P (valid statement, proof not started)"
+    assert render(f, k, RECALL) == ["- section_K (incomplete)", "  parameter: x", "  contents:", "    " + p_line]
+    assert render(f, k, focus(k)) == ["- section_K (incomplete)", "  " + p_line]        # a quickview: no field, no header
+    k.evaluation_status_ending = failing("end broke")
+    assert render(f, k, OUT_FOCUS) == ["- section_K (failed)", "  Error:", "    end broke"]   # no children shown: no header
+    agent(f).seen.clear()
+    assert render(f, k, focus(k)) == ["- section_K (failed)", "  Error:", "    end broke", "  contents:", "    " + p_line]
+    s = section(x, "S", ending=failing("end broke"))                                     # answering None: directly under
+    leaf(Lemma, s, "lemma", "Q", status=READY)
+    assert render(f, s, focus(s)) == ["- section_S (failed)", "  Error:", "    end broke",
+                                      "  - lemma_Q (valid statement, proof not started)"]
+    deep = keyed_section(keyed_section(keyed_section(x, "L1"), "L2"), "L3")
+    leaf(Lemma, deep, "lemma", "R", status=READY)
+    rendered = render(f, x, RECALL)                    # L3 at depth 3: its field, no children, so no header; the summary
+    at = rendered.index(M.INDENT * 6 + "- section_L3 (incomplete)")
+    assert rendered[at:] == [M.INDENT * 6 + "- section_L3 (incomplete)", M.INDENT * 7 + "parameter: x",
+                             M.INDENT * 7 + "1 proof construction incomplete: lemma_R"]
+
+
+def test_the_empty_node_s_line_stands_under_the_header_and_a_refusing_block_writes_neither():
+    """PRINT.md §2: a block with no children writes the empty node's line
+    under its header; a block refusing children writes neither."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    k = keyed_section(x, "K")
+    assert render(f, k, RECALL) == ["- section_K (complete)", "  parameter: x", "  contents:", empty("section_K", 2)]
+
+    class Refusing(Keyed_Section):
+        def children_refusal(self): return "No children here."
+    r = keyed_section(x, "R", cls=Refusing)
+    assert render(f, r, RECALL) == ["- section_R (complete)", "  parameter: x"]
+
+
+def test_a_failure_block_is_keyed_by_its_colon():
+    """PRINT.md §2: a failure block over a message is a keyed line and brings
+    the header; one whose header was written with a period, the message
+    empty, is not."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    u = keyed_section(x, "U", cls=Keyed_Goal_Section)
+    u.job().outcome = jobs.Failed("no proof")
+    assert render(f, u, focus(u)) == ["- section_U (incomplete)", "  No proof was found:", "    no proof",
+                                      "  contents:", empty("section_U", 2)]
+    u.job().outcome = jobs.Failed("")
+    assert render(f, u, focus(u)) == ["- section_U (incomplete)", "  No proof was found.", empty("section_U")]
+
+
+def test_a_status_s_messages_stand_under_one_header():
+    """PRINT.md §3: one block per operation, every message of the status
+    under its header, each message's lines one level deeper."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=failing("first broke", "second broke\n  on two lines"), ending=READY)
+    assert render(f, x, RECALL) == ["- theory_X (failed)", "  imports: Main", "  Error:", "    first broke",
+                                    "    second broke", "      on two lines", "  declarations:", empty("theory_X", 2)]
+    x.evaluation_status_beginning = READY
+    x.evaluation_status_ending = M.Ready((IsaTerm.from_agent("end warned"), IsaTerm.from_agent("twice")))
+    assert render(f, x, RECALL)[2:5] == ["  Notice:", "    end warned", "    twice"]
+    agent(f).seen.clear()                              # in a quickview too, the `Notice:` bringing the header
+    assert render(f, f, focus(x))[1:] == ["- theory_X (complete)", "  Notice:", "    end warned", "    twice",
+                                          "  declarations:", empty("theory_X", 2)]
+
+
+class Keyed_Lemma(Lemma):
+    """A leaf writing a keyed field under `Recall` and answering a phrase:
+    the framework asks a leaf for no header."""
+    def print_fields(self, indent, out, mode, depth):
+        if mode is not RECALL:
+            return False
+        out.write(M.INDENT * indent + "parameter: x\n")
+        return True
+
+    def children_header(self):
+        return "contents"
+
+
+def test_a_leaf_gets_no_children_header_and_print_md_section_2_s_quickview_is_as_shown():
+    """PRINT.md §2: never under a leaf, whatever it writes and answers; and
+    §2's third fence, the failed theory in a quickview, rendered whole."""
+    f = new_forest()
+    a = session(f, "A")
+    x = theory(a, "X", beginning=READY, ending=READY)
+    k = leaf(Keyed_Lemma, x, "lemma", "K", status=READY)
+    k.job().outcome = jobs.Failed("no proof")
+    assert render(f, k, RECALL) == ["- lemma_K (valid statement, failed to prove)", "  parameter: x",
+                                    "  No proof was found:", "    no proof"]
+    assert render(f, k, focus(k)) == ["- lemma_K (valid statement, failed to prove)", "  No proof was found:", "    no proof"]
+    g = new_forest()
+    b = session(g, "B")
+    y = theory(b, "X", beginning=failing("Fail to load `Nowhere.Nope` because it is not found."), ending=READY)
+    [_, _, quickview] = fenced_blocks(PRINT, "2.")
+    assert render(g, g, focus(y))[1:] == quickview

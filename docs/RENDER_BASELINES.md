@@ -404,6 +404,16 @@ framework's (PRINT.md §2):
     Sledgehammer timed out on every prover.
 ```
 
+The children header, over a nesting node's children where a keyed line
+stands under its line (PRINT.md §2) — the phrase the class's, `Theory`'s
+here (node_classes/SESSION_AND_THEORY.md §4), the colon and the level
+the framework's:
+
+```
+  declarations:
+    - lemma_A (valid statement, proven)
+```
+
 The summary under an `incomplete` nesting node at `Recall`'s last depth
 (PRINT.md §2), one line per group with members, ids up to five, the
 count alone past five:

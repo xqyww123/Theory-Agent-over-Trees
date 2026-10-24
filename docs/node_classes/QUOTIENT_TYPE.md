@@ -614,9 +614,12 @@ round trip
 to Isabelle; `english` follows at depth 0 alone; no line carries a key.
 The line is the private helper's that writes the emitted text (§5),
 given no keyword set.
-The children are the framework's to print, one level deeper, in the mode
-PRINT.md §2's table gives them; a block with none shows the empty node's
-line.
+The children are the framework's to print, in the mode PRINT.md §2's
+table gives them: directly under what was written, or one level deeper
+under `lifting context:` — the children header `Lifting_Closing`
+answers (COMMON.md §6) — when a message block or a failure block with
+its colon stands above them, the definition and `english` carrying no
+key; a block with none shows the empty node's line.
 
 ```
 'a fset = "'a list" / "λxs ys. set xs = set ys" morphisms list_of_fset fset_of_list
@@ -634,10 +637,11 @@ free variable:
   Finite sets, as lists up to order and repetition
   Error:
     "fset": illegal variable(s) in the relation: "P"
-  - lift_definition_fempty (not evaluated, proof not started)
-    fempty :: "'a fset" is "[]"
-  - lift_definition_fmember (not evaluated, proof not started)
-    fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
+  lifting context:
+    - lift_definition_fempty (not evaluated, proof not started)
+      fempty :: "'a fset" is "[]"
+    - lift_definition_fmember (not evaluated, proof not started)
+      fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
 ```
 
 A node under `recall` whose definition went through, its proof found,
@@ -649,10 +653,11 @@ and whose ending was refused:
   Finite sets, as lists up to order and repetition
   Error:
     Interrupt
-  - lift_definition_fempty (valid definition)
-    fempty :: "'a fset" is "[]"
-  - lift_definition_fmember (valid definition)
-    fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
+  lifting context:
+    - lift_definition_fempty (valid definition)
+      fempty :: "'a fset" is "[]"
+    - lift_definition_fmember (valid definition)
+      fmember :: "'a ⇒ 'a fset ⇒ bool" is "λx xs. x ∈ set xs"
 ```
 
 The owing line and the jobs' blocks are `Proof_Obligation`'s (COMMON.md

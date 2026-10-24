@@ -680,17 +680,22 @@ def test_proof_mark_reads_the_three_words_of_a_class_that_defines():
 # --- `Lifting_Closing`'s two sentences and its hook (§6)
 
 def test_lifting_closing_s_two_sentences_are_section_6_s_and_a_base_whose_setup_is_not_made_refuses_children():
-    """§6: the refusal sentence and the `children` description, the one home
-    of each, verbatim §6's two blocks, the description taken by both
-    classes' schemas; on the base `is_lifting_setup_made()` is true, so
-    `children_refusal()` is None and the ending's two hooks do their work
-    — `close` called, the two lines written —; a class on it answering
-    false refuses children with the sentence, its ending the copy and
-    nothing written, `StdBlock`'s defaults."""
-    [refusal, description] = fenced_blocks(COMMON, "6.")
+    """§6: the refusal sentence, the `children` description and the children
+    header, the one home of each, verbatim §6's three blocks, the
+    description taken by both classes' schemas, the header answered by
+    the base and by `LiftingContext` (PRINT.md §2); on the base
+    `is_lifting_setup_made()` is true, so `children_refusal()` is None and
+    the ending's two hooks do their work — `close` called, the two lines
+    written —; a class on it answering false refuses children with the
+    sentence, its ending the copy and nothing written, `StdBlock`'s
+    defaults."""
+    [refusal, description, header] = fenced_blocks(COMMON, "6.")
     assert [common.LIFTING_REFUSAL] == refusal and [common.LIFTING_CHILDREN_DESCRIPTION] == description
+    assert header == [common.LIFTING_CHILDREN_HEADER + ":"]
     for schema in (typedef.Typedef.construct_schema, quotient_type.QuotientType.construct_schema):
         assert schema is not None and schema["properties"]["children"]["description"] == common.LIFTING_CHILDREN_DESCRIPTION
+    for cls in (typedef.Typedef, quotient_type.QuotientType, lifting_context.LiftingContext):
+        assert cls.children_header(None) == common.LIFTING_CHILDREN_HEADER      # type: ignore[arg-type]  # reads no self
 
     class Unmade(quotient_type.QuotientType):           # a block on the base whose beginning made no setup
         def is_lifting_setup_made(self):

@@ -677,7 +677,8 @@ sentence (EXCEPTIONS.md §3); the child's first own operation, once the
 placement check has admitted the child — the operation is
 `cannot_evaluate` without running, its message the sentence after the
 framework's own (RENDER_BASELINES §3; ARCHITECTURE §3.3) —; and
-`print`, which writes no empty node's line under a node answering one
+`print`, which writes no empty node's line under a node answering one —
+and so, where that line would have stood alone, no children header
 (PRINT.md §2). The answer changes only with the node's beginning and
 never with the child: a parent that would take one child and not
 another overrides `on_adding_child` instead.

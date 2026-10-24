@@ -631,7 +631,7 @@ async def test_refused_openings_are_obstacles(std_conversation):
                 ts.theory("TAT_Std_LU") | {"children": [quotient("fs4"), block("after4", ("nosuch", "fs4", "nat"))]},
                 ts.theory("TAT_Std_LG") | {"children": [block("greek", ("α",))]})]})
         text = text_of(result)
-        assert not result.isError and text.count("Error:") == 7, text       # one block per message: `after4` has two
+        assert not result.isError and text.count("Error:") == 6, text       # one block per operation: `after4`'s two messages under one (PRINT.md §3)
         (s,) = forest.sub_nodes
         (fset_size,), (nat_block,), (nosuch_block,), (_, after3), (_, after4), (greek,) = (t.sub_nodes for t in s.sub_nodes)
         refused_names = {fset_size: ["fset"], nat_block: ["nat"], nosuch_block: ["nosuch"], after3: ["nat"],

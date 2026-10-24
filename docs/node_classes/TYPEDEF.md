@@ -586,10 +586,13 @@ identifier, whatever keywords the theory recorded, without a round trip
 to Isabelle; `english` follows at depth 0 alone; no line carries a key.
 The line is the private helper's that writes the emitted text (§5),
 given no keyword set. `setup_lifting` is not printed: it is not
-authored. The children are the framework's to print, one level deeper,
-in the mode PRINT.md §2's table gives them; a block with none shows the
-empty node's line — none under a block that refuses children (PRINT.md
-§2).
+authored. The children are the framework's to print, in the mode
+PRINT.md §2's table gives them: directly under what was written, or one
+level deeper under `lifting context:` — the children header
+`Lifting_Closing` answers (COMMON.md §6) — when a message block or a
+failure block with its colon stands above them, the definition and
+`english` carrying no key; a block with none shows the empty node's
+line — none under a block that refuses children (PRINT.md §2).
 
 ```
 'a dlist = "{xs :: 'a list. distinct xs}" morphisms list_of_dlist dlist_of_list
@@ -610,15 +613,17 @@ expected:
   Error:
     Not a set type: "'a list ⇒ bool"
     The error(s) above occurred in typedef "dlist"
-  - lift_definition_dl_rev (not evaluated, proof not started)
-    dl_rev :: "'a dlist ⇒ 'a dlist" is rev
-  - lift_definition_dl_length (not evaluated, proof not started)
-    dl_length :: "'a dlist ⇒ nat" is length
+  lifting context:
+    - lift_definition_dl_rev (not evaluated, proof not started)
+      dl_rev :: "'a dlist ⇒ 'a dlist" is rev
+    - lift_definition_dl_length (not evaluated, proof not started)
+      dl_length :: "'a dlist ⇒ nat" is length
 ```
 
 A node under `recall` whose definition went through, its proof found
 and checked, but for which lifting could not be set up (§6) — it
-refuses children, so no empty node's line stands under it:
+refuses children, so neither a children header nor the empty node's
+line stands under it:
 
 ```
 - typedef_fm (valid definition)
@@ -637,10 +642,11 @@ at its first own operation (§6; RENDER_BASELINES §3):
   Finite maps from naturals to naturals, as a type of their own
   Notice:
     Because of a limitation inside Isabelle, lift_definition cannot be used on this subtype.
-  - lift_definition_fm_empty (invalid definition)
-    fm_empty :: fm is fmempty
-    Error:
-      A node of kind `lift_definition` cannot stand inside `session_S.theory_T.typedef_fm`, a node of kind `typedef`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
+  lifting context:
+    - lift_definition_fm_empty (invalid definition)
+      fm_empty :: fm is fmempty
+      Error:
+        A node of kind `lift_definition` cannot stand inside `session_S.theory_T.typedef_fm`, a node of kind `typedef`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
 ```
 
 The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under

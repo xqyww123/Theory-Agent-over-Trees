@@ -33,7 +33,9 @@ blocks (PRINT.md §3, §4) and, where the node is detailed, the class's
 owing line and the framework's failure blocks (PRINT.md §2), and, under an
 `incomplete` nesting node at depth 3, the framework's summary of what is
 unfinished below it (PRINT.md §2); under a nesting node with no children
-above depth 3, the empty node's line (PRINT.md §2); below depth 3
+above depth 3, the empty node's line (PRINT.md §2); the children, or
+that line, one level deeper under the class's children header where a
+keyed line stands above them (PRINT.md §2); below depth 3
 nothing, not even lines.
 What each class writes at each depth is its own table: `Session` and
 `Theory` in node_classes/SESSION_AND_THEORY.md §4, `Theorem` in
@@ -66,20 +68,27 @@ dash.
 A `recall` of `Sessions`, the root, in `Recall` — two sessions, `A` finished and `B`
 holding a theory not yet evaluated, which imports `A`'s tree; the
 theories' nodes are at depth 3, where a `Theorem` writes nothing under
-its line, and a `Session` at depth 1 writes no `description`:
+its line, and a `Session` at depth 1 writes no `description`; the
+sessions' and the theories' fields are keyed, so their children stand
+under `theories:` and `declarations:` (node_classes/SESSION_AND_THEORY.md
+§4):
 
 ```
 Sessions:
 - session_A (complete)
   parent_session: HOL
-  - theory_Base (complete)
-    imports: Main
-    - lemma_A (valid statement, proven)
+  theories:
+    - theory_Base (complete)
+      imports: Main
+      declarations:
+        - lemma_A (valid statement, proven)
 - session_B (incomplete)
   parent_session: HOL
-  - theory_X (not evaluated)
-    imports: Main A.Base
-    - lemma_P (not evaluated, proof not started)
+  theories:
+    - theory_X (not evaluated)
+      imports: Main A.Base
+      declarations:
+        - lemma_P (not evaluated, proof not started)
 ```
 
 ## 3. The call

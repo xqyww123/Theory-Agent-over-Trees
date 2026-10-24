@@ -213,6 +213,7 @@ class Datatype(Leaf):
                 out.write(INDENT * indent + ("and " if i else "") + f"{head} = " + " | ".join(constructors) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
+        return False
 
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.english))
