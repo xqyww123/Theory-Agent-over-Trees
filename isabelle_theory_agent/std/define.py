@@ -9,8 +9,7 @@ replayed by the proof check."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Annotated, Any, ClassVar, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -23,9 +22,9 @@ from ..jobs import Failed, Succeeded
 from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors, string_token
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, Construction_Setup, Mixfix, Mixfix_RawAST, Proof_Check, Proof_Job,
-    With_Proof_Obligations, check_not_bound_twice, mixfix_of, mixfix_text, mixfix_wire, normalised,
-    proof_wire, require_id_name, text_line, unverified)
+    MIXFIX_DEFS, Construction_Setup, Mixfix_RawAST, Proof_Check, Proof_Job, Variable_With_Syntax,
+    With_Proof_Obligations, check_not_bound_twice, fixes_text, normalised, proof_wire, require_id_name, text_line,
+    unverified)
 
 KINDS = ("definition",)
 DEFINITION, SEQUENTIAL, PLAIN = "definition", "function (sequential, no_partials)", "function"
@@ -135,28 +134,6 @@ class Define_RawAST(TypedDict):
     auto_reduction: bool
 
 
-@dataclass(frozen=True)
-class Constant:
-    """A constant defined (§1, §2): its name in the id grammar, its type and
-    its syntax when given."""
-    name: str
-    type: IsaTerm | None
-    syntax: Mixfix | None
-
-    def image(self) -> dict[str, Any]:
-        """The store's row, the construct's shape in the `unicode` spelling."""
-        return {"name": self.name,
-                **({"type": self.type.unicode} if self.type is not None else {}),
-                **({"syntax": self.syntax.image()} if self.syntax is not None else {})}
-
-    @classmethod
-    def of_image(cls, raw: Constant_RawAST) -> Constant:
-        """The construct's constant, normalised, and a stored image read back."""
-        type_ = normalised(raw.get("type", ""))
-        return cls(raw["name"], IsaTerm.from_agent(type_) if type_ else None,
-                   mixfix_of(raw["syntax"]) if "syntax" in raw else None)
-
-
 class Define_Proof_Job(Proof_Job):
     """`Define`'s proof construction (§7): `Proof_Job`'s call once per open
     obligation, in command order, each under the obligation's setup; a
@@ -256,7 +233,7 @@ class Define(With_Proof_Obligations, Leaf):
     unverified_word = "unverified definition"                               # ... while a proof is owed
 
     english: str
-    constants: tuple[Constant, ...]
+    constants: tuple[Variable_With_Syntax, ...]    # each its name in the id grammar (§1; COMMON.md §4)
     equations: tuple[IsaTerm, ...]
     auto_reduction: bool
     form: Form | None                       # recorded by the first evaluation that goes through, run again by the
@@ -267,13 +244,14 @@ class Define(With_Proof_Obligations, Leaf):
     completeness_state: Isar_State_Slot     # the two goal slots (§6): each holds its goal open exactly while the
     termination_state: Isar_State_Slot      # node is `ready` and the obligation is open
 
-    def __init__(self, parent, state, english: str, constants: tuple[Constant, ...], equations: tuple[IsaTerm, ...],
-                 auto_reduction: bool, form: Form | None = None, completeness_method: str | None = None,
-                 termination_method: str | None = None, failed_obligation: str | None = None):
+    def __init__(self, parent, state, english: str, constants: tuple[Variable_With_Syntax, ...],
+                 equations: tuple[IsaTerm, ...], auto_reduction: bool, form: Form | None = None,
+                 completeness_method: str | None = None, termination_method: str | None = None,
+                 failed_obligation: str | None = None):
         super().__init__(parent, state)
         self.english = english
         self.constants = constants
-        self.name = "_and_".join(c.name for c in constants)    # the node's name: `definition_even_and_odd` (§9)
+        self.name = "_and_".join(self.constant_names())    # the node's name: `definition_even_and_odd` (§9)
         self.equations = equations
         self.auto_reduction = auto_reduction
         self.form = form
@@ -289,11 +267,12 @@ class Define(With_Proof_Obligations, Leaf):
         grammar, no two the same; the texts normalised.  On an amend,
         `failed_obligation` comes from the replaced node exactly when the
         commit carries its outcome (§7), the two answering one question."""
-        constants: list[Constant] = []
+        constants: list[Variable_With_Syntax] = []
         for i, c in enumerate(raw["constants"]):
             require_id_name(c["name"], "constant name")
-            check_not_bound_twice(c["name"], f"constants[{i}].name", [x.name for x in constants])
-            constants.append(Constant.of_image(c))
+            constant = Variable_With_Syntax.of_image(c)
+            check_not_bound_twice(constant.name, f"constants[{i}].name", [x.name for x in constants])
+            constants.append(constant)
         node = cls(config.parent, config.state, normalised(raw["english"]), tuple(constants),
                    tuple(IsaTerm.from_agent(normalised(e)) for e in raw["equations"]), raw["auto_reduction"])
         old = config.replaces()
@@ -317,7 +296,7 @@ class Define(With_Proof_Obligations, Leaf):
     @classmethod
     def from_store(cls, config, rows):
         return cls(config.parent, config.state, rows.get("english"),
-                   tuple(Constant.of_image(c) for c in rows.get("constants")),
+                   tuple(Variable_With_Syntax.of_image(c) for c in rows.get("constants")),
                    tuple(IsaTerm.from_agent(e) for e in rows.get("equations")), rows.get("auto_reduction"),
                    rows.get("form"), rows.get("completeness_method"), rows.get("termination_method"),
                    rows.get("failed_obligation"))
@@ -325,7 +304,7 @@ class Define(With_Proof_Obligations, Leaf):
     # --- the obligations (§1, §7)
 
     def constant_names(self) -> list[str]:
-        return [c.name for c in self.constants]
+        return [c.name.unicode for c in self.constants]       # in the id grammar: one spelling
 
     def _method_of(self, obligation: Obligation) -> str | None:
         """The recorded method that closed the obligation's goal; None while
@@ -379,10 +358,10 @@ class Define(With_Proof_Obligations, Leaf):
     # --- the evaluation (§6)
 
     def goal_structure(self) -> Any:
-        """§4: the constants — names, types, syntaxes — and the equations,
-        each `IsaTerm` as its `ascii`: what both goals are made of."""
-        return ([(c.name, c.type.ascii if c.type is not None else None, mixfix_wire(c.syntax)) for c in self.constants],
-                [e.ascii for e in self.equations])
+        """§4: the constants — names, types, syntaxes, each as
+        `Variable_With_Syntax`'s wire — and the equations, each `IsaTerm` as
+        its `ascii`: what both goals are made of."""
+        return ([c.wire() for c in self.constants], [e.ascii for e in self.equations])
 
     def message(self) -> Any:
         """The definition as `TAT.Define.evaluate` unpacks it: the goal
@@ -425,19 +404,12 @@ class Define(With_Proof_Obligations, Leaf):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _head(self, write: Callable[[str | IsaTerm], str]) -> str:
-        """The constants after the command: each its name, `:: T` when typed,
-        its syntax when given, joined by `and`, the name and the type
-        through `write`."""
-        return " and ".join(" ".join(filter(None, (
-            write(c.name), f":: {write(c.type)}" if c.type is not None else "",
-            mixfix_text(c.syntax) if c.syntax is not None else ""))) for c in self.constants)
-
     def print_fields(self, indent, out, mode, depth):
-        """Under `Recall` alone (§8): the constants and the equations one
-        level deeper at depths 0 to 2, in the stored text; `english` at 0."""
+        """Under `Recall` alone (§8): the constants by `fixes_text` over the
+        stored text and the equations, one level deeper at depths 0 to 2;
+        `english` at 0."""
         if mode is RECALL and depth <= 2:
-            out.write(INDENT * (indent + 1) + self._head(IsaTerm.to_unicode) + "\n")
+            out.write(INDENT * (indent + 1) + fixes_text(self.constants, IsaTerm.to_unicode) + "\n")
             for e in self.equations:
                 out.write(INDENT * (indent + 1) + e.unicode + "\n")
         if mode is RECALL and depth == 0:
@@ -469,7 +441,7 @@ class Define(With_Proof_Obligations, Leaf):
         def write(text: str | IsaTerm) -> str:
             return print_name(text, keywords)
         command = self._command()
-        lines = [f"{command} {self._head(write)} where"]
+        lines = [f"{command} {fixes_text(self.constants, write)} where"]
         lines += [("  " if i == 0 else "| ") + string_token(e.unicode) for i, e in enumerate(self.equations)]
         if command not in (DEFINITION, "fun"):
             lines += [f"  {self._terminal(PATTERN_COMPLETENESS)}", "termination", f"  {self._terminal(TERMINATION)}"]

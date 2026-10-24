@@ -298,19 +298,20 @@ class DuplicateName(BadEdit):
 
 
 class InvalidName(BadEdit):
-    """Raised against one of six grammars, which `grammar` names: the
+    """Raised against one of seven grammars, which `grammar` names: the
     framework's name grammar (MCP_SPECIFICATION §2), by the framework; the
     theory name's, by `Theory.gen`; the session name's, by `Session.gen`;
     the fact name's, by `Theorem.gen` (node_classes/THEOREM.md §4); the
     type name's, by `Datatype.gen` and `Typedef.gen` (node_classes/DATATYPE.md
     §4, TYPEDEF.md §4); the constant name's, by `LiftDefinition.gen` and
-    `Define.gen` (node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4).  Each
+    `Define.gen` (node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4); the
+    locale name's, by `Locale.gen` (node_classes/LOCALE.md §4).  Each
     renders its own grammar, so the agent can correct the name from the
     message."""
 
     def __init__(self, name: str,
                  grammar: Literal["name", "theory name", "session name", "fact name", "type name",
-                                  "constant name"] = "name"):
+                                  "constant name", "locale name"] = "name"):
         super().__init__()
         self.name = name
         self.grammar = grammar
@@ -320,10 +321,10 @@ class InvalidName(BadEdit):
 
 
 # Each grammar's text, a predicate of the name, rendered by `InvalidName`
-# after its subject.  The fact name's, the type name's and the constant
-# name's are one text (RENDER_BASELINES §2), which `Isabelle_Std` also
-# renders when it refuses a field that is no Isabelle identifier
-# (node_classes/COMMON.md §5).
+# after its subject.  The fact name's, the type name's, the constant
+# name's and the locale name's are one text (RENDER_BASELINES §2), which
+# `Isabelle_Std` also renders when it refuses a field that is no Isabelle
+# identifier (node_classes/COMMON.md §5).
 _FACT_OR_TYPE_NAME = ("starts with a letter and continues with letters, digits, underscores and primes ('), and"
                       " does not end with an underscore")
 GRAMMARS = {
@@ -336,6 +337,7 @@ GRAMMARS = {
     "fact name": _FACT_OR_TYPE_NAME,
     "type name": _FACT_OR_TYPE_NAME,
     "constant name": _FACT_OR_TYPE_NAME,
+    "locale name": _FACT_OR_TYPE_NAME,
 }
 
 

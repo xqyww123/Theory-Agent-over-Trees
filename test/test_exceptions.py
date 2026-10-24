@@ -104,6 +104,8 @@ def test_invalid_field():
     # The schema check's own reasons, for a construct's fields.
     check(InvalidField(field="statement", reason="must be an object"),
           "The field `statement` must be an object.")
+    check(InvalidField(field="implicit_structure", reason="must be a string or null"),   # a union's null arm
+          "The field `implicit_structure` must be a string or null.")
     check(InvalidField(field="types", reason="must not be empty"),
           "The field `types` must not be empty.")
     check(InvalidField(field="types[0].constructors[1].syntax.priority", reason="must be a 64-bit integer"),
@@ -164,7 +166,7 @@ def test_invalid_name():
           " letter and continues with letters, digits, underscores and"
           " interior hyphens, and does not end with a hyphen or an"
           " underscore.")
-    # The fact name's, the type name's and the constant name's grammars share one text.
+    # The fact name's, the type name's, the constant name's and the locale name's grammars share one text.
     check(InvalidName("rev-length", "fact name"),
           "`rev-length` is not a valid fact name: a fact name starts with a letter and continues with"
           " letters, digits, underscores and primes ('), and does not end with an underscore.")
@@ -173,6 +175,9 @@ def test_invalid_name():
           " letters, digits, underscores and primes ('), and does not end with an underscore.")
     check(InvalidName("dl-rev", "constant name"),
           "`dl-rev` is not a valid constant name: a constant name starts with a letter and continues with"
+          " letters, digits, underscores and primes ('), and does not end with an underscore.")
+    check(InvalidName("idempotent-semigroup", "locale name"),
+          "`idempotent-semigroup` is not a valid locale name: a locale name starts with a letter and continues with"
           " letters, digits, underscores and primes ('), and does not end with an underscore.")
 
 def test_duplicate_theory_short_name():

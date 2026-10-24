@@ -216,7 +216,8 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          [Theorem.gen]; the type name's
 │  │                          [Datatype.gen, Typedef.gen]; the constant
 │  │                          name's [LiftDefinition.gen, Define.gen];
-│  │                          the six grammars are RENDER_BASELINES §2's
+│  │                          the locale name's [Locale.gen]; the seven
+│  │                          grammars are RENDER_BASELINES §2's
 │  ├─ DuplicateTheoryShortName  short_name, holder — the base heap, another
 │  │                          tree, or a construct of the same call
 │  │                          (its full path in the call) already uses

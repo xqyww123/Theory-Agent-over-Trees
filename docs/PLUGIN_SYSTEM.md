@@ -306,7 +306,10 @@ registration, per class:
   `items` is, with `minItems: 1` a non-empty list; an `anyOf`, no arm
   of which is itself an `anyOf`, is a union whose arms pair with its
   own one for one — by JSON type, and TypedDicts told apart by a
-  `Literal` by the values of the choosing field; and no schema carries a keyword besides
+  `Literal` by the values of the choosing field —, an arm `{"type":
+  "null"}`, JSON null, pairing with `None`: the one place null is
+  admitted, as an arm of an `anyOf` and nowhere else (node_classes/LOCALE.md
+  §2); and no schema carries a keyword besides
   these, `description`, and `$defs` at the top alone. Values, fields
   and arms are compared as
   sets, never by position, since an annotation does not reliably keep

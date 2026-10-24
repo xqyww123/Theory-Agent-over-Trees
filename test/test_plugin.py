@@ -1352,3 +1352,48 @@ def test_a_package_declares_the_theories_the_forests_theories_import(monkeypatch
     for bad in ("Minilang_AoA", "S..A", 'S."A"', ""):
         with pytest.raises(CannotLoadPlugin, match="is not a theory name of the shape"):
             plugin.TAT_import(bad)
+
+
+def test_json_null_is_an_arm_of_an_any_of_and_nothing_else():
+    """PLUGIN_SYSTEM §5, MODULE_STRUCTURE §4.4: `{"type": "null"}` is admitted
+    as an arm of a construct schema's `anyOf`, paired with `None` in the
+    union, and nowhere else — not a bare property, not through a `$defs`
+    entry, not a bare annotation, not in a tool schema; `check_call` reads
+    the arm, its phrase `null` (RENDER_BASELINES §2)."""
+    class Nullable(TypedDict):
+        v: str | None
+    nullable = {"v": {"anyOf": [{"type": "string"}, {"type": "null", "description": "none at all"}]}}
+    cls = plugin.TAT_node(declaring("N1", nullable, Nullable, required=["v"]))
+    schema = cls.construct_schema
+    assert schema is not None
+    for value in (None, "x"):
+        plugin.check_call(schema, "n1", {"kind": "n1", "v": value}, construct=True)
+    with pytest.raises(InvalidField) as e:
+        plugin.check_call(schema, "n1", {"kind": "n1", "v": 1}, construct=True)
+    assert (e.value.field, e.value.reason) == ("v", "must be a string or null")
+    with pytest.raises(InvalidField) as e:
+        plugin.check_call(schema, "n1", {"kind": "n1", "v": False}, construct=True)
+    assert e.value.reason == "must be a string or null"
+
+    class Plain(TypedDict):
+        v: str
+    refused(declaring("N2", nullable, Plain, required=["v"]), "an `anyOf` against <class 'str'>")
+    class Int_Or_None(TypedDict):
+        v: int | None
+    refused(declaring("N3", nullable, Int_Or_None, required=["v"]),
+            r"the `anyOf`'s JSON types \['null', 'string'\] against the union's \['null', 'number'\]")
+    class Bare(TypedDict):
+        v: None
+    refused(declaring("N4", nullable, Bare, required=["v"]), "outside the argument schema grammar")
+    refused(declaring("N5", {"v": {"type": "null"}}, Plain, required=["v"]),
+            "construct_schema.v: not of one JSON type of the construct schema grammar")
+    refused(declaring("N6", {"v": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/Nil"}]}}, Nullable,
+                      required=["v"], defs={"Nil": {"type": "null"}}),
+            r"\$defs\.Nil: not of one JSON type of the construct schema grammar")
+    refused(declaring("N7", {"v": {"anyOf": [{"type": "string"}, {"type": "null", "enum": [None]}]}}, Nullable,
+                      required=["v"]), "construct_schema.v<1>: not of one JSON type")     # with a keyword: no null arm
+    refused(declaring("N8", {"v": {"anyOf": [{"type": "string"}, {"type": "null"}, {"type": "null"}]}}, Nullable,
+                      required=["v"]), "2 `anyOf` arms of JSON type null against 1 of the union's")
+    with pytest.raises(TAT_InternalError, match="not of one JSON type of the tool schema grammar"):
+        plugin.validate_call_schema({"type": "object", "properties": {"v": {"type": "null"}}, "required": [],
+                                     "additionalProperties": False}, "t")

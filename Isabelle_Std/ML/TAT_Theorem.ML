@@ -39,23 +39,32 @@ fun statement_transition ((kind, name, for_any, premises, conclusion) : statemen
 
 (*§6's check once the goal is open: the statement's free variables -- in the
   goal and in the premises assumed beside it -- that `for_any` does not
-  declare, which Isabelle fixed by itself; sorted*)
-fun undeclared ((_, _, for_any, _, _) : statement) st =
+  declare and the input state's context does not fix (a `Locale`'s parameters
+  inside its block, LOCALE.md §6), which Isabelle fixed by itself; sorted*)
+fun undeclared ((_, _, for_any, _, _) : statement) st_input st =
   let val {context, goal, ...} = Proof.goal (Toplevel.proof_of st)
       val props = Thm.prop_of goal :: map Thm.prop_of (Assumption.all_prems_of context)
       val frees = distinct (op =) (map #1 (fold Term.add_frees props []))
-   in sort_strings (subtract (op =) (map #1 for_any) frees) end
+      val fixed = Variable.is_fixed (Toplevel.context_of st_input)
+   in sort_strings (filter_out fixed (subtract (op =) (map #1 for_any) frees)) end
+
+(*names joined by `, ` with `last` before the final one, the twin of the
+  framework's `exceptions.series` (LOCALE.md §6)*)
+fun series _ [one] = one
+  | series last names = String.concatWith ", " (take (length names - 1) names) ^ " " ^ last ^ " " ^ List.last names
+
+fun quoted name = "`" ^ name ^ "`"
+
+(*the head of an undeclared-variable sentence, `Theorem`'s and a `Locale`
+  axiom's (§6; LOCALE.md §6): the variables, then the axioms they occur in
+  when any are named, each list by `series`, the nouns in number*)
+fun undeclared_head names axioms =
+  "Undeclared variable" ^ (if length names = 1 then " " else "s ") ^ series "and" (map quoted names)
+  ^ (if null axioms then ""
+     else " in the axiom" ^ (if length axioms = 1 then " " else "s ") ^ series "and" (map quoted axioms))
 
 fun undeclared_sentence names =
-  let val quoted = map (fn n => "`" ^ n ^ "`") names
-      val listed =
-        (case quoted of
-          [one] => one
-        | _ => String.concatWith ", " (take (length quoted - 1) quoted) ^ " and " ^ List.last quoted)
-   in if length names = 1
-      then "Undeclared variable " ^ listed ^ ": declare it in `for_any`."
-      else "Undeclared variables " ^ listed ^ ": declare them in `for_any`."
-  end
+  undeclared_head names [] ^ (if length names = 1 then ": declare it in `for_any`." else ": declare them in `for_any`.")
 
 (*`Theorem`'s `open_goal` (COMMON.md §3): the statement's transition from the
   input state to the state with the goal open, refused -- one message --
@@ -63,7 +72,7 @@ fun undeclared_sentence names =
 fun open_goal statement st =
   TAT_Framework.apply_transition (statement_transition statement) st
   |> TAT_Framework.bind_answer (fn st' =>
-      (case undeclared statement st' of
+      (case undeclared statement st st' of
         [] => Accepted (st', ())
       | names => Refused [undeclared_sentence names]))
 

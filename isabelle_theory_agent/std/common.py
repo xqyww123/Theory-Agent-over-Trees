@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
-from collections.abc import Container, Iterable, Sequence
+from collections.abc import Callable, Container, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, NotRequired, TypedDict, final, overload
 
@@ -39,13 +39,25 @@ from ..plugin import TAT_compile_hook, TAT_import
 TAT_import("TAT_Std.TAT_Std")
 
 
-def text_line(english: str, lead: str | None = None) -> str:
-    """The `text` command a class writes before its own (§2): `english`,
-    a period added when it ends without `.`, `!` or `?`, after the
-    class's lead when it has one, through the framework's `cartouche`."""
+def english_cartouche(english: str, lead: str | None = None) -> str:
+    """`english` as the file carries it (§2): a period added when it ends
+    without `.`, `!` or `?`, after the class's lead when it has one,
+    through the framework's `cartouche` — the `text` line's text, and a
+    `Locale` axiom's formal comment (LOCALE.md §5)."""
     if english and english[-1] not in ".!?":
         english += "."
-    return f"text {cartouche(english if lead is None else f'{lead} {english}')}"
+    return cartouche(english if lead is None else f"{lead} {english}")
+
+
+def text_line(english: str, lead: str | None = None) -> str:
+    """The `text` command a class writes before its own (§2)."""
+    return f"text {english_cartouche(english, lead)}"
+
+
+# The two descriptions `STATEMENT_DEFS`, `LOCALE_INSTANCE_DEFS` and `VARIABLE_WITH_SYNTAX_DEFS` share (§4; THEOREM.md §3
+# their home)
+TERM_DESCRIPTION = "Isabelle/HOL term with all literal numbers annotated with types"
+TYPE_DESCRIPTION = 'An Isabelle type expression. Leave empty ("") if unsure'
 
 
 # --- the texts and the names (§5)
@@ -65,7 +77,7 @@ def layout_normalised(text: str) -> str:
 _ID_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_']*")      # the id grammar without hyphens (§5)
 
 
-def require_id_name(name: str, grammar: Literal["fact name", "type name", "constant name"]) -> None:
+def require_id_name(name: str, grammar: Literal["fact name", "type name", "constant name", "locale name"]) -> None:
     """`InvalidName` unless `name` is in the id grammar without hyphens and
     does not end with an underscore (§5): a node's own name, and each
     authored field a class computes it from."""
@@ -90,6 +102,21 @@ def check_not_bound_twice(name: IsaTerm | str, field: str, earlier: Iterable[Isa
     `earlier` (§4, §5)."""
     if any(e == name for e in earlier):
         raise InvalidField(field, f"repeats `{IsaTerm.to_unicode(name)}`")
+
+
+def dotted_name_of(text: str, field: str, earlier: Iterable[IsaTerm], noun: str) -> IsaTerm:
+    """A name that is an Isabelle identifier or identifiers joined by dots —
+    a `Locale`'s `imports[].locale`, a `LiftingContext`'s `types` entry —,
+    normalised, as the node holds it (§4): `InvalidField` unless each part
+    on its `ascii` is an identifier not ending with an underscore (§5),
+    and not among `earlier`; `noun` is what the name names, `locale` or
+    `type`."""
+    name = IsaTerm.from_agent(normalised(text))
+    if not all(is_identifier(part) and not part.endswith("_") for part in name.ascii.split(".")):
+        raise InvalidField(field, f"must be a {noun}'s name: an Isabelle identifier, or identifiers joined by dots,"
+                                  f" each of which {GRAMMARS['fact name']}")
+    check_not_bound_twice(name, field, earlier)
+    return name
 
 
 def _check_type_variable(text: str, field: str, earlier: Iterable[IsaTerm]) -> IsaTerm:
@@ -139,6 +166,14 @@ _TEMPLATE_ARM: JSON_Schema = {
     "required": ["form", "template"], "additionalProperties": False,
 }
 
+# The arm the two unions share: no annotation, the same as leaving the field out everywhere but on a `Locale`'s
+# parameter (§4; LOCALE.md §2)
+_NO_SYNTAX_ARM: JSON_Schema = {
+    "type": "object", "description": "no syntax",
+    "properties": {"form": {"type": "string", "enum": ["NoSyntax"]}},
+    "required": ["form"], "additionalProperties": False,
+}
+
 MIXFIX_DEFS: dict[str, JSON_Schema] = {
     "Mixfix": {
         "description": "Isabelle's mixfix annotation",
@@ -152,6 +187,7 @@ MIXFIX_DEFS: dict[str, JSON_Schema] = {
              "required": ["form", "symbol", "priority"], "additionalProperties": False},
             {**_TEMPLATE_ARM,
              "description": 'a template with one _ per argument, as in ("⟨_, _⟩") or ("_ ! _" [100, 101] 100)'},
+            _NO_SYNTAX_ARM,
         ],
     },
 }
@@ -162,7 +198,46 @@ TYPE_MIXFIX_DEFS: dict[str, JSON_Schema] = {
         "anyOf": [
             {**_INFIX_ARM, "description": 'an infix type constructor. Example: (infixr "+" 10)'},
             {**_TEMPLATE_ARM, "description": 'a template with one _ per type parameter. Example: ("_⇩⊥" [21] 21)'},
+            _NO_SYNTAX_ARM,
         ],
+    },
+}
+
+LOCALE_INSTANCE_DEFS: dict[str, JSON_Schema] = {
+    "LocaleInstance": {
+        "type": "object",
+        "properties": {
+            "locale": {"type": "string", "description": "the name of the locale"},
+            "qualifier": {"type": "string",
+                          "description": "when two imports are the same locale or declare the same constant or type,"
+                                         " use prefixes to qualify them in separate name spaces: the prefix M renames"
+                                         " the import's element name as M.name"},
+            "instantiations": {
+                "type": "array",
+                "items": {"type": "object",
+                          "properties": {
+                              "name": {"type": "string", "description": "the parameter's name"},
+                              "term": {"type": "string", "description": TERM_DESCRIPTION}},
+                          "required": ["name", "term"], "additionalProperties": False},
+                "description": "one instantiation for each parameter of the imported locale. Example: the carrier of"
+                               " the monoid is instantiated to the carrier of the group. For a parameter defined by a"
+                               " `defines` clause (rare), write `_`"},
+        },
+        "required": ["locale", "instantiations"],
+        "additionalProperties": False,
+    },
+}
+
+VARIABLE_WITH_SYNTAX_DEFS: dict[str, JSON_Schema] = {
+    "VariableWithSyntax": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string", "description": TYPE_DESCRIPTION},
+            "syntax": {"$ref": "#/$defs/Mixfix"},
+        },
+        "required": ["name"],
+        "additionalProperties": False,
     },
 }
 
@@ -191,8 +266,29 @@ class Template_RawAST(TypedDict):
     priority: NotRequired[int]
 
 
-Mixfix_RawAST = Infix_RawAST | Binder_RawAST | Template_RawAST
-TypeMixfix_RawAST = Infix_RawAST | Template_RawAST
+class NoSyntax_RawAST(TypedDict):
+    form: Literal["NoSyntax"]
+
+
+Mixfix_RawAST = Infix_RawAST | Binder_RawAST | Template_RawAST | NoSyntax_RawAST
+TypeMixfix_RawAST = Infix_RawAST | Template_RawAST | NoSyntax_RawAST
+
+
+class Instantiation_RawAST(TypedDict):
+    name: str
+    term: str
+
+
+class LocaleInstance_RawAST(TypedDict):
+    locale: str
+    qualifier: NotRequired[str]
+    instantiations: list[Instantiation_RawAST]
+
+
+class VariableWithSyntax_RawAST(TypedDict):
+    name: str
+    type: NotRequired[str]
+    syntax: NotRequired[Mixfix_RawAST]
 
 
 @dataclass(frozen=True)
@@ -323,14 +419,26 @@ Mixfix = Infix | Binder | Template           # as a node holds an annotation; it
 TypeMixfix = Infix | Template
 
 
+@dataclass(frozen=True)
+class NoSyntax:
+    """The arm `NoSyntax` as a `Variable_With_Syntax` holds it (§4): the
+    authored word for no annotation, told apart from `syntax` left out,
+    which on a `Locale`'s parameter may take an import's (LOCALE.md §2)."""
+
+    def image(self) -> dict[str, Any]:
+        return {"form": "NoSyntax"}
+
+
 @overload
-def mixfix_of(raw: TypeMixfix_RawAST) -> TypeMixfix: ...
+def mixfix_of(raw: TypeMixfix_RawAST) -> TypeMixfix | None: ...
 @overload
-def mixfix_of(raw: Mixfix_RawAST) -> Mixfix: ...
-def mixfix_of(raw: Mixfix_RawAST) -> Mixfix:
+def mixfix_of(raw: Mixfix_RawAST) -> Mixfix | None: ...
+def mixfix_of(raw: Mixfix_RawAST) -> Mixfix | None:
     """The construct's annotation as the node holds it, the symbol or
-    template normalised for newlines and tabs alone (§4); a stored image
-    is read back through it too."""
+    template normalised for newlines and tabs alone, the arm `NoSyntax`
+    none (§4); a stored image is read back through it too."""
+    if raw["form"] == "NoSyntax":
+        return None
     if raw["form"] == "mixfix":
         return Template(IsaTerm.from_agent(layout_normalised(raw["template"])),
                         tuple(raw["argument_priorities"]) if "argument_priorities" in raw else None,
@@ -363,6 +471,25 @@ def mixfix_wire(syntax: Mixfix | None) -> str | None:
     return None if syntax is None else ascii_of_unicode(mixfix_text(syntax))
 
 
+def mixfix_of_wire(wire: tuple[str, str, list[int] | None, int | None] | None) -> Mixfix | None:
+    """`TAT_Mixfix.arm_of`'s answer read back (§4): None for none; else the
+    arm — its form, its symbol or template in `ascii`, a template's
+    priorities when sent — built with `IsaTerm.from_isabelle` and read by
+    `mixfix_of`."""
+    if wire is None:
+        return None
+    form, text, argument_priorities, priority = wire
+    text = IsaTerm.from_isabelle(text).unicode
+    if form == "mixfix":
+        raw: Mixfix_RawAST = {"form": "mixfix", "template": text,
+                              **({"argument_priorities": argument_priorities} if argument_priorities is not None else {}),
+                              **({"priority": priority} if priority is not None else {})}  # type: ignore[typeddict-item]
+    else:
+        assert priority is not None     # the ML sends every other form with its one priority
+        raw = {"form": form, "symbol": text, "priority": priority}  # type: ignore[typeddict-item]
+    return mixfix_of(raw)
+
+
 def type_head_text(parameters: Sequence[Type_Parameter], name: str, syntax: TypeMixfix | None,
                    keywords: Container[str]) -> str:
     """§4's writer of a type's head, as the commands write it: the type
@@ -371,6 +498,123 @@ def type_head_text(parameters: Sequence[Type_Parameter], name: str, syntax: Type
     — `'a fset`, `('a, 'b) t (infixr "+" 10)`."""
     return " ".join(filter(None, (type_parameters_text(parameters, keywords), print_name(name, keywords),
                                   mixfix_text(syntax) if syntax is not None else "")))
+
+
+# --- a variable with an optional annotation (§4): a `Locale`'s parameter, a `Define`'s constant
+
+@dataclass(frozen=True)
+class Variable_With_Syntax:
+    """`VariableWithSyntax` as the node holds it (§4): the name, the type or
+    none, and the annotation — a `Mixfix`, `NoSyntax` when the authored
+    `syntax` is that form, or None when `syntax` is left out."""
+    name: IsaTerm
+    type: IsaTerm | None
+    syntax: Mixfix | NoSyntax | None
+
+    def image(self) -> dict[str, Any]:
+        """The store's row, the construct's shape in the `unicode` spelling:
+        no `syntax` key for none, `{"form": "NoSyntax"}` for `NoSyntax`."""
+        return {"name": self.name.unicode,
+                **({"type": self.type.unicode} if self.type is not None else {}),
+                **({"syntax": self.syntax.image()} if self.syntax is not None else {})}
+
+    @classmethod
+    def of_image(cls, raw: VariableWithSyntax_RawAST) -> Variable_With_Syntax:
+        """The construct's variable, its texts normalised, and a stored image
+        read back; the name's grammar is the class's to check first."""
+        type_ = normalised(raw.get("type", ""))
+        syntax: Mixfix | NoSyntax | None = None
+        if "syntax" in raw:
+            syntax = NoSyntax() if raw["syntax"]["form"] == "NoSyntax" else mixfix_of(raw["syntax"])
+        return cls(IsaTerm.from_agent(normalised(raw["name"])), IsaTerm.from_agent(type_) if type_ else None, syntax)
+
+    def wire(self) -> tuple[str, str | None, str | None]:
+        """The variable as `TAT_Mixfix.fixes` reads it: the name and the type
+        in `ascii`, the annotation as `mixfix_wire` sends it — None for
+        `NoSyntax` and none alike."""
+        return (self.name.ascii, self.type.ascii if self.type is not None else None,
+                mixfix_wire(self.syntax) if not isinstance(self.syntax, NoSyntax) else None)
+
+
+def fixes_text(variables: Sequence[Variable_With_Syntax], write: Callable[[str | IsaTerm], str]) -> str:
+    """§4's writer: the variables joined by ` and `, each its name, its type
+    after `::` and its annotation by `mixfix_text`, nothing for `NoSyntax`;
+    the name and the type through `write` — `f :: "'a ⇒ 'a ⇒ 'a" (infixl
+    "⊗" 70)` with `print_name`."""
+    return " and ".join(" ".join(filter(None, (
+        write(v.name), f":: {write(v.type)}" if v.type is not None else "",
+        mixfix_text(v.syntax) if v.syntax is not None and not isinstance(v.syntax, NoSyntax) else "")))
+        for v in variables)
+
+
+# --- a locale instance (§4): a locale a `Locale` extends, every parameter instantiated
+
+@dataclass(frozen=True)
+class Instantiation:
+    name: IsaTerm
+    term: IsaTerm
+
+
+@dataclass(frozen=True)
+class Locale_Instance:
+    """`LocaleInstance` as the node holds it (§4): the locale's name, the
+    qualifier or none, and the instantiations in their order."""
+    locale: IsaTerm
+    qualifier: IsaTerm | None
+    instantiations: tuple[Instantiation, ...]
+
+    def image(self) -> dict[str, Any]:
+        """The store's row, the construct's shape in the `unicode` spelling."""
+        return {"locale": self.locale.unicode,
+                **({"qualifier": self.qualifier.unicode} if self.qualifier is not None else {}),
+                "instantiations": [{"name": i.name.unicode, "term": i.term.unicode} for i in self.instantiations]}
+
+    @classmethod
+    def of_image(cls, raw: LocaleInstance_RawAST) -> Locale_Instance:
+        """A stored image read back, unchecked."""
+        return cls(IsaTerm.from_agent(raw["locale"]),
+                   IsaTerm.from_agent(raw["qualifier"]) if "qualifier" in raw else None,
+                   tuple(Instantiation(IsaTerm.from_agent(i["name"]), IsaTerm.from_agent(i["term"]))
+                         for i in raw["instantiations"]))
+
+    def wire(self) -> tuple[str, str | None, list[tuple[str, str]]]:
+        """The instance as the ML reads it: every piece in `ascii`."""
+        return (self.locale.ascii, self.qualifier.ascii if self.qualifier is not None else None,
+                [(i.name.ascii, i.term.ascii) for i in self.instantiations])
+
+
+def locale_instance_of(raw: LocaleInstance_RawAST, path: str) -> Locale_Instance:
+    """§4's reader, under the class's `path` of the field: the locale's name
+    by `dotted_name_of` under the noun `locale`; the qualifier, when
+    given, an Isabelle identifier; each instantiation's name an identifier
+    not ending with an underscore, no two the same; the texts normalised."""
+    locale = dotted_name_of(raw["locale"], f"{path}.locale", (), "locale")
+    qualifier = (check_identifier(raw["qualifier"], f"{path}.qualifier", (), in_term=False)
+                 if "qualifier" in raw else None)
+    instantiations: list[Instantiation] = []
+    for i, instantiation in enumerate(raw["instantiations"]):
+        name = check_identifier(instantiation["name"], f"{path}.instantiations[{i}].name",
+                                [x.name for x in instantiations], in_term=True)
+        instantiations.append(Instantiation(name, IsaTerm.from_agent(normalised(instantiation["term"]))))
+    return Locale_Instance(locale, qualifier, tuple(instantiations))
+
+
+def locale_instance_text(instance: Locale_Instance, keywords: Container[str] = ()) -> str:
+    """§4's writer, an instance as a locale expression writes it: the
+    qualifier and a colon when given; the locale's name, bare when it has
+    a dot (one token to Isabelle's lexer); `where` and the instantiations
+    joined by ` and `, each `name = term`, the instantiation `_` bare —
+    every other piece through `print_name` against `keywords`: `S:
+    semigroup where f = f`, `padic_integers where Zp = _ and p = p`."""
+    parts = []
+    if instance.qualifier is not None:
+        parts.append(print_name(instance.qualifier, keywords) + ":")
+    parts.append(instance.locale.unicode if "." in instance.locale.ascii else print_name(instance.locale, keywords))
+    if instance.instantiations:
+        parts.append("where " + " and ".join(
+            f"{print_name(i.name, keywords)} = {'_' if i.term.ascii == '_' else print_name(i.term, keywords)}"
+            for i in instance.instantiations))
+    return " ".join(parts)
 
 
 # --- the Rep and the Abs function names of a type (§4): the check, the defaults and the `morphisms` clause

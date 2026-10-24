@@ -28,9 +28,9 @@ from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as 
 from isabelle_theory_agent.exceptions import BadPlacement, DuplicateName, InvalidField, InvalidName, RawASTError, TAT_StartupError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, define
-from isabelle_theory_agent.std.common import NO_SETUP, Infix, Proof_Check
+from isabelle_theory_agent.std.common import NO_SETUP, Infix, Proof_Check, Variable_With_Syntax
 from isabelle_theory_agent.std.define import (
-    INTERPRETATIONS, OBLIGATIONS, PATTERN_COMPLETENESS, TERMINATION, Constant, Define, Define_Proof_Check,
+    INTERPRETATIONS, OBLIGATIONS, PATTERN_COMPLETENESS, TERMINATION, Define, Define_Proof_Check,
     Define_Proof_Job, Termination_Task, assertion, goal_hint, task_text)
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import TAT_STD, read_back
@@ -106,7 +106,7 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
     (p,) = x.sub_nodes
     assert isinstance(p, Define) and p.kind == "definition" and p.name == "sum_upto" and f.id_of(p) == "definition_sum_upto"
     assert p.english == "The sum of the naturals from i to N"
-    assert p.constants == (Constant("sum_upto", IsaTerm.from_agent("nat ⇒ nat ⇒ nat"), None),)
+    assert p.constants == (Variable_With_Syntax(IsaTerm.from_agent("sum_upto"), IsaTerm.from_agent("nat ⇒ nat ⇒ nat"), None),)
     assert [e.unicode for e in p.equations] == list(SUM_UPTO["equations"]) and all(isinstance(e, IsaTerm) for e in p.equations)
     assert p.auto_reduction is False
     assert (p.form, p.completeness_method, p.termination_method, p.failed_obligation) == (None, None, None, None)
@@ -117,7 +117,7 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
     (q,) = insert(f, x, 1, [EVEN_ODD | {"constants": [
         {"name": "even", "type": "nat ⇒ bool", "syntax": {"form": "infixl", "symbol": "⊕", "priority": 65}}, {"name": "odd"}]}])
     assert q.name == "even_and_odd" and f.id_of(q) == "definition_even_and_odd"
-    assert q.constants[0].syntax == Infix("infixl", IsaTerm.from_agent("⊕"), 65) and q.constants[1] == Constant("odd", None, None)
+    assert q.constants[0].syntax == Infix("infixl", IsaTerm.from_agent("⊕"), 65) and q.constants[1] == Variable_With_Syntax(IsaTerm.from_agent("odd"), None, None)
     inv(f)
 
 

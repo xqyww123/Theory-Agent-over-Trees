@@ -196,9 +196,9 @@ def test_print_fields_writes_the_proposition_and_english_by_depth():
                                                       [proposition], []]
     assert fields(M.OUT_FOCUS, 0) == [] and fields(M.Relative_Focus(frozenset({p}), 0), 0) == []
     # a part holding `⋀` or `⟹` in either spelling is parenthesised; one `⋀` per variable
-    two = Statement("e", (theorem.Variable(IsaTerm.from_agent("x"), None),
-                          theorem.Variable(IsaTerm.from_agent("y"), IsaTerm.from_agent("nat"))),
-                    (theorem.Premise(IsaTerm.from_agent("h"), IsaTerm.from_agent("⋀z. P z ⟹ Q z")),),
+    two = Statement("e", (statement.Variable(IsaTerm.from_agent("x"), None),
+                          statement.Variable(IsaTerm.from_agent("y"), IsaTerm.from_agent("nat"))),
+                    (statement.Premise(IsaTerm.from_agent("h"), IsaTerm.from_agent("⋀z. P z ⟹ Q z")),),
                     IsaTerm.from_agent("A \\<Longrightarrow> B"))
     assert two.proposition() == "⋀x. ⋀y::nat. (⋀z. P z ⟹ Q z) ⟹ (A \\<Longrightarrow> B)"
 

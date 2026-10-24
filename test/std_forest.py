@@ -51,7 +51,7 @@ def refused(f, parent, raws, cls):
     return e.value
 
 
-def assert_a_missing_row_is_refused_at_start(path, identity, fields):
+def assert_a_missing_row_is_refused_at_start(path, identity, fields, kinds=KINDS):
     """A class's rows are read with `get`: the store at `path` reopened with
     one of the node's `fields` missing is refused at start with
     `TAT_StartupError` naming the row, each field in turn, the row put back
@@ -66,7 +66,7 @@ def assert_a_missing_row_is_refused_at_start(path, identity, fields):
                     store.put(identity, name, value)
         store.close()
         with pytest.raises(TAT_StartupError, match=field):
-            Forest_Under_Test(store=Forest_Store(path, ts.stand_ins.log()), kinds=KINDS)
+            Forest_Under_Test(store=Forest_Store(path, ts.stand_ins.log()), kinds=kinds)
         store = Forest_Store(path, ts.stand_ins.log())
         with store.transaction():
             store.put(identity, field, rows[field])

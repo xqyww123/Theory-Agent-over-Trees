@@ -455,10 +455,15 @@ class _JSON_Type(NamedTuple):
     shape: type | tuple[type, ...]
     phrase: str
 
+_NULL = type(None)
+
 _JSON_TYPES = {"string": _JSON_Type(str, "a string"), "boolean": _JSON_Type(bool, "a boolean"),
                # a Python int: a JSON `1.0` is refused, since the same table types `gen`'s raw
                "integer": _JSON_Type(int, "an integer"), "number": _JSON_Type((int, float), "a number"),
-               "array": _JSON_Type(list, "a list"), "object": _JSON_Type(Mapping, "an object")}
+               "array": _JSON_Type(list, "a list"), "object": _JSON_Type(Mapping, "an object"),
+               # JSON null: an arm of a construct schema's `anyOf` alone (PLUGIN_SYSTEM §5), which the
+               # `anyOf` walk admits itself — not in `_KEYWORDS`, so a bare `{"type": "null"}` is refused
+               "null": _JSON_Type(_NULL, "null")}
 
 
 def _fits(value: Any, json_type: str) -> bool:
@@ -594,13 +599,15 @@ def _validate_annotation(ann: Any, where: str, enclosing: tuple) -> None:
 
 def _validate_union(arms: tuple, where: str, enclosing: tuple) -> None:
     """A union's arms, no two of one JSON type but TypedDicts told apart by
-    `_choosing_field`.  A `Literal` and a non-empty list are never arms:
-    their refusals speak for the whole field, and would be false where
-    another arm accepts what they refuse."""
+    `_choosing_field`; `None`, JSON null, is an arm and nothing else.  A
+    `Literal` and a non-empty list are never arms: their refusals speak
+    for the whole field, and would be false where another arm accepts what
+    they refuse."""
     for arm in arms:
         if get_origin(arm) is Literal or (_list_item(arm) or (None, False))[1]:
             raise TAT_InternalError(f"{where}: a `Literal` or a non-empty list is never an arm")
-        _validate_annotation(arm, where, enclosing)
+        if arm is not _NULL:
+            _validate_annotation(arm, where, enclosing)
     types = [_arm_type(_json_type(arm)) for arm in arms]
     if any(types.count(t) > 1 for t in types if t != "object"):
         raise TAT_InternalError(f"{where}: two arms of one JSON type could not be told apart")
@@ -647,7 +654,10 @@ def _arm_type(json_type: str) -> str:
 
 
 def _json_type(ann: Any) -> str:
-    """The JSON type of an annotation of the grammar."""
+    """The JSON type of an annotation of the grammar, `None`'s — an arm of
+    a union alone — `null`."""
+    if ann is _NULL:
+        return "null"
     if ann in _JSON_NAMES:
         return _JSON_NAMES[ann]
     if get_origin(ann) is Literal:
@@ -711,6 +721,8 @@ def _validate_construct_schema(cls: type[Node]) -> None:
         if isinstance(s, dict) and "anyOf" in s:
             allowed(s, {"anyOf"}, where)
             for i, arm in enumerate(s["anyOf"]):
+                if _is_null(arm):                      # JSON null: an arm of an `anyOf`, and nothing else
+                    continue
                 walk(arm, f"{where}<{i}>")             # a schema, its `$ref` naming an own entry
                 if "anyOf" in _resolved(arm, defs):
                     raise _refuse(cls, f"{where}: an `anyOf` arm is itself an `anyOf`")
@@ -728,6 +740,12 @@ def _validate_construct_schema(cls: type[Node]) -> None:
     if unreached:
         raise _refuse(cls, f"`$defs` entry `{unreached[0]}` is reached by no `$ref` outside the"
                            " top-level `children`")
+
+
+def _is_null(schema: Any) -> bool:
+    """`{"type": "null"}` with at most a `description`: JSON null, admitted
+    as an arm of a construct schema's `anyOf` alone (PLUGIN_SYSTEM §5)."""
+    return isinstance(schema, dict) and schema.get("type") == "null" and set(schema) <= {"type", "description"}
 
 
 def _required_enum_fields(arms: list[JSON_Schema]) -> list[str]:
@@ -772,6 +790,9 @@ class _Agreement:
         elif "enum" in schema:                 # a `Literal` of the grammar is of strings: a non-string `enum` disagrees
             if get_origin(ann) is not Literal or set(get_args(ann)) != set(schema["enum"]):
                 raise self.disagree(where, f"an `enum` of {schema['enum']} against {ann!r}")
+        elif json_type == "null":              # reached as a union's arm alone
+            if ann is not _NULL:
+                raise self.disagree(where, f"null against {ann!r}")
         elif _JSON_NAMES.get(ann) != json_type:
             raise self.disagree(where, f"{_JSON_TYPES[json_type].phrase} against {ann!r}")
 

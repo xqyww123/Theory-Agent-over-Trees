@@ -49,7 +49,7 @@ is updated with this document).
 | Field | Type | |
 | --- | --- | --- |
 | `english` | what is defined, `str` | authored |
-| `constants` | `list[Constant]` (§2), non-empty: each a `name`, `str`, in the id grammar without hyphens — a letter, then letters, digits, underscores and primes, not ending in an underscore (MCP_SPECIFICATION §2); one outside it is refused with the grammar's own sentence, as a `Typedef`'s `type_name` is —, an optional `type`, `IsaTerm`, and an optional `syntax`, `Mixfix` (COMMON.md §4) | authored |
+| `constants` | `list[Variable_With_Syntax]` (§2; COMMON.md §4), non-empty: each a `name`, `IsaTerm`, in the id grammar without hyphens — a letter, then letters, digits, underscores and primes, not ending in an underscore (MCP_SPECIFICATION §2); one outside it is refused with the grammar's own sentence, as a `Typedef`'s `type_name` is —, an optional `type`, `IsaTerm`, and an optional `syntax`, `Mixfix` (COMMON.md §4) | authored |
 | `equations` | `list[IsaTerm]`, non-empty: the defining equations, each one Isabelle equation | authored |
 | `auto_reduction` | `bool`, required, no default: whether to add the defining equations to the system simplification set | authored |
 | `form` | `definition` \| `function (sequential, no_partials)` \| `function`, or none until an evaluation has recorded one: the command the definition is made with — decided by the first evaluation that goes through and run again as recorded by every later one (§6); stored, since the commands are written from a loaded forest (COMPILATION.md §3), and read back with `rows.get`, so that a missing row is refused at start (`TAT_StartupError`) as a missing `equations` is. The file writes `fun` for `function (sequential, no_partials)` when no obligation is open (§5) | recorded |
@@ -157,8 +157,10 @@ The class's construct schema:
 }
 ```
 
-`Constant` is `Define`'s own definition, used by no other class;
-`MIXFIX_DEFS`, with its writer, is COMMON.md §4's.
+`Constant` is `Define`'s own definition, used by no other class; what
+the node keeps of one is `common.py`'s `Variable_With_Syntax`, with its
+wire and its writer `fixes_text`, and `MIXFIX_DEFS`, with its writer, is
+COMMON.md §4's.
 
 The class carries a description, its name not saying which commands it
 stands for; `constants[].name` carries none (COMMON.md §5). The
@@ -292,7 +294,8 @@ declare sum_upto.simps [simp del]
   file carries is the command the evaluation ran, and the file's
   obligations are the ones the evaluation saw (§6). Several constants
   are joined by `and` in the command's head, as Isabelle writes them.
-- Each constant: its name; `:: "T"` when `type` is given, nothing when
+- Each constant, as `fixes_text` writes it (COMMON.md §4): its name;
+  `:: "T"` when `type` is given, nothing when
   not; its `syntax`, when given, after the type, in parentheses as
   Isabelle writes it, by the plugin's `mixfix_text` (COMMON.md §4):
   `(infixl "⊕" 65)`.
@@ -373,8 +376,8 @@ on the context: they run at every evaluation, whatever the mode.
 **`definition`.** One transition, `Toplevel.local_theory NONE NONE` of
 `Specification.definition_cmd` on the constant — its binding, its type
 or none, its mixfix, `NoSyn` without `syntax`, otherwise the constructor
-of Isabelle's `mixfix` datatype the form names, decoded by the plugin's
-`TAT_Mixfix` (COMMON.md §4) — and the equation; then, when
+of Isabelle's `mixfix` datatype the form names, read by the plugin's
+`TAT_Mixfix.fixes` (COMMON.md §4) — and the equation; then, when
 `auto_reduction` is true, the `declare` transition on `<name>_def` with
 `simp`, `Specification.theorems_cmd` as `Pure.thy` builds `declare`.
 The transition refused — a right side that does not type, a free

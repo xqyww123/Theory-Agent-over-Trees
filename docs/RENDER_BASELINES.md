@@ -71,7 +71,8 @@ The argument `constructs` <reason>.
 ```
 
 A schema check's own reasons are `must be` followed by the JSON type —
-`a string`, `an integer`, `a number`, `a boolean`, `a list`, `an object`
+`a string`, `an integer`, `a number`, `a boolean`, `a list`, `an object`,
+and `null` for the one arm a construct's union may admit (PLUGIN_SYSTEM §5)
 — several joined with ` or `, each JSON type once, in the order the schema first names them; `must be one of` followed by the `enum`,
 backticked, `must not be empty` for `minItems`, and `must be a 64-bit
 integer` for an integer outside the signed 64-bit range, for a tool
@@ -81,6 +82,7 @@ argument before any other check, each object or array a level:
 
 ```
 The field `statement` must be an object.
+The field `implicit_structure` must be a string or null.
 The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
 The argument `constructs` must not be empty.
 The argument `constructs` must not be nested deeper than 100 levels.
@@ -112,11 +114,12 @@ framework's check), against the theory name's grammar (`Theory.gen`'s
 check), against the session name's (`Session.gen`'s check), against
 the fact name's (`Theorem.gen`'s check, node_classes/THEOREM.md §4),
 against the type name's (`Datatype.gen`'s and `Typedef.gen`'s check,
-node_classes/DATATYPE.md §4, TYPEDEF.md §4) and against the constant
+node_classes/DATATYPE.md §4, TYPEDEF.md §4), against the constant
 name's (`LiftDefinition.gen`'s and `Define.gen`'s check,
-node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4); `grammar` selects the
-rendering, the fact name's, the type name's and the constant name's
-sharing one text:
+node_classes/LIFT_DEFINITION.md §4, DEFINE.md §4) and against the
+locale name's (`Locale.gen`'s check, node_classes/LOCALE.md §4);
+`grammar` selects the rendering, the fact name's, the type name's, the
+constant name's and the locale name's sharing one text:
 
 ```
 `Ch 2` is not a valid name: a name starts with a letter and continues with letters, digits, underscores, primes (') and interior hyphens, and does not end with a hyphen or an underscore.
@@ -125,6 +128,7 @@ sharing one text:
 `rev-length` is not a valid fact name: a fact name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 `my-list` is not a valid type name: a type name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 `dl-rev` is not a valid constant name: a constant name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
+`idempotent-semigroup` is not a valid locale name: a locale name starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 ```
 
 `DuplicateName` — two siblings would share an id component

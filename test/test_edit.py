@@ -404,6 +404,7 @@ def test_schema_grammar_is_closed_at_registration():
         some: NotRequired[Annotated[list[str], NON_EMPTY]]
         either: NotRequired[Fact | str]
         mixed: NotRequired[str | int | list[str] | Fact]
+        nullable: str | None                 # JSON null, an arm of a union alone (PLUGIN_SYSTEM §5)
     plugin.validate_argument_schema(Fine)
 
     def refused(td, match=""):
@@ -412,7 +413,7 @@ def test_schema_grammar_is_closed_at_registration():
     class HasChildren(TypedDict):
         children: list
     class Optional(TypedDict):
-        a: str | None                        # no JSON word for null
+        a: None                              # null alone is no field's type
     class Dicty(TypedDict):
         a: dict
     class Anything(TypedDict):

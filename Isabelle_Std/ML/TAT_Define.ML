@@ -49,10 +49,9 @@ fun config_of command =
 val read_methods = TAT_Mixfix.read_text (Method.parse -- Scan.option Method.parse) "method"
 val read_attribs = TAT_Mixfix.read_text Parse.attribs "attributes"
 
-(*the constants as the commands take them, the annotation read under the local
-  theory's keywords (COMMON.md §4)*)
-fun fixes lthy constants =
-  map (fn (name, typ, syntax) => (Binding.name name, typ, TAT_Mixfix.read lthy syntax)) constants
+(*the constants as the commands take them: `Variable_With_Syntax`'s wire, the
+  annotation read under the local theory's keywords (COMMON.md §4)*)
+val fixes = TAT_Mixfix.fixes
 
 (*** the form (DEFINE.md §6) ***)
 

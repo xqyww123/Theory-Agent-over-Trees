@@ -68,7 +68,9 @@ using it merges the same definition (PLUGIN_SYSTEM §5):
 
 `english` and `conclusion` are required, `for_any` and `premises`
 optional. Every variable the premises and the conclusion use is declared
-in `for_any`: one Isabelle fixed by itself is refused at evaluation (§6).
+in `for_any`, unless the context the node stands in fixes it — a
+`Locale`'s parameters inside its block (LOCALE.md §6): one Isabelle
+fixed by itself is refused at evaluation (§6).
 `gen` normalises every piece of Isabelle text — the names, the types,
 the terms — and `english` once, when the construct is accepted:
 newlines become spaces and runs of whitespace one space; printing,
@@ -218,13 +220,20 @@ is checked in that context, as ARCHITECTURE §2 promises. A failure is
 `Proof_Obligation`'s (COMMON.md §3). On the open goal, `Theorem`'s
 `open_goal` refuses the statement whose
 free variables — in the goal, or in the premises assumed beside it —
-`for_any` does not declare, which Isabelle fixed by itself (§2): the
+`for_any` does not declare and the input state's context does not fix
+— a `Locale`'s parameters inside its block (LOCALE.md §6) —, which
+Isabelle fixed by itself (§2): the
 same failure, one message naming them in alphabetical order,
 
 ```
 Undeclared variable `x`: declare it in `for_any`.
 Undeclared variables `x` and `y`: declare them in `for_any`.
 ```
+
+Its head, `Undeclared variable(s) …`, is written by one writer of
+TAT_Theorem.ML, which the axioms' sentences of LOCALE.md §6 share with
+the axioms named after the variables; the lists are joined by its
+`series`, the twin of the framework's `exceptions.series`.
 
 Otherwise `_eval_opr` returns `Ready` with no messages: `Theorem`'s
 `record_from_evaluation` is `Proof_Obligation`'s default, which records

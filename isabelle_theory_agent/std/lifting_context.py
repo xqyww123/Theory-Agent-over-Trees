@@ -12,13 +12,12 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, TypedDict
 
-from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
+from Isabelle_RPC_Host.unicode import IsaTerm
 
 from .. import isabelle_driver
-from ..exceptions import GRAMMARS, InvalidField
 from ..model import INDENT, NON_EMPTY, RECALL, Placement, StdBlock, emit_lines, status_of_errors
 from ..plugin import TAT_node
-from .common import LIFTING_CHILDREN_HEADER, check_not_bound_twice, lifting_closing_text, normalised
+from .common import LIFTING_CHILDREN_HEADER, dotted_name_of, lifting_closing_text
 
 KINDS = ("lifting_context",)
 
@@ -30,19 +29,12 @@ class LiftingContext_RawAST(TypedDict):
 
 
 def type_names_of(raw: list[str]) -> tuple[IsaTerm, ...]:
-    """§4's check of `types`, each entry normalised and as the node holds
-    it: an Isabelle identifier, or identifiers joined by dots, each part on
-    its `ascii` an identifier not ending with an underscore (COMMON.md §5),
-    refused on `types[i]` with §4's sentence; no two the same (COMMON.md
-    §4).  A stored image is read back through it too."""
+    """§4's check of `types`, each entry by COMMON.md §4's `dotted_name_of`
+    under the noun `type` and the path `types[i]`, no two the same.  A
+    stored image is read back through it too."""
     names: list[IsaTerm] = []
     for i, text in enumerate(raw):
-        name = IsaTerm.from_agent(normalised(text))
-        if not all(is_identifier(part) and not part.endswith("_") for part in name.ascii.split(".")):
-            raise InvalidField(f"types[{i}]", "must be a type's name: an Isabelle identifier, or identifiers joined"
-                                              " by dots, each of which " + GRAMMARS["type name"])
-        check_not_bound_twice(name, f"types[{i}]", names)
-        names.append(name)
+        names.append(dotted_name_of(text, f"types[{i}]", names, "type"))
     return tuple(names)
 
 

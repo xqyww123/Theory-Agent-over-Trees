@@ -860,12 +860,13 @@ with one child:
     comm: "⋀(x::'a) (y::'a). ⟦x ∈ carrier G; y ∈ carrier G⟧ ⟹ x ⊗ y = y ⊗ x"
       Multiplication is commutative
   locale context:
-    - lemma_comm_inv (valid statement, proving)
+    - locale_commutative_monoid.lemma_comm_inv (valid statement, proving)
       ⋀x::'a. x ∈ carrier G ⟹ inv x ⊗ x = x ⊗ inv x
       The inverse of an element commutes with it
 ```
 
-At depth 1 and 2 the same without the two kinds of `english`. The
+A child's id carries the locale's component always (§9). At depth 1
+and 2 the same without the two kinds of `english`. The
 evaluation's messages are the framework's to print (PRINT.md §3–§4). A
 node under `recall` whose beginning Isabelle refused — an import
 naming no locale:
@@ -884,7 +885,7 @@ naming no locale:
   Error:
     Undefined locale: "semigrp"
   locale context:
-    - lemma_idem_twice (not evaluated, proof not started)
+    - locale_idempotent_semigroup.lemma_idem_twice (not evaluated, proof not started)
       ⋀x::'a. x ⊗ (x ⊗ x) = x
       Applying the operation to an element twice over gives it back
 ```
@@ -929,7 +930,7 @@ nothing:
 
 ```
   - locale_commutative_monoid (incomplete)
-    - lemma_comm_inv (valid statement, proving)
+    - locale_commutative_monoid.lemma_comm_inv (valid statement, proving)
 ```
 
 ## 9. Id properties

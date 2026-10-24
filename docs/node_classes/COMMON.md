@@ -832,10 +832,11 @@ the file and `Locale`'s recall passing
 its converse, `TAT_Mixfix.arm_of`, takes Isabelle's `mixfix` to the
 construct's arm in `ascii` or none — none for `NoSyn` and for the
 forms `MIXFIX_DEFS` leaves out, a template's default priorities
-dropped —, which `mixfix_of` reads, each symbol or template built
-with `IsaTerm.from_isabelle`; `TAT_Mixfix.read` of `mixfix_wire` of
-the arm is `Mixfix.equal` to the original, which test_common pins for
-every form of `MIXFIX_DEFS` against Isabelle (LOCALE.md §6).
+dropped —, which `mixfix_of_wire` reads through `mixfix_of`, each
+symbol or template built with `IsaTerm.from_isabelle`;
+`TAT_Mixfix.read` of `mixfix_wire` of the arm is `Mixfix.equal` to the
+original, which test_common pins for every form of `MIXFIX_DEFS`
+against Isabelle (LOCALE.md §6).
 
 ## 5. Conventions
 

@@ -15,6 +15,7 @@ Run: python -m pytest test/test_common.py
 """
 
 import io
+import re
 import jsoncomment
 import pytest
 
@@ -22,11 +23,12 @@ import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines, table_rows
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
-from isabelle_theory_agent.exceptions import BadPlacement, InvalidField
+from isabelle_theory_agent.exceptions import GRAMMARS, BadPlacement, InvalidField
 from isabelle_theory_agent.std import (
     common, datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
 from isabelle_theory_agent.std.common import (
-    Binder, Infix, Lifting_Closing, Proof_Obligation, Template, Type_Parameter, lifting_closing_text, text_line)
+    Binder, Infix, Lifting_Closing, Proof_Obligation, Template, Type_Parameter, english_cartouche, lifting_closing_text,
+    text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import ROOT, ml_process, ml_string
 from test_datatype import LIST, definition
@@ -124,6 +126,7 @@ def test_the_text_line_is_section_2_s():
     assert [text_line(e) for e in ("Bang!", "Why?", "Done.")] == ["text ‹Bang!›", "text ‹Why?›", "text ‹Done.›"]
     assert text_line("Bang", "Lemma q.") == "text ‹Lemma q. Bang.›"
     assert text_line("‹Quoted› \\<open>here\\<close>") == 'text ‹"Quoted" "here".›'
+    assert english_cartouche("Bang", "Lemma q.") == "‹Lemma q. Bang.›"     # the text alone: an axiom's comment
 
 
 @pytest.mark.parametrize("shape", ["leaf", "block"])
@@ -382,10 +385,12 @@ def test_lifting_closing_text_writes_section_6_s_two_lines_and_the_ending_writes
 # --- the shared `$defs` (§4): the schema text, the type parameters' check and writer, the mixfix writers
 
 def test_the_shared_defs_are_section_4_s_schema_text():
-    """§4: the three definitions, descriptions included, are the section's
-    jsonc blocks, pinned here alone; `Datatype`'s `$defs` are the three."""
+    """§4: the five definitions, descriptions included, are the section's
+    jsonc blocks, pinned here alone; `Datatype`'s `$defs` are the first
+    three."""
     blocks = [jsoncomment.JsonComment().loads("\n".join(b)) for b in fenced_blocks(COMMON, "4.") if b[0] == "{"]
-    assert blocks == [common.TYPE_PARAMETER_DEFS, common.MIXFIX_DEFS, common.TYPE_MIXFIX_DEFS]
+    assert blocks == [common.TYPE_PARAMETER_DEFS, common.MIXFIX_DEFS, common.TYPE_MIXFIX_DEFS,
+                      common.LOCALE_INSTANCE_DEFS, common.VARIABLE_WITH_SYNTAX_DEFS]
 
 
 def test_the_type_parameters_check_renders_section_4_s_two_sentences():
@@ -723,3 +728,147 @@ def test_lifting_closing_s_two_sentences_are_section_6_s_and_a_base_whose_setup_
     assert made.emit_ending(1, out) == 1 and out.getvalue() == "\n  lifting_update fset.lifting\n  lifting_forget fset.lifting\n"
     out = io.StringIO()
     assert unmade.emit_ending(1, out) == 1 and out.getvalue() == ""
+
+
+# --- `dotted_name_of`, `Locale_Instance` and `Variable_With_Syntax` (§4)
+
+def test_dotted_name_of_renders_section_4_s_sentence_under_both_nouns():
+    """§4: one sentence, the noun what the name names, the grammar text the
+    framework's; each part an identifier not ending with an underscore;
+    normalised; a repeat the shared sentence."""
+    [locale_sentence, type_sentence] = [b for b in fenced_blocks(COMMON, "4.")
+                                        if b[0].startswith("The field `imports[0].locale`")][0]
+    assert locale_sentence.endswith(GRAMMARS["fact name"] + ".")
+    for text in ("fset", "FSet.fset", "ε", "a.b.c"):
+        assert common.dotted_name_of(text, "f", (), "type") == IsaTerm.from_agent(text)
+    assert common.dotted_name_of(" fset\n", "f", (), "type") == IsaTerm.from_agent("fset")
+    with pytest.raises(InvalidField) as e:
+        common.dotted_name_of("semi-group", "imports[0].locale", (), "locale")
+    assert str(e.value) == locale_sentence
+    for text in ("fset_", "", "1st", "x y", "a..b", ".fset", "fset.", "FSet.fset_", "h\\<nat>", "fset-set", "'a"):
+        with pytest.raises(InvalidField) as e:
+            common.dotted_name_of(text, "types[0]", (), "type")
+        assert str(e.value) == type_sentence, text
+    with pytest.raises(InvalidField) as e:
+        common.dotted_name_of("fset", "types[1]", (IsaTerm.from_agent("fset"),), "type")
+    assert str(e.value) == "The field `types[1]` repeats `fset`."
+
+
+def test_locale_instance_s_reader_renders_section_4_s_sentences_and_its_writer_writes_its_examples():
+    """§4: the locale's name by `dotted_name_of`, the qualifier an
+    identifier, each instantiation's name one not ending with an
+    underscore, no two the same, under the class's path; the writer's
+    four examples; the image and the wire."""
+    [locale_sentence, _] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `imports[0].locale`")][0]
+    [qualifier, name] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `imports[0].qualifier`")][0]
+    of = common.locale_instance_of
+    s = of({"locale": "semigroup", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]}, "imports[0]")
+    assert s == common.Locale_Instance(IsaTerm.from_agent("semigroup"), IsaTerm.from_agent("S"),
+                                       (common.Instantiation(IsaTerm.from_agent("f"), IsaTerm.from_agent("f")),))
+    assert common.locale_instance_text(s) == "S: semigroup where f = f"
+    p = of({"locale": "padic_integers", "instantiations": [{"name": "Zp", "term": "_"}, {"name": "p", "term": " p\n"}]},
+           "imports[1]")
+    assert p.qualifier is None and common.locale_instance_text(p) == "padic_integers where Zp = _ and p = p"
+    assert common.locale_instance_text(of({"locale": "Group.monoid", "instantiations": []}, "imports[0]")) == "Group.monoid"
+    k = of({"locale": "A", "qualifier": "is", "instantiations": [{"name": "open", "term": "m"}]}, "imports[0]")
+    assert common.locale_instance_text(k, {"is", "open", "m", "A"}) == '"is": "A" where "open" = "m"'
+    assert common.locale_instance_text(k, {"is", "open"}) == '"is": A where "open" = m'
+    assert common.locale_instance_text(k) == "is: A where open = m"
+    dotted = of({"locale": "Group.monoid", "instantiations": [{"name": "G", "term": "G"}]}, "imports[0]")
+    assert common.locale_instance_text(dotted, {"Group.monoid", "monoid"}) == "Group.monoid where G = G"   # one token
+    for instance in (s, p, k):
+        assert common.Locale_Instance.of_image(instance.image()) == instance
+    assert s.image() == {"locale": "semigroup", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]}
+    assert p.image() == {"locale": "padic_integers", "instantiations": [{"name": "Zp", "term": "_"}, {"name": "p", "term": "p"}]}
+    assert s.wire() == ("semigroup", "S", [("f", "f")]) and p.wire() == ("padic_integers", None, [("Zp", "_"), ("p", "p")])
+    with pytest.raises(InvalidField) as e:
+        of({"locale": "semi-group", "instantiations": []}, "imports[0]")
+    assert str(e.value) == locale_sentence
+    with pytest.raises(InvalidField) as e:
+        of({"locale": "s", "qualifier": "1S", "instantiations": []}, "imports[0]")
+    assert str(e.value) == qualifier
+    assert of({"locale": "s", "qualifier": "S_", "instantiations": []}, "imports[0]").qualifier == IsaTerm.from_agent("S_")
+    with pytest.raises(InvalidField) as e:
+        of({"locale": "s", "instantiations": [{"name": "f", "term": "f"}, {"name": "g_", "term": "g"}]}, "imports[0]")
+    assert str(e.value) == name
+    with pytest.raises(InvalidField) as e:
+        of({"locale": "s", "instantiations": [{"name": "f", "term": "f"}, {"name": "f", "term": "g"}]}, "imports[2]")
+    assert str(e.value) == "The field `imports[2].instantiations[1].name` repeats `f`."
+
+
+def test_variable_with_syntax_holds_the_three_annotations_and_fixes_text_writes_section_4_s_example():
+    """§4: a `Mixfix`, `NoSyntax` for the authored arm, None for `syntax`
+    left out; the image keeps `{"form": "NoSyntax"}` and has no key for
+    none; the wire sends None for both; `fixes_text` with `print_name`;
+    `mixfix_of` reads the arm `NoSyntax` as none."""
+    V = common.Variable_With_Syntax
+    f = V.of_image({"name": "f", "type": "'a ⇒ 'a ⇒ 'a", "syntax": {"form": "infixl", "symbol": "⊗", "priority": 70}})
+    assert f == V(IsaTerm.from_agent("f"), IsaTerm.from_agent("'a ⇒ 'a ⇒ 'a"), Infix("infixl", IsaTerm.from_agent("⊗"), 70))
+    g = V.of_image({"name": "g", "type": "", "syntax": {"form": "NoSyntax"}})
+    assert g == V(IsaTerm.from_agent("g"), None, common.NoSyntax())
+    h = V.of_image({"name": " h\n"})
+    assert h == V(IsaTerm.from_agent("h"), None, None)
+    for v in (f, g, h):
+        assert V.of_image(v.image()) == v
+    assert g.image() == {"name": "g", "syntax": {"form": "NoSyntax"}} and h.image() == {"name": "h"}
+    assert f.wire() == ("f", "'a \\<Rightarrow> 'a \\<Rightarrow> 'a", '(infixl "\\<otimes>" 70)')
+    assert g.wire() == ("g", None, None) and h.wire() == ("h", None, None)
+    assert common.fixes_text([f, g, h], lambda t: M.print_name(t, ())) == 'f :: "\'a ⇒ \'a ⇒ \'a" (infixl "⊗" 70) and g and h'
+    assert common.fixes_text([f], IsaTerm.to_unicode) == 'f :: \'a ⇒ \'a ⇒ \'a (infixl "⊗" 70)'
+    assert common.fixes_text([h], lambda t: M.print_name(t, {"h"})) == '"h"' and common.fixes_text([], str) == ""
+    assert common.mixfix_of({"form": "NoSyntax"}) is None
+    for defs, name in ((common.MIXFIX_DEFS, "Mixfix"), (common.TYPE_MIXFIX_DEFS, "TypeMixfix")):
+        assert defs[name]["anyOf"][-1]["properties"]["form"]["enum"] == ["NoSyntax"]       # the shared last arm
+
+
+# --- TAT_Mixfix.arm_of (§4), on a raw ML process of the heap the plugin runs on: the structure's file from source
+
+ARM_FORMS = [                                                      # every form of `MIXFIX_DEFS`, priorities given and not
+    {"form": "infixr", "symbol": "#", "priority": 65}, {"form": "infix", "symbol": "+", "priority": 0},
+    {"form": "infixl", "symbol": "⊗", "priority": 70}, {"form": "binder", "symbol": "∀", "priority": 10},
+    {"form": "mixfix", "template": "⟨_, _⟩"},
+    {"form": "mixfix", "template": "_ ! _", "argument_priorities": [100, 101], "priority": 100},
+    {"form": "mixfix", "template": "_⇩⊥", "argument_priorities": [21]}, {"form": "mixfix", "template": "_!", "priority": 999},
+    {"form": "mixfix", "template": "_", "argument_priorities": [0], "priority": 0}]
+ARM_NONE = ['(binder "\\<forall>" [5] 10)', "(structure)"]           # the forms `MIXFIX_DEFS` leaves out: none
+
+ARM_CASES = r"""
+  val ctxt = Proof_Context.init_global (Context.the_theory (Context.the_generic_context ()));
+  fun show NONE = "NONE"
+    | show (SOME (form, text, ps, p)) =
+        form ^ " " ^ quote text ^ " " ^ (case ps of NONE => "-" | SOME ps => "[" ^ commas (map string_of_int ps) ^ "]")
+        ^ " " ^ (case p of NONE => "-" | SOME p => string_of_int p);
+  fun arm (i, text) = writeln ("ARM " ^ string_of_int i ^ ": " ^ show (TAT_Mixfix.arm_of (TAT_Mixfix.read ctxt (SOME text))));
+  val _ = List.app arm [%s];
+  val _ = writeln "ARM DONE";
+"""
+
+
+async def test_tat_mixfix_arm_of_is_the_converse_of_read_for_every_form(std_harness, tmp_path):
+    """§4: for every form of `MIXFIX_DEFS`, `arm_of` of the annotation
+    `read` gives for `mixfix_wire`'s text is the arm itself, read back by
+    `mixfix_of_wire` — so `mixfix_wire` of that arm is the text `read`
+    took, and `read` of it the same annotation —; a structure and a
+    binder with a body priority of its own are none."""
+    arms = [common.mixfix_of(raw) for raw in ARM_FORMS]
+    texts = [common.mixfix_wire(a) for a in arms]
+    assert all(t is not None for t in texts)
+    listed = ", ".join(f"({i}, {ml_string(t)})" for i, t in enumerate([*texts, *ARM_NONE]))      # type: ignore[arg-type]
+    cases = tmp_path / "arm_cases.ML"
+    cases.write_text(ARM_CASES % listed)
+    files = ", ".join(ml_string(f) for f in [str(ROOT / "Isabelle_Std" / "ML" / "TAT_Mixfix.ML"), str(cases)])
+    r = await ml_process(std_harness, f"val _ = in_theory thy0 [{files}];",
+                         logic="Minilang_AoA", base="Minilang_AoA.Minilang_AoA")
+    lines = r.stdout.splitlines()
+    assert r.returncode == 0 and "ARM DONE" in lines, (r.stdout[-3000:], r.stderr[-3000:])
+    shown = {int(m[1]): m[2] for m in (re.fullmatch(r"ARM (\d+): (.*)", line) for line in lines) if m}
+    pattern = re.compile(r'(\S+) "(.*)" (-|\[[^\]]*\]) (-|\d+)')
+    for i, (raw, arm) in enumerate(zip(ARM_FORMS, arms)):
+        m = pattern.fullmatch(shown[i])
+        assert m is not None, shown[i]
+        form, text, ps, p = m.groups()
+        wire = (form, text, None if ps == "-" else [int(n) for n in ps[1:-1].split(",") if n.strip()],
+                None if p == "-" else int(p))
+        assert common.mixfix_of_wire(wire) == arm, (raw, shown[i])
+    assert [shown[len(arms) + i] for i in range(len(ARM_NONE))] == ["NONE", "NONE"]
+    assert common.mixfix_of_wire(None) is None

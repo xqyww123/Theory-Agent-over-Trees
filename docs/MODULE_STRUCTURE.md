@@ -1249,7 +1249,8 @@ a 64-bit integer`, an `enum` by membership, an empty list under
 fields by their names and a typed `items`' elements by their index, a
 `$ref` followed into the class's `$defs`, an `anyOf` in this order — a
 value of no arm's JSON type, `must be` the arms' distinct JSON types,
-each once, in the order the schema first names them, joined by `or`; a
+each once, in the order the schema first names them, joined by `or`,
+`null` the phrase of a null arm; a
 value of one arm's type, against that arm; an object among objects told
 apart by a required `enum` field, a field none of them declares,
 `UnexpectedField`, whose `it takes` lists their fields in the order
@@ -1298,7 +1299,9 @@ loader reads off the annotation itself — which, through the agreement
 check (PLUGIN_SYSTEM §5), keeps every construct schema within what
 `check_call` enforces and its sentences can say, RENDER_BASELINES §2's
 vocabulary. A union's arms are `str`, `bool`,
-`int`, `float`, `list[X]` and TypedDicts, no two of one JSON type —
+`int`, `float`, `list[X]`, TypedDicts and `None` — JSON null, the arm
+`{"type": "null"}` of the construct schema's `anyOf`, admitted as an
+arm of a union and nowhere else —, no two of one JSON type —
 `int` and `float` are both numbers — except TypedDicts declaring one
 and the same required `Literal` field, one such field only, its values
 disjoint from the other arms', which chooses among them: the value's
