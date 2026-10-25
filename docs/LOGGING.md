@@ -154,8 +154,8 @@ A refused edit is a `tool` `result` with its `TAT_Error`.
 | event | level | data |
 | --- | --- | --- |
 | `walk_started` | info | the destination, `ignore_error`, `checks` |
-| `operation` | info | the node, which operation — its own, its beginning, its ending — whether it ran, the status written with its `messages` (ARCHITECTURE §3.2; an empty list for a clean run; absent for an invalidation and for the copy a failed beginning leaves as the ending's write, present for a refusal of the node's placement, which runs no hook — PLUGIN_SYSTEM §2), the duration |
-| `stopped` | info | the node, and why: one of its own operations is `cannot_evaluate` — its command failed, or a refusal of the node's placement (PLUGIN_SYSTEM §2) — (a stop, ARCHITECTURE §3.3), the order constraint, an import with no theory value — then also the importing tree, which was not run |
+| `operation` | info | the node, which operation — its own, its beginning, its ending — whether it ran, the status written with its `messages` (ARCHITECTURE §3.2; an empty list for a clean run; absent for an invalidation and for the copy a failed beginning leaves as the ending's write, present for the placement check's refusal, which runs no hook — PLUGIN_SYSTEM §2), the duration |
+| `stopped` | info | the node, and why: one of its own operations is `cannot_evaluate` — its command failed, or the placement check refused it (PLUGIN_SYSTEM §2) — (a stop, ARCHITECTURE §3.3), the order constraint, an import with no theory value — then also the importing tree, which was not run |
 | `walk_ended` | info | `continue` or the stop, the slots released, the duration |
 
 ### `job`
@@ -234,8 +234,8 @@ conversation goes through, and which writes `round_trip` from the trip's
 completion callback, so whether or not its caller still waits;
 the status setters of `model.py`, which
 every write of an evaluation status goes through, and which are handed
-the duration of the hook that ran, or none — none for a placement
-refusal, whose status is written without a run; `Forest_Store.transaction`;
+the duration of the hook that ran, or none — none for the placement
+check's refusal, whose status is written without a run; `Forest_Store.transaction`;
 the edit's commit block; the ending object; a job's `start`, settlement,
 `cancel` and drop; the mailbox's post and delivery.
 

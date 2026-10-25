@@ -21,16 +21,16 @@ import stand_ins
 import test_ids
 import test_model as tm
 import test_session_theory as ts
-from baselines import DOCS, fenced_blocks, fenced_lines
+from baselines import DOCS, composed_refusal, fenced_blocks, fenced_lines
 from harness import text_of
 from invariants import assert_store_mirrors
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import (
-    BadPlacement, ChildRefused, DuplicateName, InvalidField, InvalidName, RawASTError)
+    BadTheoryNodeParent, DuplicateName, InvalidField, InvalidName, RawASTError)
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, typedef
-from isabelle_theory_agent.std.common import LIFTING_REFUSAL, Lifting_Closing, Template, Type_Parameter
+from isabelle_theory_agent.std.common import Lifting_Closing, Template, Type_Parameter
 from isabelle_theory_agent.std.lift_definition import LiftDefinition, OWING_LINE as LD_OWING_LINE
 from isabelle_theory_agent.std.typedef import LIFTING_NOTICE, OWING_LINE, Typedef
 from isabelle_theory_agent.store import Forest_Store
@@ -45,6 +45,7 @@ table = ts.table                    # the fake state slot table and the fake wir
 TD = DOCS / "node_classes" / "TYPEDEF.md"
 COMMON = DOCS / "node_classes" / "COMMON.md"
 BASELINES = DOCS / "RENDER_BASELINES.md"
+[LIFTING_REFUSAL] = fenced_blocks(COMMON, "6.")[0]          # the sentence's one home; test_common pins the constant to it
 
 DLIST = json.loads("\n".join(fenced_blocks(TD, "2.")[0]))      # §2's example, the block of `'a dlist` with its two children
 DL_REV, DL_LENGTH = DLIST["children"]
@@ -124,8 +125,7 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the place first (the framework's `BadPlacement`, pinned
-    for every class by test_common.py); a type name outside §1's grammar
+    """§4's refusals: a type name outside §1's grammar
     (RENDER_BASELINES §2's line); the type parameters by the shared check,
     each used in `set`, and the two function names by the shared check of
     the pair (COMMON §4's sentences, pinned by test_common.py) — a name
@@ -134,9 +134,6 @@ def test_gen_refuses_as_section_4_says():
     syntax, an `overloaded` field given or the recorded `lifting` authored,
     by the framework."""
     f, x = forest()
-    (s,) = f.sub_nodes
-    e = refused(f, s, [definition("my-list")], BadPlacement)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("typedef", "session_Arith", "constructs[0]")
     [invalid] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition("my-list")], InvalidName)
     assert (e.name, e.grammar) == ("my-list", "type name") and str(e) == "At `constructs[0]`: " + invalid
@@ -375,49 +372,54 @@ def test_the_recorded_lifting_reaches_the_store_and_the_mirror_catches_an_emit_o
 
 def test_a_block_whose_lifting_is_false_refuses_children(monkeypatch):
     """§6; COMMON §6: `is_lifting_setup_made()` true while `lifting` is none
-    or true, false when false, `children_refusal()` the sentence exactly
-    then; a child the block holds when its beginning records false is
-    refused at its first own operation — `CannotEvaluate` with
-    RENDER_BASELINES §3's sentence, the parent's full id, its callback
-    never called, the walk stopped there, the ending `not_evaluated` —;
-    a node appended, inserted or moved into the block is refused at the
-    edit with `ChildRefused`, RENDER_BASELINES §2's sentence, nothing
-    changed; with the child gone the ending is `Ready` by the copy and
-    no empty node's line stands under the block; an amend decides anew,
-    and a child runs under a `lifting` recorded true."""
+    or true, false when false, `refuses_children()` true exactly then and
+    `cannot_hold` the sentence; a child the block holds when its beginning
+    records false is refused at its first own operation — `CannotEvaluate`
+    with the head and COMMON §6's sentence, the parent's full id, its
+    callback never called, the walk stopped there, the ending
+    `not_evaluated` —; a node appended, inserted or moved into the block
+    enters at the edit and is refused at evaluation likewise; a theory
+    appended into the block is its own gate's (`BadTheoryNodeParent`);
+    with the children gone the ending is `Ready` by the copy and no empty
+    node's line stands under the block; an amend decides anew, and a child
+    runs under a `lifting` recorded true."""
     f = Forest_Under_Test(kinds=KINDS)
     (s,) = insert(f, f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
         {**FM, "children": [FM_EMPTY]}, lift("fm_other", "fm", "fmempty", "Another map")]})])
     (x,) = s.sub_nodes
     p, other = x.sub_nodes
     (c,) = p.sub_nodes
-    assert p.is_lifting_setup_made() is True and p.children_refusal() is None       # none recorded: not known unmade
+    assert p.is_lifting_setup_made() is True and p.refuses_children() is False and p.cannot_hold(c, 1) is None   # none recorded
     calls = fake_wire(monkeypatch, lambda message: [[], [None, False]])
     run(x.evaluate_to(None, False))
-    assert p.lifting is False and p.is_lifting_setup_made() is False and p.children_refusal() == LIFTING_REFUSAL
+    assert p.lifting is False and p.is_lifting_setup_made() is False and p.refuses_children() is True
+    assert p.cannot_hold(c, 1) == LIFTING_REFUSAL
     full = f.full_id(p)
-    [evaluation] = [line for line in fenced_lines(BASELINES, "3.") if line.startswith("A node of kind `lift_definition`")]
-    expected = evaluation.replace("session_S.theory_T.typedef_fm", full)
-    assert full == "session_Arith.fake_theory_X.typedef_fm" and expected != evaluation
+    expected = composed_refusal("lift_definition", full, LIFTING_REFUSAL)
+    assert full == "session_Arith.fake_theory_X.typedef_fm"
     assert isinstance(c._status, M.CannotEvaluate) and [m.unicode for m in c._status.messages] == [expected]
-    assert M.child_refusal(c) == expected
+    assert c._refusal() == expected
     assert not any(name == "TAT.LiftDefinition.evaluate" for name, _ in calls)     # the child's hook never ran
     assert p.evaluation_status_ending is M.NOT_EVALUATED and other._status is M.NOT_EVALUATED   # the walk stopped at `c`
     assert not any(name == "TAT.Lifting_Closing.close" for name, _ in calls)
     assert_store_mirrors(f, shape=ts.shape)           # the fake wire writes no slot: the mirror alone
-    # at the edit: an append, an insert before the held child, a move in — `ChildRefused`, §2's sentence, nothing changed
-    [edit_time] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("A node of kind `lift_definition`")]
-    for call in (edit.insert(p, 1, [lift("fm_more", "fm", "fmempty", "More")]),
-                 edit.insert(p, 0, [lift("fm_more", "fm", "fmempty", "More")]),
-                 edit.move(other, p, 0)):
-        with pytest.raises(ChildRefused) as e:
-            run(locked(f, call))
-        assert (e.value.kind, e.value.parent_id, e.value.reason) == ("lift_definition", full, LIFTING_REFUSAL)
-        assert e.value.raw_ast_path is None and str(e.value) == edit_time.replace("session_S.theory_T.typedef_fm", full)
-    assert p.sub_nodes == [c] and x.sub_nodes == [p, other] and other.parent is x
+    # at the edit: an append, an insert before the held child, a move in — each enters, and is refused at evaluation
+    (more,) = insert(f, p, 1, [lift("fm_more", "fm", "fmempty", "More")])
+    (first,) = insert(f, p, 0, [lift("fm_first", "fm", "fmempty", "First")])
+    run(locked(f, edit.move(other, p, 3)))
+    assert p.sub_nodes == [first, c, more, other] and x.sub_nodes == [p]
+    with pytest.raises(BadTheoryNodeParent) as e:                                  # a theory: its own gate's
+        insert(f, p, 0, [theory("Z")])
+    assert e.value.parent_id == full and p.sub_nodes == [first, c, more, other]
+    run(x.evaluate_to(None, True))
+    for child in (first, more, other):
+        assert isinstance(child._status, M.CannotEvaluate) and [m.unicode for m in child._status.messages] == [expected]
+    assert not any(name == "TAT.LiftDefinition.evaluate" for name, _ in calls)
     assert_store_mirrors(f, shape=ts.shape)           # the fake wire writes no slot: the mirror alone
-    # the child gone: the ending `Ready` by the copy, no `close`; no empty node's line under the block
-    run(locked(f, edit.delete(c)))
+    # the children gone: the ending `Ready` by the copy, no `close`; no empty node's line under the block
+    for child in (first, c, more):
+        run(locked(f, edit.delete(child)))
+    run(locked(f, edit.move(other, x, 1)))
     run(x.evaluate_to(None, False))
     assert p.evaluation_status_ending == M.READY_CLEAN and other._status == M.READY_CLEAN
     assert not any(name == "TAT.Lifting_Closing.close" for name, _ in calls)
@@ -428,7 +430,7 @@ def test_a_block_whose_lifting_is_false_refuses_children(monkeypatch):
     assert_store_mirrors(f, shape=ts.shape)           # the fake wire writes no slot: the mirror alone
     # an amend decides anew: the replacement takes children, and under `lifting` true they run
     (p2,) = run(locked(f, edit.amend(p, [FM])))
-    assert p2.lifting is None and p2.is_lifting_setup_made() is True and p2.children_refusal() is None
+    assert p2.lifting is None and p2.is_lifting_setup_made() is True and p2.refuses_children() is False
     (c2,) = insert(f, p2, 0, [FM_EMPTY])
     fake_wire(monkeypatch, lambda message: [[], [None, True]])
     run(x.evaluate_to(None, False))
@@ -542,7 +544,7 @@ def test_print_fields_writes_the_definition_and_english_by_depth():
     (child,) = insert(f, w, 0, [FM_EMPTY])
     with_proof(w, M.Ready((IsaTerm.from_agent(LIFTING_NOTICE),)), PROVED, PASSED)
     w.lifting = False
-    refusal = M.child_refusal(child)
+    refusal = child._refusal()
     assert refusal is not None
     child._status = M.CannotEvaluate((IsaTerm.from_agent(refusal),))
     assert f.render(w, M.RECALL, me).splitlines() == [
@@ -690,8 +692,8 @@ async def test_a_subtype_is_defined_lifting_set_up_and_the_block_closed(std_conv
     ending `Ready`, then a theorem whose statement parses only through the
     morphisms, the syntax, the lifted functions and the relation
     `setup_lifting` defines; `recall` as §8 shows, `t2` without the empty
-    node's line; a `lift_definition` appended into `t2`'s block refused at
-    the edit with `ChildRefused`'s sentence; the theory rendered as §5
+    node's line; a `lift_definition` appended into `t2`'s block accepted
+    at the edit and refused at its first own operation, then deleted; the theory rendered as §5
     shows, under the recorded keywords, `t2`'s `typedef` alone, and read
     back whole by Isabelle; then the proof check for real (§7): a product
     on the inner theorem and one on `dlist`'s goal, both `PASSED` under
@@ -727,7 +729,7 @@ async def test_a_subtype_is_defined_lifting_set_up_and_the_block_closed(std_conv
         assert [n.lifting for n in (dlist, poly, errorable, t2, zero_only)] == [True, True, True, False, True]
         assert all(n.evaluation_status_beginning.messages == () for n in (dlist, poly, errorable, zero_only))
         assert [m.unicode for m in t2.evaluation_status_beginning.messages] == [LIFTING_NOTICE]
-        assert t2.children_refusal() == LIFTING_REFUSAL and dlist.children_refusal() is None
+        assert t2.refuses_children() is True and dlist.refuses_children() is False
         [one, _, notice, _, _] = fenced_blocks(TD, "8.")
         recalled = await session.call_tool("recall", {"node_id": "typedef_t2"})                 # §8's notice, no empty node's line
         lines = text_of(recalled).splitlines()
@@ -755,12 +757,17 @@ async def test_a_subtype_is_defined_lifting_set_up_and_the_block_closed(std_conv
             '      t2 = "UNIV :: nat set" morphisms domain Abs_t2', "      Notice:", "        " + LIFTING_NOTICE, "      " + OWING_LINE,
             "    - typedef_zero_only (unverified definition, proof not started)"]
         assert not recalled.isError and shown[:len(expected)] == expected, shown
-        # a node hung into `t2`'s block: refused at the edit with §2's sentence, the parent's full id (RENDER_BASELINES §2)
-        [edit_time] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("A node of kind `lift_definition`")]
-        result = await session.call_tool("edit", {"action": "append", "target_id": "typedef_t2", "evaluate": False,
+        # a node hung into `t2`'s block: accepted at the edit, refused at its first own operation under `t2`'s full id
+        result = await session.call_tool("edit", {"action": "append", "target_id": "typedef_t2", "evaluate": True,
                                                   "constructs": [lift("t2_zero", "t2", "0", "Zero")]})
-        assert result.isError and edit_time.replace("session_S.theory_T.typedef_fm", "session_TAT_Suite.theory_TAT_Std_A.typedef_t2") in text_of(result), text_of(result)
-        assert t2.sub_nodes == []
+        expected = composed_refusal("lift_definition", "session_TAT_Suite.theory_TAT_Std_A.typedef_t2", LIFTING_REFUSAL)
+        (zero,) = t2.sub_nodes
+        assert not result.isError and expected in text_of(result), text_of(result)
+        assert isinstance(zero._status, M.CannotEvaluate) and [m.unicode for m in zero._status.messages] == [expected]
+        result = await session.call_tool("delete", {"node_id": "lift_definition_t2_zero"})
+        assert not result.isError and t2.sub_nodes == [], text_of(result)
+        result = await session.call_tool("evaluate_to", {"node_id": "theory_TAT_Std_A"})      # the obstacle gone: to `end` again
+        assert not result.isError and t2.evaluation_status_ending == M.READY_CLEAN, text_of(result)
     rendered = C.render(forest)
     file = rendered.files[C.Path("TAT_Suite/TAT_Std_A.thy")]
     assert file.startswith('theory "TAT_Std_A"\n  imports "Main" "TAT_Std.TAT_Std"\nbegin\n') and file.endswith("end\n")
@@ -816,14 +823,14 @@ async def test_the_setup_is_closed_after_the_block_and_a_child_held_by_a_refusin
     holding one, is accepted; one inside the block opening `dlist` is
     silent, `opened` empty; `t2` submitted with a `lift_definition` — the
     beginning `Ready` with the notice, the child `CannotEvaluate` with
-    RENDER_BASELINES §3's sentence, its callback never run, the ending
+    RENDER_BASELINES §3's form line filled with COMMON §6's sentence, its
+    callback never run, the ending
     `not_evaluated`; the child deleted, `evaluate_to` leaves the ending
     `Ready` by the copy and the theory is written with the `typedef`
     alone."""
     forest = std_conversation.forest
     ld = DOCS / "node_classes" / "LIFT_DEFINITION.md"
     [_, _, _, sentences, _] = fenced_blocks(ld, "6.")
-    [evaluation] = [line for line in fenced_lines(BASELINES, "3.") if line.startswith("A node of kind `lift_definition`")]
     after = lift("dl_after", "'a dlist ⇒ 'a dlist", "rev", "After the block")
     again = {"kind": "lifting_context", "name": "dlist_again", "types": ["dlist"],
              "children": [lift("dl_again", "'a dlist ⇒ 'a dlist", "rev", "Opened again")]}
@@ -853,7 +860,7 @@ async def test_the_setup_is_closed_after_the_block_and_a_child_held_by_a_refusin
         assert t2.lifting is False and [m.unicode for m in t2.evaluation_status_beginning.messages] == [LIFTING_NOTICE]
         assert isinstance(child._status, M.CannotEvaluate) and not await child.goal_state.is_initialized()
         assert [m.unicode for m in child._status.messages] == [
-            evaluation.replace("session_S.theory_T.typedef_fm", "session_TAT_Suite.theory_TAT_Std_G.typedef_t2")]
+            composed_refusal("lift_definition", "session_TAT_Suite.theory_TAT_Std_G.typedef_t2", LIFTING_REFUSAL)]
         assert t2.evaluation_status_ending is M.NOT_EVALUATED
         recalled = await session.call_tool("recall", {"node_id": "typedef_t2"})
         assert not recalled.isError and "Empty so far" not in text_of(recalled) and "lift_definition_t2_zero (invalid definition)" in text_of(recalled)

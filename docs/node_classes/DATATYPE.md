@@ -11,7 +11,8 @@ once, when they are mutually recursive — each by its name, its type
 parameters and its constructors. It opens no proof obligation
 (INDEX.md): its evaluation runs the command and nothing more, and the
 node is finished when it is `ready`. It is a `Leaf` of the plugin
-`Isabelle_Std`: its Python half is `isabelle_theory_agent/std/datatype.py`,
+`Isabelle_Std` and a `Type_Definition` (COMMON.md §1) — `class
+Datatype(Leaf, Type_Definition)`: its Python half is `isabelle_theory_agent/std/datatype.py`,
 its ML half `Isabelle_Std/ML/TAT_Datatype.ML`. Its agent-facing wording
 lives here — the `description` texts of its construct schema (§3), the
 sentences its `gen` renders, and the words on its line — pinned by the

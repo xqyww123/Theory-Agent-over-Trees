@@ -24,13 +24,12 @@ from typing import Literal
 
 from . import isabelle_driver
 from .exceptions import (
-    BadEdit, BadPlacement, ChildRefused, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
+    BadEdit, BadNodeParent, ChildrenNotInheritable, DuplicateName, InvalidField, InvalidName,
     MalformedRawAST, MoveIntoOwnSubtree, TAT_Error, TAT_InternalError,
     UnexpectedChildren, UnknownKind)
 from .model import (
     Amendment, Evaluation, Forest, Insertion, Isar_State_Slot, Leaf, Location, Node,
-    NodeConfig, NonLeaf_Node, RawAST, Role, Unchained_Node, _completed, _leaving, _wrote, is_valid_name,
-    placement_kinds)
+    NodeConfig, NonLeaf_Node, RawAST, Role, _completed, _leaving, _wrote, is_valid_name)
 from .plugin import GIVEN_LATER, _must_be, check_call
 
 
@@ -53,19 +52,6 @@ def _fire(fired: list[Node], hook, *args) -> None:
     (MODULE_STRUCTURE §4.1, "Events")."""
     _completed(hook, *args)
     fired.append(hook.__self__)
-
-
-def _admit(parent: NonLeaf_Node, child: Node,
-           mode: Literal["insert_or_delete", "move", "inheritance", "amend"]) -> None:
-    """The framework's question and the parent's gate before `child` enters
-    `parent.sub_nodes` (MODULE_STRUCTURE §4.1): `ChildRefused` on the
-    parent's `children_refusal()`, then `on_adding_child`.  Fired before
-    the commit wherever `on_added_child` fires after it; a fresh parent
-    answers None, its beginning not having run."""
-    reason = parent.children_refusal()
-    if reason is not None:
-        raise ChildRefused(child.kind, parent.forest().full_id(parent), reason)
-    _gate(parent.on_adding_child, child, mode)
 
 
 def _store_transaction(forest: Forest, ev: Evaluation,
@@ -102,12 +88,11 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
                  auto_construct: bool = False) -> list[Node]:
     """`append`/`insert_before`/`insert_after`: construct the batch detached
     — `gen` is the inserted node's own gate; the parent's is
-    `on_adding_child`, after the framework's `children_refusal()` — and
-    commit it before position `index` of `parent`: invalidate, fire the
-    completed events, store.  Returns the batch; its last element is the
-    natural destination (MCP_SPECIFICATION §3.2).  `auto_construct` is the
-    call's, written on every new node's construction job
-    (CONSTRUCT_INTERACTION §3.2)."""
+    `on_adding_child` — and commit it before position `index` of `parent`:
+    invalidate, fire the completed events, store.  Returns the batch; its
+    last element is the natural destination (MCP_SPECIFICATION §3.2).
+    `auto_construct` is the call's, written on every new node's
+    construction job (CONSTRUCT_INTERACTION §3.2)."""
     forest = parent.forest()
     before = forest._record()
     nodes = await _construct_siblings(parent, raws, "constructs", Edit_Call(forest, auto_construct),
@@ -115,7 +100,7 @@ async def insert(parent: NonLeaf_Node, index: int, raws: list[RawAST],
     created = [n for root in nodes for n in root._tree_order()]   # tree order over what enters
     for n in created:                         # the parents' gates, before the commit
         assert n.parent is not None
-        _admit(n.parent, n, "insert_or_delete")
+        _gate(n.parent.on_adding_child, n, "insert_or_delete")
     # Commit: first the one copy of ARCHITECTURE §3.4 into the first new
     # node's slot — only when the predecessor operation wrote it, judged
     # with no round trip; every other new slot stays empty, as befits
@@ -163,12 +148,12 @@ async def amend(old: Node, raws: list[RawAST], auto_construct: bool = False) -> 
         assert isinstance(old, NonLeaf_Node) and isinstance(replacement, NonLeaf_Node)
         _gate(old.on_removing_child, child, "inheritance")
         _gate(child.on_inheriting, replacement)
-        _admit(replacement, child, "inheritance")
-    _admit(parent, replacement, "amend")
+        _gate(replacement.on_adding_child, child, "inheritance")
+    _gate(parent.on_adding_child, replacement, "amend")
     followers = [n for root in nodes[1:] for n in root._tree_order()]
     for n in followers:
         assert n.parent is not None
-        _admit(n.parent, n, "insert_or_delete")
+        _gate(n.parent.on_adding_child, n, "insert_or_delete")
     # Commit.  Released, in one round trip with the invalidation's: `old`'s
     # slots not travelling to the replacement or the inherited children,
     # and the values `old`'s own operations wrote into travelling slots —
@@ -291,9 +276,9 @@ async def move(node: Node, new_parent: NonLeaf_Node, new_index: int) -> None:
     old_index = node.index_of()
     old_location = Location(parent, old_index)
     new_location = Location(new_parent, new_index)
-    _require_placement(type(node), node.kind, new_parent)
+    _require_forest_shape(type(node), node.kind, new_parent)
     _gate(node.on_moving, new_location)
-    _admit(new_parent, node, "move")
+    _gate(new_parent.on_adding_child, node, "move")
     _gate(parent.on_removing_child, node, "move")
     # Judge the destination side against the post-removal shape, with no
     # await in between: remove, look, put back.
@@ -442,15 +427,16 @@ async def _construct_siblings(parent: NonLeaf_Node, raws: list[RawAST], listname
     return nodes
 
 
-def _require_placement(cls: type[Node], kind: str, parent: NonLeaf_Node) -> None:
-    """`BadPlacement` for a plugin's node placed under an `Unchained_Node`,
-    where no evaluation would reach it to refuse it (PLUGIN_SYSTEM §2): no
-    `placement` admits one there, since load refuses a `within` naming an
-    `Unchained_Node` class.  Under a chaining parent the check runs at
+def _require_forest_shape(cls: type[Node], kind: str, parent: NonLeaf_Node) -> None:
+    """The forest's shape (MODULE_STRUCTURE §4.2): `BadNodeParent` with the
+    forest's remedy where `Forest.cannot_place` refuses a node of class
+    `cls` under `parent` — under the root or a `Session`, which no
+    evaluation reaches; inside a theory the placement check runs at
     evaluation."""
-    if isinstance(parent, Unchained_Node) and cls.placement is not None:
-        forest = parent.forest()
-        raise BadPlacement(kind, forest.full_id(parent), *placement_kinds(cls.placement, forest.kinds))
+    forest = parent.forest()
+    remedy = forest.cannot_place(cls, parent)
+    if remedy is not None:
+        raise BadNodeParent(kind, forest.full_id(parent), remedy)
 
 
 async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tuple[Node, ...],
@@ -489,7 +475,7 @@ async def _construct_element(raw: RawAST, parent: NonLeaf_Node, batch_before: tu
     schema = cls.construct_schema
     assert schema is not None                 # registration checked it
     check_call(schema, kind, raw, construct=True)
-    _require_placement(cls, kind, parent)
+    _require_forest_shape(cls, kind, parent)
     node = await cls.gen(config, {k: v for k, v in raw.items()
                                   if k != "children"})
     if isinstance(node, NonLeaf_Node) and node.sub_nodes:

@@ -38,7 +38,7 @@ from .jobs import Construction_Job, Evaluation_Job
 from .exceptions import (
     InvalidField, MissingField, RawASTError, TAT_InternalError, TAT_StartupError,
     UnexpectedField)
-from .model import (NON_EMPTY, Forest, JSON_Schema, Leaf, Node, NonLeaf_Node, Placement, StdBlock,
+from .model import (NON_EMPTY, Forest, JSON_Schema, Leaf, Node, NonLeaf_Node, StdBlock,
                     Unchained_Node, is_valid_name)
 from .store import CONSTRUCT_FRAMEWORK_FIELDS, FRAMEWORK_FIELDS
 
@@ -171,32 +171,11 @@ def load(python_packages: list[str]) -> Loaded:
             raise CannotLoadPlugin(package, None, f"{type(e).__name__}: {e}") from e
     classes = [cls for cls in registry
                if cls in model.FRAMEWORK_NODE_CLASSES or _defined_in(cls, python_packages)]
-    _check_placements(classes)
     return Loaded({kind: cls for cls in classes for kind in registry[cls]}, edit_schema(classes),
                   tuple(h for h in compile_hooks if _defined_in(h, python_packages)),
                   _job_classes(classes, lambda cls: cls.construction_job_class),
                   _job_classes(classes, lambda cls: cls.evaluation_job_class),
                   tuple(t for t, module in imports.items() if _module_in(module, python_packages)))
-
-
-def _check_placements(classes: list[type[Node]]) -> None:
-    """The names of each class's `placement` (PLUGIN_SYSTEM §5), judgeable
-    only once every package is imported: each a class of the
-    conversation's, `within` one outside `Unchained_Node` answering to one
-    kind."""
-    by_name = {cls.__name__: cls for cls in classes}
-    for cls in classes:
-        placement = cls.placement
-        if placement is None:
-            continue
-        for name in (placement.within, *placement.through):
-            if name not in by_name:
-                raise _refuse(cls, f"`placement` names `{name}`, which is not a node class of the conversation")
-        within = by_name[placement.within]
-        if issubclass(within, Unchained_Node):
-            raise _refuse(cls, f"`placement.within` names `{placement.within}`, which runs no operation")
-        if len(registry[within]) != 1:
-            raise _refuse(cls, f"`placement.within` names `{placement.within}`, which answers to several kinds")
 
 
 def _job_classes(classes: list[type[Node]], named_by: Callable[[type[Node]], Any]) -> tuple[Any, ...]:
@@ -331,11 +310,8 @@ def _check_class(cls: type[Node]) -> list[str]:
     elif cls.job_operation not in cls._operation_names():
         raise _refuse(cls, f"`job_operation` is {cls.job_operation!r}, not an operation of the class:"
                            f" {', '.join(repr(name) for name in cls._operation_names())}")
-    if cls not in model.FRAMEWORK_NODE_CLASSES:
-        if not isinstance(cls.placement, Placement):
-            raise _refuse(cls, "declares no `placement`")
-        if _defined_by(cls, "_evaluate") not in (Leaf, StdBlock):
-            raise _refuse(cls, "overrides `_evaluate`, which is the framework's")
+    if cls not in model.FRAMEWORK_NODE_CLASSES and _defined_by(cls, "_evaluate") not in (Leaf, StdBlock):
+        raise _refuse(cls, "overrides `_evaluate`, which is the framework's")
     if _defined_by(cls, "print") is not Node:
         raise _refuse(cls, "overrides `print`; `print_fields`, `children_header`, `owing_line` and `mark` are the override points")
     if _defined_by(cls, "_children_to_print") not in (Node, NonLeaf_Node):

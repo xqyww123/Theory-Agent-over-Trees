@@ -32,7 +32,7 @@ from . import isabelle_driver
 from .exceptions import (
     AmbiguousId, BadEdit, BadSessionNodeParent, BadTheoryNodeParent, DuplicateName,
     DuplicateTheoryShortName, InvalidField, InvalidName, NodeNotFound, ReservedSessionName,
-    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError, placement_rule)
+    ReservedTheoryName, TAT_Error, TAT_InternalError, TAT_StartupError, compose_refusal)
 from .jobs import (
     NOT_STARTED, RUNNING, Cancel_Reason, Check_Outcome, Dropped_By, Evaluation_Job, Failed, Passed, Stored_Check,
     Succeeded, Unchecked, Unfinished, Unfinished_Check, Unfinished_Construction, cancel_jobs,
@@ -135,8 +135,8 @@ class Ready:
 @dataclass(frozen=True)
 class CannotEvaluate:
     """The operation ran and its class judged the failure fatal, or the
-    framework refused to run it where the node's `placement` does not
-    admit it: the node is an obstacle (ARCHITECTURE §3.3) — while it
+    placement check refused the node and the framework did not run it:
+    the node is an obstacle (ARCHITECTURE §3.3) — while it
     stands it is not rerun unless a walk rewrote its input, and its input
     stands as its result; once invalidated (ARCHITECTURE §3.4) it is
     `NotEvaluated` and runs when a walk reaches it unblocked.  What it
@@ -378,16 +378,6 @@ class Location:
     index: int
 
 
-@dataclass(frozen=True)
-class Placement:
-    """Where a node of a plugin's class may stand (PLUGIN_SYSTEM §2): inside
-    a node of class `within`, directly or under nodes of the classes
-    `through` alone.  Class names, matching a node whose class or one of
-    its base classes bears the name."""
-    within: str
-    through: tuple[str, ...]
-
-
 class Node(ABC):
     """The Python half of a node class (ARCHITECTURE §6).
 
@@ -443,18 +433,14 @@ class Node(ABC):
     # jobs depending on every operation.
     job_operation: ClassVar[Any]
 
-    # Where a node of the class may stand (PLUGIN_SYSTEM §2), which the
-    # framework checks (`placement_refusal` at evaluation, `BadPlacement` at
-    # an edit); every plugin class declares one, the framework's classes none.
-    placement: ClassVar[Placement | None] = None
-
     @classmethod
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
         """Semantic construction from the agent's construct — `raw`, the
         RawAST, which the class annotates with its own `argument_schema`
         TypedDict (MODULE_STRUCTURE §4.1): judge the fields' meaning and
-        build the node from `config` — where it may stand is the
-        framework's to check, by the class's `placement`.  May read over
+        build the node from `config` — where it may stand inside its theory
+        is the placement check's, at evaluation; the forest's shape is the
+        edit's (MODULE_STRUCTURE §4.2).  May read over
         the wire through the framework's query functions (MODULE_STRUCTURE
         §4.3); must not write.  Raises
         `TAT_Error`s bare — the framework prefixes the `raw_ast_path`
@@ -622,15 +608,41 @@ class Node(ABC):
         no node is under itself."""
         return any(n is ancestor for n in self.ancestors())
 
+    def cannot_stand_under(self, ancestor: NonLeaf_Node, depth: int) -> str | None:
+        """The remedy when this node does not stand under `ancestor`,
+        `depth` steps above it (1: its parent); None, the default, admits
+        the place (PLUGIN_SYSTEM §2).  Synchronous; reads the classes, the
+        kinds, the authored fields, the ancestor's full id and what its
+        beginning recorded — nothing that changes without an invalidation."""
+        return None
+
+    def _ancestors_in_tree(self) -> Iterator[NonLeaf_Node]:
+        """The node's ancestors in its tree, nearest first: every ancestor
+        below the first `Unchained_Node` (MODULE_STRUCTURE §4.1) — for a
+        node inside a theory, the parent up to the theory; none for a tree."""
+        return itertools.takewhile(lambda n: not isinstance(n, Unchained_Node), self.ancestors())
+
+    def _refusal(self) -> str | None:
+        """The placement check (MODULE_STRUCTURE §4.1): for each ancestor in
+        the node's tree, outermost first, the ancestor's `cannot_hold` and
+        then this node's `cannot_stand_under`, with the distance between
+        the two; the first remedy composed with the head (RENDER_BASELINES
+        §3), or None where no answer refuses."""
+        for depth, ancestor in reversed(list(enumerate(self._ancestors_in_tree(), 1))):
+            remedy = ancestor.cannot_hold(self, depth)
+            if remedy is None:
+                remedy = self.cannot_stand_under(ancestor, depth)
+            if remedy is not None:
+                return compose_refusal(self.kind, self.forest().full_id(ancestor), remedy)
+        return None
+
     async def _placed(self, hook: Callable[[], Coroutine[Any, Any, _T]]
                       ) -> tuple[_T | CannotEvaluate, float | None]:
         """The node's first own operation, run where the node may stand
-        (PLUGIN_SYSTEM §2): the hook's answer and how long it ran; at a
-        place the class does not admit, or under a parent that refuses
-        children (`children_refusal`, the placement checked first), a
-        `CannotEvaluate` carrying the refusal, the hook never called."""
-        assert self.parent is not None
-        refusal = placement_refusal(type(self), self.kind, self.parent) or child_refusal(self)
+        (PLUGIN_SYSTEM §2): the hook's answer and how long it ran; where
+        the placement check refuses the node, a `CannotEvaluate` carrying
+        the refusal, the hook never called."""
+        refusal = self._refusal()
         if refusal is not None:
             return CannotEvaluate((IsaTerm.from_agent(refusal),)), None
         return await _timed(hook())
@@ -921,7 +933,7 @@ class Node(ABC):
         keyed |= self._print_failures(below, out, mode, depth)
         children = self._children_to_print(mode, depth)
         empty = (isinstance(self, NonLeaf_Node) and not self.sub_nodes and _shows_children(mode, depth)
-                 and self.children_refusal() is None)
+                 and not self.refuses_children())
         header = self.children_header() if keyed and (children or empty) else None
         children_indent = below
         if header is not None:
@@ -1390,18 +1402,25 @@ class NonLeaf_Node(Node):
     def on_adding_child(self, child: Node,
                         mode: Literal["insert_or_delete", "move",
                                       "inheritance", "amend"]) -> None:
-        """Gate: `child` is to enter this node's `sub_nodes`, the framework
-        having asked `children_refusal()` first; fires before the commit
-        wherever `on_added_child` fires after it (MODULE_STRUCTURE §4.1)."""
+        """Gate: `child` is to enter this node's `sub_nodes`; fires before
+        the commit wherever `on_added_child` fires after it
+        (MODULE_STRUCTURE §4.1)."""
 
-    def children_refusal(self) -> str | None:
-        """Why this node refuses children now — a sentence, which the
-        framework renders at an edit as `ChildRefused`, at a child's first
-        own operation as its `CannotEvaluate`, and under which it writes no
-        empty node's line — or None, the default (MODULE_STRUCTURE §4.1;
-        PLUGIN_SYSTEM §2).  The answer changes only with the node's
-        beginning, never with the child."""
+    def cannot_hold(self, descendant: Node, depth: int) -> str | None:
+        """The remedy when this node does not hold `descendant`, which
+        stands `depth` steps below it (1: a child of its own); None, the
+        default, admits it (PLUGIN_SYSTEM §2).  Synchronous; reads the
+        classes, the kinds, the authored fields and what this node's
+        beginning recorded — nothing that changes without an invalidation."""
         return None
+
+    def refuses_children(self) -> bool:
+        """Whether this node takes no child now, by what its beginning
+        recorded; False, the default (MODULE_STRUCTURE §4.1).  Asked
+        without a child: by the class's own `cannot_hold`, and by `print`,
+        which writes no empty node's line under a node answering true
+        (PRINT.md §2)."""
+        return False
 
     def on_added_child(self, child: Node,
                        mode: Literal["insert_or_delete", "move",
@@ -1825,9 +1844,8 @@ class Forest(Unchained_Node):
         A database TAT could not have written is refused (`TAT_StartupError`).
         `imports` are the theories the loaded plugins declare, which
         `Theory.header` writes (PLUGIN_SYSTEM §1); `kinds` is kept, the one
-        kind table of the conversation: what an edit dispatches on, a load
-        from the store rebuilds nodes with, and the placement refusals take
-        their kinds from."""
+        kind table of the conversation: what an edit dispatches on and a
+        load from the store rebuilds nodes with."""
         super().__init__(None, Isar_State_Slot.assign(conversation))
         self.conversation = conversation
         self.kinds = dict(kinds)
@@ -2242,10 +2260,20 @@ class Forest(Unchained_Node):
                 for t in s.sub_nodes if isinstance(t, Theory)]
 
     def _tree_of(self, node: Node) -> Node:
-        """The child of an `Unchained_Node` above `node`, or `node` itself."""
-        while node.parent is not None and not isinstance(node.parent, Unchained_Node):
-            node = node.parent
-        return node
+        """The child of an `Unchained_Node` above `node`, or `node` itself:
+        the outermost of `node` and its ancestors in its tree."""
+        *_, tree = (node, *node._ancestors_in_tree())
+        return tree
+
+    def cannot_place(self, cls: type[Node], parent: NonLeaf_Node) -> str | None:
+        """The forest's shape, at the edit (MODULE_STRUCTURE §4.2): the remedy
+        when a node of class `cls` cannot stand under `parent` — any class
+        but `Session` and `Theory` under the root or a `Session`, which no
+        evaluation reaches —, or None.  A `Session` and a `Theory` check
+        their own parent in `gen` and `on_moving`."""
+        if isinstance(parent, Unchained_Node) and not issubclass(cls, (Session, Theory)):
+            return "Put it in a theory."
+        return None
 
     def _trees_under(self, node: Node) -> list[Theory]:
         """The trees a destination stands for (ARCHITECTURE §3.5): every
@@ -2374,7 +2402,7 @@ class Forest(Unchained_Node):
                 reason = "import_without_theory"
             else:
                 stop = await self._evaluate_tree(ev, tree)
-                reason = "command_failed"         # any obstacle's, a refusal of its placement included
+                reason = "command_failed"         # any obstacle's, the placement check's refusal included
         if stop is not None:                              # the one place a stop is recorded (LOGGING.md §4)
             self.conversation.log.evaluation.stopped(
                 node=self.full_id(stop), reason=reason,
@@ -2439,9 +2467,9 @@ class Forest(Unchained_Node):
 # (PLUGIN_SYSTEM §1).
 
 def _parent_id(config: NodeConfig) -> str:
-    """The parent as the agent sees it, for a `Bad<Class>NodeParent`.  A
-    parent still under construction in the same call prints its full id."""
-    return config.parent.forest().id_of(config.parent)
+    """The parent's full id, for a `Bad<Class>NodeParent` (RENDER_BASELINES
+    §2); a parent still under construction in the same call has one too."""
+    return config.parent.forest().full_id(config.parent)
 
 
 # The two names that become path elements — `<session>/<short name>.thy`,
@@ -2649,7 +2677,7 @@ class Session(Unchained_Node):
 
     def on_moving(self, new_location):
         if not isinstance(new_location.parent, Forest):
-            raise BadSessionNodeParent(self.kind, self.forest().id_of(new_location.parent))
+            raise BadSessionNodeParent(self.kind, self.forest().full_id(new_location.parent))
 
     def folder(self) -> Path:
         """The session's folder, relative to the working directory: its
@@ -2777,7 +2805,7 @@ class Theory(StdBlock):
 
     def on_moving(self, new_location):
         if not isinstance(new_location.parent, Session):
-            raise BadTheoryNodeParent(self.kind, self.forest().id_of(new_location.parent))
+            raise BadTheoryNodeParent(self.kind, self.forest().full_id(new_location.parent))
 
     def to_store(self, rows):
         rows.put("name", self.name)
@@ -2931,52 +2959,6 @@ def status_of_errors(errors: list[str]) -> Ready | CannotEvaluate:
     if errors:
         return CannotEvaluate(tuple(IsaTerm.from_isabelle(e) for e in errors))
     return READY_CLEAN
-
-
-def bears(cls: type[Node], name: str) -> bool:
-    """Whether the class, or one of its base classes, bears the class name
-    `name` — what a `Placement`'s names match."""
-    return any(c.__name__ == name for c in cls.__mro__)
-
-
-def placement_kinds(placement: Placement, kinds: Mapping[str, type[Node]]) -> tuple[str, list[str]]:
-    """The kinds a `placement` names, in the kind table `kinds`: `within`'s
-    one kind, and the kinds of the classes `through` in the table's order —
-    what both refusals name (RENDER_BASELINES §2, §3)."""
-    within = next(k for k, c in kinds.items() if c.__name__ == placement.within)
-    return within, [k for k, c in kinds.items() if c.__name__ in placement.through]
-
-
-def placement_refusal(cls: type[Node], kind: str, place: NonLeaf_Node) -> str | None:
-    """Why a node of class `cls` and kind `kind` cannot stand under `place`,
-    a node inside a theory, or None where its `placement` admits it
-    (PLUGIN_SYSTEM §2): an ancestor of the class `within` admits; the
-    nearest other ancestor of no class `through` is named.  Under an
-    `Unchained_Node` the edit refuses instead (`BadPlacement`)."""
-    placement = cls.placement
-    if placement is None:
-        return None
-    for n in itertools.chain((place,), place.ancestors()):
-        if bears(type(n), placement.within):
-            return None
-        if not any(bears(type(n), name) for name in placement.through):
-            forest = place.forest()
-            return (f"A node of kind `{kind}` cannot stand inside `{forest.full_id(n)}`,"
-                    f" a node of kind `{n.kind}`; " + placement_rule(*placement_kinds(placement, forest.kinds)))
-    raise TAT_InternalError("a node outside every theory")
-
-
-def child_refusal(child: Node) -> str | None:
-    """Why `child` cannot run under its parent, a node that refuses children
-    now (`children_refusal`, MODULE_STRUCTURE §4.1), or None: the parent's
-    sentence after the framework's own (RENDER_BASELINES §3)."""
-    parent = child.parent
-    assert parent is not None
-    reason = parent.children_refusal()
-    if reason is None:
-        return None
-    return (f"A node of kind `{child.kind}` cannot stand inside `{parent.forest().full_id(parent)}`,"
-            f" a node of kind `{parent.kind}`. {reason}")
 
 
 FRAMEWORK_NODE_CLASSES: list[type[Node]] = [Session, Theory]

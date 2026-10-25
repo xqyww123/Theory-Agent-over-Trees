@@ -21,7 +21,7 @@ from test_model import CONN, locked, run
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent import edit, isabelle_driver
 from isabelle_theory_agent.exceptions import (
-    BadSessionNodeParent, BadTheoryNodeParent, DuplicateTheoryShortName,
+    BadNodeParent, BadSessionNodeParent, BadTheoryNodeParent, DuplicateTheoryShortName,
     InvalidField, InvalidName, ReservedSessionName, ReservedTheoryName, TAT_InternalError,
     TAT_StartupError)
 from isabelle_theory_agent.model import NOT_EVALUATED, EvaluationResult, Session, Theory
@@ -537,7 +537,7 @@ def test_moving_between_sessions_and_the_parent_gates():
     assert (e.value.kind, e.value.parent_id) == ("theory", "Sessions")
     with pytest.raises(BadTheoryNodeParent) as e:
         run(locked(f, edit.move(x, y, 0)))
-    assert e.value.parent_id == "theory_Y"
+    assert e.value.parent_id == "session_Arith.theory_Y"
     with pytest.raises(BadSessionNodeParent) as e:
         run(locked(f, edit.move(s2, s, 0)))
     assert (e.value.kind, e.value.parent_id) == ("session", "session_Arith")
@@ -551,20 +551,110 @@ def test_where_a_session_and_a_theory_may_live():
     f, s, x, y, a = arith()
     with pytest.raises(BadSessionNodeParent) as e:
         insert(f, x, 0, [session("Inner")])
-    assert (e.value.kind, e.value.parent_id) == ("session", "theory_X")
+    assert (e.value.kind, e.value.parent_id) == ("session", "session_Arith.theory_X")
     assert e.value.raw_ast_path == "constructs[0]"
     with pytest.raises(BadTheoryNodeParent) as e:
         insert(f, f, 0, [theory("Z")])
     assert e.value.parent_id == "Sessions"
     with pytest.raises(BadTheoryNodeParent) as e:
         insert(f, x, 0, [theory("Z")])
-    assert e.value.parent_id == "theory_X"
+    assert e.value.parent_id == "session_Arith.theory_X"
     # a parent still under construction in the same call: its full id
     with pytest.raises(BadSessionNodeParent) as e:
         insert(f, f, 1, [session("Outer", session("Inner"))])
     assert e.value.parent_id == "session_Outer"
     assert e.value.raw_ast_path == "constructs[0].children[0]"
     assert f.sub_nodes == [s] and x.sub_nodes == []
+    inv(f)
+
+
+class Refusing_Gen(tm.T):
+    """A leaf whose `gen` refuses every construct: what the forest's shape is
+    checked before."""
+    @classmethod
+    async def gen(cls, config, raw):
+        raise InvalidField("name", "is refused by gen")
+
+
+class Recording_Block(tm.Block):
+    """A block that would refuse everything by `cannot_hold`, recording each
+    time it is asked: never at the edit."""
+    def __init__(self, parent, state, name="", **rest):
+        super().__init__(parent, state, name, **rest)
+        self.asked = []
+    def cannot_hold(self, descendant, depth):
+        self.asked.append((descendant, depth))
+        return "Never."
+
+
+def test_the_forest_s_shape_is_checked_at_the_edit():
+    """RENDER_BASELINES §2's six `BadNodeParent` lines, each from a real edit,
+    `_cause()` the line with the parent's full id: a lemma inserted at, and
+    moved to, the root (1), inserted and moved under a session and as a
+    session's inline child (2); a theory inserted at the root (3), moved
+    into a block (4); a session as a session's inline child and as an
+    amend's follower under a session (5), moved into a theory and as a
+    follower under a theory (6).  The coordinate is carried where a batch
+    is built; the forest is unchanged; the place is refused before `gen`
+    judges a field; a class deriving from `Theory` stands under a session;
+    a plugin container's `cannot_hold` is never asked at the edit."""
+    lines = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if " cannot stand under " in line]
+    assert len(lines) == 6
+    kinds = {**KINDS, "lemma": tm.T, "section": tm.Block, "refusing_gen": Refusing_Gen, "recording": Recording_Block}
+    lemma = {"kind": "lemma", "name": "P"}
+    f = Forest_Under_Test(kinds=kinds)
+    (s,) = insert(f, f, 0, [session("Arith", theory("X") | {"children": [
+        {"kind": "section", "name": "Basics", "children": [lemma]}, {"kind": "recording", "name": "R"}]}, theory("Y"))])
+    x, y = s.sub_nodes
+    basics, r = x.sub_nodes
+    (p,) = basics.sub_nodes
+    (s2,) = insert(f, f, 1, [session("Algebra")])
+    empty = Forest_Under_Test(kinds=kinds)                                # for a session's inline children: no `session_Arith` beside
+
+    def refused(cls, call, raw_ast_path, line, forest=f):
+        before = shape(forest)
+        with pytest.raises(cls) as e:
+            run(locked(forest, call))
+        assert e.value.raw_ast_path == raw_ast_path, e.value
+        assert e.value._cause() == lines[line - 1], (e.value._cause(), line)
+        assert shape(forest) == before                                    # nothing changed
+        return e.value
+    refused(BadNodeParent, edit.insert(f, 0, [lemma]), "constructs[0]", 1)
+    refused(BadNodeParent, edit.move(p, f, 0), None, 1)
+    refused(BadNodeParent, edit.insert(s, 0, [lemma]), "constructs[0]", 2)
+    refused(BadNodeParent, edit.move(p, s, 0), None, 2)
+    refused(BadNodeParent, edit.insert(empty, 0, [session("Arith", lemma)]), "constructs[0].children[0]", 2, empty)
+    refused(BadTheoryNodeParent, edit.insert(f, 0, [theory("Z")]), "constructs[0]", 3)
+    refused(BadTheoryNodeParent, edit.move(y, basics, 0), None, 4)
+    refused(BadSessionNodeParent, edit.insert(empty, 0, [session("Arith", session("Inner"))]), "constructs[0].children[0]", 5, empty)
+    refused(BadSessionNodeParent, edit.amend(y, [theory("Y2"), session("Follower")]), "constructs[1]", 5)
+    refused(BadSessionNodeParent, edit.move(s2, x, 0), None, 6)
+    refused(BadSessionNodeParent, edit.amend(basics, [{"kind": "section", "name": "B2"}, session("Follower")]), "constructs[1]", 6)
+    assert p.parent is basics and empty.sub_nodes == []
+    # the theory under a theory, the full id
+    with pytest.raises(BadTheoryNodeParent) as e:
+        insert(f, x, 0, [theory("Z")])
+    assert e.value.parent_id == "session_Arith.theory_X"
+    # before `gen` judges any field
+    with pytest.raises(BadNodeParent) as e:
+        insert(f, s, 0, [{"kind": "refusing_gen", "name": "g"}])
+    assert (e.value.kind, e.value.parent_id) == ("refusing_gen", "session_Arith")
+    with pytest.raises(InvalidField):
+        insert(f, x, 0, [{"kind": "refusing_gen", "name": "g"}])
+    # a plugin container's `cannot_hold` is never asked at the edit: a theory under the recording block is its own gate's
+    with pytest.raises(BadTheoryNodeParent) as inserted:
+        insert(f, r, 0, [theory("Z")])
+    with pytest.raises(BadTheoryNodeParent) as moved:
+        run(locked(f, edit.move(y, r, 0)))
+    assert moved.value.parent_id == inserted.value.parent_id == f.full_id(r) == "session_Arith.theory_X.recording_R"
+    assert r.asked == [] and y.parent is s and r.sub_nodes == []
+    (n,) = insert(f, r, 0, [lemma])                                      # a lemma enters; the check is evaluation's
+    assert r.asked == [] and r.sub_nodes == [n]
+    # a class deriving from `Theory` stands under a session
+    (w,) = insert(f, s, 2, [theory("W", kind="fake_theory")])
+    assert isinstance(w, Fake_Theory) and f.cannot_place(Fake_Theory, s) is None and f.cannot_place(Theory, f) is None
+    assert f.cannot_place(tm.T, f) == f.cannot_place(tm.Block, s) and f.cannot_place(tm.T, f) is not None
+    assert f.cannot_place(tm.T, x) is None
     inv(f)
 
 

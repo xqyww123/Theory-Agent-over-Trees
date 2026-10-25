@@ -183,8 +183,8 @@ The sixth: a nesting node with no children, in a mode that shows its
 children — `Briefing`, `Relative_Focus`, `Recall` while `depth < 3` —
 writes where its children would go the **empty node's line**, its id the
 one its own line prints, under the children header when there is one —
-unless the node refuses children, `children_refusal()` answering a
-sentence (MODULE_STRUCTURE §4.1), when neither is written:
+unless the node refuses children, `refuses_children()` answering true
+(MODULE_STRUCTURE §4.1), when neither is written:
 
 ```
 - theory_X (not evaluated)

@@ -14,7 +14,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 
 from .. import isabelle_driver
 from ..exceptions import InvalidField, series
-from ..model import INDENT, RECALL, Placement, Ready, StdBlock, Theory, emit_lines, print_name, status_of_errors, string_token
+from ..model import INDENT, RECALL, Ready, StdBlock, Theory, emit_lines, print_name, status_of_errors, string_token
 from ..plugin import TAT_node
 from .common import (
     LOCALE_INSTANCE_DEFS, MIXFIX_DEFS, VARIABLE_WITH_SYNTAX_DEFS, Locale_Instance, LocaleInstance_RawAST, Mixfix,
@@ -114,7 +114,6 @@ class Locale(StdBlock):
         "$defs": {**LOCALE_INSTANCE_DEFS, **VARIABLE_WITH_SYNTAX_DEFS, **STATEMENT_DEFS, **MIXFIX_DEFS},
     }
     argument_schema = Locale_RawAST
-    placement = Placement(within="Theory", through=("Section",))
 
     english: str
     name: str                                       # in the id grammar without hyphens (§1)

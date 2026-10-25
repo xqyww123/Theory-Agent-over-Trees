@@ -154,17 +154,17 @@ text.
 `english` are `str`; `partial` is `bool`. `TypeMixfix` is shared
 through `TYPE_MIXFIX_DEFS` (COMMON.md §4).
 
-What stands inside the block: a node whose class's `placement` names
-`QuotientType` in its `through` (PLUGIN_SYSTEM §2; this plugin's,
-COMMON.md §1). The type's Lifting setup is open inside the block
+What stands inside the block: any node but a type definition, which the
+block refuses at any depth (COMMON.md §1, §6), and a `locale`, which
+refuses to stand in it (LOCALE.md §6). The type's Lifting setup is open
+inside the block
 and closed at its end (§6), so a `LiftDefinition` on the type stands
 here or inside a `LiftingContext`, which opens the setup again
 (LIFTING_CONTEXT.md); lemmas about the type proved by `transfer`
 likewise, since `lifting_forget` deletes the type's transfer rules. A
-node that uses the type by name alone — a `Datatype` with an `'a
-fset` field, a `Theorem` proved without `transfer` — needs no open
-setup, so the block does not bound it: it stands wherever its class's
-`placement` admits it (COMMON.md §1).
+node that uses the type by name alone — a `Theorem` proved without
+`transfer` — needs no open setup, so the block does not bound it: it
+stands wherever the placement check admits it (COMMON.md §1).
 
 The class's construct schema:
 
@@ -616,7 +616,7 @@ The line is the private helper's that writes the emitted text (§5),
 given no keyword set.
 The children are the framework's to print, in the mode PRINT.md §2's
 table gives them: directly under what was written, or one level deeper
-under `lifting context:` — the children header `Lifting_Closing`
+under `lifting context:` — the children header `Lifting_Block`
 answers (COMMON.md §6) — when a message block or a failure block with
 its colon stands above them, the definition and `english` carrying no
 key; a block with none shows the empty node's line.

@@ -30,9 +30,9 @@ from test_model import run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import PROVED, with_proof
 
-# `Locale` joins the package once `Section` is a class of it (COMMON.md §1); until then `plugin.load` refuses its
-# placement, so the class is kept out of what the loader selects: the module leaves `sys.modules`, and the loader's
-# sweep forgets the class; the cases hold the class itself.
+# `Locale` joins the package, with its `cannot_stand_under`, once `Section` is a class of it (COMMON.md §1); until then
+# the class is kept out of what the loader selects: the module leaves `sys.modules`, and the loader's sweep forgets the
+# class; the cases hold the class itself.
 sys.modules.pop("isabelle_theory_agent.std.locale")
 
 table = ts.table                    # the fake state slot table and the fake wire, per test
@@ -79,7 +79,6 @@ def test_the_schema_and_the_descriptions_are_the_documents():
     assert Locale.construction_job_class is None and Locale.evaluation_job_class is None          # no jobs (§1)
     assert {"_eval_beginning_opr", "_eval_ending_opr", "emit_beginning", "emit_ending"} <= set(vars(Locale))
     assert "mark" not in vars(Locale) and "owing_line" not in vars(Locale)                          # the framework's (§7)
-    assert Locale.placement == M.Placement(within="Theory", through=("Section",))                  # §1
     assert not Locale.output_omissible and not Locale.input_omissible and Locale.drop_priority == 0   # §9
     assert IDEMPOTENT["name"] == "idempotent_semigroup" and COMMUTATIVE["implicit_structure"] == "G"
 
@@ -266,10 +265,7 @@ def test_emit_writes_section_5_s_three_examples():
 def fake_wire(monkeypatch, beginning):
     """The fake wire: `beginning` answers `TAT.Locale.open` from the
     declaration sent; the ending's answer and a child's callback clean;
-    every call kept.  A `Theorem` stands inside the block: its `through`
-    gains `"Locale"` when the class joins the package (COMMON.md §1)."""
-    from isabelle_theory_agent.std.theorem import Theorem
-    monkeypatch.setattr(Theorem, "placement", M.Placement(within="Theory", through=(*Theorem.placement.through, "Locale")))
+    every call kept."""
     calls = []
 
     async def call(conversation, name, args):

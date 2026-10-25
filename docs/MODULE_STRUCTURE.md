@@ -497,26 +497,33 @@ that order, which the three base classes answer likewise
 the nearest ancestor of class `cls`, `TAT_InternalError` when none; and
 the event hooks (below).
 
-**Placement.** Where a node of a plugin's class may stand is its
-class's `placement`, a `Placement(within, through)` of class names, which
-the framework checks (PLUGIN_SYSTEM §2); the framework's classes have
-`None`. Under an `Unchained_Node` no placement admits a plugin's node,
-since load refuses a `within` naming such a class, so the edit refuses
-it there (§4.2). Inside a theory, `placement_refusal(cls, kind, place)`
-decides: the refusal sentence of a node of class `cls` and kind `kind`
-under `place`, or `None` where it may stand. It walks up from `place`:
-an ancestor bearing `within` — its class, or one of its base classes,
-of that name — admits; the nearest other ancestor bearing none of the
-names `through` is named. Both refusals name nodes by their full ids and
-classes by their kinds — `placement_kinds(placement, kinds)` reads them
-off the forest's kind table, the classes `through` in the table's
-order — and share their second half, `exceptions.placement_rule`
-(RENDER_BASELINES §2, §3). The check at evaluation
-runs where a node's first own operation does, `Leaf._evaluate` and
+**The placement check.** Where a node may stand inside its theory is
+answered by the classes concerned (PLUGIN_SYSTEM §2): a container's
+`cannot_hold(descendant, depth)` and a node's `cannot_stand_under(ancestor,
+depth)`, each the remedy or `None`; `depth` is the distance between the
+two, 1 between a parent and its child. `Node._refusal()` asks them for
+the node and every ancestor in its tree — `_ancestors_in_tree()`, the
+ancestors below the first `Unchained_Node`, which `Forest._tree_of`
+reads too — outermost first, the ancestor's `cannot_hold` and then the
+node's `cannot_stand_under`, and composes the first answer with the head
+through `exceptions.compose_refusal(kind, ancestor_id, remedy)`, which
+names the kind with its article (`a_kind`) and the ancestor by its full
+id (RENDER_BASELINES §3); `None` where no answer refuses. The check runs
+where a node's first own operation does, `Leaf._evaluate` and
 `StdBlock._evaluate`, through `Node._placed(hook)`: a refusal is the
-operation's status, a `CannotEvaluate` carrying the sentence, the hook
-uncalled; otherwise the hook runs and is timed. The edit-time check is
-§4.2's.
+operation's status, a `CannotEvaluate` carrying the message, the hook
+uncalled; otherwise the hook runs and is timed. Neither method is asked
+at the edit, nor with a class; the forest's shape is §4.2's. A nesting
+node also answers `refuses_children()`: whether it takes no child now by
+what its beginning recorded, `False` by default — `Lifting_Closing`'s is
+true while `is_lifting_setup_made()` answers false (node_classes/COMMON.md
+§6). It is asked without a child, and not by the check: the class's own
+`cannot_hold` reads it, and so does `print`, which writes no empty node's
+line under a node answering true — and so, where that line would have
+stood alone, no children header (PRINT.md §2). All three methods are
+synchronous and read only what cannot change without the node being
+invalidated: the classes, the kinds, the authored fields, the ancestor's
+full id and what its beginning recorded.
 
 Four aliases name what an id is made of: `Id = str`, the dotted string the
 agent sees; `Id_Component = str`, one `<kind>_<name>`; `Id_Components =
@@ -602,8 +609,8 @@ async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
 ```
 
 `gen` checks and constructs; the framework sets the node's `parent`.
-Where a node of a plugin's class may stand is its `placement`, which the
-framework checks (above); `Session` and `Theory` judge their own parent,
+Where a node may stand inside its theory is the placement check's, at
+evaluation (above); `Session` and `Theory` judge their own parent,
 in `gen` and in `on_moving`, each with its `Bad<Class>NodeParent`
 (EXCEPTIONS.md §3). `gen`
 has no part in the replaced node's job outcome: the amend's commit asks
@@ -640,7 +647,7 @@ class only ever speaks for its own node. The tense is the contract:
 | `on_deleted(reason)` | completed | it left; the Python object is still whole — cancel running work here |
 | `on_inserted()` | completed | linked in, children and all |
 | `on_removing_child(child, mode)` | gate | `child` is to leave this node's `sub_nodes` |
-| `on_adding_child(child, mode)` | gate | `child` is to enter this node's `sub_nodes`: it fires before the commit wherever `on_added_child` fires after it, with the same `child` and `mode`, and only once the framework has asked the node's `children_refusal()` (below). A class that refuses by the child overrides it |
+| `on_adding_child(child, mode)` | gate | `child` is to enter this node's `sub_nodes`: it fires before the commit wherever `on_added_child` fires after it, with the same `child` and `mode` |
 | `on_added_child(child, mode)` | completed | `child` entered this node's `sub_nodes` |
 | `on_inheriting(new_parent)` | gate | on each direct child of a replaced node; never recursive — grandchildren see nothing |
 | `on_inherited(old_parent)` | completed | the reparenting happened |
@@ -668,21 +675,6 @@ jobs depend on (CONSTRUCT_INTERACTION §3.1) — a rerun's rewrite of
 through `_completed`, so whatever it raises, a `TAT_Error` included, is
 its class's bug (EXCEPTIONS.md §1). Its default cancels the job
 (CONSTRUCT_INTERACTION §3.2).
-
-Beside the events, a nesting node answers `children_refusal()`: why it
-refuses children now, a sentence — `Lifting_Closing`'s while
-`is_lifting_setup_made()` answers false (node_classes/COMMON.md §6) —,
-or `None`, the default. The framework asks it in three places: just
-before it fires `on_adding_child`, raising `ChildRefused` on the
-sentence (EXCEPTIONS.md §3); the child's first own operation, once the
-placement check has admitted the child — the operation is
-`cannot_evaluate` without running, its message the sentence after the
-framework's own (RENDER_BASELINES §3; ARCHITECTURE §3.3) —; and
-`print`, which writes no empty node's line under a node answering one —
-and so, where that line would have stood alone, no children header
-(PRINT.md §2). The answer changes only with the node's beginning and
-never with the child: a parent that would take one child and not
-another overrides `on_adding_child` instead.
 
 No hook fires on an aborted call. In any hook, as in `gen`, a state slot
 may hold nothing; the only code that may assume its slot holds a state is
@@ -745,7 +737,7 @@ a `Ready(messages)` or a `CannotEvaluate(messages)` — the Python classes
 of ARCHITECTURE §3.2's `not_evaluated`, `ready` and `cannot_evaluate`;
 the last two are frozen dataclasses with one field, `messages:
 tuple[IsaTerm, ...]`, the output of the run that left the status, or the
-refusal of the node's placement (§4.1), so a
+placement check's refusal (§4.1), so a
 kind is tested with `isinstance` and `==` compares the messages too;
 `Ready()` is a clean run, and `READY_CLEAN` a module-level instance of
 it, a value and never a kind (COMPILATION.md §4). A `Leaf`
@@ -847,9 +839,10 @@ the same `Evaluation` (the invalidation functions, below).
   can do repairs it.
 - `Forest(Unchained_Node)` — the root above every `Session`. Holds the
   lock, the store (ARCHITECTURE §4.1), the `Conversation` and the
-  conversation's kind table (§4.4) — what `edit` dispatches on, what
-  loading the forest from the store rebuilds nodes with, and where the
-  placement refusals read their kinds; resolves ids
+  conversation's kind table (§4.4) — what `edit` dispatches on and what
+  loading the forest from the store rebuilds nodes with; answers
+  `cannot_place(cls, parent)`, the forest's shape at the edit (§4.2);
+  resolves ids
   and prints their shortest form; and, in the walk, keeps the import graph
   (recomputed whenever needed, never stored), routes a walk to the tree it
   concerns, invalidates every tree that imports a changed one, and runs a
@@ -1052,9 +1045,12 @@ and its resolved imports, the `Theory` nodes themselves
    `ChildrenNotInheritable` — decidable from the RawAST and the `kind`
    table alone, so they run before any `gen`), the class lookup, the
    schema check (§4.4; a `children` that is not a list meets it there,
-   `must be a list`), under an `Unchained_Node` the placement check — a
-   plugin's class is refused there with `BadPlacement` (§4.1), since no
-   evaluation reaches the node there to refuse it —, `gen`, then — for a nesting class — its `children`, built
+   `must be a list`), the forest's shape — the edit asks the forest's
+   `cannot_place` for the class and its parent, which answers a remedy
+   for a class other than `Session` and `Theory` under the root or a
+   `Session`, where no evaluation reaches the node, raised as
+   `BadNodeParent` (EXCEPTIONS.md §3); a session's and a theory's `gen`
+   check their own parent —, `gen`, then — for a nesting class — its `children`, built
    by the framework onto the fresh, still-detached node the same way. The
    framework assigns each new node a fresh state slot and reads the name
    off the finished node: a name outside the grammar of
@@ -1152,8 +1148,9 @@ holder awaits a job's task.
 
 `move` re-homes a node with its subtree — a copy on the source side and a
 copy on the destination side (ARCHITECTURE §3.4), both round trips made
-before the commit's synchronous block (step 3). To a destination under
-an `Unchained_Node` it checks the placement first, as step 1 does. Its invalidation runs
+before the commit's synchronous block (step 3). It asks the forest's
+`cannot_place` for the node's class and the new parent first, as step 1
+does, and a session's and a theory's `on_moving` check their own parent. Its invalidation runs
 from two positions, each whose input the move changed: the source
 successor's, taken after the pointer surgery — the parent's ending when
 the moved node was last — where the successor now reads the
@@ -1262,9 +1259,9 @@ field's name is told before the hole it leaves; and an `items` that
 names `Construct` or a node class — `edit`'s `constructs`, a class's
 `children` — checked to be an array, with `minItems` where declared,
 its elements left to `edit.py`, which checks each against its own
-class's construct schema (§4.2) — where a node may stand is checked by
-`Session`'s and `Theory`'s `Bad<Class>NodeParent` and a plugin class's
-`placement` (§4.1).
+class's construct schema (§4.2) — where a node may stand is not the
+schema check's: the edit checks the forest's shape (§4.2), and the
+placement check runs at evaluation (§4.1).
 The tool call's entry point alone, before the check, refuses an
 argument nested deeper than 100 levels, each object or array a level,
 `must not be nested deeper than 100 levels`, and marks every refusal as

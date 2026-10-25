@@ -54,10 +54,8 @@ def leaf_schema(kinds, fields=None, required=(), defs=None):
 
 
 class Persisted:
-    """The three methods every class must override (PLUGIN_SYSTEM §5), and
-    a `placement`, naming `Sec`, the framework's class in the load tests;
+    """The three methods every class must override (PLUGIN_SYSTEM §5);
     nothing here is ever built or stored."""
-    placement = M.Placement(within="Sec", through=())
     @classmethod
     async def gen(cls, config, raw): raise NotImplementedError
     def to_store(self, rows): raise NotImplementedError
@@ -338,59 +336,34 @@ def test_job_operation_is_an_operation_of_the_class_and_no_plugin_class_is_a_con
             "overrides `job_operation_status`, which is the framework's")
 
 
-def test_a_plugin_class_declares_its_placement_and_leaves_evaluate_to_the_framework(monkeypatch):
-    """PLUGIN_SYSTEM §5: a plugin class carries a `Placement`, its own or
-    inherited, and does not override `_evaluate`, on a leaf or a block,
-    so that no class skips the placement check; the framework's classes
-    are exempt from both."""
+def test_a_plugin_class_leaves_evaluate_to_the_framework(monkeypatch):
+    """PLUGIN_SYSTEM §5: a plugin class does not override `_evaluate`, on a
+    leaf or a block, so that no node of a plugin's class skips `_placed`;
+    the framework's classes are exempt."""
     async def own_evaluate(self, ev, mode): ...
-    refused(leaf("Unplaced", ["unplaced"], placement=None), "declares no `placement`")
-    placeless = type("Placeless", (M.Leaf,), {
-        "construct_schema": leaf_schema(["placeless"]), "argument_schema": Empty, "_eval_opr": Thm._eval_opr,
-        "__module__": __name__, **{m: Persisted.__dict__[m] for m in ("gen", "to_store", "from_store")}})
-    refused(placeless, "declares no `placement`")
     refused(leaf("Own_Leaf", ["own_leaf"], _evaluate=own_evaluate), "overrides `_evaluate`, which is the framework's")
     children = {"type": "array", "items": {"$ref": "#/$defs/Construct"}}
     refused(type("Own_Block", (block("Plain_Block", children),), {"_evaluate": own_evaluate, "__module__": __name__}),
             "overrides `_evaluate`, which is the framework's")
-    plugin.TAT_node(leaf("Inherited", ["inherited"]))
-    exempt = leaf("Exempt", ["exempt"], placement=None)
+    exempt = leaf("Exempt", ["exempt"], _evaluate=own_evaluate)
     monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [exempt])
     plugin.TAT_node(exempt)
 
 
-def test_load_refuses_a_placement_naming_no_class_a_container_or_a_class_of_several_kinds(monkeypatch):
-    """PLUGIN_SYSTEM §5, judged once every package is imported: each name a
-    class of the conversation's; `within` not an `Unchained_Node` class,
-    nor a class answering to several kinds; two classes naming each other
-    load in either order of registration."""
-    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec, M.Session, M.Theory])
-    def load_refusing(cls, match):
-        monkeypatch.setattr(plugin, "registry", {})
-        plugin.TAT_node(cls)                                       # registration cannot judge the names
-        with pytest.raises(CannotLoadPlugin, match=match) as e:
-            plugin.load([__name__])
-        assert e.value.node_class == cls.__name__
-    load_refusing(leaf("Lost", ["lost"], placement=M.Placement(within="Sec", through=("Nowhere",))),
-                  "`placement` names `Nowhere`, which is not a node class of the conversation")
-    load_refusing(leaf("Lost_Within", ["lost_within"], placement=M.Placement(within="Nowhere", through=())),
-                  "`placement` names `Nowhere`, which is not a node class of the conversation")
-    load_refusing(leaf("Unchained_Within", ["unchained_within"], placement=M.Placement(within="Session", through=())),
-                  "`placement.within` names `Session`, which runs no operation")
-    two_kinds = leaf("Two_Kinds", ["two_a", "two_b"])
-    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec, two_kinds])
-    load_refusing(leaf("Within_Two", ["within_two"], placement=M.Placement(within="Two_Kinds", through=())),
-                  "`placement.within` names `Two_Kinds`, which answers to several kinds")
-    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
-    one = block("One", {"type": "array", "items": {"$ref": "#/$defs/Construct"}})
-    one.placement = M.Placement(within="Sec", through=("Other",))
-    other = block("Other", {"type": "array", "items": {"$ref": "#/$defs/Construct"}})
-    other.placement = M.Placement(within="Sec", through=("One",))
-    for order in ((one, other), (other, one)):
-        monkeypatch.setattr(plugin, "registry", {})
-        for cls in order:
-            plugin.TAT_node(cls)
-        assert set(plugin.load([__name__]).kinds) == {"section", "one", "other"}
+def test_the_placement_check_s_three_methods_are_plain():
+    """PLUGIN_SYSTEM §5: `cannot_hold`, `cannot_stand_under` and
+    `refuses_children` are synchronous, like every method they stand
+    beside; an `async def` is refused."""
+    async def coroutine(self, *args): ...
+    children = {"type": "array", "items": {"$ref": "#/$defs/Construct"}}
+    refused(leaf("Async_Stand", ["async_stand"], cannot_stand_under=coroutine),
+            "`cannot_stand_under` is a coroutine; the method it overrides is not")
+    for method in ("cannot_hold", "refuses_children"):
+        refused(type("Async_Hold", (block("Plain_Hold", children),), {method: coroutine, "__module__": __name__}),
+                f"`{method}` is a coroutine; the method it overrides is not")
+    plugin.TAT_node(type("Plain", (block("Plain_Plain", children),), {
+        "cannot_hold": lambda self, descendant, depth: None, "refuses_children": lambda self: False,
+        "cannot_stand_under": lambda self, ancestor, depth: None, "__module__": __name__}))
 
 
 def test_the_descent_is_the_frameworks_for_leaves_and_nesting_classes_alike():
@@ -470,7 +443,7 @@ def test_gen_and_both_persistence_methods_must_be_overridden():
     for missing in methods:
         cls = type("No_" + missing, (M.Leaf,), {         # not Persisted: one method short
             "construct_schema": leaf_schema(["no_" + missing]), "argument_schema": Empty,
-            "_eval_opr": Thm._eval_opr, "placement": Persisted.placement, "__module__": __name__,
+            "_eval_opr": Thm._eval_opr, "__module__": __name__,
             **{m: Persisted.__dict__[m] for m in methods if m != missing}})
         refused(cls, f"does not override `{missing}`")
 
@@ -1117,9 +1090,8 @@ def test_the_view_without_recursion_admits_what_the_server_accepts():
             assert not validator.is_valid(envelope({**bare, "children": plugin.GIVEN_LATER}))
 
 
-def a_leaf_module(name, kind, through=()):
-    """The source of a module defining one registered Leaf class, standing
-    within `Sec` through the classes `through`."""
+def a_leaf_module(name, kind):
+    """The source of a module defining one registered Leaf class."""
     return ("from typing import TypedDict\n"
             "from isabelle_theory_agent import model, plugin\n"
             "class Empty(TypedDict): pass\n"
@@ -1128,7 +1100,6 @@ def a_leaf_module(name, kind, through=()):
             "    construct_schema = {'type': 'object', 'additionalProperties': False,\n"
             f"        'properties': {{'kind': {{'const': '{kind}'}}}}, 'required': ['kind']}}\n"
             "    argument_schema = Empty\n"
-            f"    placement = model.Placement(within='Sec', through={tuple(through)!r})\n"
             "    @classmethod\n"
             "    async def gen(cls, config, raw): raise NotImplementedError\n"
             "    def to_store(self, rows): raise NotImplementedError\n"
@@ -1182,23 +1153,6 @@ def test_the_table_holds_the_listed_packages_classes_only(two_packages, monkeypa
     assert list(plugin.load(["fake_tat_pkg", "other_tat_pkg"]).kinds) == ["section", "fake", "other"]
     assert list(plugin.load(["other_tat_pkg", "fake_tat_pkg"]).kinds) == ["section", "fake", "other"]
     assert list(plugin.load([]).kinds) == ["section"]
-
-
-def test_a_class_naming_another_plugins_class_loads_only_together_with_it(tmp_path, monkeypatch):
-    """PLUGIN_SYSTEM §5: a `placement` name is judged against the
-    conversation's classes, not the process's registry: `Naming`, whose
-    module imports `Named`'s, is refused when `named_tat_pkg` is not
-    listed, though `Named` is registered, and loads with it."""
-    monkeypatch.setattr(M, "FRAMEWORK_NODE_CLASSES", [Sec])
-    (tmp_path / "named_tat_pkg.py").write_text(a_leaf_module("Named", "named"))
-    (tmp_path / "naming_tat_pkg.py").write_text("import named_tat_pkg\n" + a_leaf_module("Naming", "naming", ("Named",)))
-    monkeypatch.syspath_prepend(str(tmp_path))
-    for module in ("named_tat_pkg", "naming_tat_pkg"):
-        monkeypatch.delitem(sys.modules, module, raising=False)
-    with pytest.raises(CannotLoadPlugin, match="`placement` names `Named`, which is not a node class of the conversation") as e:
-        plugin.load(["naming_tat_pkg"])
-    assert e.value.node_class == "Naming" and "Named" in [c.__name__ for c in registered()]
-    assert list(plugin.load(["named_tat_pkg", "naming_tat_pkg"]).kinds) == ["section", "named", "naming"]
 
 
 def test_a_compile_hook_is_checked_and_registered_at_import_and_returned_by_load(tmp_path, monkeypatch):

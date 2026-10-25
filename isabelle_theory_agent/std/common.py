@@ -7,10 +7,12 @@ operation, or a block's beginning through `Beginning_Proof_Obligation`
 shared `$defs` — the type parameter and the two mixfix annotations —
 with their checks and writers, and the checks of a name (§4, §5); the
 package's compile hook for AoA's proof stores (§3; COMPILATION.md §5);
-`Lifting_Closing`, the plugin's `StdBlock` whose ending closes a type's
-Lifting setup, its ML half Isabelle_Std/ML/TAT_Lifting_Closing.ML, with
-`lifting_closing_text`, the two lines its ending and `LiftingContext`'s
-write (§6);
+`Type_Definition`, the marker of the type-defining classes, and
+`MOVE_IT_OUT`, the remedy of §1; `Lifting_Block`, the plugin's `StdBlock`
+inside which a Lifting setup is open, and on it `Lifting_Closing`, the
+block whose ending closes a type's Lifting setup, its ML half
+Isabelle_Std/ML/TAT_Lifting_Closing.ML, with `lifting_closing_text`, the
+two lines its ending and `LiftingContext`'s write (§6);
 and the theory the plugin declares the forest's theories import
 (PLUGIN_SYSTEM §1)."""
 
@@ -37,6 +39,18 @@ from ..plugin import TAT_compile_hook, TAT_import
 # every theory of the forest imports it: the `aoa` method, the plugin's AoA tasks and the configuration option
 # `typedef_overloaded` (§3, §4)
 TAT_import("TAT_Std.TAT_Std")
+
+
+# --- where a class stands (§1)
+
+class Type_Definition:
+    """The marker of the four type-defining classes, which a `Lifting_Block`
+    refuses at any depth (§1, §6): `Datatype` and `Record` list it among
+    their bases, and `Lifting_Closing` does, so `Typedef` and `QuotientType`
+    inherit it; no members."""
+
+
+MOVE_IT_OUT = "Move it out."      # §1's remedy, the one home of the sentence
 
 
 def english_cartouche(english: str, lead: str | None = None) -> str:
@@ -1002,11 +1016,24 @@ LIFTING_REFUSAL = ("For technical reasons, this subtype does not support lifting
 LIFTING_CHILDREN_DESCRIPTION = ("lift_definitions and lemmas whose proofs transfer the defined type to its representation"
                                 " type. Outside this block the defined type is opaque — its representation is closed to"
                                 " lift_definition and the transfer tactic — unless a lifting_context opens it again")
-# §6's children header, the base's and `LiftingContext`'s (PRINT.md §2)
+# §6's children header, `Lifting_Block`'s (PRINT.md §2)
 LIFTING_CHILDREN_HEADER = "lifting context"
 
 
-class Lifting_Closing(StdBlock):
+class Lifting_Block(StdBlock):
+    """The plugin's `StdBlock` inside which a Lifting setup is open (§6):
+    `Lifting_Closing` and `LiftingContext` derive from it.  It answers the
+    children header, and its `cannot_hold` refuses a `Type_Definition` at
+    any depth (§1)."""
+
+    def cannot_hold(self, descendant, depth) -> str | None:
+        return MOVE_IT_OUT if isinstance(descendant, Type_Definition) else None
+
+    def children_header(self):
+        return LIFTING_CHILDREN_HEADER
+
+
+class Lifting_Closing(Lifting_Block, Type_Definition):
     """The plugin's `StdBlock` whose ending closes the Lifting setup its
     beginning made (§6): `lifting_update t.lifting` then `lifting_forget
     t.lifting`, `t` the node's `name`.  It defines the ending's two hooks
@@ -1024,11 +1051,16 @@ class Lifting_Closing(StdBlock):
         false."""
         return True
 
-    def children_refusal(self):
-        return None if self.is_lifting_setup_made() else LIFTING_REFUSAL
+    def refuses_children(self) -> bool:
+        return not self.is_lifting_setup_made()
 
-    def children_header(self):
-        return LIFTING_CHILDREN_HEADER
+    def cannot_hold(self, descendant, depth) -> str | None:
+        """§6: `Lifting_Block`'s answer first; then, while the block refuses
+        children, every descendant is refused with the sentence."""
+        remedy = super().cannot_hold(descendant, depth)
+        if remedy is None and self.refuses_children():
+            return LIFTING_REFUSAL
+        return remedy
 
     @final
     async def _eval_ending_opr(self):

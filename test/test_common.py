@@ -1,6 +1,6 @@
 """What the classes of `Isabelle_Std` share (node_classes/COMMON.md):
-each class's `placement` and the framework's edit-time refusal over every
-class the package registers (PLUGIN_SYSTEM §2); the `text` line (§2); `Proof_Obligation`'s
+the placement check's answers over every class the package registers,
+against §1's table (PLUGIN_SYSTEM §2); the `text` line (§2); `Proof_Obligation`'s
 abstraction, and its reading of the class's own words, callback, message
 and records, through a stand-in, and `TAT_Proof_Obligation.decide` on a
 raw ML process (§3); the shared `$defs` against the section's schema
@@ -21,13 +21,14 @@ import pytest
 
 import test_model as tm
 import test_session_theory as ts
-from baselines import DOCS, fenced_blocks, fenced_lines, table_rows
+from baselines import DOCS, composed_refusal, fenced_blocks, fenced_lines, table_rows
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
-from isabelle_theory_agent.exceptions import GRAMMARS, BadPlacement, InvalidField
+from isabelle_theory_agent.exceptions import GRAMMARS, InvalidField
 from isabelle_theory_agent.std import (
     common, datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
 from isabelle_theory_agent.std.common import (
-    Binder, Infix, Lifting_Closing, Proof_Obligation, Template, Type_Parameter, english_cartouche, lifting_closing_text,
+    Binder, Infix, Lifting_Block, Lifting_Closing, Proof_Obligation, Template, Type_Definition, Type_Parameter,
+    english_cartouche, lifting_closing_text,
     text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import ROOT, ml_process, ml_string
@@ -57,66 +58,94 @@ EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: FSET for kind in quotient_type.KINDS}}
 
 
-def test_each_registered_class_declares_section_1_s_placement():
-    """§1's table, read from the document: each row's classes stand
-    within `Theory` through the classes of its second cell, `nothing` for
-    none; every class the package registers is in one row."""
-    loaded = plugin.load(["isabelle_theory_agent.std"])
-    by_name = {cls.__name__: cls for cls in loaded.kinds.values() if cls not in M.FRAMEWORK_NODE_CLASSES}
+def section_1_table():
+    """§1's table, read from the document: a class's name → the names of the
+    classes its row's second cell lists, a base's name (`StdBlock`) standing
+    for that class and every class deriving from it."""
     declared = {}
-    for classes, through in table_rows(COMMON, "1."):
-        assert through.startswith(("`", "nothing"))
-        names = tuple(n.strip("` ") for n in through.split(",")) if through.startswith("`") else ()
+    for classes, under in table_rows(COMMON, "1."):
+        names = tuple(n.strip("` ") for n in under.split(","))
         declared |= {name.strip("` "): names for name in classes.split(",")}
-    assert set(declared) == set(by_name)
-    for name, through in declared.items():
-        assert by_name[name].placement == M.Placement(within="Theory", through=through)
+    return declared
 
 
-def test_every_registered_class_is_refused_under_a_session_or_the_root():
-    """A construct of each class placed under a `Session` or the root — an
-    insert, an amend, a session's inline child, a move — is refused with
-    the framework's `BadPlacement`, the parent's full id named; under a
-    nesting node under the theory it is accepted, by an insert and by a
-    move, and directly under another theory by a move; `enclosing(Theory)`
-    is, each time, the theory it lives in."""
+def test_the_placement_check_answers_section_1_s_table():
+    """§1: every class the package registers is in the table; for the theory
+    and every chain of one or two registered nesting classes the table
+    admits, each class's example is built under the chain's last node and
+    `_refusal()` asked: None exactly where the table admits the class under
+    every node of the chain, otherwise the head naming the outermost node
+    whose cell is no, by its full id, then that cell's remedy — `Move it
+    out.`, §1's fence, for a type definition under a lifting block; a
+    heading under a chain holding a heading is the level rule's
+    (test_section_text.py).  A `Typedef` block whose `lifting` is false
+    refuses every class, at any depth: a type definition with `Move it
+    out.`, every other with §6's sentence.  The headers: the four type
+    definitions are `Type_Definition`, the three lifting blocks
+    `Lifting_Block`."""
     loaded = plugin.load(["isabelle_theory_agent.std"])
     registered = {kind: cls for kind, cls in loaded.kinds.items() if cls not in M.FRAMEWORK_NODE_CLASSES}
     assert set(registered) == set(EXAMPLES)
-    kinds = {**ts.KINDS, **registered}
-    f = Forest_Under_Test(kinds=kinds)
-    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X") | {"children": [
-        {"kind": "block", "name": "B", "children": [{"kind": "block", "name": "C"}]}]}, theory("Y"))])))
-    x, y = s.sub_nodes
-    (b,) = x.sub_nodes
-    (c,) = b.sub_nodes
-    for kind, construct in EXAMPLES.items():
-        cls = registered[kind]
-        for parent in (s, f):
-            with pytest.raises(BadPlacement) as e:
-                run(locked(f, edit.insert(parent, 0, [construct])))
-            assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, f.full_id(parent), "constructs[0]")
-            assert (e.value.within, e.value.through) == M.placement_kinds(cls.placement, kinds)
-        (z,) = run(locked(f, edit.insert(s, 2, [theory("Z")])))
-        with pytest.raises(BadPlacement):
-            run(locked(f, edit.amend(z, [{k: v for k, v in construct.items() if k != "children"}])))
-        with pytest.raises(BadPlacement):
-            run(locked(f, edit.insert(f, 1, [session("Other", construct)])))
-        run(locked(f, edit.delete(z)))
-        (node,) = run(locked(f, edit.insert(c, 0, [construct])))
-        assert isinstance(node, cls) and node.enclosing(M.Theory) is x
-        run(locked(f, edit.move(node, b, 0)))
-        assert node.parent is b and node.enclosing(M.Theory) is x
-        run(locked(f, edit.move(node, y, 0)))
-        assert node.parent is y and node.enclosing(M.Theory) is y
-        for parent in (s, f):
-            with pytest.raises(BadPlacement) as e:
-                run(locked(f, edit.move(node, parent, 0)))
-            assert (e.value.kind, e.value.parent_id) == (kind, f.full_id(parent))
-        assert node.parent is y
-        run(locked(f, edit.delete(node)))
-    assert f.sub_nodes == [s] and s.sub_nodes == [x, y] and x.sub_nodes == [b] and b.sub_nodes == [c]
-    assert y.sub_nodes == []
+    declared = section_1_table()
+    by_name = {cls.__name__: cls for cls in registered.values()}
+    assert set(by_name) <= set(declared)
+    classes = {**by_name, "StdBlock": M.StdBlock}                          # the loaded classes a cell may name
+    heading = classes.get("Section")
+    [move_it_out] = fenced_lines(COMMON, "1.")
+    [lifting_refusal] = fenced_blocks(COMMON, "6.")[0]
+    assert move_it_out == common.MOVE_IT_OUT and lifting_refusal == common.LIFTING_REFUSAL
+    assert {c for c in by_name.values() if issubclass(c, Type_Definition)} == {datatype.Datatype, typedef.Typedef, record.Record, quotient_type.QuotientType}
+    assert {c for c in by_name.values() if issubclass(c, Lifting_Block)} == {typedef.Typedef, quotient_type.QuotientType, lifting_context.LiftingContext}
+
+    def admits(container_cls, cls):
+        return any(issubclass(container_cls, classes[name]) for name in declared[cls.__name__] if name in classes)
+
+    def remedy(container_cls, cls):
+        if issubclass(container_cls, Lifting_Block) and issubclass(cls, Type_Definition):
+            return move_it_out
+        raise AssertionError(f"no remedy known for a {cls.__name__} under a {container_cls.__name__}")
+
+    def expected(chain, kind):
+        for container in chain:                                           # outermost first
+            if not admits(type(container), registered[kind]):
+                return composed_refusal(kind, f.full_id(container), remedy(type(container), registered[kind]))
+        return None
+
+    nesting = {cls: kind for kind, cls in reversed(registered.items()) if issubclass(cls, M.NonLeaf_Node)}   # one kind per class
+    childless = {kind: {k: v for k, v in construct.items() if k != "children"} for kind, construct in EXAMPLES.items()}
+    f = Forest_Under_Test(kinds={**ts.KINDS, **registered})
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X"))])))
+    (x,) = s.sub_nodes
+    pairs = [(k1, k2) for k1 in nesting.values() for k2 in nesting.values() if admits(registered[k1], registered[k2])]
+    for kinds in [(), *((k,) for k in nesting.values()), *pairs]:
+        nodes, last = [], x
+        for kind in kinds:
+            (last,) = run(locked(f, edit.insert(last, 0, [childless[kind]])))
+            nodes.append(last)
+        for kind, construct in childless.items():
+            if heading and issubclass(registered[kind], heading) and any(isinstance(n, heading) for n in nodes):
+                continue                                                  # the level rule's (test_section_text.py)
+            (node,) = run(locked(f, edit.insert(last, 0, [construct])))
+            assert node._refusal() == expected(nodes, kind), (kinds, kind)
+            run(locked(f, edit.delete(node)))
+        if nodes:
+            run(locked(f, edit.delete(nodes[0])))
+    # a `Typedef` block whose `lifting` is recorded false, and a lifting context inside it
+    (fm,) = run(locked(f, edit.insert(x, 0, [childless["typedef"]])))
+    fm.lifting = False
+    assert fm.refuses_children() is True
+
+    def every_class_refused_under(parent):
+        for kind, construct in childless.items():
+            (node,) = run(locked(f, edit.insert(parent, 0, [construct])))
+            told = move_it_out if issubclass(registered[kind], Type_Definition) else lifting_refusal
+            assert node._refusal() == composed_refusal(kind, f.full_id(fm), told), (parent, kind)
+            run(locked(f, edit.delete(node)))
+    every_class_refused_under(fm)
+    (ctx,) = run(locked(f, edit.insert(fm, 0, [childless["lifting_context"]])))        # at depth 2, through a lifting context
+    assert ctx._refusal() == composed_refusal("lifting_context", f.full_id(fm), lifting_refusal)
+    every_class_refused_under(ctx)
+    assert x.sub_nodes == [fm] and fm.sub_nodes == [ctx]
 
 
 def test_the_text_line_is_section_2_s():
@@ -303,7 +332,6 @@ def test_the_loader_refuses_a_bare_proof_obligation_on_a_block_and_beginning_pro
 
     class Bare(Proof_Obligation, tm.Block):
         construct_schema = {**tm.BLOCK_SCHEMA, "properties": {**tm.BLOCK_SCHEMA["properties"], "kind": {"const": "bare"}}}
-        placement = M.Placement(within="Theory", through=())
         evaluation_callback = "TAT.Bare.evaluate"
         def goal_structure(self): return ()
         def message(self): return ()
@@ -684,23 +712,25 @@ def test_proof_mark_reads_the_three_words_of_a_class_that_defines():
 
 # --- `Lifting_Closing`'s two sentences and its hook (§6)
 
-def test_lifting_closing_s_two_sentences_are_section_6_s_and_a_base_whose_setup_is_not_made_refuses_children():
+def test_lifting_closing_s_sentences_are_section_6_s_and_a_base_whose_setup_is_not_made_refuses_children():
     """§6: the refusal sentence, the `children` description and the children
     header, the one home of each, verbatim §6's three blocks, the
-    description taken by both classes' schemas, the header answered by
-    the base and by `LiftingContext` (PRINT.md §2); on the base
-    `is_lifting_setup_made()` is true, so `children_refusal()` is None and
-    the ending's two hooks do their work — `close` called, the two lines
-    written —; a class on it answering false refuses children with the
-    sentence, its ending the copy and nothing written, `StdBlock`'s
-    defaults."""
+    description taken by both classes' schemas, the header `Lifting_Block`'s
+    (PRINT.md §2); on the base `is_lifting_setup_made()` is true, so
+    `refuses_children()` is false, `cannot_hold` admits a lemma and refuses
+    a type definition with §1's remedy, and the ending's two hooks do their
+    work — `close` called, the two lines written —; a class on it answering
+    false refuses children, `cannot_hold` answering the sentence for a
+    lemma and §1's remedy first for a type definition, its ending the copy
+    and nothing written, `StdBlock`'s defaults."""
     [refusal, description, header] = fenced_blocks(COMMON, "6.")
     assert [common.LIFTING_REFUSAL] == refusal and [common.LIFTING_CHILDREN_DESCRIPTION] == description
     assert header == [common.LIFTING_CHILDREN_HEADER + ":"]
     for schema in (typedef.Typedef.construct_schema, quotient_type.QuotientType.construct_schema):
         assert schema is not None and schema["properties"]["children"]["description"] == common.LIFTING_CHILDREN_DESCRIPTION
+    assert Lifting_Block.children_header(None) == common.LIFTING_CHILDREN_HEADER      # type: ignore[arg-type]  # reads no self
     for cls in (typedef.Typedef, quotient_type.QuotientType, lifting_context.LiftingContext):
-        assert cls.children_header(None) == common.LIFTING_CHILDREN_HEADER      # type: ignore[arg-type]  # reads no self
+        assert cls.children_header is Lifting_Block.children_header                 # one home: no class answers it again
 
     class Unmade(quotient_type.QuotientType):           # a block on the base whose beginning made no setup
         def is_lifting_setup_made(self):
@@ -709,11 +739,13 @@ def test_lifting_closing_s_two_sentences_are_section_6_s_and_a_base_whose_setup_
     kinds = {**ts.KINDS, **{k: c for k, c in loaded.kinds.items() if c not in M.FRAMEWORK_NODE_CLASSES}, "unmade": Unmade}
     f = Forest_Under_Test(kinds=kinds)
     (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X", kind="fake_theory") | {"children": [
-        FSET, {**FSET, "kind": "unmade", "type_name": "gset", "children": []}]})])))
+        FSET, {**FSET, "kind": "unmade", "type_name": "gset", "children": []}, lemma("p"), definition(LIST)]})])))
     (x,) = s.sub_nodes
-    made, unmade = x.sub_nodes
-    assert made.is_lifting_setup_made() is True and made.children_refusal() is None
-    assert unmade.is_lifting_setup_made() is False and unmade.children_refusal() == common.LIFTING_REFUSAL
+    made, unmade, p, lst = x.sub_nodes
+    assert made.is_lifting_setup_made() is True and made.refuses_children() is False
+    assert made.cannot_hold(p, 1) is None and made.cannot_hold(lst, 2) == common.MOVE_IT_OUT
+    assert unmade.is_lifting_setup_made() is False and unmade.refuses_children() is True
+    assert unmade.cannot_hold(p, 1) == common.LIFTING_REFUSAL and unmade.cannot_hold(lst, 1) == common.MOVE_IT_OUT
     calls = []
 
     async def call(conversation, name, args):

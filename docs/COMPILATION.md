@@ -450,7 +450,7 @@ the two are equal; they differ only on a loaded node not yet rerun.
 **One form per status, and the messages of a run.** The status values
 carry what the run reported *(decided)*. `NotEvaluated` carries nothing,
 its one instance `NOT_EVALUATED`; `CannotEvaluate(messages)` the reason the run
-failed, or the refusal of the node's placement when the framework did not run
+failed, or the placement check's refusal when the framework did not run
 it (PLUGIN_SYSTEM §2); `Ready(messages)` what the class's callback chose to report of a
 run that went through — a failure it carried on past, or a notice of
 its own — and `Ready()` a clean

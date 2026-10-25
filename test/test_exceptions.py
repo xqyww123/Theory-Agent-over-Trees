@@ -8,7 +8,7 @@ cannot drift apart.  Run: python -m pytest test/test_exceptions.py
 import pytest
 
 from isabelle_theory_agent.exceptions import (
-    AmbiguousId, BadAnswer, BadEdit, BadPlacement, BadSessionNodeParent, BadTheoryNodeParent, ChildRefused,
+    AmbiguousId, BadAnswer, BadEdit, BadNodeParent, BadSessionNodeParent, BadTheoryNodeParent,
     ChildrenNotInheritable, ConstructionError,
     ConstructNotSupported, ConstructOwnedByAnother, DuplicateName, DuplicateTheoryShortName,
     HoldsNoChildren, InvalidField, InvalidName, MalformedRawAST, MissingField,
@@ -16,7 +16,7 @@ from isabelle_theory_agent.exceptions import (
     ReservedSessionName, ReservedTheoryName, ResolutionError, TAT_DisasterError, TAT_Error,
     TAT_InternalError,
     TAT_IsabelleError, TAT_StartupError, UnexpectedChildren, UnexpectedField,
-    UnknownKind)
+    UnknownKind, a_kind, compose_refusal)
 
 from baselines import DOCS, fenced_lines
 
@@ -79,8 +79,28 @@ def of_tool(exc):
 def test_missing_field():
     check(MissingField(holder="lemma", field="statement"),
           "A `lemma` needs the field `statement`.")
+    check(MissingField(holder="inductive", field="name"),
+          "An `inductive` needs the field `name`.")
     check(of_tool(MissingField(holder="edit", field="evaluate")),
           "The `edit` tool needs the argument `evaluate`.")
+
+def test_the_article_before_a_kind_is_computed():
+    """RENDER_BASELINES §2: `an` before a vowel letter, `a` otherwise,
+    capitalised at a sentence's start; the head of a refusal of a node's
+    place is composed with it."""
+    assert a_kind("lemma") == "a `lemma`" and a_kind("inductive") == "an `inductive`"
+    assert a_kind("lemma", initial=True) == "A `lemma`" and a_kind("Inductive", initial=True) == "An `Inductive`"
+    assert a_kind("owl") == "an `owl`" and a_kind("unary") == "an `unary`" and a_kind("x") == "a `x`"
+    assert compose_refusal("inductive", "session_S.theory_X.typedef_fm", "Move it out.") == \
+        "An `inductive` cannot stand under `session_S.theory_X.typedef_fm`. Move it out."
+    assert str(HoldsNoChildren(id="theory_X.inductive_even", kind="inductive")) == \
+        "`theory_X.inductive_even` is an `inductive`, and it cannot hold children."
+    assert str(UnexpectedField(holder="inductive", field="nmae", takes=["name"], holder_is_top=True)) == \
+        "An `inductive` has no field `nmae`; it takes `name`."
+    assert str(UnexpectedChildren(kind="inductive", is_leaf=True)) == \
+        "`children` is not allowed: an `inductive` holds no children."
+    assert str(ChildrenNotInheritable(old_id="theory_X.section_Basics", new_kind="inductive", children_count=1)) == \
+        "`theory_X.section_Basics` has 1 child, which an `inductive` cannot hold. Move or delete it first."
 
 def test_invalid_field():
     # The doc holds the shape with a <reason> placeholder, in both forms.
@@ -223,30 +243,21 @@ def test_children_not_inheritable():
           " hold. Move or delete it first.")
 
 def test_bad_node_parent():
-    check(BadSessionNodeParent(kind="session", parent_id="theory_X"),
-          "A `session` cannot be placed under `theory_X`; a session lives"
-          " directly under `Sessions`.")
-    check(BadTheoryNodeParent(kind="theory", parent_id="section_Basics"),
-          "A `theory` cannot be placed under `section_Basics`; a theory lives"
-          " directly under a session.")
-
-def test_bad_placement():
-    """`{through}` two kinds, and none."""
-    check(BadPlacement(kind="note", parent_id="session_Arith", within="theory", through=["section", "subsection"]),
-          "A node of kind `note` cannot be placed under `session_Arith`; it stands inside a node of kind"
-          " `theory`, directly or under nodes of kind `section` or `subsection`.")
-    check(BadPlacement(kind="top", parent_id="Sessions", within="theory", through=[]),
-          "A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind"
-          " `theory`, directly.")
-
-def test_child_refused():
-    """The parent's sentence after a period."""
-    check(ChildRefused(kind="lift_definition", parent_id="session_S.theory_T.typedef_fm",
-                       reason="For technical reasons, this subtype does not support lifting; you cannot use the transfer"
-                              " tactic or lift_definitions on this type."),
-          "A node of kind `lift_definition` cannot be placed under `session_S.theory_T.typedef_fm`. For technical"
-          " reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on"
-          " this type.")
+    """The forest's shape: the framework's `BadNodeParent` with the forest's
+    remedy, and the two classes' own, each with its fixed remedy — the six
+    lines of §2's fence."""
+    check(BadNodeParent(kind="lemma", parent_id="Sessions", remedy="Put it in a theory."),
+          "A `lemma` cannot stand under `Sessions`. Put it in a theory.")
+    check(BadNodeParent(kind="lemma", parent_id="session_Arith", remedy="Put it in a theory."),
+          "A `lemma` cannot stand under `session_Arith`. Put it in a theory.")
+    check(BadTheoryNodeParent(kind="theory", parent_id="Sessions"),
+          "A `theory` cannot stand under `Sessions`. Put it in a session.")
+    check(BadTheoryNodeParent(kind="theory", parent_id="session_Arith.theory_X.section_Basics"),
+          "A `theory` cannot stand under `session_Arith.theory_X.section_Basics`. Put it in a session.")
+    check(BadSessionNodeParent(kind="session", parent_id="session_Arith"),
+          "A `session` cannot stand under `session_Arith`. Put it under `Sessions`.")
+    check(BadSessionNodeParent(kind="session", parent_id="session_Arith.theory_X"),
+          "A `session` cannot stand under `session_Arith.theory_X`. Put it under `Sessions`.")
 
 
 def test_move_into_own_subtree():
@@ -356,10 +367,9 @@ def test_groups():
     assert issubclass(DuplicateTheoryShortName, BadEdit)
     assert issubclass(ReservedTheoryName, BadEdit)
     assert issubclass(ReservedSessionName, BadEdit)
-    assert issubclass(BadSessionNodeParent, BadEdit)
-    assert issubclass(BadTheoryNodeParent, BadEdit)
-    assert issubclass(BadPlacement, BadEdit)
-    assert issubclass(ChildRefused, BadEdit)
+    assert issubclass(BadNodeParent, BadEdit)
+    assert issubclass(BadSessionNodeParent, BadNodeParent)
+    assert issubclass(BadTheoryNodeParent, BadNodeParent)
     for cls in (ConstructNotSupported, ConstructOwnedByAnother, NoQuestionPending):
         assert issubclass(cls, ConstructionError)
     for group in (ResolutionError, RawASTError, BadEdit, ConstructionError):

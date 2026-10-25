@@ -118,13 +118,22 @@ def series(words: list[str], last: str) -> str:
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" {last} " + words[-1]
 
 
-def placement_rule(within: str, through: list[str]) -> str:
-    """The second half of both placement refusals (RENDER_BASELINES §2,
-    §3), from the kinds a placement names: where a node of the class
-    stands."""
-    return (f"it stands inside a node of kind `{within}`, "
-            + (f"directly or under nodes of kind {series([f'`{k}`' for k in through], 'or')}." if through
-               else "directly."))
+_VOWELS = frozenset("aeiou")
+
+
+def a_kind(kind: str, initial: bool = False) -> str:
+    """The kind in backquotes with its indefinite article (RENDER_BASELINES
+    §2): `an` before a vowel letter, `a` otherwise; capitalised when
+    `initial`, at a sentence's start."""
+    article = "an" if kind[:1].lower() in _VOWELS else "a"
+    return f"{article.capitalize() if initial else article} `{kind}`"
+
+
+def compose_refusal(kind: str, ancestor_id: str, remedy: str) -> str:
+    """A refusal of a node's place (RENDER_BASELINES §2, §3): the head — the
+    kind with its article, the ancestor it cannot stand under by its full
+    id — then the remedy."""
+    return f"{a_kind(kind, initial=True)} cannot stand under `{ancestor_id}`. {remedy}"
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +223,7 @@ class MissingField(RawASTError):
     def _cause(self) -> str:
         if self.of_tool:
             return f"The `{self.holder}` tool needs the argument `{self.field}`."
-        return f"A `{self.holder}` needs the field `{self.field}`."
+        return f"{a_kind(self.holder, initial=True)} needs the field `{self.field}`."
 
 
 class InvalidField(RawASTError):
@@ -255,7 +264,7 @@ class UnexpectedField(RawASTError):
         elif self.of_tool:
             subject = f"The `{self.holder}` tool"
         else:
-            subject = f"A `{self.holder}`"
+            subject = a_kind(self.holder, initial=True)
         what = "argument" if self.of_tool else "field"
         takes = ", ".join(f"`{t}`" for t in self.takes) or f"no {what}s"
         return f"{subject} has no {what} `{self.field}`; it takes {takes}."
@@ -397,8 +406,7 @@ class UnexpectedChildren(BadEdit):
 
     def _cause(self) -> str:
         if self.is_leaf:
-            return (f"`children` is not allowed: a `{self.kind}` holds no"
-                    " children.")
+            return f"`children` is not allowed: {a_kind(self.kind)} holds no children."
         return ("When amending a non-leaf node, `children` is not allowed:"
                 " the amended node inherits its existing children. To change"
                 " the children, use `delete` to remove them and `append` or"
@@ -418,71 +426,42 @@ class ChildrenNotInheritable(BadEdit):
         one = self.children_count == 1
         return (f"`{self.old_id}` has"
                 f" {'1 child' if one else f'{self.children_count} children'},"
-                f" which a `{self.new_kind}` cannot hold."
+                f" which {a_kind(self.new_kind)} cannot hold."
                 f" Move or delete {'it' if one else 'them'} first.")
 
 
-class BadSessionNodeParent(BadEdit):
-    """`Session`'s parent check (EXCEPTIONS.md §3): raised by its gen and
-    its `on_moving` for every parent but the forest root."""
+class BadNodeParent(BadEdit):
+    """The forest's shape, at the edit (EXCEPTIONS.md §3): raised by the
+    framework at an insert, an amend and a move for a node of any class but
+    `Session` and `Theory` under the forest root or a `Session`, with the
+    forest's remedy (`Forest.cannot_place`); `Session` and `Theory` raise
+    the two subclasses below for their own parent, each with its fixed
+    remedy.  `parent_id` is the parent's full id."""
+
+    def __init__(self, kind: str, parent_id: str, remedy: str):
+        super().__init__()
+        self.kind = kind
+        self.parent_id = parent_id
+        self.remedy = remedy
+
+    def _cause(self) -> str:
+        return compose_refusal(self.kind, self.parent_id, self.remedy)
+
+
+class BadSessionNodeParent(BadNodeParent):
+    """`Session`'s parent check: raised by its gen and its `on_moving` for
+    every parent but the forest root."""
 
     def __init__(self, kind: str, parent_id: str):
-        super().__init__()
-        self.kind = kind
-        self.parent_id = parent_id
-
-    def _cause(self) -> str:
-        return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
-                " a session lives directly under `Sessions`.")
+        super().__init__(kind, parent_id, "Put it under `Sessions`.")
 
 
-class BadTheoryNodeParent(BadEdit):
-    """`Theory`'s parent check (EXCEPTIONS.md §3): raised by its gen and
-    its `on_moving` for every parent but a `Session`."""
+class BadTheoryNodeParent(BadNodeParent):
+    """`Theory`'s parent check: raised by its gen and its `on_moving` for
+    every parent but a `Session`."""
 
     def __init__(self, kind: str, parent_id: str):
-        super().__init__()
-        self.kind = kind
-        self.parent_id = parent_id
-
-    def _cause(self) -> str:
-        return (f"A `{self.kind}` cannot be placed under `{self.parent_id}`;"
-                " a theory lives directly under a session.")
-
-
-class BadPlacement(BadEdit):
-    """A plugin's node placed under a `Session` or the forest root
-    (EXCEPTIONS.md §3): raised by the framework at an insert, an amend and
-    a move.  `within` and `through` are the kinds of the classes the
-    class's `placement` names (`model.placement_kinds`)."""
-
-    def __init__(self, kind: str, parent_id: str, within: str, through: list[str]):
-        super().__init__()
-        self.kind = kind
-        self.parent_id = parent_id
-        self.within = within
-        self.through = through
-
-    def _cause(self) -> str:
-        return (f"A node of kind `{self.kind}` cannot be placed under `{self.parent_id}`; "
-                + placement_rule(self.within, self.through))
-
-
-class ChildRefused(BadEdit):
-    """A node placed under a nesting node that refuses children now, its
-    `children_refusal()` answering `reason` (EXCEPTIONS.md §3;
-    MODULE_STRUCTURE §4.1): raised by the framework at an insert, an amend
-    and a move, just before the parent's `on_adding_child`.  The refusal
-    at evaluation carries `reason` too (RENDER_BASELINES §3)."""
-
-    def __init__(self, kind: str, parent_id: str, reason: str):
-        super().__init__()
-        self.kind = kind
-        self.parent_id = parent_id
-        self.reason = reason
-
-    def _cause(self) -> str:
-        return f"A node of kind `{self.kind}` cannot be placed under `{self.parent_id}`. {self.reason}"
+        super().__init__(kind, parent_id, "Put it in a session.")
 
 
 class MoveIntoOwnSubtree(BadEdit):
@@ -516,7 +495,7 @@ class HoldsNoChildren(BadEdit):
         self.kind = kind
 
     def _cause(self) -> str:
-        return f"`{self.id}` is a `{self.kind}`, and it cannot hold children."
+        return f"`{self.id}` is {a_kind(self.kind)}, and it cannot hold children."
 
 
 class ProtectedNode(BadEdit):

@@ -13,7 +13,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, Leaf, Placement, Theory, emit_lines, print_name
+from ..model import INDENT, RECALL, Leaf, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, Mixfix, Mixfix_RawAST, Proof_Obligation, mixfix_of, mixfix_text, mixfix_wire,
@@ -61,7 +61,6 @@ class LiftDefinition(Proof_Obligation, Leaf):
         "$defs": {**MIXFIX_DEFS},
     }
     argument_schema = LiftDefinition_RawAST
-    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     evaluation_callback = "TAT.LiftDefinition.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed

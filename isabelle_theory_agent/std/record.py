@@ -13,10 +13,10 @@ from typing import Annotated, Any, Literal, NotRequired, TypedDict
 from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
 
 from .. import isabelle_driver
-from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Theory, emit_lines, print_name, status_of_errors
 from ..plugin import TAT_node
 from .common import (
-    TYPE_PARAMETER_DEFS, Type_Parameter, TypeParameter_RawAST, check_identifier,
+    TYPE_PARAMETER_DEFS, Type_Definition, Type_Parameter, TypeParameter_RawAST, check_identifier,
     check_type_parameters_used, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
     type_parameters_wire)
 
@@ -44,7 +44,7 @@ class Field:
 
 
 @TAT_node
-class Record(Leaf):
+class Record(Leaf, Type_Definition):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -71,7 +71,6 @@ class Record(Leaf):
         "$defs": {**TYPE_PARAMETER_DEFS},
     }
     argument_schema = Record_RawAST
-    placement = Placement(within="Theory", through=())
 
     english: str
     type_parameters: tuple[Type_Parameter, ...]

@@ -34,7 +34,7 @@ is `isabelle_theory_agent/std/typedef.py`, its ML half
 — the `description` texts of its construct schema (§3), the sentences
 its `gen` renders, the notice of §6, the words on its line and its owing
 line (§7) — pinned by the baseline tests the way DATATYPE.md's are; the
-`children` description and the refusal sentence are `Lifting_Closing`'s
+`children` description and the remedy are `Lifting_Closing`'s
 (COMMON.md §6).
 
 One kind, `typedef`, which heads the id component: `typedef_dlist`; a
@@ -106,7 +106,7 @@ is optional and empty when left out; `syntax`, `rep_function_name` and
 name left out is Isabelle's default, `Rep_dlist` or `Abs_dlist`; an
 empty `sort` is no sort; `children` is optional, as for every nesting
 class (PLUGIN_SYSTEM §3), and contents come later through `edit` as
-well — never into a block that refuses children (§6). A sort
+well. A sort
 constraint may be written on the parameter (`"sort": "zero"`) or inside
 `set` (`'a::zero`), as Isabelle
 takes either. The node's name is `type_name`. `gen` normalises every
@@ -124,21 +124,18 @@ stored text.
 `TypeParameter` is shared through `TYPE_PARAMETER_DEFS` and `TypeMixfix`
 through `TYPE_MIXFIX_DEFS`, both the plugin's (COMMON.md §4).
 
-What stands inside the block: a node whose class's `placement` names
-`Typedef` in its `through` (PLUGIN_SYSTEM §2; this plugin's, COMMON.md
-§1). The subtype's Lifting setup is open inside the block and closed at
+What stands inside the block: any node but a type definition, which the
+block refuses at any depth (COMMON.md §1, §6), and a `locale`, which
+refuses to stand in it (LOCALE.md §6). The subtype's Lifting setup is
+open inside the block and closed at
 its end (§6), so a `LiftDefinition` on the subtype stands here or inside
 a `LiftingContext`, which opens the setup again (LIFTING_CONTEXT.md);
 lemmas about the subtype proved by `transfer` likewise, since
 `lifting_forget` deletes the subtype's transfer rules. A node that uses
-the subtype by name alone — a `Datatype` with an `'a dlist` field, a
-`Theorem` proved without `transfer` — needs no open setup, so the block
-does not bound it: it stands wherever its class's `placement` admits it
-(COMMON.md §1). A block whose `lifting` is recorded false (§6) refuses
-children: a node placed inside it is refused with COMMON.md §6's
-refusal sentence — at the edit once `lifting` is recorded false, at the
-node's first own operation when it was placed before (RENDER_BASELINES
-§2, §3).
+the subtype by name alone — a `Theorem` proved without `transfer` —
+needs no open setup, so the block does not bound it: it stands wherever
+the placement check admits it (COMMON.md §1). A block whose `lifting` is
+recorded false (§6) refuses children.
 
 The class's construct schema:
 
@@ -478,11 +475,10 @@ block (PRINT.md §3); the mark (§7) is unchanged, the node owing nothing.
 With `lifting` recorded false `Typedef`'s answer to `Lifting_Closing`'s
 hook `is_lifting_setup_made()` is false — true while `lifting` is none
 or true —, on which the block refuses children and its ending runs
-nothing (COMMON.md §6). A child the block holds already is refused at
+nothing (COMMON.md §6). A child the block holds is refused at
 its first own operation, its status a `CannotEvaluate` carrying the
-framework's refusal with COMMON.md §6's refusal sentence after it
-(PLUGIN_SYSTEM §2; RENDER_BASELINES §3); a node placed inside the block
-later is refused at the edit, as `ChildRefused` (RENDER_BASELINES §2).
+head with COMMON.md §6's remedy after it
+(PLUGIN_SYSTEM §2; RENDER_BASELINES §3).
 The proof check and the proof construction, with their callbacks
 `TAT.Proof_Obligation.check` and
 `TAT.Proof_Obligation.construct`, are `Proof_Obligation`'s (COMMON.md
@@ -589,7 +585,7 @@ given no keyword set. `setup_lifting` is not printed: it is not
 authored. The children are the framework's to print, in the mode
 PRINT.md §2's table gives them: directly under what was written, or one
 level deeper under `lifting context:` — the children header
-`Lifting_Closing` answers (COMMON.md §6) — when a message block or a
+`Lifting_Block` answers (COMMON.md §6) — when a message block or a
 failure block with its colon stands above them, the definition and
 `english` carrying no key; a block with none shows the empty node's
 line — none under a block that refuses children (PRINT.md §2).
@@ -646,7 +642,7 @@ at its first own operation (§6; RENDER_BASELINES §3):
     - lift_definition_fm_empty (invalid definition)
       fm_empty :: fm is fmempty
       Error:
-        A node of kind `lift_definition` cannot stand inside `session_S.theory_T.typedef_fm`, a node of kind `typedef`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
+        A `lift_definition` cannot stand under `session_S.theory_T.typedef_fm`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
 ```
 
 The jobs' blocks are `Proof_Obligation`'s (COMMON.md §3); a node under

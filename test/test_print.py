@@ -991,7 +991,7 @@ def test_the_empty_node_s_line_stands_under_the_header_and_a_refusing_block_writ
     assert render(f, k, RECALL) == ["- section_K (complete)", "  parameter: x", "  contents:", empty("section_K", 2)]
 
     class Refusing(Keyed_Section):
-        def children_refusal(self): return "No children here."
+        def refuses_children(self): return True
     r = keyed_section(x, "R", cls=Refusing)
     assert render(f, r, RECALL) == ["- section_R (complete)", "  parameter: x"]
 

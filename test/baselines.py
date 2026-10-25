@@ -1,14 +1,24 @@
 """Reading approved wording and tables out of the documents (not a pytest
 module): a baseline test pins every fenced line of the sections that hold
 agent-facing text, the log's tests pin the events and their levels to
-LOGGING.md §4's tables, and the plugin's test pins each class's
-`placement` to node_classes/COMMON.md §1's table, so the code and the
+LOGGING.md §4's tables, and the plugin's test pins the placement check's
+answers to node_classes/COMMON.md §1's table, so the code and the
 documents cannot drift apart."""
 
 from collections.abc import Iterator
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
+
+
+def composed_refusal(kind: str, ancestor_id: str, remedy: str) -> str:
+    """RENDER_BASELINES §3's form line filled in — the head for `kind`, with
+    the article §2 states, and `ancestor_id`, then `remedy` —: what the
+    placement check tells, composed from the documents alone."""
+    [form] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "3.") if line.startswith("<A|An>")]
+    article = "An" if kind[:1].lower() in "aeiou" else "A"
+    return (form.replace("<A|An>", article).replace("<node's kind>", kind)
+            .replace("<ancestor's full id>", ancestor_id).replace("<remedy>", remedy))
 
 
 def _section_lines(doc: Path, *section_prefixes: str) -> Iterator[str]:

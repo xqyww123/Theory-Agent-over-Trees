@@ -68,7 +68,9 @@ takes, where the node has a construction job — an amend's replacement
 included, which does not inherit the replaced node's.
 
 Beyond the schema, TAT checks: `append`'s target can hold children
-(`HoldsNoChildren`); no `children` on `amend`'s first construct or on a
+(`HoldsNoChildren`); the forest's shape — a session under `Sessions`, a
+theory under a session, every other construct inside a theory
+(`BadNodeParent`, EXCEPTIONS.md §3); no `children` on `amend`'s first construct or on a
 leaf construct (`UnexpectedChildren`), `GivenLater` where the class
 declares `children` aside, on `amend`'s first construct too
 (MCP_SPECIFICATION §3.1); and every construct's fields against
@@ -105,7 +107,9 @@ a **Location** (ARCHITECTURE §1) on the wire.
 ```
 
 Beyond the schema, TAT checks: `into`'s node can hold children
-(`HoldsNoChildren`); the destination is not inside the moved subtree
+(`HoldsNoChildren`); the forest's shape — a session under `Sessions`, a
+theory under a session, every other node inside a theory
+(`BadNodeParent`, EXCEPTIONS.md §3); the destination is not inside the moved subtree
 (`MoveIntoOwnSubtree`), nor `before` or `after` the moved node itself
 (`MoveBesideItself`); neither the moved node nor a `before`/`after` node
 is `Sessions` (`ProtectedNode`); and the moved node's id component is

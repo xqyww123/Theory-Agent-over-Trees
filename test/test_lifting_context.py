@@ -24,7 +24,7 @@ from harness import text_of
 from invariants import assert_store_mirrors
 from Isabelle_RPC_Host.unicode import IsaTerm
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import BadPlacement, GRAMMARS, DuplicateName, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import GRAMMARS, DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, Succeeded
 from isabelle_theory_agent.std import lifting_context
 from isabelle_theory_agent.std.common import Lifting_Closing
@@ -100,17 +100,13 @@ def test_gen_keeps_the_fields_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals in its order: the place first (the framework's
-    `BadPlacement`, pinned for every class by test_common.py); an entry of
+    """§4's refusals in its order: an entry of
     `types` that is no type's name, §4's first sentence, the grammar text
     the framework's; a repeat, the second; the type names before the node's
     name, which the framework judges after `gen`, and an empty `types`, the
     framework's `must not be empty`; a missing field, an `english` or the
     recorded field authored, by the framework."""
     f, x = forest()
-    (s,) = f.sub_nodes
-    e = refused(f, s, [block()], BadPlacement)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("lifting_context", "session_Arith", "constructs[0]")
     [identifier, twice] = fenced_blocks(LC, "4.")[0]
     assert identifier.endswith(GRAMMARS["type name"] + ".")
     e = refused(f, x, [block(types=("'a fset",))], InvalidField)

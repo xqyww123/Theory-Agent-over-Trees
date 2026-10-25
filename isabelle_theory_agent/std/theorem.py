@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from ..model import INDENT, RECALL, Leaf, Placement, Theory, emit_lines
+from ..model import INDENT, RECALL, Leaf, Theory, emit_lines
 from ..plugin import TAT_node
 from .common import Proof_Obligation, require_id_name, text_line
 from .statement import STATEMENT_DEFS, LongStatement_RawAST, Statement, statement_of
@@ -36,7 +36,6 @@ class Theorem(Proof_Obligation, Leaf):
         "$defs": STATEMENT_DEFS,
     }
     argument_schema = Theorem_RawAST
-    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     evaluation_callback = "TAT.Theorem.evaluate"
     valid_word, invalid_word = "valid statement", "invalid statement"       # the mark's first slot (§7)
 

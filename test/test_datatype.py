@@ -21,7 +21,7 @@ from harness import text_of
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from invariants import assert_invariants, assert_store_mirrors
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import BadPlacement, DuplicateName, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.std import common, datatype
 from isabelle_theory_agent.std.common import Binder, Infix, Template, Type_Parameter
 from isabelle_theory_agent.std.datatype import Argument, Constructor, Datatype, Defined_Type
@@ -107,16 +107,12 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the place first (the framework's `BadPlacement`, pinned
-    for every class by test_common.py); a type name outside §1's grammar
+    """§4's refusals: a type name outside §1's grammar
     (RENDER_BASELINES §2's line); the five sentences of §4's block; the type
     parameters by the shared check, and, last, each used in some
     constructor's argument type (COMMON §4's sentences, pinned by
     test_common.py); an empty `types` or `constructors` by the framework."""
     f, x = forest()
-    (s,) = f.sub_nodes
-    e = refused(f, s, [definition({"type_name": "my-list", "constructors": [{"name": "N"}]})], BadPlacement)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("datatype", "session_Arith", "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition({"type_name": "my-list", "constructors": [{"name": "N"}]})], InvalidName)

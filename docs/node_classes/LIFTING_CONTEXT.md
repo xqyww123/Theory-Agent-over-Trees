@@ -28,8 +28,9 @@ block notes does, and the two commands store it into the type's bundle
 and delete it from the context, so that outside the block the type is
 opaque again and a later `LiftingContext` opening the type finds the
 rule in the bundle. The class opens no proof obligation and has no jobs
-(INDEX.md). It is a `StdBlock` of the plugin `Isabelle_Std` — `class
-LiftingContext(StdBlock)` — and defines the four hooks
+(INDEX.md). It is a `StdBlock` of the plugin `Isabelle_Std` on
+`Lifting_Block`, the base of the blocks inside which a Lifting setup is
+open (COMMON.md §6) — `class LiftingContext(Lifting_Block)` — and defines the four hooks
 of a block itself, the beginning's two and the ending's two together
 (PLUGIN_SYSTEM §5). Its Python half is
 `isabelle_theory_agent/std/lifting_context.py`, its ML half
@@ -128,13 +129,15 @@ lifting could not be set up (TYPEDEF.md §6), a type whose
 `quotient_type` stands later — is refused at evaluation (§6). `gen`
 checks neither: each needs the context where the block stands.
 
-What stands inside the block: a node whose class's `placement` names
-`LiftingContext` in its `through` (PLUGIN_SYSTEM §2; this plugin's,
-COMMON.md §1). The opened types' Lifting setups are open inside
+What stands inside the block: any node but a type definition, which the
+block refuses at any depth, and a `locale`, which refuses to stand in
+it — the block's children header and its refusal are `Lifting_Block`'s
+(COMMON.md §1, §6; LOCALE.md §6). The opened types' Lifting setups are
+open inside
 the block and closed at its end (§6), so a `LiftDefinition` on an
 opened type stands here, as does a `Theorem` about it proved by
 `transfer`; a node that uses the type by name alone needs no open setup
-and stands wherever its class's `placement` admits it (COMMON.md §1).
+and stands wherever the placement check admits it (COMMON.md §1).
 
 The class's construct schema:
 
@@ -427,7 +430,7 @@ stored text by the one private helper of lifting_context.py that §5's
 line uses too; no line carries a key. The children are the framework's
 to print, in the mode PRINT.md §2's table gives them: directly under
 what was written, or one level deeper under `lifting context:` — the
-children header the class answers, the phrase `Lifting_Closing` answers
+children header `Lifting_Block` answers
 (COMMON.md §6) — when a message block stands above them; a block with
 none shows the empty node's line.
 

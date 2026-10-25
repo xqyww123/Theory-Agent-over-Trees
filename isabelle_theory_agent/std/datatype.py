@@ -13,10 +13,10 @@ from typing import Annotated, Any, Literal, NotRequired, TypedDict
 from Isabelle_RPC_Host.unicode import IsaTerm
 
 from .. import isabelle_driver
-from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Theory, emit_lines, print_name, status_of_errors
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Type_Parameter,
+    MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Type_Definition, Type_Parameter,
     TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice,
     check_type_parameters_used, mixfix_of, mixfix_text, mixfix_wire, normalised, require_id_name, text_line,
     type_head_text, type_parameters_of, type_parameters_wire)
@@ -71,7 +71,7 @@ class Defined_Type:
 
 
 @TAT_node
-class Datatype(Leaf):
+class Datatype(Leaf, Type_Definition):
     construct_schema = {
         "type": "object",
         "properties": {
@@ -113,7 +113,6 @@ class Datatype(Leaf):
         "$defs": {**TYPE_PARAMETER_DEFS, **TYPE_MIXFIX_DEFS, **MIXFIX_DEFS},
     }
     argument_schema = Datatype_RawAST
-    placement = Placement(within="Theory", through=())
 
     english: str
     type_parameters: tuple[Type_Parameter, ...]

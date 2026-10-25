@@ -19,7 +19,7 @@ from IsaMini.AoA.task import StdTask, aoa_task
 from .. import isabelle_driver
 from ..exceptions import series
 from ..jobs import Failed, Succeeded
-from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Placement, Theory, emit_lines, print_name, status_of_errors, string_token
+from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Theory, emit_lines, print_name, status_of_errors, string_token
 from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, Construction_Setup, Mixfix_RawAST, Proof_Check, Proof_Job, Variable_With_Syntax,
@@ -226,7 +226,6 @@ class Define(With_Proof_Obligations, Leaf):
         },
     }
     argument_schema = Define_RawAST
-    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     construction_job_class = Define_Proof_Job
     evaluation_job_class = Define_Proof_Check
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's words (§7) ...

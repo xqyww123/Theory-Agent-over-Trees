@@ -217,6 +217,7 @@ class OneTreeForest(M.Forest):
     _source_before = M.NonLeaf_Node._source_before
     _carry_forward = M.NonLeaf_Node._carry_forward
     def _resulting_state_of_all_children(self): return self._end
+    def cannot_place(self, cls, parent): return None    # it holds blocks at its root: no forest's shape
     async def _evaluate(self, ev, mode):
         """The destination's tree — every top-level block when the
         destination is the root, ending at the first stop — each by the

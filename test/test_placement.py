@@ -1,73 +1,82 @@
-"""Where a plugin's node may stand (PLUGIN_SYSTEM §2): the two refusal
-sentences against RENDER_BASELINES §2 (`BadPlacement`, from real edits)
-and §3 (`placement_refusal` on stand-ins), the walk, the check at
-evaluation — a misplaced `Leaf` and a misplaced `StdBlock`, the
-hook never run — and at edit time under a `Session` and under the root,
-against the fake state slot table.  The registration and load checks are
-test_plugin.py's; the shipped classes' declarations test_common.py's.
+"""The placement check (PLUGIN_SYSTEM §2; MODULE_STRUCTURE §4.1) on stand-ins
+against the fake state slot table: the walk — the node and every ancestor
+in its tree, outermost first, the ancestor's `cannot_hold` then the node's
+`cannot_stand_under`, with the depth —, the first refusal as the message,
+its head RENDER_BASELINES §3's form line with the kind's article, the hook
+never run, a refused block's children `not_evaluated`; an insert, a move
+and an amend into a refused place accepted at the edit and refused at
+evaluation, neither method asked at the edit; a theory's own beginning
+never refused.  The forest's shape at the edit is test_session_theory.py's;
+the plugin's answers are test_common.py's.
 Run: python -m pytest test/test_placement.py
 """
-
-import pytest
 
 import stand_ins
 import test_model as tm
 import test_session_theory as ts
-from baselines import DOCS, fenced_lines
+from baselines import composed_refusal
 from invariants import assert_invariants, assert_store_mirrors
 from isabelle_theory_agent import edit, model as M
-from isabelle_theory_agent.exceptions import BadPlacement
-from isabelle_theory_agent.model import NOT_EVALUATED, READY_CLEAN, placement_refusal
+from isabelle_theory_agent.model import NOT_EVALUATED, READY_CLEAN
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
 
 table = ts.table                    # the fake state slot table and the fake wire, per test
-BASELINES = DOCS / "RENDER_BASELINES.md"
+
+CALLS: list[tuple] = []             # every question asked of a stand-in, in order: (receiver, method, argument, depth)
 
 
-class Note(tm.T):
-    placement = M.Placement(within="Theory", through=("Section_Block",))
+class Asked:
+    """What the stand-ins record and answer: `hold`, the remedy the node's
+    `cannot_hold` answers for every descendant; `stand`, the remedies its
+    `cannot_stand_under` answers, by ancestor; None admits."""
+    def __init__(self, *args, **rest):
+        super().__init__(*args, **rest)
+        self.hold, self.stand = None, {}
 
-class Top(tm.T):
-    placement = M.Placement(within="Theory", through=())
+    def cannot_hold(self, descendant, depth):
+        CALLS.append((self, "cannot_hold", descendant, depth))
+        return self.hold
 
-class Section_Block(tm.Block):      # a class of two kinds, nesting in itself
-    placement = M.Placement(within="Theory", through=("Section_Block",))
+    def cannot_stand_under(self, ancestor, depth):
+        CALLS.append((self, "cannot_stand_under", ancestor, depth))
+        return self.stand.get(ancestor)
 
-class Top_Block(tm.Block):
-    placement = M.Placement(within="Theory", through=())
 
-class Inside_Top(tm.T):              # within a class other than `Theory`
-    placement = M.Placement(within="Top_Block", through=())
-
-class Chapter_Block(Section_Block):  # bears `Section_Block` through its base; its own kind is no `through` word
+class Asking_Block(Asked, tm.Block):
     pass
 
-class Aside(tm.T):                   # its classes declared against the table's order
-    placement = M.Placement(within="Theory", through=("Top_Block", "Section_Block"))
+
+class Asking_Leaf(Asked, tm.T):
+    pass
 
 
-KINDS = {**ts.KINDS, "note": Note, "top": Top, "section": Section_Block, "subsection": Section_Block,
-         "top_block": Top_Block, "inside_top": Inside_Top, "chapter": Chapter_Block, "aside": Aside}
+class Asking_Theory(Asked, ts.Fake_Theory):
+    pass
+
+
+KINDS = {**ts.KINDS, "theory": Asking_Theory, "block": Asking_Block, "t": Asking_Leaf, "owl": Asking_Leaf}
 
 
 def insert(f, parent, index, raws):
     return run(locked(f, edit.insert(parent, index, raws)))
 
 
-def node(kind, name, *children, **fields):
-    return {"kind": kind, "name": name, **({"children": list(children)} if children else {}), **fields}
+def node(kind, name, *children):
+    return {"kind": kind, "name": name, **({"children": list(children)} if children else {})}
 
 
-def arith(theory_kind="theory"):
-    """session_Arith > theory_X > section_S > block_B; the forest and the four."""
+def tree():
+    """session_Arith > theory_X > block_B1 > block_B2 > t_n; the forest and the four."""
     f = Forest_Under_Test(kinds=KINDS)
-    (s,) = insert(f, f, 0, [session("Arith", theory("X", kind=theory_kind) | {"children": [
-        node("section", "S", node("block", "B"))]})])
+    (s,) = insert(f, f, 0, [session("Arith", theory("X") | {"children": [
+        node("block", "B1", node("block", "B2", node("t", "n")))]})])
     (x,) = s.sub_nodes
-    (sec,) = x.sub_nodes
-    (b,) = sec.sub_nodes
-    return f, s, x, sec, b
+    (b1,) = x.sub_nodes
+    (b2,) = b1.sub_nodes
+    (n,) = b2.sub_nodes
+    CALLS.clear()
+    return f, x, b1, b2, n
 
 
 def inv(f):
@@ -75,157 +84,153 @@ def inv(f):
     assert_store_mirrors(f, shape=ts.shape)
 
 
-# --- the function and its sentences -----------------------------------------
+# --- the walk ---------------------------------------------------------------
 
-def test_the_sentences_are_render_baselines():
-    """§2's edit-time pair, from real edits, and §3's evaluation pair,
-    verbatim: `{through}` the two kinds of one class, an empty `through`
-    ending at "directly"; ids full.  The kinds of `{through}` come in the
-    kind table's order, whatever order the declaration names its classes."""
-    f, s, x, sec, b = arith()
-    edit_time = fenced_lines(BASELINES, "2.")
-    evaluation = fenced_lines(BASELINES, "3.")
-    for parent, construct in ((s, node("note", "n")), (f, node("top", "t"))):
-        with pytest.raises(BadPlacement) as e:
-            insert(f, parent, 0, [construct])
-        assert e.value._cause() in edit_time
-    for line in (placement_refusal(Note, "note", b), placement_refusal(Top, "top", sec)):
-        assert line in evaluation
-    assert placement_refusal(Aside, "aside", b) == (
-        "A node of kind `aside` cannot stand inside `session_Arith.theory_X.section_S.block_B`, a node of kind"
-        " `block`; it stands inside a node of kind `theory`, directly or under nodes of kind `section`,"
-        " `subsection` or `top_block`.")
-
-
-def test_the_walk_admits_within_through_and_names_the_nearest_blocker():
-    """Admitted at the theory and under any depth of the classes `through`,
-    the class naming itself included, and under a subclass of one;
-    refused at the nearest ancestor of another class — two nested ones,
-    the inner named, also with an admitted node between it and the place;
-    a `within` other than `Theory` admits under its class and names its
-    own kind; the framework's classes declare nothing and are never
-    refused."""
-    f, s, x, sec, b = arith()
-    (sub,) = insert(f, sec, 0, [node("subsection", "T", node("section", "U"))])
-    (u,) = sub.sub_nodes
-    for place in (x, sec, sub, u):
-        assert placement_refusal(Note, "note", place) is None
-    (c,) = insert(f, b, 0, [node("block", "C", node("section", "V"))])
-    (v,) = c.sub_nodes
-    for place in (c, v):
-        refusal = placement_refusal(Note, "note", place)
-        assert refusal is not None and f"inside `{f.full_id(c)}`, a node of kind `block`;" in refusal
-    top_block, chapter = insert(f, x, 0, [node("top_block", "K"), node("chapter", "H")])
-    assert placement_refusal(Note, "note", chapter) is None
-    assert placement_refusal(Inside_Top, "inside_top", top_block) is None
-    assert placement_refusal(Inside_Top, "inside_top", x) == (
-        "A node of kind `inside_top` cannot stand inside `session_Arith.theory_X`, a node of kind `theory`;"
-        " it stands inside a node of kind `top_block`, directly.")
-    assert placement_refusal(Top, "top", sec) is not None and placement_refusal(Top, "top", x) is None
-    assert placement_refusal(M.Theory, "theory", b) is None and placement_refusal(M.Session, "session", x) is None
+def test_the_walk_asks_every_ancestor_in_the_tree_outermost_first_both_sides_with_the_depth():
+    """For `n` under theory > B1 > B2: six questions, the theory's first and
+    its parent's last, at each ancestor the ancestor's `cannot_hold` of `n`
+    then `n`'s `cannot_stand_under` of the ancestor, the depth the distance;
+    for `B2`, four; a theory has no ancestor in its tree, and a session is
+    never asked."""
+    f, x, b1, b2, n = tree()
+    assert n._refusal() is None
+    assert CALLS == [(x, "cannot_hold", n, 3), (n, "cannot_stand_under", x, 3),
+                     (b1, "cannot_hold", n, 2), (n, "cannot_stand_under", b1, 2),
+                     (b2, "cannot_hold", n, 1), (n, "cannot_stand_under", b2, 1)]
+    CALLS.clear()
+    assert b2._refusal() is None
+    assert CALLS == [(x, "cannot_hold", b2, 2), (b2, "cannot_stand_under", x, 2),
+                     (b1, "cannot_hold", b2, 1), (b2, "cannot_stand_under", b1, 1)]
+    CALLS.clear()
+    (s,) = f.sub_nodes
+    assert x._refusal() is None and s._refusal() is None and CALLS == []
 
 
-def test_the_blocker_is_named_by_its_full_id_which_resolves_to_it():
-    """The id in a refusal is the full one: a second `block_B` elsewhere
-    leaves it unchanged, and it resolves to the node named."""
-    f, s, x, sec, b = arith()
-    (other,) = insert(f, x, 1, [node("block", "B")])
-    for blocker in (b, other):
-        full = f.full_id(blocker)
-        assert f.resolve(full) is blocker
-        assert f"inside `{full}`," in placement_refusal(Note, "note", blocker)
-    assert f.full_id(other) == "session_Arith.theory_X.block_B"
-    assert f.full_id(b) == "session_Arith.theory_X.section_S.block_B"
+def test_the_first_refusal_ends_the_check_and_is_told_with_the_head():
+    """The first remedy answered ends the check: nothing below the refusing
+    ancestor is asked, and at that ancestor the container's answer comes
+    before the node's; the message is RENDER_BASELINES §3's form line, the
+    ancestor by its full id.  An outer ancestor's refusal is told before an
+    inner one's; the node's own side refuses under an admitting
+    `cannot_hold`."""
+    f, x, b1, b2, n = tree()
+    b1.hold = "Hold off."
+    assert n._refusal() == composed_refusal("t", f.full_id(b1), "Hold off.")
+    assert CALLS == [(x, "cannot_hold", n, 3), (n, "cannot_stand_under", x, 3), (b1, "cannot_hold", n, 2)]
+    CALLS.clear()
+    n.stand[b1] = "Stand off."                                   # both sides at one ancestor: the container's is told
+    assert n._refusal() == composed_refusal("t", f.full_id(b1), "Hold off.") and len(CALLS) == 3
+    CALLS.clear()
+    b1.hold = None                                               # the node's own side, under an admitting `cannot_hold`
+    assert n._refusal() == composed_refusal("t", f.full_id(b1), "Stand off.")
+    assert CALLS == [(x, "cannot_hold", n, 3), (n, "cannot_stand_under", x, 3),
+                     (b1, "cannot_hold", n, 2), (n, "cannot_stand_under", b1, 2)]
+    CALLS.clear()
+    n.stand.clear()
+    b2.hold, x.hold = "Inner.", "Outer."                         # outermost first
+    assert n._refusal() == composed_refusal("t", f.full_id(x), "Outer.")
+    assert CALLS == [(x, "cannot_hold", n, 3)]
+
+
+def test_the_head_takes_the_kind_s_article():
+    f, x, b1, b2, n = tree()
+    (owl,) = insert(f, b2, 1, [node("owl", "o")])
+    b2.hold = "Hold off."
+    assert owl._refusal() == composed_refusal("owl", f.full_id(b2), "Hold off.")
+    assert owl._refusal().startswith("An `owl` cannot stand under `")
+    assert n._refusal().startswith("A `t` cannot stand under `")
 
 
 # --- at evaluation ----------------------------------------------------------
 
-def test_a_misplaced_leaf_is_refused_at_evaluation_and_a_move_makes_it_pass():
-    """Inside a theory a misplaced node is built and kept; evaluating it
-    gives a `CannotEvaluate` carrying the refusal, the hook never run, its
-    `operation` record carrying the messages (LOGGING.md §4); moved to
-    where its class admits it, it runs."""
-    f, s, x, sec, b = arith("fake_theory")
-    (n,) = insert(f, b, 0, [node("note", "n")])
+def test_a_refused_leaf_is_cannot_evaluate_without_running_and_a_move_makes_it_pass():
+    """A refused node is built and kept; evaluating it gives a `CannotEvaluate`
+    carrying the refusal, the hook never run, its `operation` record carrying
+    the message (LOGGING.md §4); moved where no answer refuses it, it runs."""
+    f, x, b1, b2, n = tree()
+    b2.hold = "Hold off."
     run(x.evaluate_to(None, True))
-    assert n.runs == 0
-    assert isinstance(n._status, M.CannotEvaluate)
-    assert [m.unicode for m in n._status.messages] == [placement_refusal(Note, "note", b)]
-    [record] = [r["data"] for r in stand_ins.records("evaluation") if r["data"].get("node") == f.full_id(n)]
-    assert record["ran"] is False and record["status"] == "cannot_evaluate"
-    assert record["messages"] == [placement_refusal(Note, "note", b)]       # logged though no hook ran
+    expected = composed_refusal("t", f.full_id(b2), "Hold off.")
+    assert n.runs == 0 and isinstance(n._status, M.CannotEvaluate)
+    assert [m.unicode for m in n._status.messages] == [expected]
+    [record] = [r["data"] for r in stand_ins.records("evaluation")
+                if r["data"].get("node") == f.full_id(n) and "ran" in r["data"]]
+    assert record["ran"] is False and record["status"] == "cannot_evaluate" and record["messages"] == [expected]
     inv(f)
-    run(locked(f, edit.move(n, sec, 0)))
+    run(locked(f, edit.move(n, b1, 0)))
     assert n._status is NOT_EVALUATED
     run(x.evaluate_to(None, True))
     assert n.runs == 1 and n._status == READY_CLEAN
     inv(f)
 
 
-def test_a_misplaced_block_is_refused_at_its_beginning_and_its_children_do_not_run():
-    """A misplaced `StdBlock`: its beginning's hook never runs, the status
-    carries the refusal, its children stay `not_evaluated`; moved to the
-    theory's top level, it and its children run."""
-    f, s, x, sec, b = arith("fake_theory")
-    (blk,) = insert(f, sec, 0, [node("top_block", "K", node("t", "inner"))])
-    (inner,) = blk.sub_nodes
+def test_a_refused_block_is_refused_at_its_beginning_and_its_children_do_not_run():
+    """A refused `StdBlock`: its beginning's hook never runs, the status
+    carries the refusal, its children stay `not_evaluated`; moved out of
+    the refusing ancestor, it and its children run."""
+    f, x, b1, b2, n = tree()
+    b1.hold = "Hold off."
     run(x.evaluate_to(None, True))
-    assert blk.begin_runs == 0 and inner.runs == 0
-    assert isinstance(blk.evaluation_status_beginning, M.CannotEvaluate)
-    assert [m.unicode for m in blk.evaluation_status_beginning.messages] == [
-        placement_refusal(Top_Block, "top_block", sec)]
-    assert inner._status is NOT_EVALUATED
+    assert b2.begin_runs == 0 and n.runs == 0
+    assert isinstance(b2.evaluation_status_beginning, M.CannotEvaluate)
+    assert [m.unicode for m in b2.evaluation_status_beginning.messages] == [composed_refusal("block", f.full_id(b1), "Hold off.")]
+    assert n._status is NOT_EVALUATED
     inv(f)
-    run(locked(f, edit.move(blk, x, 0)))
+    run(locked(f, edit.move(b2, x, 0)))
     run(x.evaluate_to(None, True))
-    assert blk.begin_runs == 1 and inner.runs == 1
-    assert blk.evaluation_status_beginning == READY_CLEAN and inner._status == READY_CLEAN
+    assert b2.begin_runs == 1 and n.runs == 1
+    assert b2.evaluation_status_beginning == READY_CLEAN and n._status == READY_CLEAN
+    inv(f)
+
+
+def test_a_theory_s_own_beginning_is_never_refused():
+    """A theory refusing everything below it, and refusing to stand under its
+    session: its beginning runs, its child is refused."""
+    f, x, b1, b2, n = tree()
+    (s,) = f.sub_nodes
+    x.hold, x.stand[s] = "Hold off.", "Stand off."
+    run(x.evaluate_to(None, True))
+    assert x.evaluation_status_beginning == ts.READY and b1.begin_runs == 0
+    assert [m.unicode for m in b1.evaluation_status_beginning.messages] == [composed_refusal("block", f.full_id(x), "Hold off.")]
+    inv(f)
+
+
+# --- at the edit ------------------------------------------------------------
+
+def test_an_insert_a_move_and_an_amend_into_a_refused_place_succeed_at_the_edit_and_are_refused_at_evaluation():
+    """Neither method is asked at the edit: a node inserted, moved or amended
+    into a place an ancestor refuses enters the forest, and each is refused
+    at evaluation, the ancestor named."""
+    f, x, b1, b2, n = tree()
+    b1.hold = "Hold off."
+    (m,) = insert(f, b1, 1, [node("t", "m")])
+    (outside,) = insert(f, x, 1, [node("t", "outside")])
+    run(locked(f, edit.move(outside, b1, 2)))
+    (m2,) = run(locked(f, edit.amend(m, [node("t", "m2")])))
+    assert CALLS == [] and b1.sub_nodes == [b2, m2, outside] and x.sub_nodes == [b1]
+    inv(f)
+    run(x.evaluate_to(None, True))
+    expected = composed_refusal("t", f.full_id(b1), "Hold off.")
+    for refused in (m2, outside):
+        assert refused.runs == 0 and [m_.unicode for m_ in refused._status.messages] == [expected]
+    assert b2.begin_runs == 0 and n._status is NOT_EVALUATED
     inv(f)
 
 
 def test_an_amend_passing_children_on_checks_them_at_their_new_parent():
-    """An amend replacing a block by one of another class passes its
-    children on: a child the new parent's class does not admit is refused
-    at the next evaluation; the other way, a child refused under the old
-    parent runs under the new."""
-    f, s, x, sec, b = arith("fake_theory")
-    (n,) = insert(f, sec, 0, [node("note", "n")])
+    """An amend replacing a block passes its children on: a child the
+    replacement refuses is refused at the next evaluation; the other way, a
+    child refused under the old parent runs under the new."""
+    f, x, b1, b2, n = tree()
     run(x.evaluate_to(None, True))
     assert n.runs == 1
-    (blk,) = run(locked(f, edit.amend(sec, [node("block", "S")])))
-    assert n.parent is blk
+    (c,) = run(locked(f, edit.amend(b2, [node("block", "C")])))
+    assert n.parent is c
+    c.hold = "Hold off."
     run(x.evaluate_to(None, True))
-    assert n.runs == 1 and isinstance(n._status, M.CannotEvaluate)
-    (back,) = run(locked(f, edit.amend(blk, [node("section", "S")])))
+    assert n.runs == 1 and [m.unicode for m in n._status.messages] == [composed_refusal("t", f.full_id(c), "Hold off.")]
+    (back,) = run(locked(f, edit.amend(c, [node("block", "B2")])))
     assert n.parent is back
     run(x.evaluate_to(None, True))
     assert n.runs == 2 and n._status == READY_CLEAN
-    inv(f)
-
-
-# --- at edit time -----------------------------------------------------------
-
-@pytest.mark.parametrize("kind", ["note", "top", "section", "top_block"])
-def test_under_a_session_or_the_root_every_edit_is_refused(kind):
-    """Under an `Unchained_Node`, which no evaluation reaches, an insert,
-    an amend, a move and a session's inline child are refused with
-    `BadPlacement`, the parent's full id and the placement's kinds its
-    fields; the forest is unchanged."""
-    f, s, x, sec, b = arith()
-    words = M.placement_kinds(KINDS[kind].placement, KINDS)
-    construct = node(kind, "n")
-    def refused(parent_id, call, raw_ast_path="constructs[0]"):
-        with pytest.raises(BadPlacement) as e:
-            run(locked(f, call))
-        assert (e.value.kind, e.value.parent_id, e.value.raw_ast_path) == (kind, parent_id, raw_ast_path)
-        assert (e.value.within, e.value.through) == words
-    for parent, parent_id in ((s, "session_Arith"), (f, "Sessions")):
-        refused(parent_id, edit.insert(parent, 0, [construct]))
-    (y,) = insert(f, s, 1, [theory("Y")])
-    refused("session_Arith", edit.amend(y, [construct]))
-    refused("session_Other", edit.insert(f, 1, [session("Other", construct)]), "constructs[0].children[0]")
-    (n,) = insert(f, x, 0, [construct])
-    for parent, parent_id in ((s, "session_Arith"), (f, "Sessions")):
-        refused(parent_id, edit.move(n, parent, 0), None)
-    assert n.parent is x and f.sub_nodes == [s] and s.sub_nodes == [x, y]
     inv(f)

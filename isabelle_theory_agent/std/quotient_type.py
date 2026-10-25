@@ -15,7 +15,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
-from ..model import INDENT, RECALL, Placement, Theory, emit_lines, print_name
+from ..model import INDENT, RECALL, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
     LIFTING_CHILDREN_DESCRIPTION, TYPE_MIXFIX_DEFS, Beginning_Proof_Obligation, Lifting_Closing, Type_Parameter,
@@ -80,7 +80,6 @@ class QuotientType(Beginning_Proof_Obligation, Lifting_Closing):
         "$defs": {**TYPE_MIXFIX_DEFS},
     }
     argument_schema = QuotientType_RawAST
-    placement = Placement(within="Theory", through=())
     evaluation_callback = "TAT.QuotientType.evaluate"
     valid_word, invalid_word = "valid definition", "invalid definition"     # the mark's first slot (§7) ...
     unverified_word = "unverified definition"                               # ... while the proof is owed

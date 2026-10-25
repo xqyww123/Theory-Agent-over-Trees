@@ -25,13 +25,15 @@ recorded-choice bullet; not implemented.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
-this document's: where each class stands (§1), the `english` field and
+this document's: where each class stands, with `Type_Definition`, the
+marker of the four type-defining classes (§1), the `english` field and
 its `text` line (§2), the base of the classes whose command opens a
 proof obligation (§3), the `$defs` several classes merge and the
 configuration option `typedef_overloaded`, which `TAT_Std.TAT_Std` sets
 for every theory of a forest (§4), the conventions their schemas and
-sentences follow (§5), and the block whose ending closes a type's
-Lifting setup, with its hook and its two sentences (§6). Its Python half is
+sentences follow (§5), and `Lifting_Block`, the base of the blocks
+inside which a Lifting setup is open, with `Lifting_Closing` on it, the
+block whose ending closes the setup, its hook and its sentences (§6). Its Python half is
 `isabelle_theory_agent/std/common.py`, its ML halves
 `Isabelle_Std/ML/TAT_Proof_Obligation.ML` (§3), `TAT_Mixfix.ML` (§4),
 and `TAT_Lifting_Closing.ML` (§6). What a class makes of it is that
@@ -39,19 +41,44 @@ class's own document's.
 
 ## 1. Where a class stands
 
-Every class of the plugin stands inside a theory. Between a node and its
-theory may lie only nodes of the classes its `placement` lists, which the
-framework checks (PLUGIN_SYSTEM §2); a class reads its theory as
-`enclosing(Theory)`:
+Every class of the plugin stands inside a theory, which it reads as
+`enclosing(Theory)`. Between a node and its theory may lie only nodes of
+the classes in its row's second cell — each name standing for that class
+and every class deriving from it:
 
 | class | may stand under, inside its theory |
 | --- | --- |
-| `Theorem`, `Define`, `Inductive`, `LiftDefinition`, `LiftingContext` | `Typedef`, `QuotientType`, `LiftingContext`, `Locale` |
-| `Datatype`, `Typedef`, `Record`, `QuotientType` | `Locale` |
+| `Theorem`, `Define`, `Inductive`, `LiftDefinition`, `LiftingContext` | `Section`, `Typedef`, `QuotientType`, `LiftingContext`, `Locale` |
+| `Datatype`, `Typedef`, `Record`, `QuotientType` | `Section`, `Locale` |
 | `Locale` | `Section` |
 
-A test of the plugin holds every class's declaration to this table.
-`Section` joins the other rows when that class is designed.
+Any other place is refused by the placement check, at evaluation
+(PLUGIN_SYSTEM §2): the framework asks, for the node and each ancestor
+in its tree, outermost first, the ancestor's `cannot_hold` and the
+node's `cannot_stand_under`, and the first remedy answered follows the
+head. The answers, each in the class that gives it, with its remedy's
+home:
+
+- `Lifting_Block`'s `cannot_hold` (§6) refuses a `Type_Definition` at
+  any depth with `Move it out.`. `Type_Definition` is a class with no
+  members marking the four type-defining classes: `Datatype` and `Record`
+  list it among their bases, and `Lifting_Closing` does (§6), so `Typedef`
+  and `QuotientType` inherit it.
+- `Lifting_Closing`'s `cannot_hold` (§6), after `Lifting_Block`'s answer,
+  refuses every descendant with §6's sentence while its
+  `refuses_children()` is true.
+- `Locale`'s `cannot_stand_under` (LOCALE.md §6) refuses every ancestor
+  but the theory and a `Section`: a `Lifting_Block` with `Move it out.`
+  and LOCALE.md §6's sentence, any other with `Move it out.`.
+
+`Move it out.` is one constant of common.py, `MOVE_IT_OUT`, whose home
+is here, pinned by the plugin's test (§5):
+
+```
+Move it out.
+```
+
+The plugin's test holds the classes' answers to the table.
 
 ## 2. `english` and the `text` line
 
@@ -925,11 +952,12 @@ names read, under `constants[i].name`: `Define.gen` runs it (DEFINE.md
   noun of its grammar, `InvalidField` after `must be`, the noun of what
   the field must be and a colon (THEOREM.md §4, DATATYPE.md §4).
 - A class's own sentences — its descriptions, its `gen`'s refusals,
+  the remedies its `cannot_hold` and `cannot_stand_under` answer,
   the words of its mark — are in its own document, pinned by the
   baseline tests. Every shared sentence — a shared `$defs`
-  description, a shared refusal sentence — has one home, §4,
+  description, a shared refusal sentence, a shared remedy — has one home, §4,
   THEOREM.md for `STATEMENT_DEFS`'s descriptions (§3) and the sentences
-  of its reader and of the `for_any` check (§4), or §6 for the two sentences of a `Lifting_Closing`
+  of its reader and of the `for_any` check (§4), §1 for `Move it out.`, or §6 for the sentences of a `Lifting_Closing`
   block, and one test pin
   there; a class document lists its own sentences alone and names that
   home for the rest.
@@ -959,14 +987,23 @@ names read, under `constants[i].name`: `Define.gen` runs it (DEFINE.md
   `Define`'s `pat_completeness auto` and `lexicographic_order` — is no
   such choice: it runs at every evaluation.
 
-## 6. `Lifting_Closing`
+## 6. `Lifting_Block` and `Lifting_Closing`
+
+`Lifting_Block` is the plugin's `StdBlock` inside which a Lifting setup
+is open: `Lifting_Closing`, below, and `LiftingContext`
+(LIFTING_CONTEXT.md) derive from it. It answers the children header
+below, and its `cannot_hold` refuses a `Type_Definition` (§1) at any
+depth with `Move it out.` (§1); a `Locale` refuses to stand in it
+(LOCALE.md §6).
 
 `Lifting_Closing` is the plugin's `StdBlock` whose ending closes the
 Lifting setup its beginning made: the base of a block whose beginning,
 whenever it is `Ready`, has defined a type and, as a rule, made its
 Lifting setup, the bundle `t.lifting` with it — `QuotientType`, always
 (QUOTIENT_TYPE.md); `Typedef`, when `setup_lifting` was accepted
-(TYPEDEF.md §6). `t` is the node's `name`, the type's name. The ending
+(TYPEDEF.md §6). It derives from `Lifting_Block` and `Type_Definition`
+(§1): a class on it is a type definition. `t` is the node's `name`, the
+type's name. The ending
 is the two commands `lifting_update t.lifting` and `lifting_forget
 t.lifting`, Isabelle's own discipline for a type whose construction is
 finished (HOL's `Multiset.thy`, `FSet.thy` and `Dlist.thy` do so):
@@ -990,15 +1027,13 @@ answers false exactly when its recorded `lifting` is false (TYPEDEF.md
 §6). While `is_lifting_setup_made()` answers false the block refuses
 children, and its ending runs nothing and writes nothing (the
 evaluation and the emission, below). It refuses them through the
-framework's `children_refusal()` (MODULE_STRUCTURE §4.1), which the
-base answers with the sentence below while `is_lifting_setup_made()`
-answers false, and with `None` otherwise: the framework refuses a node
-placed inside the block at the edit, as `ChildRefused`, refuses a child
-the block holds already at that child's first own operation, as its
-`CannotEvaluate`, and
-prints no empty node's line under the block (PLUGIN_SYSTEM §2;
-RENDER_BASELINES §2, §3; PRINT.md §2). The sentence, a constant of
-common.py pinned by the plugin's test (§5):
+placement check (MODULE_STRUCTURE §4.1): its `refuses_children()`
+answers true then, and its `cannot_hold`, after `Lifting_Block`'s
+answer, refuses every descendant with the sentence below, so a child the
+block holds is refused at its first own operation, its `CannotEvaluate`
+the head with the sentence (PLUGIN_SYSTEM §2; RENDER_BASELINES §3), and
+no empty node's line is printed under the block (PRINT.md §2). The
+sentence, a constant of common.py pinned by the plugin's test (§5):
 
 ```
 For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
@@ -1015,9 +1050,9 @@ lift_definitions and lemmas whose proofs transfer the defined type to its repres
 A block on the base writes no keyed field (TYPEDEF.md §8,
 QUOTIENT_TYPE.md §8), so its children follow its line directly unless a
 message block or a failure block with its colon stands above them, when
-the framework writes them one level deeper under the children header the
-base answers (PRINT.md §2), `lifting context`, a constant of common.py
-which `LiftingContext` answers too (LIFTING_CONTEXT.md §8):
+the framework writes them one level deeper under the children header
+`Lifting_Block` answers (PRINT.md §2), `lifting context`, a constant of
+common.py (LIFTING_CONTEXT.md §8):
 
 ```
 lifting context:

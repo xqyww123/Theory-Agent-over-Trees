@@ -27,6 +27,11 @@ Cannot delete theory_X.section_Basics
 
 ## 2. Cause lines
 
+The indefinite article before a kind in backquotes is computed from the
+kind, in every sentence of this document that has one
+(`exceptions.a_kind`): `an` when the kind starts with a vowel letter, `a`
+otherwise — ``A `lemma` …``, ``An `inductive` …``.
+
 `NodeNotFound` — when there are no near matches, only the first sentence
 renders:
 
@@ -58,6 +63,7 @@ Unknown kind `lemna`. Available kinds: `lemma`, `theorem`, `corollary`, `proposi
 
 ```
 A `lemma` needs the field `statement`.
+An `inductive` needs the field `name`.
 The `edit` tool needs the argument `evaluate`.
 ```
 
@@ -195,42 +201,20 @@ When amending a non-leaf node, `children` is not allowed: the amended node inher
 `theory_X.section_Basics` has 1 child, which a `lemma` cannot hold. Move or delete it first.
 ```
 
-`Bad<Class>NodeParent` — one sentence per judgement of where a node of a
-framework class may live (EXCEPTIONS.md §3).
-
-`Session`'s `BadSessionNodeParent`:
-
-```
-A `session` cannot be placed under `theory_X`; a session lives directly under `Sessions`.
-```
-
-`Theory`'s `BadTheoryNodeParent`:
+`BadNodeParent` — the forest's shape, checked at the edit (ARCHITECTURE
+§2; EXCEPTIONS.md §3): the head, naming the node's kind and the parent by
+its full id, then the remedy as a sentence of its own. The framework's
+`BadNodeParent`, for a node of any class but `Session` and `Theory` under
+the root or a session; `Theory`'s `BadTheoryNodeParent`; `Session`'s
+`BadSessionNodeParent`:
 
 ```
-A `theory` cannot be placed under `section_Basics`; a theory lives directly under a session.
-```
-
-`BadPlacement`, a plugin's node placed under a `Session` or the forest
-root, composed by the framework from the class's `placement`
-(PLUGIN_SYSTEM §2): the parent's full id, the kind of the class it
-stands within, and the kinds of the classes allowed between, in registry
-order; with none allowed, the sentence ends at "directly". Here a class
-standing within `Theory` through a class of the kinds `section` and
-`subsection`, and one standing directly in a theory:
-
-```
-A node of kind `note` cannot be placed under `session_Arith`; it stands inside a node of kind `theory`, directly or under nodes of kind `section` or `subsection`.
-A node of kind `top` cannot be placed under `Sessions`; it stands inside a node of kind `theory`, directly.
-```
-
-`ChildRefused`, a node placed under a nesting node that refuses children
-now (MODULE_STRUCTURE §4.1), composed by the framework from the parent's
-full id and the sentence the parent's class answers, a sentence of its
-own after a period — here `Lifting_Closing`'s, for a subtype whose
-lifting could not be set up (node_classes/COMMON.md §6):
-
-```
-A node of kind `lift_definition` cannot be placed under `session_S.theory_T.typedef_fm`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
+A `lemma` cannot stand under `Sessions`. Put it in a theory.
+A `lemma` cannot stand under `session_Arith`. Put it in a theory.
+A `theory` cannot stand under `Sessions`. Put it in a session.
+A `theory` cannot stand under `session_Arith.theory_X.section_Basics`. Put it in a session.
+A `session` cannot stand under `session_Arith`. Put it under `Sessions`.
+A `session` cannot stand under `session_Arith.theory_X`. Put it under `Sessions`.
 ```
 
 `MoveIntoOwnSubtree`:
@@ -305,25 +289,16 @@ EVALUATOR_DESIGN §7), named as Isabelle resolved it:
 Fail to load `TAT_Nowhere.Nope` because it is not found.
 ```
 
-A plugin's node standing inside a theory where its class's `placement`
-does not admit it (PLUGIN_SYSTEM §2): its operation's `CannotEvaluate`,
-the hook never run, composed by the framework as `BadPlacement`'s
-sentence is, naming the nearest ancestor not allowed by its full id and
-its kind. The two classes of §2's example:
+A node the placement check refuses (PLUGIN_SYSTEM §2): its first own
+operation's `CannotEvaluate`, the hook never run. The framework writes
+the head — the node's kind with its article, and the ancestor it cannot
+stand under, by its full id — and the remedy after it is the answer of
+that ancestor's class or of the node's own, approved and pinned in that
+class's document; a test composes the full line from this form and the
+remedy's home:
 
 ```
-A node of kind `note` cannot stand inside `session_Arith.theory_X.section_S.block_B`, a node of kind `block`; it stands inside a node of kind `theory`, directly or under nodes of kind `section` or `subsection`.
-A node of kind `top` cannot stand inside `session_Arith.theory_X.section_S`, a node of kind `section`; it stands inside a node of kind `theory`, directly.
-```
-
-A node under a nesting node that refuses children now
-(MODULE_STRUCTURE §4.1): its first own operation's `CannotEvaluate`,
-the hook never run, composed by the framework as `ChildRefused`'s
-sentence is, in the form of the placement refusal above — the parent's
-full id and its kind, then the parent's sentence:
-
-```
-A node of kind `lift_definition` cannot stand inside `session_S.theory_T.typedef_fm`, a node of kind `typedef`. For technical reasons, this subtype does not support lifting; you cannot use the transfer tactic or lift_definitions on this type.
+<A|An> `<node's kind>` cannot stand under `<ancestor's full id>`. <remedy>
 ```
 
 ## 4. Server text

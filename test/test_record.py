@@ -16,7 +16,7 @@ import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from Isabelle_RPC_Host.unicode import IsaTerm
 from isabelle_theory_agent import edit, isabelle_driver, model as M
-from isabelle_theory_agent.exceptions import BadPlacement, DuplicateName, InvalidField, InvalidName, RawASTError
+from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.std import common, record
 from isabelle_theory_agent.std.common import Type_Parameter
 from isabelle_theory_agent.std.record import Field, Record
@@ -100,16 +100,12 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the place first (the framework's `BadPlacement`, pinned
-    for every class by test_common.py); a type name outside §1's grammar
+    """§4's refusals: a type name outside §1's grammar
     (RENDER_BASELINES §2's line); the type parameters and their use by the
     shared checks, COMMON §4's sentences pinned by test_common.py; the
     fields, the two sentences of §4's block; an empty `fields` by the
     framework."""
     f, x = forest()
-    (s,) = f.sub_nodes
-    e = refused(f, s, [definition("my-list")], BadPlacement)
-    assert (e.kind, e.parent_id, e.raw_ast_path) == ("record", "session_Arith", "constructs[0]")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition("my-list")], InvalidName)

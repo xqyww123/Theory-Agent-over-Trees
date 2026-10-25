@@ -46,11 +46,10 @@ locale applied to the parameters the axioms mention, `bounded n`, which
 holds exactly when the axioms do.
 
 The declaration runs only at the top level of a theory: the node
-stands in its `Theory`, directly or under a `Section`, and its class's
-`placement` says so, `Placement(within="Theory", through=("Section",))`
-(PLUGIN_SYSTEM §2; this plugin's table, COMMON.md §1). What stands
-inside the block: a node whose class's `placement` names `Locale` in
-its `through`; no `Locale`. Inside the block Isabelle is in the
+stands in its `Theory`, directly or under a `Section`, and its
+`cannot_stand_under` refuses every other place (§6; PLUGIN_SYSTEM §2;
+this plugin's table, COMMON.md §1); nothing but a `Locale` is refused
+inside it. Inside the block Isabelle is in the
 locale's local theory, and a fact a child declares is qualified by the
 locale, `idempotent_semigroup.idem_twice`, and is referred to so
 outside the block (§6). The class opens no proof obligation and has
@@ -503,6 +502,18 @@ end
   in jEdit all the same.
 
 ## 6. Evaluation
+
+Before the beginning runs, the placement check asks the node's
+`cannot_stand_under` (PLUGIN_SYSTEM §2): it refuses every ancestor in
+its tree but the theory and a `Section` (COMMON.md §1) — a
+`Lifting_Block` (COMMON.md §6) with `Move it out.` (COMMON.md §1)
+followed by the sentence below; any other ancestor with `Move it out.`
+alone. The
+sentence, a constant of locale.py pinned by the class's test:
+
+```
+Reopen a `lifting_context` within the locale if you need it.
+```
 
 The beginning declares the locale and opens its block; the ending
 closes the block; neither runs a proof (ARCHITECTURE §3.6). Both go

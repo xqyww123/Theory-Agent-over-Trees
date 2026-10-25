@@ -243,31 +243,20 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          replaced node has children and the
 │  │                          replacement class is a Leaf. Raised before
 │  │                          any gen runs                        [framework]
-│  ├─ Bad<Class>NodeParent    kind, parent_id — the class cannot live under
-│  │                          that parent: BadSessionNodeParent and
-│  │                          BadTheoryNodeParent, raised in Session's and
-│  │                          Theory's gen and on_moving (Session's gen
-│  │                          refuses every parent but the forest root)
-│  │                                                        [Session, Theory]
-│  ├─ BadPlacement            kind, parent_id, within, through — a
-│  │                          plugin's node placed under a Session or the
-│  │                          forest root, where no placement admits it
-│  │                          (PLUGIN_SYSTEM §2), at an insert, an amend
-│  │                          and a move; within and through are the
-│  │                          kinds of the classes the placement names,
-│  │                          and the sentence's second half is also the
-│  │                          refusal's at evaluation
-│  │                          (RENDER_BASELINES §2, §3)           [framework]
-│  ├─ ChildRefused            kind, parent_id, reason — a node placed
-│  │                          under a nesting node that refuses children
-│  │                          now, its `children_refusal()` answering
-│  │                          `reason` (MODULE_STRUCTURE §4.1), at an
-│  │                          insert, an amend and a move, raised by the
-│  │                          framework just before the parent's
-│  │                          `on_adding_child`; `reason` is a sentence
-│  │                          of the parent's class, and the refusal at
-│  │                          evaluation carries it too
-│  │                          (RENDER_BASELINES §2, §3)           [framework]
+│  ├─ BadNodeParent           kind, parent_id, remedy — the forest's
+│  │  │                       shape, at the edit (MODULE_STRUCTURE §4.2):
+│  │  │                       a node of any class but Session and Theory
+│  │  │                       placed under the forest root or a Session,
+│  │  │                       where no evaluation reaches it, at an
+│  │  │                       insert, an amend and a move; parent_id a
+│  │  │                       full id, remedy the sentence after the head
+│  │  │                       (RENDER_BASELINES §2)               [framework]
+│  │  ├─ BadSessionNodeParent  kind, parent_id — the remedy fixed; raised
+│  │  │                       in Session's gen and on_moving for every
+│  │  │                       parent but the forest root          [Session]
+│  │  └─ BadTheoryNodeParent   kind, parent_id — the remedy fixed; raised
+│  │                          in Theory's gen and on_moving for every
+│  │                          parent but a Session                 [Theory]
 │  ├─ MoveIntoOwnSubtree      id, destination — the move would make the
 │  │                          node its own ancestor               [framework]
 │  ├─ MoveBesideItself        id — the move is `before` or `after` the

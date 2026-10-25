@@ -40,6 +40,9 @@ language. A concept that needs a name gets one here first.
 | **construct** | what the agent submits to become a node: a JSON object whose `kind` names the node class and whose other fields are the class's own (TOOL_SCHEMAS.md); in the code it is a `RawAST` |
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
 | **anchor** | the node a Location is relative to: `edit`'s `target_id` under `append`, `insert_before` and `insert_after`, `move`'s `location.node_id` (TOOL_SCHEMAS.md) |
+| **placement check** | the framework's question, for a node and each of its ancestors in its tree, outermost first, of the ancestor's `cannot_hold` and the node's `cannot_stand_under`, at evaluation, before the node's first own operation; the first answer is the refusal (PLUGIN_SYSTEM §2) |
+| **remedy** | the sentences after the head saying what the agent does instead or may not do: a class's answer to the placement check, pinned in the class's own document, or one of the forest's shape's three, whose home is RENDER_BASELINES §2 |
+| **head** | the sentence the framework writes before a remedy: the node's kind with its article, and the ancestor it cannot stand under, by its full id — the parent, for the forest's shape (RENDER_BASELINES §2, §3) |
 | **print mode** | what a rendering is looking at: one of `Out_Focus`, `Briefing`, `Relative_Focus`, `Recall` (PRINT.md) |
 | **focus** | under `Relative_Focus`, a node the quickview prints detailed: one a tool call was about, or one within the call's depth under it; the quickview expands the path from the root to them (PRINT.md §2, §5) |
 | **mark** | the words in parentheses on a node's line that say its state — the framework's `complete`, `failed`, `not evaluated`, `incomplete`, or a class's own; no line is bare (PRINT.md §1) |
@@ -77,7 +80,11 @@ tree's root sits under exactly one `Session`, an Isabelle session under
 construction (§2.2). Import dependency between trees makes the forest a
 dependency graph, and compilation order is a topological order over it;
 imports cross `Session` boundaries freely. The `Session` layer is ordered
-like every other; Isabelle reads no meaning into that order.
+like every other; Isabelle reads no meaning into that order. The forest's
+shape — the root `Sessions` holds sessions, a session holds theories,
+every other node stands inside a theory — is checked by the framework at
+the edit (MODULE_STRUCTURE §4.2); where a node stands inside its theory
+is the placement check's, at evaluation (§3.3; PLUGIN_SYSTEM §2).
 
 The node classes: `Session` and `Theory`, the framework's, and those of
 the plugin `Isabelle_Std`, listed in
@@ -230,7 +237,7 @@ its beginning and its ending, and so two statuses.
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
 | `ready` | the operation ran and its resulting slot is current |
-| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the node standing where its class's placement does not admit it (PLUGIN_SYSTEM §2) or under a node that refuses children (MODULE_STRUCTURE §4.1): the node is an obstacle (§3.3) |
+| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the placement check refusing the node (PLUGIN_SYSTEM §2): the node is an obstacle (§3.3) |
 
 Every operation has a second field beside `evaluation_status`, its
 **stored status** `last_evaluation_status`: the value `evaluation_status`
@@ -303,11 +310,9 @@ nesting node whose ending command failed is one too: a `Theory` whose `end`
 failed has no theory value. Such a node **stops** evaluation: everything after
 it in the tree is `not_evaluated`.
 
-A node standing where its class's placement does not admit it
-(PLUGIN_SYSTEM §2), or under a nesting node that refuses children
-(`children_refusal()`, MODULE_STRUCTURE §4.1), is an obstacle too: its
-first own operation is
-`cannot_evaluate` without running — a leaf's one operation, the leaf
+A node the placement check refuses (PLUGIN_SYSTEM §2) is an obstacle
+too: its first own operation is
+`cannot_evaluate` without running, its message the refusal — a leaf's one operation, the leaf
 then an obstacle like any; a nesting node's beginning, the node then
 handled as one whose beginning command failed (below) — and a move or
 an amend that invalidates it has it checked again at its new place.
@@ -453,11 +458,11 @@ never interleave:
   stands for all the trees under it, and the root for every tree: the
   forest schedules each of them, to its `end`, through the same graph.
 - A **nesting node** runs its beginning command if it is not evaluated and
-  neither its placement nor its parent refuses it (§3.3). If that
+  the placement check does not refuse it (§3.3). If that
   command succeeded, now or earlier, it calls its children in order up to
   the one that contains the destination, what follows being invalidated
   past the destination (§3.4);
-  if it failed, or its placement or its parent refused it, it
+  if it failed, or the placement check refused it, it
   invalidates each of them whole instead of running them (§3.3): when
   the destination lies under it the walk ends there, the node is the
   stop the call reports when `ignore_error` is unset, and
@@ -467,7 +472,7 @@ never interleave:
   command: it is the destination only once its children have run, so naming a
   `Theory` means the whole tree, `end` included.
 - A **leaf** runs its commands if it is not evaluated or the walk rewrote the
-  state before it, and neither its placement nor its parent refuses it (§3.3);
+  state before it, and the placement check does not refuse it (§3.3);
   otherwise it runs nothing.
 
 The recursion visits every node up to the destination, or up to the

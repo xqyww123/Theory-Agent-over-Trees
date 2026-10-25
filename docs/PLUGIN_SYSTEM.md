@@ -105,7 +105,6 @@ Besides its hooks a class declares, as class attributes:
 | `output_omissible`, `input_omissible`, `drop_priority` | the id properties of MCP_SPECIFICATION §2.1; compulsory in both directions and priority 0 by default, so an omissible class declares them and a leaf declares none |
 | `namespace`, optional | the forest-wide namespace the node's name lives in, which the framework checks against the forest and the call (MODULE_STRUCTURE §4.2), and the `BadEdit` to raise when the name is taken — `Theory`'s short names, `DuplicateTheoryShortName` |
 | `construction_job_class`, `evaluation_job_class`, optional | the class's job classes, `None` by default: the `Construction_Job` subclass `construct` starts on the node, the `Evaluation_Job` subclass an evaluation starts on it (CONSTRUCT_INTERACTION §3) |
-| `placement` | where a node of the class may stand: `Placement(within=..., through=(...))`, class names — inside a node of class `within`, directly or under nodes of the classes `through` alone. A name matches a node whose class, or one of its base classes, bears it, and may name the class itself or another plugin's class. The framework checks it, where the place takes effect: under a `Session` or the forest root at the edit, refused with `BadPlacement` (EXCEPTIONS.md §3); inside a theory at evaluation, before the node's first own operation, whose status becomes a `CannotEvaluate` carrying the refusal, the hook not called (RENDER_BASELINES §2, §3). Required of a plugin's class (§5); the framework's declare none. Beside it a nesting node may refuse children by what its beginning recorded, answering `children_refusal()` (MODULE_STRUCTURE §4.1), which the framework honours at the edit, as `ChildRefused`, at the first own operation of a child the node holds already, as that child's `CannotEvaluate`, and in print |
 | `job_operation`, optional | the operation that writes what the node's jobs read, named as `_operation_names()` names it — `None` for a `Leaf`'s one operation, `"beginning"` or `"ending"` for a `StdBlock`'s; the jobs depend on it and on every own operation before it (CONSTRUCT_INTERACTION §3.1). The base's default is its last operation, so a class that declares nothing has jobs depending on every operation; a `StdBlock` class whose jobs read what its beginning wrote declares `"beginning"`, as the plugin's `Beginning_Proof_Obligation` does (node_classes/COMMON.md §3) |
 
 The two schemas describe one thing twice, for two readers — the agent and
@@ -113,6 +112,31 @@ the type checker — and the loader holds them to each other (§5). Isabelle
 text among a class's fields is typed `IsaTerm` (MODULE_STRUCTURE §4.3),
 which `gen` builds with `IsaTerm.from_agent` from the submitted
 string.
+
+Where a node of the class may stand inside its theory is answered by
+two methods a class overrides, each from its own side: a container's
+`cannot_hold(descendant, depth)` and a node's
+`cannot_stand_under(ancestor, depth)`, `depth` the number of steps
+between the two, 1 for a parent and its child. Each answers the remedy —
+sentences of the class's own, approved and pinned in its document,
+saying what the agent does instead or may not do — or `None`, the
+default, which admits. The placement check asks both for a node and
+every ancestor in its tree, outermost first, at evaluation alone, before
+the node's first own operation, and never with a class: the first answer
+is the operation's `CannotEvaluate`, the hook not called, its message the
+head the framework writes — the kind with its article, the ancestor it
+cannot stand under by its full id — and the remedy after it (RENDER_BASELINES §3;
+MODULE_STRUCTURE §4.1). Both methods are synchronous and read only what
+cannot change without the node being invalidated: the classes, the
+kinds, the authored fields, the ancestor's full id and what its beginning
+recorded. A nesting class that takes no child by what its beginning
+recorded answers `refuses_children()`, `False` by default, which its own
+`cannot_hold` reads and the empty node's line reads too (PRINT.md §2) —
+`Lifting_Closing` while its setup is not made (node_classes/COMMON.md
+§6). The framework's classes answer nothing: the forest's shape — the
+root holds sessions, a session holds theories, every other node stands
+inside a theory — is the framework's own, checked at the edit
+(MODULE_STRUCTURE §4.2; EXCEPTIONS.md §3).
 
 A class sets `name` in its `gen` to the name the agent supplied, or to
 one computed from its fields (a `Datatype`'s, DATATYPE.md §2); the
@@ -167,8 +191,9 @@ class Theorem(Proof_Obligation, Leaf):
   `Session`'s `{"type": "array", "items": {"$ref": "#/$defs/Theory"}}`.
   One that does not declare it takes contents only through later `edit`
   calls — a `children` in its construct is refused. A narrower `items`
-  describes where a node may stand, which `Session` and `Theory` check
-  themselves and a plugin's class declares as its `placement` (§2). A
+  only describes where a node may stand: a node is refused by the forest's
+  shape, which the framework checks at the edit, or by the placement
+  check, at evaluation (§2). A
   leaf class declares no `children`.
 - Shared structures go in the class's own `$defs`, each key a Python
   identifier, and are used through `$ref`; a `$ref` under the top-level
@@ -255,9 +280,9 @@ registration, per class:
   `Proof_Obligation` bare on a block, whose `job_operation` is `None`,
   is refused, and so is `Beginning_Proof_Obligation` on a leaf;
 - a plugin's class — every class but the framework's `Session` and
-  `Theory` — carries a `Placement` (§2), its own or inherited, does not
-  derive from `Unchained_Node`, and does not override `_evaluate`, so
-  no class skips the placement check;
+  `Theory` — does not derive from `Unchained_Node` and does not override
+  `_evaluate`, so no node of a plugin's class skips `_placed`
+  (MODULE_STRUCTURE §4.1);
 - the class does not override `is_finished` — `_unfinished` is the
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
   `job_operation_status` nor
@@ -273,7 +298,8 @@ registration, per class:
   overrides is — the framework's, or one of the plugin's own base
   classes: `print_fields`, `children_header`, `owing_line` and `mark` are plain, as rendering is
   synchronous (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning`
-  and `emit_ending`; the evaluation hooks are coroutines;
+  and `emit_ending`, and `cannot_hold`, `cannot_stand_under` and
+  `refuses_children` (§2); the evaluation hooks are coroutines;
 - the class defines neither `__eq__` nor `__hash__`: a node is equal to,
   and hashed as, itself alone, since nodes live in sets (PRINT.md §2);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's
@@ -316,9 +342,7 @@ registration, per class:
   its order (MODULE_STRUCTURE §4.4). So what a construct schema says of
   the class's own fields — which the check enforces — is what `gen`'s
   `raw` holds. Which classes a `children` property's `items` admit
-  describes where a node may stand; what is checked is `Session`'s and
-  `Theory`'s `Bad<Class>NodeParent` and a plugin class's `placement`
-  (§2; MODULE_STRUCTURE §4.2).
+  only describes where a node may stand (§3).
 
 At assembly, once every class is known:
 
@@ -329,10 +353,6 @@ At assembly, once every class is known:
   name;
 - two classes defining the same `$defs` name define it equally (`dict`
   equality); otherwise the error names both classes and the name;
-- every name of a class's `placement` names a class of the
-  conversation, and `within` names neither an `Unchained_Node` class nor
-  a class answering to several kinds; a class naming another plugin's
-  class is loadable only together with that plugin;
 - the assembled `edit` schema is itself well-formed.
 
 TAT's test suite validates the assembled schema again, with `jsonschema`,

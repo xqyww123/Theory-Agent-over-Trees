@@ -10,7 +10,8 @@ named fields — by its name, its type parameters, its fields and, when
 it extends one, its parent record. It opens no proof obligation
 (INDEX.md): its evaluation runs the command and nothing more, and the
 node is finished when it is `ready`. It is a `Leaf` of the plugin
-`Isabelle_Std` — `class Record(Leaf)`. Its Python half is
+`Isabelle_Std` and a `Type_Definition` (COMMON.md §1) — `class
+Record(Leaf, Type_Definition)`. Its Python half is
 `isabelle_theory_agent/std/record.py`, its ML half
 `Isabelle_Std/ML/TAT_Record.ML`. Its agent-facing wording lives here —
 the `description` texts of its construct schema (§3), the sentences its

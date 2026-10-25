@@ -15,9 +15,9 @@ from typing import Annotated, Literal, TypedDict
 from Isabelle_RPC_Host.unicode import IsaTerm
 
 from .. import isabelle_driver
-from ..model import INDENT, NON_EMPTY, RECALL, Placement, StdBlock, emit_lines, status_of_errors
+from ..model import INDENT, NON_EMPTY, RECALL, emit_lines, status_of_errors
 from ..plugin import TAT_node
-from .common import LIFTING_CHILDREN_HEADER, dotted_name_of, lifting_closing_text
+from .common import Lifting_Block, dotted_name_of, lifting_closing_text
 
 KINDS = ("lifting_context",)
 
@@ -39,7 +39,7 @@ def type_names_of(raw: list[str]) -> tuple[IsaTerm, ...]:
 
 
 @TAT_node
-class LiftingContext(StdBlock):
+class LiftingContext(Lifting_Block):
     construct_schema = {
         "type": "object",
         "description": "opens the Lifting setup of one or more subtypes (by `typedef`) or quotient types (such as fset)"
@@ -59,7 +59,6 @@ class LiftingContext(StdBlock):
         "additionalProperties": False,
     }
     argument_schema = LiftingContext_RawAST
-    placement = Placement(within="Theory", through=("Typedef", "QuotientType", "LiftingContext"))
     output_omissible = input_omissible = True
     drop_priority = 1                       # after `Section`'s, with `Session`'s, before `Theory`'s (§9)
 
@@ -137,10 +136,6 @@ class LiftingContext(StdBlock):
         if mode is RECALL and depth <= 2:
             out.write(INDENT * indent + self._beginning_text() + "\n")
         return False
-
-    def children_header(self):
-        """§8: `Lifting_Closing`'s phrase (COMMON.md §6)."""
-        return LIFTING_CHILDREN_HEADER
 
     def emit_beginning(self, indent, out):
         """§5: the command; one empty line when the block has children — the
