@@ -1,5 +1,5 @@
 """`Locale` (node_classes/LOCALE.md): with no Isabelle, the schema and the
-descriptions (§2, §3), `gen`'s checks and refusals (§4), the fields as the
+descriptions (§2, §3), `gen` and the field check (§4), the fields as the
 node holds, stores and prints them (§1, §8), the emitted text (§5), the
 beginning's call with its records and its messages, the ending's call
 (§6), the children header (§8).  The Isabelle-backed cases come with
@@ -12,6 +12,7 @@ import json
 import sys
 
 import jsoncomment
+import pytest
 
 import stand_ins
 import test_session_theory as ts
@@ -24,7 +25,8 @@ from isabelle_theory_agent.std import common, locale, statement
 from isabelle_theory_agent.std.common import Infix, Instantiation, Locale_Instance, NoSyntax, Variable_With_Syntax
 from isabelle_theory_agent.std.locale import Axiom, Locale, cancellation_sentence, proposition_text
 from isabelle_theory_agent.store import Forest_Store
-from std_forest import KINDS as STD_KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
+from std_forest import (
+    KINDS as STD_KINDS, assert_a_missing_row_is_refused_at_start, field_check, forest, insert, inv, refused, reloaded)
 from test_descriptions import descriptions
 from test_model import run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -41,6 +43,7 @@ LD = DOCS / "node_classes" / "LOCALE.md"
 RB = DOCS / "RENDER_BASELINES.md"
 IDEMPOTENT, COMMUTATIVE = (json.loads("\n".join(b)) for b in fenced_blocks(LD, "2.")[:2])     # §2's two constructs
 (IDEM_TWICE,) = IDEMPOTENT["children"]
+[IDENTIFIER, REPEATS_F, AXIOM_IDENTIFIER, REPEATS_IDEM, CLASH, BLANK] = fenced_blocks(LD, "4.")[0]     # §4's six sentences
 ROWS = ("english", "name", "imports", "fixes", "assumes", "implicit_structure", "annotations", "parenthesised_conclusions")
 G = IsaTerm.from_agent("G")
 OTIMES = Infix("infix", IsaTerm.from_agent("⊗"), 70)       # an annotation as a beginning records it: the fake wire's answer
@@ -114,54 +117,18 @@ def test_gen_keeps_the_fields_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals in its order: the name (`InvalidName`, the locale name's
-    grammar, RENDER_BASELINES §2's line); an import by `Locale_Instance`'s
-    reader; a parameter's name, a repeat; an axiom's name, a repeat, its
-    statement by the shared reader under `assumes[i].statement`; a
-    `for_any` variable that is a parameter; a blank implicit structure;
-    the framework's: a missing field, a value of another type, a recorded
-    field authored, a sibling of the same name."""
+    """§4's `gen` refuses only the name outside the locale name's grammar
+    (`InvalidName`, RENDER_BASELINES §2's line), before any field is
+    judged; the framework's: a missing field, a value of another type, a
+    recorded field authored, a sibling of the same name."""
     f, x = forest(COMMUTATIVE, kinds=KINDS)
-    [identifier, repeats_f, axiom_identifier, repeats_idem, clash, blank] = fenced_blocks(LD, "4.")[0]
     [invalid] = [line for line in fenced_lines(RB, "2.") if line.startswith("`idempotent-semigroup` is not a valid locale")]
     e = refused(f, x, [bounded(name="idempotent-semigroup")], InvalidName)
     assert (e.name, e.grammar) == ("idempotent-semigroup", "locale name") and invalid in str(e)
     for name in ("bounded_", "Bounded-1", "1st", "x y", "a.b", "ε", ""):
         assert refused(f, x, [bounded(name=name)], InvalidName).grammar == "locale name", name
-    e = refused(f, x, [bounded(imports=[{"locale": "semi-group", "instantiations": []}])], InvalidField)
-    assert e.field == "imports[0].locale" and str(e).startswith("At `constructs[0]`: The field `imports[0].locale` must be a locale's name")
-    e = refused(f, x, [bounded(imports=[{"locale": "s", "instantiations": []},
-                                        {"locale": "t", "instantiations": [{"name": "f", "term": "f"}, {"name": "f", "term": "g"}]}])],
-                InvalidField)
-    assert str(e) == "At `constructs[0]`: The field `imports[1].instantiations[1].name` repeats `f`."
-    e = refused(f, x, [bounded(fixes=[{"name": "f"}, {"name": "1g"}])], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier
-    for name in ("f_", "x y", "a.b", "", "h\\<nat>"):
-        assert refused(f, x, [bounded(fixes=[{"name": "f"}, {"name": name}])], InvalidField).field == "fixes[1].name", name
-    assert str(refused(f, x, [bounded(fixes=[{"name": "f"}, {"name": " f "}])], InvalidField)) == "At `constructs[0]`: " + repeats_f
-    (ax,) = bounded()["assumes"]
-    e = refused(f, x, [bounded(assumes=[ax, {"name": "1x", "statement": ax["statement"]}])], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + axiom_identifier
-    (p_,) = insert(f, x, 1, [bounded(name="pos_locale", assumes=[ax, {"name": "pos_", "statement": ax["statement"]}])])
-    assert p_.assumes[1].name == IsaTerm.from_agent("pos_")          # a fact's name may end with an underscore (COMMON §5)
-    e = refused(f, x, [bounded(assumes=[{**ax, "name": "idem"}, {**ax, "name": "idem"}])], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + repeats_idem
-    e = refused(f, x, [bounded(assumes=[{**ax, "statement": {**ax["statement"], "for_any": [{"name": "1x"}]}}])], InvalidField)
-    assert e.field == "assumes[0].statement.for_any[0].name" and "must be an Isabelle identifier" in str(e)
-    e = refused(f, x, [bounded(assumes=[{**ax, "statement": {**ax["statement"], "for_any": [{"name": "n"}]}}])], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + clash
-    for structure in ("", "  \n"):
-        assert str(refused(f, x, [bounded(implicit_structure=structure)], InvalidField)) == "At `constructs[0]`: " + blank
-    # §4's order under two faults: the name, then the imports, the parameters, the axioms — every axiom read before the
-    # `for_any` clash is looked for —, then the implicit structure
     bad_import = [{"locale": "semi-group", "instantiations": []}]
-    bad_fix = [{"name": "1g"}]
-    clashing = {**ax, "statement": {**ax["statement"], "for_any": [{"name": "n"}]}}
     assert refused(f, x, [bounded(name="idempotent-semigroup", imports=bad_import)], InvalidName).grammar == "locale name"
-    assert refused(f, x, [bounded(imports=bad_import, fixes=bad_fix)], InvalidField).field == "imports[0].locale"
-    assert refused(f, x, [bounded(fixes=bad_fix, assumes=[{**ax, "name": "1x"}])], InvalidField).field == "fixes[0].name"
-    assert refused(f, x, [bounded(assumes=[clashing, {**ax, "name": "1x"}])], InvalidField).field == "assumes[1].name"
-    assert refused(f, x, [bounded(assumes=[clashing], implicit_structure="")], InvalidField).field == "assumes[0].statement.for_any[0].name"
     # the framework's: `implicit_structure` required and a string or null; no recorded field authored; `english` required
     e = refused(f, x, [{k: v for k, v in bounded().items() if k != "implicit_structure"}], RawASTError)
     assert "implicit_structure" in str(e)
@@ -172,8 +139,71 @@ def test_gen_refuses_as_section_4_says():
         refused(f, x, [raw], RawASTError)
     e = refused(f, x, [bounded(name="commutative_monoid")], DuplicateName)
     assert e.id_component == "locale_commutative_monoid"
-    assert len(x.sub_nodes) == 2
+    assert len(x.sub_nodes) == 1
     inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check in its order, each sentence told alone, no path
+    before it: an import by `Locale_Instance`'s check; a parameter's name, a
+    repeat; an axiom's name, a repeat, its statement by the shared check
+    under `assumes[i].statement`; a `for_any` variable that is a parameter;
+    a blank implicit structure; what §4 admits; §4's order under two
+    faults."""
+    f, x = forest(kinds=KINDS)
+    e = field_check(f, x, [bounded(imports=[{"locale": "semi-group", "instantiations": []}])])
+    assert e.field == "imports[0].locale" and str(e).startswith("The field `imports[0].locale` must be a locale's name")
+    e = field_check(f, x, [bounded(imports=[{"locale": "s", "instantiations": []},
+                                            {"locale": "t", "instantiations": [{"name": "f", "term": "f"}, {"name": "f", "term": "g"}]}])])
+    assert str(e) == "The field `imports[1].instantiations[1].name` repeats `f`."
+    assert str(field_check(f, x, [bounded(fixes=[{"name": "f"}, {"name": "1g"}])])) == IDENTIFIER
+    for name in ("f_", "x y", "a.b", "", "h\\<nat>"):
+        assert field_check(f, x, [bounded(fixes=[{"name": "f"}, {"name": name}])]).field == "fixes[1].name", name
+    assert str(field_check(f, x, [bounded(fixes=[{"name": "f"}, {"name": " f "}])])) == REPEATS_F
+    (ax,) = bounded()["assumes"]
+    assert str(field_check(f, x, [bounded(assumes=[ax, {"name": "1x", "statement": ax["statement"]}])])) == AXIOM_IDENTIFIER
+    assert field_check(f, x, [bounded(assumes=[ax, {"name": "pos_", "statement": ax["statement"]}])]) is None   # a fact's name may end so
+    assert str(field_check(f, x, [bounded(assumes=[{**ax, "name": "idem"}, {**ax, "name": "idem"}])])) == REPEATS_IDEM
+    e = field_check(f, x, [bounded(assumes=[{**ax, "statement": {**ax["statement"], "for_any": [{"name": "1x"}]}}])])
+    assert e.field == "assumes[0].statement.for_any[0].name" and "must be an Isabelle identifier" in str(e)
+    assert str(field_check(f, x, [bounded(assumes=[{**ax, "statement": {**ax["statement"], "for_any": [{"name": "n"}]}}])])) == CLASH
+    for structure in ("", "  \n"):
+        assert str(field_check(f, x, [bounded(implicit_structure=structure)])) == BLANK
+    assert field_check(f, x, [bounded(imports=[{"locale": "s", "qualifier": "S_", "instantiations": []}])]) is None
+    assert field_check(f, x, [COMMUTATIVE]) is None and field_check(f, x, [bounded()]) is None
+    # §4's order under two faults: the imports, the parameters, the axioms — every axiom judged before the `for_any`
+    # clash is looked for —, then the implicit structure
+    bad_import = [{"locale": "semi-group", "instantiations": []}]
+    bad_fix = [{"name": "1g"}]
+    clashing = {**ax, "statement": {**ax["statement"], "for_any": [{"name": "n"}]}}
+    assert field_check(f, x, [bounded(imports=bad_import, fixes=bad_fix)]).field == "imports[0].locale"
+    assert field_check(f, x, [bounded(fixes=bad_fix, assumes=[{**ax, "name": "1x"}])]).field == "fixes[0].name"
+    assert field_check(f, x, [bounded(assumes=[clashing, {**ax, "name": "1x"}])]).field == "assumes[1].name"
+    assert field_check(f, x, [bounded(assumes=[clashing], implicit_structure="")]).field == "assumes[0].statement.for_any[0].name"
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_a_locale_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
+    """`from_store` reads a blank implicit structure and a blank qualifier
+    back as stored, the empty term, judging nothing; the field check refuses
+    each loaded node with the document's sentence; the recall line writes
+    the empty term `""`."""
+    [qualifier, _] = [b for b in fenced_blocks(DOCS / "node_classes" / "COMMON.md", "4.")
+                      if b[0].startswith("The field `imports[0].qualifier`")][0]
+    nodes, loaded = reloaded(tmp_path / "TAT.sqlite", bounded(implicit_structure=" "),
+                             bounded(name="q", imports=[{"locale": "s", "qualifier": " ", "instantiations": []}]), kinds=KINDS)
+    assert [(n.implicit_structure, n.imports) for n in loaded] == [(n.implicit_structure, n.imports) for n in nodes]
+    assert loaded[0].implicit_structure == IsaTerm.from_agent("") and loaded[1].imports[0].qualifier == IsaTerm.from_agent("")
+    out = io.StringIO()
+    loaded[0].print_fields(0, out, M.RECALL, 1)
+    assert 'implicit_structure: ""' in out.getvalue().splitlines()
+    messages = []
+    for n in loaded:
+        with pytest.raises(InvalidField) as e:
+            n.check_fields()
+        messages.append(str(e.value))
+    assert messages == [BLANK, qualifier]
 
 
 # --- the store (§1) ---------------------------------------------------------------

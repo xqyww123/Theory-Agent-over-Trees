@@ -262,22 +262,25 @@ class Define(With_Proof_Obligations, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Define_RawAST):
-        """§4's checks in its order: each constant's name against §1's
-        grammar, no two the same; the texts normalised.  On an amend,
-        `failed_obligation` comes from the replaced node exactly when the
-        commit carries its outcome (§7), the two answering one question."""
+        """§4: each constant's name against §1's grammar; the texts read
+        normalised.  On an amend, `failed_obligation` comes from the
+        replaced node exactly when the commit carries its outcome (§7), the
+        two answering one question."""
         constants: list[Variable_With_Syntax] = []
-        for i, c in enumerate(raw["constants"]):
+        for c in raw["constants"]:
             require_id_name(c["name"], "constant name")
-            constant = Variable_With_Syntax.of_image(c)
-            check_not_bound_twice(constant.name, f"constants[{i}].name", [x.name for x in constants])
-            constants.append(constant)
+            constants.append(Variable_With_Syntax.of_image(c))
         node = cls(config.parent, config.state, normalised(raw["english"]), tuple(constants),
                    tuple(IsaTerm.from_agent(normalised(e)) for e in raw["equations"]), raw["auto_reduction"])
         old = config.replaces()
         if isinstance(old, Define) and node._carries_job_from(old):
             node.failed_obligation = old.failed_obligation
         return node
+
+    def check_fields(self):
+        """§4's field check: no two constants the same."""
+        for i, c in enumerate(self.constants):
+            check_not_bound_twice(c.name, f"constants[{i}].name", [x.name for x in self.constants[:i]])
 
     # --- the store (§1): the authored fields in the `unicode` spelling, the construct's shape, and the recorded
     #     ones; every row read with `get`, so that a missing one is refused at start

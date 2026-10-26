@@ -26,7 +26,9 @@ from typing import Literal, get_args
 
 class TAT_Error(Exception, ABC):
     """An error the agent can act on: raised anywhere, caught only at the
-    tool boundary, rendered into the tool result (EXCEPTIONS.md §1)."""
+    tool boundary, rendered into the tool result — but the `InvalidField`
+    of a node's `check_fields`, which `Node._placed` makes the message of
+    the node's first own operation (EXCEPTIONS.md §1)."""
 
     # The refused forest-changing operation and its target, echoed from the
     # call (EXCEPTIONS.md §4).  Written once by `_set_operation`; both stay
@@ -227,8 +229,9 @@ class MissingField(RawASTError):
 
 
 class InvalidField(RawASTError):
-    """Schema-derived like `MissingField`; also ready-made for `gen`
-    authors' semantic checks, who derive further subclasses freely."""
+    """Schema-derived like `MissingField`; also `Session.gen`'s,
+    `Theory.gen`'s and the field check's (`check_fields`, PLUGIN_SYSTEM
+    §2).  A node class's author derives further subclasses freely."""
 
     def __init__(self, field: str, reason: str):
         super().__init__()

@@ -15,8 +15,8 @@ Record(Leaf, Type_Definition)`. Its Python half is
 `isabelle_theory_agent/std/record.py`, its ML half
 `Isabelle_Std/ML/TAT_Record.ML`. Its agent-facing wording lives here —
 the `description` texts of its construct schema (§3), the sentences its
-`gen` renders, and the words on its line — pinned by the baseline tests
-the way DATATYPE.md's are.
+field check renders (§4), and the words on its line — pinned by the
+baseline tests the way DATATYPE.md's are.
 
 One kind, `record`, which heads the id component: `record_point`.
 
@@ -155,15 +155,17 @@ An Isabelle type expression
 The description of `TypeParameter.sort` is COMMON.md §4's, pinned there
 alone.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
 Where a `Record` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`Record.gen` checks: `type_name` against §1's grammar, the node's name
-(`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth
-form); the type parameters by the shared check (COMMON.md §4): each
-`name` a type variable, no two the same; every field's `name` an
+`Record.gen` refuses only `type_name` outside §1's grammar, the node's
+name (`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's
+fifth form), and reads the rest normalised (§2). The field check
+(PLUGIN_SYSTEM §2) refuses, before the node's first own operation, in
+this order: the type parameters by the shared check (COMMON.md §4):
+each `name` a type variable, no two the same; every field's `name` an
 Isabelle identifier (COMMON.md §5) not ending with an underscore
 (COMMON.md §5's clause on internal names), and no two fields the same
 name (`InvalidField`); then each type parameter used, in a field's

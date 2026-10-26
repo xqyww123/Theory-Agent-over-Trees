@@ -5,8 +5,7 @@ Status: proposed 2026-10-24, from the design discussion of 2026-10-21 to
 ai-artifacts/review/inductive/DECISIONS.md); revised the same day after
 its review (ai-artifacts/review/inductive/design_review.json) and its
 re-review (design_rereview.json); the agent-facing wording below is the
-owner's. Not implemented; it waits for the framework's evaluation-time
-field check (§4), its name to come.
+owner's. Not implemented.
 
 An `Inductive` defines one or more predicates by rules: under the kind
 `inductive` as the least predicates that satisfy the rules, under
@@ -173,12 +172,9 @@ refused before `gen` (MODULE_STRUCTURE §4.4). A sibling already bearing
 the node's id component is the framework's `DuplicateName`
 (MCP_SPECIFICATION §2).
 
-Every other check of the fields is the framework's evaluation-time
-field check, asked before the node's operation runs (the place-check
-design; its name to come): the node stays in the forest, `failed`,
-carrying the check's sentence, and the operation is not run. The class
-answers, by the plugin's shared checks and with their sentences
-(COMMON.md §5): two constants the same name, by `check_not_bound_twice`
+The field check (PLUGIN_SYSTEM §2), `check_fields`, refuses, before the
+node's first own operation, in this order, by the plugin's shared
+checks and with their sentences (COMMON.md §5): two constants the same name, by `check_not_bound_twice`
 over the stored constants' names; a rule's `name` not an Isabelle
 identifier, or two rules the same name, by `check_identifier` with
 `in_term` false over the rule names — a fact's name, which may end with

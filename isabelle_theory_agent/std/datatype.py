@@ -6,7 +6,7 @@ the node is finished when it is `ready`."""
 
 from __future__ import annotations
 
-from collections.abc import Container
+from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
@@ -18,8 +18,8 @@ from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, TYPE_MIXFIX_DEFS, TYPE_PARAMETER_DEFS, Mixfix, Mixfix_RawAST, Type_Definition, Type_Parameter,
     TypeMixfix, TypeMixfix_RawAST, TypeParameter_RawAST, check_identifier, check_not_bound_twice,
-    check_type_parameters_used, mixfix_of, mixfix_text, mixfix_wire, normalised, require_id_name, text_line,
-    type_head_text, type_parameters_of, type_parameters_wire)
+    check_type_parameters, check_type_parameters_used, mixfix_of, mixfix_text, mixfix_wire, normalised,
+    require_id_name, text_line, type_head_text, type_parameters_of, type_parameters_wire)
 
 KINDS = ("datatype", "codatatype")      # the two commands, one syntax and one implementation
 
@@ -128,21 +128,24 @@ class Datatype(Leaf, Type_Definition):
 
     @classmethod
     async def gen(cls, config, raw: Datatype_RawAST):
-        """§4's checks in its order: every type name against §1's grammar
-        and no two the same; the type parameters by the shared check; each
-        type's constructors and selectors; last, each type parameter used
-        in some constructor's argument type."""
-        for i, t in enumerate(raw["types"]):
+        """§4: every type name against §1's grammar; the rest read."""
+        for t in raw["types"]:
             require_id_name(t["type_name"], "type name")
-            check_not_bound_twice(t["type_name"], f"types[{i}].type_name", [u["type_name"] for u in raw["types"][:i]])
-        type_parameters = type_parameters_of(raw.get("type_parameters", []))
-        types = tuple(
-            Defined_Type(t["type_name"], mixfix_of(t["syntax"]) if "syntax" in t else None,
-                         _constructors_of(t["constructors"], f"types[{i}]"))
-            for i, t in enumerate(raw["types"]))
-        check_type_parameters_used(type_parameters,
-                                   [a.type for t in types for c in t.constructors for a in c.arguments])
-        return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, types)
+        return cls(config.parent, config.state, normalised(raw["english"]),
+                   type_parameters_of(raw.get("type_parameters", [])), tuple(_type_of_image(t) for t in raw["types"]))
+
+    def check_fields(self):
+        """§4's field check in its order: no two types the same name; the
+        type parameters by the shared check; each type's constructors and
+        selectors; last, each type parameter used in some constructor's
+        argument type."""
+        for i, t in enumerate(self.types):
+            check_not_bound_twice(t.type_name, f"types[{i}].type_name", [u.type_name for u in self.types[:i]])
+        check_type_parameters(self.type_parameters, ".name")
+        for i, t in enumerate(self.types):
+            _check_constructors(t.constructors, f"types[{i}]")
+        check_type_parameters_used(self.type_parameters,
+                                   [a.type for t in self.types for c in t.constructors for a in c.arguments])
 
     # --- the store (§2): the authored fields in the `unicode` spelling, the construct's shape
 
@@ -225,23 +228,17 @@ class Datatype(Leaf, Type_Definition):
         return indent
 
 
-def _constructors_of(raw: list[Constructor_RawAST], where: str) -> tuple[Constructor, ...]:
-    """§4: each constructor's `name` and each `selector` an identifier
-    Isabelle reads in a term, no two constructors of the type the same
-    name, no two selectors of a constructor the same; the texts
-    normalised, a syntax by `mixfix_of`."""
-    constructors: list[Constructor] = []
-    for j, c in enumerate(raw):
-        name = check_identifier(c["name"], f"{where}.constructors[{j}].name", [x.name for x in constructors],
-                                in_term=True)
-        arguments: list[Argument] = []
-        for k, a in enumerate(c.get("arguments", [])):
-            selector = (check_identifier(a["selector"], f"{where}.constructors[{j}].arguments[{k}].selector",
-                                         [x.selector for x in arguments if x.selector is not None], in_term=True)
-                        if "selector" in a else None)
-            arguments.append(Argument(IsaTerm.from_agent(normalised(a["type"])), selector))
-        constructors.append(Constructor(name, tuple(arguments), mixfix_of(c["syntax"]) if "syntax" in c else None))
-    return tuple(constructors)
+def _check_constructors(constructors: Sequence[Constructor], path: str) -> None:
+    """§4, under `path`, the type's: each constructor's `name` and each
+    `selector` an identifier Isabelle reads in a term, no two constructors
+    of the type the same name, no two selectors of a constructor the
+    same."""
+    for j, c in enumerate(constructors):
+        check_identifier(c.name, f"{path}.constructors[{j}].name", [x.name for x in constructors[:j]], in_term=True)
+        for k, a in enumerate(c.arguments):
+            if a.selector is not None:
+                check_identifier(a.selector, f"{path}.constructors[{j}].arguments[{k}].selector",
+                                 [x.selector for x in c.arguments[:k] if x.selector is not None], in_term=True)
 
 
 def _type_image(t: Defined_Type) -> dict[str, Any]:
@@ -257,12 +254,14 @@ def _type_image(t: Defined_Type) -> dict[str, Any]:
 
 
 def _type_of_image(image: Type_RawAST) -> Defined_Type:
-    """The image is the construct's shape (§2)."""
+    """A type, the construct's or a stored image's, the two of one shape
+    (§2): its texts normalised, a syntax by `mixfix_of`.  Judges
+    nothing."""
     return Defined_Type(
         image["type_name"], mixfix_of(image["syntax"]) if "syntax" in image else None,
-        tuple(Constructor(IsaTerm.from_agent(c["name"]),
-                          tuple(Argument(IsaTerm.from_agent(a["type"]),
-                                         IsaTerm.from_agent(a["selector"]) if "selector" in a else None)
+        tuple(Constructor(IsaTerm.from_agent(normalised(c["name"])),
+                          tuple(Argument(IsaTerm.from_agent(normalised(a["type"])),
+                                         IsaTerm.from_agent(normalised(a["selector"])) if "selector" in a else None)
                                 for a in c.get("arguments", [])),
                           mixfix_of(c["syntax"]) if "syntax" in c else None)
               for c in image["constructors"]))

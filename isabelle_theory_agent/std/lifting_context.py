@@ -10,6 +10,7 @@ bundles.  No proof obligation, no jobs, no `english`."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Literal, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -17,7 +18,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm
 from .. import isabelle_driver
 from ..model import INDENT, NON_EMPTY, RECALL, emit_lines, status_of_errors
 from ..plugin import TAT_node
-from .common import Lifting_Block, dotted_name_of, lifting_closing_text
+from .common import Lifting_Block, check_dotted_name, lifting_closing_text, normalised
 
 KINDS = ("lifting_context",)
 
@@ -29,13 +30,17 @@ class LiftingContext_RawAST(TypedDict):
 
 
 def type_names_of(raw: list[str]) -> tuple[IsaTerm, ...]:
-    """§4's check of `types`, each entry by COMMON.md §4's `dotted_name_of`
-    under the noun `type` and the path `types[i]`, no two the same.  A
-    stored image is read back through it too."""
-    names: list[IsaTerm] = []
-    for i, text in enumerate(raw):
-        names.append(dotted_name_of(text, f"types[{i}]", names, "type"))
-    return tuple(names)
+    """`types`, the construct's or a stored image's, each entry normalised
+    (§4).  Judges nothing."""
+    return tuple(IsaTerm.from_agent(normalised(text)) for text in raw)
+
+
+def check_type_names(names: Sequence[IsaTerm]) -> None:
+    """§4's check of `types`: each entry by COMMON.md §4's
+    `check_dotted_name` under the noun `type` and the path `types[i]`, no
+    two the same."""
+    for i, name in enumerate(names):
+        check_dotted_name(name, f"types[{i}]", names[:i], "type")
 
 
 @TAT_node
@@ -76,9 +81,13 @@ class LiftingContext(Lifting_Block):
 
     @classmethod
     async def gen(cls, config, raw: LiftingContext_RawAST):
-        """§4: `types` by `type_names_of`; `name` is the framework's to
+        """§4: `types` read by `type_names_of`; `name` is the framework's to
         judge."""
         return cls(config.parent, config.state, raw["name"], type_names_of(raw["types"]))
+
+    def check_fields(self):
+        """§4's field check: `types` by `check_type_names`."""
+        check_type_names(self.types)
 
     # --- the store (§1): `name`, `types` and the recorded `opened`, the names in the `unicode` spelling, `opened`
     #     None-valued until recorded; every row read with `get`, so that a missing one is refused at start

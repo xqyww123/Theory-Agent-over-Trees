@@ -41,6 +41,7 @@ language. A concept that needs a name gets one here first.
 | **Location** | a position in the forest: on the wire, the destination forms of `edit` and `move` (TOOL_SCHEMAS.md); resolved by the framework to a parent and an index within its children, which is what the move hooks receive (MODULE_STRUCTURE §4.1) |
 | **anchor** | the node a Location is relative to: `edit`'s `target_id` under `append`, `insert_before` and `insert_after`, `move`'s `location.node_id` (TOOL_SCHEMAS.md) |
 | **placement check** | the framework's question, for a node and each of its ancestors in its tree, outermost first, of the ancestor's `cannot_hold` and the node's `cannot_stand_under`, at evaluation, before the node's first own operation; the first answer is the refusal (PLUGIN_SYSTEM §2) |
+| **field check** | the framework's question of a node's `check_fields`, at evaluation, after the placement check and before the node's first own operation; the `InvalidField` it raises, for the first thing wrong with the node's authored fields (§6.1), is the message of that operation's `cannot_evaluate` (PLUGIN_SYSTEM §2) |
 | **remedy** | the sentences after the head saying what the agent does instead or may not do: a class's answer to the placement check, pinned in the class's own document, or one of the forest's shape's three, whose home is RENDER_BASELINES §2 |
 | **head** | the sentence the framework writes before a remedy: the node's kind with its article, and the ancestor it cannot stand under, by its full id — the parent, for the forest's shape (RENDER_BASELINES §2, §3) |
 | **print mode** | what a rendering is looking at: one of `Out_Focus`, `Briefing`, `Relative_Focus`, `Recall` (PRINT.md) |
@@ -237,7 +238,7 @@ its beginning and its ending, and so two statuses.
 | --- | --- |
 | `not_evaluated` | no current result; nothing in the resulting slot to rely on |
 | `ready` | the operation ran and its resulting slot is current |
-| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the placement check refusing the node (PLUGIN_SYSTEM §2): the node is an obstacle (§3.3) |
+| `cannot_evaluate` | the operation ran and failed, and its class judged the failure fatal — or it did not run, the placement check or the field check refusing the node (PLUGIN_SYSTEM §2): the node is an obstacle (§3.3) |
 
 Every operation has a second field beside `evaluation_status`, its
 **stored status** `last_evaluation_status`: the value `evaluation_status`
@@ -310,9 +311,10 @@ nesting node whose ending command failed is one too: a `Theory` whose `end`
 failed has no theory value. Such a node **stops** evaluation: everything after
 it in the tree is `not_evaluated`.
 
-A node the placement check refuses (PLUGIN_SYSTEM §2) is an obstacle
-too: its first own operation is
-`cannot_evaluate` without running, its message the refusal — a leaf's one operation, the leaf
+A node the placement check or the field check refuses (PLUGIN_SYSTEM §2)
+is an obstacle too: its first own operation is
+`cannot_evaluate` without running, its message the refusal or the field
+check's sentence (RENDER_BASELINES §2) — a leaf's one operation, the leaf
 then an obstacle like any; a nesting node's beginning, the node then
 handled as one whose beginning command failed (below) — and a move or
 an amend that invalidates it has it checked again at its new place.
@@ -458,11 +460,11 @@ never interleave:
   stands for all the trees under it, and the root for every tree: the
   forest schedules each of them, to its `end`, through the same graph.
 - A **nesting node** runs its beginning command if it is not evaluated and
-  the placement check does not refuse it (§3.3). If that
+  neither the placement check nor the field check refuses it (§3.3). If that
   command succeeded, now or earlier, it calls its children in order up to
   the one that contains the destination, what follows being invalidated
   past the destination (§3.4);
-  if it failed, or the placement check refused it, it
+  if it failed, or the placement check or the field check refused it, it
   invalidates each of them whole instead of running them (§3.3): when
   the destination lies under it the walk ends there, the node is the
   stop the call reports when `ignore_error` is unset, and
@@ -472,7 +474,8 @@ never interleave:
   command: it is the destination only once its children have run, so naming a
   `Theory` means the whole tree, `end` included.
 - A **leaf** runs its commands if it is not evaluated or the walk rewrote the
-  state before it, and the placement check does not refuse it (§3.3);
+  state before it, and neither the placement check nor the field check
+  refuses it (§3.3);
   otherwise it runs nothing.
 
 The recursion visits every node up to the destination, or up to the

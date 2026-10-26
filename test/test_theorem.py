@@ -1,5 +1,5 @@
 """`Theorem` (node_classes/THEOREM.md): with no Isabelle, the schema and the
-descriptions, `gen`'s checks and refusals, the statement as the node
+descriptions, `gen` and the field check, the statement as the node
 holds, stores and prints it, the mark's eleven ways, the jobs' sentences
 and `_check()`, §8's examples, the emitted text, the goal slot's place
 among the node's slots, the carry on an amend; through the std harness,
@@ -22,7 +22,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier
 from invariants import assert_invariants, assert_store_mirrors
 from harness import text_of, until
 from isabelle_theory_agent import compile as C, edit, isabelle_driver, jobs, model as M, plugin
-from isabelle_theory_agent.exceptions import InvalidField, InvalidName, RawASTError, TAT_InternalError
+from isabelle_theory_agent.exceptions import InvalidName, RawASTError, TAT_InternalError
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED, RUNNING, Failed, Succeeded
 from isabelle_theory_agent.std import common, statement, theorem
 from isabelle_theory_agent.std.common import Proof_Check, Proof_Job, Proof_Obligation
@@ -30,7 +30,7 @@ from isabelle_theory_agent.std.theorem import Statement, Theorem
 from isabelle_theory_agent.store import Forest_Store
 from test_compile import listing
 from test_descriptions import descriptions
-from std_forest import KINDS, forest, insert, inv, refused
+from std_forest import KINDS, field_check, forest, insert, inv, refused
 from test_launcher import compiled, leave, tat_new
 from test_model import locked, run, slot
 from test_session_theory import Forest_Under_Test, session, theory
@@ -92,32 +92,48 @@ def test_gen_keeps_the_statement_normalised_as_isaterms():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: the fact name's grammar
-    (RENDER_BASELINES §2's line), the identifiers and the repeated names (TH
-    §4's fenced lines)."""
+    """§4's `gen` refuses only the fact name outside its grammar
+    (RENDER_BASELINES §2's line), before any field is judged; a construct
+    the field check refuses is accepted; a missing field is the
+    framework's."""
     f, x = forest()
-    identifier, binds = fenced_lines(TH, "4.")
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`rev-length` is not a valid fact name")]
     e = refused(f, x, [lemma("rev-length")], InvalidName)
     assert (e.name, e.grammar) == ("rev-length", "fact name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "rev_", "rev length", "x'y-"):
         assert refused(f, x, [lemma(name)], InvalidName).grammar == "fact name"     # the class's sentence, not the framework's
-    for name in ("1x", "x_", "x y"):                       # one sentence, the grammar text the fact name's
-        e = refused(f, x, [lemma("p", for_any=({"name": name},))], InvalidField)
-        assert str(e) == "At `constructs[0]`: " + identifier and e.field == "statement.for_any[0].name", name
-    assert identifier.endswith(": it " + invalid.split(": a fact name ")[1])
-    e = refused(f, x, [lemma("p", premises=({"name": "ne", "term": "a"}, {"name": "ne", "term": "b"}))],
-                InvalidField)
-    assert str(e) == "At `constructs[0]`: " + binds and e.field == "statement.premises[1].name"
-    e = refused(f, x, [lemma("p", for_any=({"name": "xs"}, {"name": "xs"}))], InvalidField)
-    assert (e.field, e.reason) == ("statement.for_any[1].name", "repeats `xs`")
-    e = refused(f, x, [lemma("p", premises=({"name": "x y", "term": "a"},))], InvalidField)
-    assert e.field == "statement.premises[0].name"
-    (h,) = insert(f, x, 0, [lemma("h", premises=({"name": "h_", "term": "a"},))])     # a premise may end so
-    assert h.statement.premises[0].name.unicode == "h_"
-    run(locked(f, edit.delete(h)))
+    assert refused(f, x, [lemma("rev-length", for_any=({"name": "1x"},))], InvalidName).grammar == "fact name"
+    (bad,) = insert(f, x, 0, [lemma("p", for_any=({"name": "1x"}, {"name": "1x"}))])   # the field check's to refuse
+    run(locked(f, edit.delete(bad)))
     refused(f, x, [{"kind": "lemma", "name": "p", "statement": {"english": "e"}}], RawASTError)
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check, by the shared statement check: the identifiers and
+    the repeated names (TH §4's fenced lines), each told alone, no path
+    before it; a premise's name may end with an underscore; under two
+    faults the `for_any` first."""
+    f, x = forest()
+    identifier, binds = fenced_lines(TH, "4.")
+    [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
+                 if line.startswith("`rev-length` is not a valid fact name")]
+    for name in ("1x", "x_", "x y"):                       # one sentence, the grammar text the fact name's
+        e = field_check(f, x, [lemma("p", for_any=({"name": name},))])
+        assert str(e) == identifier and e.field == "statement.for_any[0].name", name
+    assert identifier.endswith(": it " + invalid.split(": a fact name ")[1])
+    e = field_check(f, x, [lemma("p", premises=({"name": "ne", "term": "a"}, {"name": "ne", "term": "b"}))])
+    assert str(e) == binds and e.field == "statement.premises[1].name"
+    e = field_check(f, x, [lemma("p", for_any=({"name": "xs"}, {"name": "xs"}))])
+    assert (e.field, e.reason) == ("statement.for_any[1].name", "repeats `xs`")
+    assert field_check(f, x, [lemma("p", premises=({"name": "x y", "term": "a"},))]).field == "statement.premises[0].name"
+    assert field_check(f, x, [lemma("h", premises=({"name": "h_", "term": "a"},))]) is None     # a premise may end so
+    assert field_check(f, x, [lemma("p")]) is None
+    e = field_check(f, x, [lemma("p", for_any=({"name": "1x"},),
+                                 premises=({"name": "ne", "term": "a"}, {"name": "ne", "term": "b"}))])
+    assert e.field == "statement.for_any[0].name"
     assert x.sub_nodes == []
     inv(f)
 

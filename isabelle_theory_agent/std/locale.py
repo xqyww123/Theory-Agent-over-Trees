@@ -18,9 +18,10 @@ from ..model import INDENT, RECALL, Ready, StdBlock, Theory, emit_lines, print_n
 from ..plugin import TAT_node
 from .common import (
     LOCALE_INSTANCE_DEFS, MIXFIX_DEFS, VARIABLE_WITH_SYNTAX_DEFS, Locale_Instance, LocaleInstance_RawAST, Mixfix,
-    Mixfix_RawAST, Variable_With_Syntax, VariableWithSyntax_RawAST, check_identifier, english_cartouche, fixes_text,
-    locale_instance_of, locale_instance_text, mixfix_of, mixfix_of_wire, normalised, require_id_name, text_line)
-from .statement import STATEMENT_DEFS, LongStatement_RawAST, Statement, statement_of
+    Mixfix_RawAST, Variable_With_Syntax, VariableWithSyntax_RawAST, check_identifier, check_locale_instance,
+    english_cartouche, fixes_text, locale_instance_text, mixfix_of, mixfix_of_wire, normalised, require_id_name,
+    text_line)
+from .statement import STATEMENT_DEFS, LongStatement_RawAST, Statement, check_statement, statement_of
 
 KINDS = ("locale",)
 CHILDREN_HEADER = "locale context"       # §8 (PRINT.md §2)
@@ -141,36 +142,40 @@ class Locale(StdBlock):
 
     @classmethod
     async def gen(cls, config, raw: Locale_RawAST):
-        """§4's checks in its order: `name` against §1's grammar; each import by
-        `Locale_Instance`'s reader; each parameter's name an identifier not
+        """§4: `name` against §1's grammar; the rest read normalised, a
+        blank `implicit_structure` an empty term."""
+        require_id_name(raw["name"], "locale name")
+        structure = raw["implicit_structure"]
+        return cls(config.parent, config.state, normalised(raw["english"]), raw["name"],
+                   tuple(Locale_Instance.of_image(i) for i in raw.get("imports", [])),
+                   tuple(Variable_With_Syntax.of_image(v) for v in raw.get("fixes", [])),
+                   tuple(Axiom(IsaTerm.from_agent(normalised(a["name"])), statement_of(a["statement"]))
+                         for a in raw.get("assumes", [])),
+                   IsaTerm.from_agent(normalised(structure)) if structure is not None else None)
+
+    def check_fields(self):
+        """§4's field check in its order: each import by
+        `check_locale_instance`; each parameter's name an identifier not
         ending with an underscore, no two the same; each axiom's name an
-        identifier, no two the same, its statement by the shared reader; no
+        identifier, no two the same, its statement by the shared check; no
         `for_any` variable a parameter's name; `implicit_structure` a term
         not blank, or null."""
-        require_id_name(raw["name"], "locale name")
-        imports = tuple(locale_instance_of(i, f"imports[{n}]") for n, i in enumerate(raw.get("imports", [])))
-        fixes: list[Variable_With_Syntax] = []
-        for n, v in enumerate(raw.get("fixes", [])):
-            check_identifier(v["name"], f"fixes[{n}].name", [x.name for x in fixes], in_term=True)
-            fixes.append(Variable_With_Syntax.of_image(v))
-        assumes: list[Axiom] = []
-        for n, a in enumerate(raw.get("assumes", [])):
-            name = check_identifier(a["name"], f"assumes[{n}].name", [x.name for x in assumes], in_term=False)
-            assumes.append(Axiom(name, statement_of(a["statement"], f"assumes[{n}].statement")))
-        parameters = {v.name for v in fixes}
-        for n, a in enumerate(assumes):
+        for n, instance in enumerate(self.imports):
+            check_locale_instance(instance, f"imports[{n}]")
+        for n, v in enumerate(self.fixes):
+            check_identifier(v.name, f"fixes[{n}].name", [x.name for x in self.fixes[:n]], in_term=True)
+        for n, a in enumerate(self.assumes):
+            check_identifier(a.name, f"assumes[{n}].name", [x.name for x in self.assumes[:n]], in_term=False)
+            check_statement(a.statement, f"assumes[{n}].statement")
+        parameters = {v.name for v in self.fixes}
+        for n, a in enumerate(self.assumes):
             for m, v in enumerate(a.statement.for_any):
                 if v.name in parameters:
                     raise InvalidField(f"assumes[{n}].statement.for_any[{m}].name",
                                        f"declares `{v.name.unicode}`, which is already declared in `fixes`: a variable"
                                        " declared in `fixes` must not be declared again in `for_any`")
-        structure = raw["implicit_structure"]
-        if structure is not None:
-            structure = normalised(structure)
-            if not structure:
-                raise InvalidField("implicit_structure", "must be an Isabelle term, or null for no implicit structure at all")
-        return cls(config.parent, config.state, normalised(raw["english"]), raw["name"], imports, tuple(fixes),
-                   tuple(assumes), IsaTerm.from_agent(structure) if structure is not None else None)
+        if self.implicit_structure is not None and not self.implicit_structure.ascii:
+            raise InvalidField("implicit_structure", "must be an Isabelle term, or null for no implicit structure at all")
 
     # --- the store (§1): the authored fields in the `unicode` spelling, the construct's shape, and the recorded
     #     ones, None-valued until recorded; every row read with `get`, so that a missing one is refused at start

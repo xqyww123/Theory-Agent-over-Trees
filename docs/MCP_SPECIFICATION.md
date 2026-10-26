@@ -202,8 +202,10 @@ field selects the node class — a class answers to the kinds its schema
 names, so `Theorem` answers to `lemma`, `theorem`, `corollary` and
 `proposition` — and
 whose other fields are that class's own: the framework enforces their
-mechanical shape from the class's declared schema, and the class's `gen` is
-the authority on their meaning (MODULE_STRUCTURE §4.1). A nesting class
+mechanical shape from the class's declared schema, and the class is the
+authority on their meaning: its `gen` at the edit, for what keeps the
+node from being built, and its field check at evaluation, for the rest
+(PLUGIN_SYSTEM §2). A nesting class
 takes its contents in a `children` field, a list of constructs again; the
 field's name is the same for every class. In place of the list, the
 value `GivenLater` says the contents come in later calls: where the

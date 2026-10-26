@@ -422,27 +422,33 @@ def test_the_shared_defs_are_section_4_s_schema_text():
 
 
 def test_the_type_parameters_check_renders_section_4_s_two_sentences():
-    """§4: a name that is not a prime and an Isabelle identifier on its
-    `ascii`, and a name bound twice, each the section's sentence; the
-    pieces normalised, an empty `sort` no sort."""
+    """§4: `type_parameters_of` reads the construct's parameters, a bad name
+    included, normalised, an empty `sort` no sort, and judges nothing;
+    `check_type_parameters` under `.name` refuses a name that is not a
+    prime and an Isabelle identifier on its `ascii`, and a name bound
+    twice, each the section's sentence."""
     [variable, binds] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field")][0]
+    of = common.type_parameters_of
     with pytest.raises(InvalidField) as e:
-        common.type_parameters_of([{"name": "a"}])
+        common.check_type_parameters(of([{"name": "a"}]), ".name")
     assert str(e.value) == variable and e.value.field == "type_parameters[0].name"
     with pytest.raises(InvalidField) as e:
-        common.type_parameters_of([{"name": "'a"}, {"name": "'a", "sort": "linorder"}])
+        common.check_type_parameters(of([{"name": "'a"}, {"name": "'a", "sort": "linorder"}]), ".name")
     assert str(e.value) == binds and e.value.field == "type_parameters[1].name"
     for bad in ("", "'", "'1", "''a", "'a b", "a'", "'a-b"):
+        parameters = of([{"name": "'b"}, {"name": bad}])
+        assert parameters[1].name == IsaTerm.from_agent(" ".join(bad.split())), bad      # read, not judged
         with pytest.raises(InvalidField) as e:
-            common.type_parameters_of([{"name": "'b"}, {"name": bad}])
+            common.check_type_parameters(parameters, ".name")
         assert e.value.field == "type_parameters[1].name" and e.value.reason.startswith("must be a type variable"), bad
-    parameters = common.type_parameters_of([{"name": " 'a "}, {"name": "'b", "sort": ""},
-                                            {"name": "'c", "sort": " {zero,\n linorder} "}, {"name": "'x⇩1"}])
+    parameters = of([{"name": " 'a "}, {"name": "'b", "sort": ""}, {"name": "'c", "sort": " {zero,\n linorder} "}, {"name": "'x⇩1"}])
     assert parameters == (Type_Parameter(IsaTerm.from_agent("'a"), None), Type_Parameter(IsaTerm.from_agent("'b"), None),
                           Type_Parameter(IsaTerm.from_agent("'c"), IsaTerm.from_agent("{zero, linorder}")),
                           Type_Parameter(IsaTerm.from_agent("'x⇩1"), None))
+    common.check_type_parameters(parameters, ".name")
     assert [p.image() for p in parameters] == [{"name": "'a"}, {"name": "'b"}, {"name": "'c", "sort": "{zero, linorder}"},
                                                {"name": "'x⇩1"}]
+    assert of([p.image() for p in parameters]) == parameters                     # a stored image read back
 
 
 def test_the_unused_type_parameter_check_renders_section_4_s_sentence():
@@ -482,51 +488,61 @@ def test_the_unused_type_parameter_check_renders_section_4_s_sentence():
 
 def test_type_variables_of_renders_section_4_s_two_sentences_under_its_own_path():
     """§4: the same check over type variables written bare, under
-    `type_parameters[i]`, answering `Type_Parameter`s without a sort, the
-    names normalised; the stored names read back through it."""
+    `type_parameters[i]`; `type_variables_of` reads them as
+    `Type_Parameter`s without a sort, the names normalised, a bad name
+    included, and reads the stored names back."""
     [variable, binds] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field")][0]
+    of = common.type_variables_of
     with pytest.raises(InvalidField) as e:
-        common.type_variables_of(["a"])
+        common.check_type_parameters(of(["a"]), "")
     assert str(e.value) == variable.replace("type_parameters[0].name", "type_parameters[0]") and e.value.field == "type_parameters[0]"
     with pytest.raises(InvalidField) as e:
-        common.type_variables_of(["'a", "'a"])
+        common.check_type_parameters(of(["'a", "'a"]), "")
     assert str(e.value) == binds.replace("type_parameters[1].name", "type_parameters[1]") and e.value.field == "type_parameters[1]"
     for bad in ("", "'", "'1", "''a", "'a b", "a'", "'a-b"):
+        parameters = of(["'b", bad])
+        assert parameters[1].name == IsaTerm.from_agent(" ".join(bad.split())), bad      # read, not judged
         with pytest.raises(InvalidField) as e:
-            common.type_variables_of(["'b", bad])
+            common.check_type_parameters(parameters, "")
         assert e.value.field == "type_parameters[1]" and e.value.reason.startswith("must be a type variable"), bad
-    parameters = common.type_variables_of([" 'a ", "'b", "'x⇩1"])
+    parameters = of([" 'a ", "'b", "'x⇩1"])
     assert parameters == (Type_Parameter(IsaTerm.from_agent("'a"), None), Type_Parameter(IsaTerm.from_agent("'b"), None),
                           Type_Parameter(IsaTerm.from_agent("'x⇩1"), None))
-    assert common.type_variables_of([p.name.unicode for p in parameters]) == parameters and common.type_variables_of([]) == ()
+    common.check_type_parameters(parameters, "")
+    assert of([p.name.unicode for p in parameters]) == parameters and of([]) == ()
 
 
 def test_the_function_name_pair_s_check_renders_section_4_s_two_sentences_and_its_writers_fill_the_defaults():
-    """§4: each given name an identifier Isabelle reads in a term, the two
-    given names, as given, not the same — the later refused —, a name
-    equal to its default or beginning like one a given name like any
-    other; `function_names` fills a name left out with its prefix before
-    the type's name; `morphisms_clause` writes the two through
-    `print_name` against the keywords, None when neither was given."""
+    """§4: `function_names_of` reads each given name normalised, a blank one
+    the empty term, None for one left out; `check_function_names` refuses a
+    given name that is not an identifier Isabelle reads in a term and the
+    later of two given names that are the same, a name equal to its default
+    or beginning like one a given name like any other; `function_names`
+    fills a name left out with its prefix before the type's name;
+    `morphisms_clause` writes the two through `print_name` against the
+    keywords, None when neither was given."""
     [identifier, twice] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `rep_function_name`")][0]
-    of = common.function_names_of
+    of, check = common.function_names_of, common.check_function_names
     with pytest.raises(InvalidField) as e:
-        of("rep_", "abs_fset")
+        check(*of("rep_", "abs_fset"))
     assert str(e.value) == identifier and e.value.field == "rep_function_name"
     with pytest.raises(InvalidField) as e:
-        of("list_of_fset", "abs_")
+        check(*of("list_of_fset", "abs_"))
     assert str(e.value) == identifier.replace("rep_function_name", "abs_function_name") and e.value.field == "abs_function_name"
     with pytest.raises(InvalidField) as e:
-        of("list_of_fset", " list_of_fset ")
+        check(*of("list_of_fset", " list_of_fset "))
     assert str(e.value) == twice and e.value.field == "abs_function_name"
     for bad in ("1x", "x y", "", "rep-", "h\\<nat>", "x_"):
         with pytest.raises(InvalidField) as e:
-            of(bad, None)
+            check(*of(bad, None))
         assert e.value.field == "rep_function_name", bad
-    assert of(None, None) == (None, None)
+    assert of(None, None) == (None, None) and of(" ", None) == (IsaTerm.from_agent(""), None)
     rep, abs_ = of(" list_of_fset", "Abs_fset")
     assert (rep, abs_) == (IsaTerm.from_agent("list_of_fset"), IsaTerm.from_agent("Abs_fset"))
+    check(rep, abs_)
     assert of("rep_fset", "abs_fset") == (IsaTerm.from_agent("rep_fset"), IsaTerm.from_agent("abs_fset"))
+    check(*of("rep_fset", "abs_fset"))
+    check(None, None)
     prefixes = ("rep_", "abs_")
     assert common.function_names(None, None, "fset", prefixes) == (IsaTerm.from_agent("rep_fset"), IsaTerm.from_agent("abs_fset"))
     assert common.function_names(rep, None, "fset", prefixes) == (rep, IsaTerm.from_agent("abs_fset"))
@@ -762,69 +778,74 @@ def test_lifting_closing_s_sentences_are_section_6_s_and_a_base_whose_setup_is_n
     assert unmade.emit_ending(1, out) == 1 and out.getvalue() == ""
 
 
-# --- `dotted_name_of`, `Locale_Instance` and `Variable_With_Syntax` (§4)
+# --- `check_dotted_name`, `Locale_Instance` and `Variable_With_Syntax` (§4)
 
-def test_dotted_name_of_renders_section_4_s_sentence_under_both_nouns():
+def test_check_dotted_name_renders_section_4_s_sentence_under_both_nouns():
     """§4: one sentence, the noun what the name names, the grammar text the
-    framework's; each part an identifier not ending with an underscore;
-    normalised; a repeat the shared sentence."""
+    framework's; each part an identifier not ending with an underscore; a
+    repeat the shared sentence."""
     [locale_sentence, type_sentence] = [b for b in fenced_blocks(COMMON, "4.")
                                         if b[0].startswith("The field `imports[0].locale`")][0]
     assert locale_sentence.endswith(GRAMMARS["fact name"] + ".")
+    check, term = common.check_dotted_name, IsaTerm.from_agent
     for text in ("fset", "FSet.fset", "ε", "a.b.c"):
-        assert common.dotted_name_of(text, "f", (), "type") == IsaTerm.from_agent(text)
-    assert common.dotted_name_of(" fset\n", "f", (), "type") == IsaTerm.from_agent("fset")
+        check(term(text), "f", (), "type")
     with pytest.raises(InvalidField) as e:
-        common.dotted_name_of("semi-group", "imports[0].locale", (), "locale")
+        check(term("semi-group"), "imports[0].locale", (), "locale")
     assert str(e.value) == locale_sentence
     for text in ("fset_", "", "1st", "x y", "a..b", ".fset", "fset.", "FSet.fset_", "h\\<nat>", "fset-set", "'a"):
         with pytest.raises(InvalidField) as e:
-            common.dotted_name_of(text, "types[0]", (), "type")
+            check(term(text), "types[0]", (), "type")
         assert str(e.value) == type_sentence, text
     with pytest.raises(InvalidField) as e:
-        common.dotted_name_of("fset", "types[1]", (IsaTerm.from_agent("fset"),), "type")
+        check(term("fset"), "types[1]", (term("fset"),), "type")
     assert str(e.value) == "The field `types[1]` repeats `fset`."
 
 
-def test_locale_instance_s_reader_renders_section_4_s_sentences_and_its_writer_writes_its_examples():
-    """§4: the locale's name by `dotted_name_of`, the qualifier an
+def test_locale_instance_s_reader_and_check_render_section_4_s_sentences_and_its_writer_writes_its_examples():
+    """§4: `Locale_Instance.of_image` reads the construct's instance and a
+    stored image alike, every piece normalised, and judges nothing;
+    `check_locale_instance` judges, under the class's path, the locale's
+    name by `check_dotted_name` under the noun `locale`, the qualifier an
     identifier, each instantiation's name one not ending with an
-    underscore, no two the same, under the class's path; the writer's
-    four examples; the image and the wire."""
+    underscore, no two the same; the writer's four examples; the image and
+    the wire."""
     [locale_sentence, _] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `imports[0].locale`")][0]
     [qualifier, name] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `imports[0].qualifier`")][0]
-    of = common.locale_instance_of
-    s = of({"locale": "semigroup", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]}, "imports[0]")
-    assert s == common.Locale_Instance(IsaTerm.from_agent("semigroup"), IsaTerm.from_agent("S"),
-                                       (common.Instantiation(IsaTerm.from_agent("f"), IsaTerm.from_agent("f")),))
+    of, check, term = common.Locale_Instance.of_image, common.check_locale_instance, IsaTerm.from_agent
+    s = of({"locale": "semigroup", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]})
+    assert s == common.Locale_Instance(term("semigroup"), term("S"), (common.Instantiation(term("f"), term("f")),))
     assert common.locale_instance_text(s) == "S: semigroup where f = f"
-    p = of({"locale": "padic_integers", "instantiations": [{"name": "Zp", "term": "_"}, {"name": "p", "term": " p\n"}]},
-           "imports[1]")
+    p = of({"locale": "padic_integers", "instantiations": [{"name": "Zp", "term": "_"}, {"name": "p", "term": " p\n"}]})
     assert p.qualifier is None and common.locale_instance_text(p) == "padic_integers where Zp = _ and p = p"
-    assert common.locale_instance_text(of({"locale": "Group.monoid", "instantiations": []}, "imports[0]")) == "Group.monoid"
-    k = of({"locale": "A", "qualifier": "is", "instantiations": [{"name": "open", "term": "m"}]}, "imports[0]")
+    assert common.locale_instance_text(of({"locale": "Group.monoid", "instantiations": []})) == "Group.monoid"
+    k = of({"locale": "A", "qualifier": "is", "instantiations": [{"name": "open", "term": "m"}]})
     assert common.locale_instance_text(k, {"is", "open", "m", "A"}) == '"is": "A" where "open" = "m"'
     assert common.locale_instance_text(k, {"is", "open"}) == '"is": A where "open" = m'
     assert common.locale_instance_text(k) == "is: A where open = m"
-    dotted = of({"locale": "Group.monoid", "instantiations": [{"name": "G", "term": "G"}]}, "imports[0]")
+    dotted = of({"locale": "Group.monoid", "instantiations": [{"name": "G", "term": "G"}]})
     assert common.locale_instance_text(dotted, {"Group.monoid", "monoid"}) == "Group.monoid where G = G"   # one token
-    for instance in (s, p, k):
-        assert common.Locale_Instance.of_image(instance.image()) == instance
+    padded = of({"locale": " semigroup\n", "qualifier": " S ", "instantiations": [{"name": " f ", "term": " f\n  x "}]})
+    assert padded == common.Locale_Instance(term("semigroup"), term("S"), (common.Instantiation(term("f"), term("f x")),))
+    assert of({"locale": "semi-group", "qualifier": " ", "instantiations": []}).qualifier == term("")    # read, not judged
+    for instance in (s, p, k, padded):
+        assert of(instance.image()) == instance
+        check(instance, "imports[0]")
     assert s.image() == {"locale": "semigroup", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]}
     assert p.image() == {"locale": "padic_integers", "instantiations": [{"name": "Zp", "term": "_"}, {"name": "p", "term": "p"}]}
     assert s.wire() == ("semigroup", "S", [("f", "f")]) and p.wire() == ("padic_integers", None, [("Zp", "_"), ("p", "p")])
     with pytest.raises(InvalidField) as e:
-        of({"locale": "semi-group", "instantiations": []}, "imports[0]")
+        check(of({"locale": "semi-group", "instantiations": []}), "imports[0]")
     assert str(e.value) == locale_sentence
     with pytest.raises(InvalidField) as e:
-        of({"locale": "s", "qualifier": "1S", "instantiations": []}, "imports[0]")
+        check(of({"locale": "s", "qualifier": "1S", "instantiations": []}), "imports[0]")
     assert str(e.value) == qualifier
-    assert of({"locale": "s", "qualifier": "S_", "instantiations": []}, "imports[0]").qualifier == IsaTerm.from_agent("S_")
+    check(of({"locale": "s", "qualifier": "S_", "instantiations": []}), "imports[0]")       # a qualifier may end so
     with pytest.raises(InvalidField) as e:
-        of({"locale": "s", "instantiations": [{"name": "f", "term": "f"}, {"name": "g_", "term": "g"}]}, "imports[0]")
+        check(of({"locale": "s", "instantiations": [{"name": "f", "term": "f"}, {"name": "g_", "term": "g"}]}), "imports[0]")
     assert str(e.value) == name
     with pytest.raises(InvalidField) as e:
-        of({"locale": "s", "instantiations": [{"name": "f", "term": "f"}, {"name": "f", "term": "g"}]}, "imports[2]")
+        check(of({"locale": "s", "instantiations": [{"name": "f", "term": "f"}, {"name": "f", "term": "g"}]}), "imports[2]")
     assert str(e.value) == "The field `imports[2].instantiations[1].name` repeats `f`."
 
 

@@ -38,7 +38,7 @@ of a block itself, the beginning's two and the ending's two together
 per type, their transitions and their text, are `Lifting_Closing`'s
 (COMMON.md §6), which it shares. Its agent-facing wording lives here —
 the `description` texts of its construct schema (§3), the sentences its
-`gen` and its evaluation render (§4, §6) — pinned by the baseline
+field check and its evaluation render (§4, §6) — pinned by the baseline
 tests the way QUOTIENT_TYPE.md's are.
 
 One kind, `lifting_context`, which heads the id component:
@@ -198,12 +198,14 @@ the types whose Lifting setup the block opens again, each by its name
 the lift_definitions on the opened types, and any other declarations whose proofs need transfer
 ```
 
-## 4. `gen`
+## 4. `gen` and the field check
 
-`LiftingContext.gen` checks each entry of `types`, normalised, by
-COMMON.md §4's `dotted_name_of` under the noun `type` and the path
-`types[i]` (`InvalidField`), and no two entries the same, the shared
-sentence for a repeat (COMMON.md §4). A `name` outside the framework's
+`LiftingContext.gen` refuses nothing: it reads each entry of `types`
+normalised. The field check (PLUGIN_SYSTEM §2) refuses, before the
+node's first own operation, each entry by COMMON.md §4's
+`check_dotted_name` under the noun `type` and the path `types[i]`
+(`InvalidField`), and two entries the same, the shared sentence for a
+repeat (COMMON.md §4). A `name` outside the framework's
 name grammar is the framework's `InvalidName`, and a sibling already
 bearing the node's id component its `DuplicateName` (MCP_SPECIFICATION
 §2); an empty `types` is refused by the framework's check of the
@@ -225,7 +227,7 @@ The field `types[0]` must be a type's name: an Isabelle identifier, or identifie
 The field `types[1]` repeats `fset`.
 ```
 
-Both are COMMON.md §4's — the first `dotted_name_of`'s under the noun
+Both are COMMON.md §4's — the first `check_dotted_name`'s under the noun
 `type`, its grammar text the framework's (COMMON.md §5) —; the path of
 both this class's own, `types[i]`.
 

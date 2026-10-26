@@ -34,8 +34,8 @@ once per obligation (§7). Its Python half is
 constructions under are registered in the plugin's theory `TAT_Std`,
 which every theory of the forest imports (§7). Its agent-facing wording
 lives here — the `description` texts of its construct schema (§3), the
-sentences its `gen` renders, the words on its line and its owing line
-(§7), and what its AoA calls tell the proof agent (§7) — pinned by the
+sentences its field check renders (§4), the words on its line and its
+owing line (§7), and what its AoA calls tell the proof agent (§7) — pinned by the
 baseline tests the way TYPEDEF.md's are.
 
 One kind, `definition`, whatever the form: the three commands are not
@@ -200,19 +200,20 @@ whether to add the defining equations to the system simplification set
 The descriptions of `Constant`, of `Mixfix` and of its arms' fields are
 COMMON.md §4's, pinned there alone.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
 Where a `Define` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`Define.gen` checks each constant's `name` against §1's grammar by
-`constants_of` (COMMON.md §4)
-(`InvalidName` with `grammar` = `constant name`, the grammar of the
-framework's `GRAMMARS` that `LiftDefinition` checks its name against too
-(LIFT_DEFINITION.md §4), rendered as RENDER_BASELINES §2's line); then
-no two constants the same, by `check_not_bound_twice` over the names
-read (`InvalidField` with the plugin's one sentence for a name bound
-twice, COMMON.md §5). `constants` and `equations` non-empty
+`Define.gen` refuses only a constant's `name` outside §1's grammar, by
+`constants_of` (COMMON.md §4) (`InvalidName` with `grammar` = `constant
+name`, the grammar of the framework's `GRAMMARS` that `LiftDefinition`
+checks its name against too (LIFT_DEFINITION.md §4), rendered as
+RENDER_BASELINES §2's line), and reads the rest normalised. The field
+check (PLUGIN_SYSTEM §2) refuses, before the node's first own operation,
+two constants the same, by `check_not_bound_twice` over the names read
+(`InvalidField` with the plugin's one sentence for a name bound twice,
+COMMON.md §5). `constants` and `equations` non-empty
 is the schema's `minItems`, refused before `gen` (MODULE_STRUCTURE
 §4.4). A sibling already bearing the node's id component is the
 framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of a

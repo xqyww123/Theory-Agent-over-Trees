@@ -19,9 +19,9 @@ from ..model import INDENT, RECALL, Theory, emit_lines, print_name
 from ..plugin import TAT_node
 from .common import (
     LIFTING_CHILDREN_DESCRIPTION, TYPE_MIXFIX_DEFS, Beginning_Proof_Obligation, Lifting_Closing, Type_Parameter,
-    TypeMixfix, TypeMixfix_RawAST, check_type_parameters_used, function_names, function_names_of, mixfix_of,
-    mixfix_wire, morphisms_clause, normalised, require_id_name, text_line, type_head_text, type_variables_of,
-    unverified)
+    TypeMixfix, TypeMixfix_RawAST, check_function_names, check_type_parameters, check_type_parameters_used,
+    function_names, function_names_of, mixfix_of, mixfix_wire, morphisms_clause, normalised, require_id_name,
+    text_line, type_head_text, type_variables_of, unverified)
 
 KINDS = ("quotient_type",)
 OWING_LINE = "The definition is unverified until the relation is proven an equivalence."                   # §7
@@ -111,18 +111,23 @@ class QuotientType(Beginning_Proof_Obligation, Lifting_Closing):
 
     @classmethod
     async def gen(cls, config, raw: QuotientType_RawAST):
-        """§4's checks in its order: `type_name` against §1's grammar; the
-        type parameters by the shared check over bare type variables; each
-        used in `representation_type`; the two function names by the shared
-        check of the pair."""
+        """§4: `type_name` against §1's grammar; the rest read."""
         require_id_name(raw["type_name"], "type name")
-        type_parameters = type_variables_of(raw.get("type_parameters", []))
-        representation_type = IsaTerm.from_agent(normalised(raw["representation_type"]))
-        check_type_parameters_used(type_parameters, (representation_type,))
-        rep, abs_ = function_names_of(raw.get("rep_function_name"), raw.get("abs_function_name"))
-        return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, raw["type_name"],
-                   mixfix_of(raw["syntax"]) if "syntax" in raw else None, representation_type,
-                   IsaTerm.from_agent(normalised(raw["equiv_relation"])), raw.get("partial", False), rep, abs_)
+        return cls(config.parent, config.state, normalised(raw["english"]),
+                   type_variables_of(raw.get("type_parameters", [])), raw["type_name"],
+                   mixfix_of(raw["syntax"]) if "syntax" in raw else None,
+                   IsaTerm.from_agent(normalised(raw["representation_type"])),
+                   IsaTerm.from_agent(normalised(raw["equiv_relation"])), raw.get("partial", False),
+                   *function_names_of(raw.get("rep_function_name"), raw.get("abs_function_name")))
+
+    def check_fields(self):
+        """§4's field check in its order: the type parameters by the shared
+        check over bare type variables; each used in
+        `representation_type`; the two function names by the shared check
+        of the pair."""
+        check_type_parameters(self.type_parameters, "")
+        check_type_parameters_used(self.type_parameters, (self.representation_type,))
+        check_function_names(self.rep_function_name, self.abs_function_name)
 
     # --- the store (§1): the authored fields in the `unicode` spelling, a field left out a None-valued row and
     #     `partial` false; every row read with `get`, so that a missing one is refused at start
@@ -141,13 +146,10 @@ class QuotientType(Beginning_Proof_Obligation, Lifting_Closing):
     @classmethod
     def from_store(cls, config, rows):
         syntax: TypeMixfix_RawAST | None = rows.get("syntax")
-        rep: str | None = rows.get("rep_function_name")
-        abs_: str | None = rows.get("abs_function_name")
         return cls(config.parent, config.state, rows.get("english"), type_variables_of(rows.get("type_parameters")),
                    rows.get("type_name"), mixfix_of(syntax) if syntax is not None else None,
                    IsaTerm.from_agent(rows.get("representation_type")), IsaTerm.from_agent(rows.get("equiv_relation")),
-                   rows.get("partial"), IsaTerm.from_agent(rep) if rep is not None else None,
-                   IsaTerm.from_agent(abs_) if abs_ is not None else None)
+                   rows.get("partial"), *function_names_of(rows.get("rep_function_name"), rows.get("abs_function_name")))
 
     # --- evaluation (§6)
 

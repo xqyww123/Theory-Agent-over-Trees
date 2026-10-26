@@ -11,7 +11,7 @@ from typing import Literal, TypedDict
 from ..model import INDENT, RECALL, Leaf, Theory, emit_lines
 from ..plugin import TAT_node
 from .common import Proof_Obligation, require_id_name, text_line
-from .statement import STATEMENT_DEFS, LongStatement_RawAST, Statement, statement_of
+from .statement import STATEMENT_DEFS, LongStatement_RawAST, Statement, check_statement, statement_of
 
 KINDS = ("lemma", "theorem", "corollary", "proposition")   # the Isar commands Isabelle treats alike
 
@@ -49,8 +49,13 @@ class Theorem(Proof_Obligation, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Theorem_RawAST):
+        """§4: `name` against §1's grammar; the statement read."""
         require_id_name(raw["name"], "fact name")
-        return cls(config.parent, config.state, raw["name"], statement_of(raw["statement"], "statement"))
+        return cls(config.parent, config.state, raw["name"], statement_of(raw["statement"]))
+
+    def check_fields(self):
+        """§4's field check: the statement by the shared check."""
+        check_statement(self.statement, "statement")
 
     def to_store(self, rows):
         rows.put("name", self.name)

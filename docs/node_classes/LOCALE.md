@@ -59,7 +59,7 @@ the beginning's two and the ending's two (PLUGIN_SYSTEM §5). Its Python
 half is `isabelle_theory_agent/std/locale.py`, its ML half
 `Isabelle_Std/ML/TAT_Locale.ML`. Its agent-facing wording lives here —
 the `description` texts of its construct schema (§3), the sentences its
-`gen` and its evaluation render (§4, §6) — pinned by the baseline
+field check and its evaluation render (§4, §6) — pinned by the baseline
 tests the way RECORD.md's are.
 
 One kind, `locale`, which heads the id component:
@@ -196,10 +196,10 @@ is `NoSyntax` has no annotation (COMMON.md §4).
 
 **The axioms.** Every variable an axiom's premises and conclusion use
 is a parameter or declared in its `for_any`; a `for_any` variable is
-never a parameter's name, which `gen` refuses (§4), since the
-quantifier would hide the parameter. A premise's `name` is checked by
-`gen` and stored; nothing else uses it — the file, the forms Isabelle
-reads (§6) and the `recall` line leave it out.
+never a parameter's name, which the field check refuses (§4), since
+the quantifier would hide the parameter. A premise's `name` is checked
+by the field check and stored; nothing else uses it — the file, the
+forms Isabelle reads (§6) and the `recall` line leave it out.
 
 **The implicit structure.** Required, a term or `null`. A term is the
 structure that notation written without a subscript refers to, in the
@@ -336,24 +336,23 @@ The descriptions of `LocaleInstance` — its `locale`, `qualifier` and
 descriptions of `LongStatement` are THEOREM.md §3's, pinned there
 alone.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
-`Locale.gen` checks, in this order: `name` against §1's grammar, the
-node's name (`InvalidName` with `grammar` = `locale name`, rendered
-with the fact name's text, RENDER_BASELINES §2's seventh form; the
-implementation adds the grammar to the framework's `GRAMMARS`, to the
-Literals of `InvalidName` and `require_id_name`, to EXCEPTIONS.md §3
-and to RENDER_BASELINES §2); then
-each import by `Locale_Instance`'s reader under `imports[i]` (COMMON.md
-§4); then every parameter's `name` an Isabelle identifier not ending
-with an underscore (COMMON.md §5), no two the same; then every axiom's
-`name` an Isabelle identifier, no two the same, and its statement by
-the shared statement reader under `assumes[i].statement` (COMMON.md
-§4; THEOREM.md §4); then every axiom's `for_any` names against
-`fixes`: one that is a parameter's name is refused; then
-`implicit_structure`, a term not blank or `null` (`InvalidField`). A
-sibling already bearing the node's id component is the framework's
-`DuplicateName` (MCP_SPECIFICATION §2). Whether an imported locale
+`Locale.gen` refuses only `name` outside §1's grammar, the node's name
+(`InvalidName` with `grammar` = `locale name`, rendered with the fact
+name's text, RENDER_BASELINES §2's seventh form), and reads the rest
+normalised (§2). The field check (PLUGIN_SYSTEM §2) refuses, before the
+node's first own operation, in this order: each import by
+`Locale_Instance`'s check under `imports[i]` (COMMON.md §4); then every
+parameter's `name` an Isabelle identifier not ending with an underscore
+(COMMON.md §5), no two the same; then every axiom's `name` an Isabelle
+identifier, no two the same, and its statement by the shared statement
+check under `assumes[i].statement` (COMMON.md §4; THEOREM.md §4); then
+every axiom's `for_any` names against `fixes`: one that is a
+parameter's name is refused; then `implicit_structure`, a term not
+blank or `null` (`InvalidField`). A sibling already bearing the node's
+id component is the framework's `DuplicateName` (MCP_SPECIFICATION
+§2). Whether an imported locale
 exists, whether an instantiation names one of its parameters, whether
 every parameter of it is instantiated, whether each instantiation's
 term is a term over the parameters, whether the terms and types parse,
@@ -380,10 +379,11 @@ The field `assumes[0].statement.for_any[0].name` declares `n`, which is already 
 The field `implicit_structure` must be an Isabelle term, or null for no implicit structure at all.
 ```
 
-`Locale_Instance`'s reader's sentences are COMMON.md §4's, the
-`repeats` sentence is COMMON.md §4's under this class's paths, and the
-statement reader's sentences are THEOREM.md §4's under the path
-`assumes[i].statement`, each pinned in its home alone. The grammar text
+`Locale_Instance`'s check's sentences (`check_locale_instance`) are
+COMMON.md §4's, the `repeats` sentence is COMMON.md §4's under this
+class's paths, and the statement check's sentences (`check_statement`)
+are THEOREM.md §4's under the path `assumes[i].statement`, each pinned
+in its home alone. The grammar text
 after the colon is the framework's, the one `InvalidName` renders for
 the grammar `locale name` (RENDER_BASELINES §2), written once and used
 by both (COMMON.md §5).

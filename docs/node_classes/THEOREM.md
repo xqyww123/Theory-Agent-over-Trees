@@ -22,8 +22,8 @@ theory `TAT_Isabelle_Std`, which imports AoA's. A working directory has
 it when it was made with `-P TAT_Isabelle_Std.TAT_Isabelle_Std` to
 `isabelle TAT_new` or `isabelle TAT`. Its agent-facing wording lives here: the
 `description` texts of its construct schema (§3), the sentences its
-`gen` and its jobs render, and the words on its line — pinned by the
-baseline tests the way SESSION_AND_THEORY.md's are.
+field check and its jobs render (§4, §6), and the words on its line —
+pinned by the baseline tests the way SESSION_AND_THEORY.md's are.
 
 Kinds: `lemma`, `theorem`, `corollary`, `proposition` — the Isar
 commands Isabelle treats alike (`Pure.thy`, `thy_goal_stmt`). The kind
@@ -122,19 +122,22 @@ Isabelle/HOL term with all literal numbers annotated with types
 (`for_any[].type` is `Variable.type`; the last line is both
 `premises[].term` and `conclusion`.) An empty `type` is no type.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
 Where a `Theorem` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`Theorem.gen` checks: `name` against §1's grammar (`InvalidName` with
-`grammar` = `fact name`, rendered as RENDER_BASELINES §2's fourth form
-with that grammar); every `for_any` variable's `name` and every
-premise's `name` an Isabelle identifier (COMMON.md §5), a variable's not
-ending with an underscore (COMMON.md §5's clause on internal names), and
-no two of either the same (`InvalidField`). Whether the terms parse is
-Isabelle's business at evaluation (MODULE_STRUCTURE §4.1); a term
-Isabelle rejects is an evaluation failure, not an exception. `Theorem`'s
+`Theorem.gen` refuses only `name` outside §1's grammar (`InvalidName`
+with `grammar` = `fact name`, rendered as RENDER_BASELINES §2's fourth
+form with that grammar), and reads the statement normalised (§2). The
+field check (PLUGIN_SYSTEM §2) refuses, before the node's first own
+operation, by the shared statement check (COMMON.md §4): every
+`for_any` variable's `name` and every premise's `name` an Isabelle
+identifier (COMMON.md §5), a variable's not ending with an underscore
+(COMMON.md §5's clause on internal names), and no two of either the
+same (`InvalidField`). Whether the terms parse is Isabelle's business at
+evaluation (MODULE_STRUCTURE §4.1); a term Isabelle rejects is an
+evaluation failure, not an exception. `Theorem`'s
 `goal_structure()` (COMMON.md §3) is the `for_any`, `premises` and
 `conclusion`, names included — each binds a fact a stored proof may cite
 —, each `IsaTerm` as its `ascii`; `message()` carries it as its goal

@@ -5,12 +5,12 @@ the base of those whose one command opens one goal — a `Leaf`'s one
 operation, or a block's beginning through `Beginning_Proof_Obligation`
 — with its two job classes (§3); the
 shared `$defs` — the type parameter and the two mixfix annotations —
-with their checks and writers, and the checks of a name (§4, §5); the
-package's compile hook for AoA's proof stores (§3; COMPILATION.md §5);
-`Type_Definition`, the marker of the type-defining classes, and
-`MOVE_IT_OUT`, the remedy of §1; `Lifting_Block`, the plugin's `StdBlock`
-inside which a Lifting setup is open, and on it `Lifting_Closing`, the
-block whose ending closes a type's Lifting setup, its ML half
+with their readers and writers, the type parameter's checks, and the
+checks of a name (§4, §5); the package's compile hook for AoA's proof
+stores (§3; COMPILATION.md §5); `Type_Definition`, the marker of the
+type-defining classes, and `MOVE_IT_OUT`, the remedy of §1;
+`Lifting_Block`, the plugin's `StdBlock` inside which a Lifting setup
+is open, and on it `Lifting_Closing`, the block whose ending closes a type's Lifting setup, its ML half
 Isabelle_Std/ML/TAT_Lifting_Closing.ML, with `lifting_closing_text`, the
 two lines its ending and `LiftingContext`'s write (§6);
 and the theory the plugin declares the forest's theories import
@@ -99,16 +99,13 @@ def require_id_name(name: str, grammar: Id_Name_Grammar) -> None:
         raise InvalidName(name, grammar)
 
 
-def check_identifier(text: str, field: str, earlier: Iterable[IsaTerm], *, in_term: bool) -> IsaTerm:
-    """A name the construct gives, normalised, as the node holds it (§5):
-    `InvalidField` unless an Isabelle identifier on its `ascii` form, not
-    ending with an underscore when Isabelle reads it in a term, and not
-    among `earlier`."""
-    name = IsaTerm.from_agent(normalised(text))
+def check_identifier(name: IsaTerm, field: str, earlier: Iterable[IsaTerm], *, in_term: bool) -> None:
+    """§5's check of a name the node holds: `InvalidField` unless an
+    Isabelle identifier on its `ascii` form, not ending with an underscore
+    when Isabelle reads it in a term, and not among `earlier`."""
     if not is_identifier(name.ascii) or (in_term and name.ascii.endswith("_")):
         raise InvalidField(field, f"must be an Isabelle identifier: it {ID_NAME_TEXT}")
     check_not_bound_twice(name, field, earlier)
-    return name
 
 
 def check_not_bound_twice(name: IsaTerm | str, field: str, earlier: Iterable[IsaTerm | str]) -> None:
@@ -118,30 +115,16 @@ def check_not_bound_twice(name: IsaTerm | str, field: str, earlier: Iterable[Isa
         raise InvalidField(field, f"repeats `{IsaTerm.to_unicode(name)}`")
 
 
-def dotted_name_of(text: str, field: str, earlier: Iterable[IsaTerm], noun: str) -> IsaTerm:
-    """A name that is an Isabelle identifier or identifiers joined by dots —
-    a `Locale`'s `imports[].locale`, a `LiftingContext`'s `types` entry —,
-    normalised, as the node holds it (§4): `InvalidField` unless each part
-    on its `ascii` is an identifier not ending with an underscore (§5),
-    and not among `earlier`; `noun` is what the name names, `locale` or
-    `type`."""
-    name = IsaTerm.from_agent(normalised(text))
+def check_dotted_name(name: IsaTerm, field: str, earlier: Iterable[IsaTerm], noun: str) -> None:
+    """§4's check of a name that is an Isabelle identifier or identifiers
+    joined by dots — a `Locale`'s `imports[].locale`, a `LiftingContext`'s
+    `types` entry —: `InvalidField` unless each part on its `ascii` is an
+    identifier not ending with an underscore (§5), and not among
+    `earlier`; `noun` is what the name names, `locale` or `type`."""
     if not all(is_identifier(part) and not part.endswith("_") for part in name.ascii.split(".")):
         raise InvalidField(field, f"must be a {noun}'s name: an Isabelle identifier, or identifiers joined by dots,"
                                   f" each of which {ID_NAME_TEXT}")
     check_not_bound_twice(name, field, earlier)
-    return name
-
-
-def _check_type_variable(text: str, field: str, earlier: Iterable[IsaTerm]) -> IsaTerm:
-    """A type parameter's name, normalised, as the node holds it (§4):
-    `InvalidField` on `field` unless, on its `ascii`, a prime then an
-    Isabelle identifier, and not among `earlier`."""
-    name = IsaTerm.from_agent(normalised(text))
-    if not (name.ascii.startswith("'") and is_identifier(name.ascii[1:])):
-        raise InvalidField(field, "must be a type variable, such as 'a")
-    check_not_bound_twice(name, field, earlier)
-    return name
 
 
 # --- the shared `$defs` (§4): the type parameter and the two mixfix annotations
@@ -316,27 +299,33 @@ class Type_Parameter:
 
 
 def type_parameters_of(raw: list[TypeParameter_RawAST]) -> tuple[Type_Parameter, ...]:
-    """The shared check (§4), the construct's `type_parameters` normalised
-    and as the node holds them: each `name`, on its `ascii`, a prime and
-    an Isabelle identifier, no two the same; an empty `sort` is no sort.
-    A stored image is read back through it too."""
+    """The construct's `type_parameters`, or a stored image, normalised and
+    as the node holds them, judging nothing (§4): an empty `sort` is no
+    sort."""
     parameters: list[Type_Parameter] = []
-    for i, p in enumerate(raw):
-        name = _check_type_variable(p["name"], f"type_parameters[{i}].name", [q.name for q in parameters])
+    for p in raw:
         sort = normalised(p.get("sort", ""))
-        parameters.append(Type_Parameter(name, IsaTerm.from_agent(sort) if sort else None))
+        parameters.append(Type_Parameter(IsaTerm.from_agent(normalised(p["name"])),
+                                         IsaTerm.from_agent(sort) if sort else None))
     return tuple(parameters)
 
 
 def type_variables_of(raw: list[str]) -> tuple[Type_Parameter, ...]:
-    """The shared check (§4) over type variables written bare, under the
-    path `type_parameters[i]`: `Type_Parameter`s without a sort.  A
-    stored image — the names — is read back through it too."""
-    parameters: list[Type_Parameter] = []
-    for i, name in enumerate(raw):
-        variable = _check_type_variable(name, f"type_parameters[{i}]", [q.name for q in parameters])
-        parameters.append(Type_Parameter(variable, None))
-    return tuple(parameters)
+    """Type variables written bare, the construct's or a stored image's, as
+    `Type_Parameter`s without a sort, normalised, judging nothing (§4)."""
+    return tuple(Type_Parameter(IsaTerm.from_agent(normalised(name)), None) for name in raw)
+
+
+def check_type_parameters(parameters: Sequence[Type_Parameter], last: str) -> None:
+    """§4's check of the type parameters, under `type_parameters[i]`
+    followed by `last` — `.name` for the `TypeParameter` shape, nothing
+    for type variables written bare: each name, on its `ascii`, a prime
+    then an Isabelle identifier, no two the same."""
+    for i, p in enumerate(parameters):
+        field = f"type_parameters[{i}]{last}"
+        if not (p.name.ascii.startswith("'") and is_identifier(p.name.ascii[1:])):
+            raise InvalidField(field, "must be a type variable, such as 'a")
+        check_not_bound_twice(p.name, field, [q.name for q in parameters[:i]])
 
 
 def check_type_parameters_used(parameters: Sequence[Type_Parameter], texts: Iterable[IsaTerm]) -> None:
@@ -529,7 +518,7 @@ class Variable_With_Syntax:
     @classmethod
     def of_image(cls, raw: VariableWithSyntax_RawAST) -> Variable_With_Syntax:
         """The construct's variable, its texts normalised, and a stored image
-        read back; the name's grammar is the class's to check first."""
+        read back; the name's grammar is the class's to check."""
         type_ = normalised(raw.get("type", ""))
         syntax: Mixfix | NoSyntax | None = None
         if "syntax" in raw:
@@ -579,10 +568,12 @@ class Locale_Instance:
 
     @classmethod
     def of_image(cls, raw: LocaleInstance_RawAST) -> Locale_Instance:
-        """A stored image read back, unchecked."""
-        return cls(IsaTerm.from_agent(raw["locale"]),
-                   IsaTerm.from_agent(raw["qualifier"]) if "qualifier" in raw else None,
-                   tuple(Instantiation(IsaTerm.from_agent(i["name"]), IsaTerm.from_agent(i["term"]))
+        """§4's reader, of the construct's instance and of a stored image
+        alike: every piece normalised, judging nothing."""
+        return cls(IsaTerm.from_agent(normalised(raw["locale"])),
+                   IsaTerm.from_agent(normalised(raw["qualifier"])) if "qualifier" in raw else None,
+                   tuple(Instantiation(IsaTerm.from_agent(normalised(i["name"])),
+                                       IsaTerm.from_agent(normalised(i["term"])))
                          for i in raw["instantiations"]))
 
     def wire(self) -> tuple[str, str | None, list[tuple[str, str]]]:
@@ -591,20 +582,17 @@ class Locale_Instance:
                 [(i.name.ascii, i.term.ascii) for i in self.instantiations])
 
 
-def locale_instance_of(raw: LocaleInstance_RawAST, path: str) -> Locale_Instance:
-    """§4's reader, under the class's `path` of the field: the locale's name
-    by `dotted_name_of` under the noun `locale`; the qualifier, when
-    given, an Isabelle identifier; each instantiation's name an identifier
-    not ending with an underscore, no two the same; the texts normalised."""
-    locale = dotted_name_of(raw["locale"], f"{path}.locale", (), "locale")
-    qualifier = (check_identifier(raw["qualifier"], f"{path}.qualifier", (), in_term=False)
-                 if "qualifier" in raw else None)
-    instantiations: list[Instantiation] = []
-    for i, instantiation in enumerate(raw["instantiations"]):
-        name = check_identifier(instantiation["name"], f"{path}.instantiations[{i}].name",
-                                [x.name for x in instantiations], in_term=True)
-        instantiations.append(Instantiation(name, IsaTerm.from_agent(normalised(instantiation["term"]))))
-    return Locale_Instance(locale, qualifier, tuple(instantiations))
+def check_locale_instance(instance: Locale_Instance, path: str) -> None:
+    """§4's check of an instance, under the class's `path` of the field:
+    the locale's name by `check_dotted_name` under the noun `locale`; the
+    qualifier, when given, an Isabelle identifier; each instantiation's
+    name an identifier not ending with an underscore, no two the same."""
+    check_dotted_name(instance.locale, f"{path}.locale", (), "locale")
+    if instance.qualifier is not None:
+        check_identifier(instance.qualifier, f"{path}.qualifier", (), in_term=False)
+    for i, instantiation in enumerate(instance.instantiations):
+        check_identifier(instantiation.name, f"{path}.instantiations[{i}].name",
+                         [x.name for x in instance.instantiations[:i]], in_term=True)
 
 
 def locale_instance_text(instance: Locale_Instance, keywords: Container[str] = ()) -> str:
@@ -625,17 +613,25 @@ def locale_instance_text(instance: Locale_Instance, keywords: Container[str] = (
     return " ".join(parts)
 
 
-# --- the Rep and the Abs function names of a type (§4): the check, the defaults and the `morphisms` clause
+# --- the Rep and the Abs function names of a type (§4): the reader, the check, the defaults and the `morphisms`
+#     clause
 
 def function_names_of(raw_rep: str | None, raw_abs: str | None) -> tuple[IsaTerm | None, IsaTerm | None]:
-    """§4's check of the pair, the fields `rep_function_name` and
-    `abs_function_name`: each given name an Isabelle identifier Isabelle
-    reads in a term (§5), the two given names, as given, not the same —
-    the later refused —; None for a name left out."""
-    rep = check_identifier(raw_rep, "rep_function_name", (), in_term=True) if raw_rep is not None else None
-    abs_ = (check_identifier(raw_abs, "abs_function_name", () if rep is None else (rep,), in_term=True)
-            if raw_abs is not None else None)
-    return rep, abs_
+    """The fields `rep_function_name` and `abs_function_name`, the
+    construct's or the store's, each given name normalised, a blank one
+    included; None for a name left out (§4).  Judges nothing."""
+    return (IsaTerm.from_agent(normalised(raw_rep)) if raw_rep is not None else None,
+            IsaTerm.from_agent(normalised(raw_abs)) if raw_abs is not None else None)
+
+
+def check_function_names(rep: IsaTerm | None, abs_: IsaTerm | None) -> None:
+    """§4's check of the pair: each given name an Isabelle identifier
+    Isabelle reads in a term (§5), the two given names, as given, not the
+    same — the later refused."""
+    if rep is not None:
+        check_identifier(rep, "rep_function_name", (), in_term=True)
+    if abs_ is not None:
+        check_identifier(abs_, "abs_function_name", () if rep is None else (rep,), in_term=True)
 
 
 def function_names(rep: IsaTerm | None, abs_: IsaTerm | None, type_name: str,

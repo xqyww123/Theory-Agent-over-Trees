@@ -11,7 +11,7 @@ function names and a type's head, implemented 2026-10-18 with that
 class, and §4's check of a type parameter declared and not used;
 revised 2026-10-21 with the `Locale` design (LOCALE.md): §1's `Locale`
 entries, §2's writer of an `english` in a cartouche, §4's statement
-reader, `LOCALE_INSTANCE_DEFS` with `dotted_name_of`,
+reader, `LOCALE_INSTANCE_DEFS` with `check_dotted_name`,
 `VARIABLE_WITH_SYNTAX_DEFS` with `TAT_Mixfix.arm_of`, the arm
 `NoSyntax`, §5's clauses on
 the dotted names and `Define`'s constants' names and its one-home
@@ -21,7 +21,9 @@ moved from `Define`, with `constants_of`, `VARIABLE_DEFS`,
 `variables_of` and `check_variables` taken out of statement.py's
 statement, and the
 `VariableWithSyntax` paragraph's sharers; §5's constants' names and its
-recorded-choice bullet; not implemented.
+recorded-choice bullet; `variables_of` and `check_variables`
+implemented 2026-10-25 with the field check
+(ai-artifacts/PLACEMENT_RULES_PLAN.md §5), the rest not implemented.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -538,18 +540,21 @@ stores no row of its own: `proof` and the check are the framework's
 A structure several classes use is defined once and merged by name
 (PLUGIN_SYSTEM §4–§5): `VARIABLE_DEFS` and `STATEMENT_DEFS` in
 `std/statement.py`, which also holds `Statement`, what a node keeps of a
-statement, its reader — taking the field's path, `statement` for a
-`Theorem`, `assumes[i].statement` for a `Locale`'s axiom — and the
-proposition `Theorem` prints under `recall`, shared by `Theorem` and
-`Locale`, `variables_of(raw)`, which reads a `for_any` list into
-`Variable`s, each name and type normalised, and judges nothing, and
-`check_variables(variables, path)`, which judges the `Variable`s read —
-each name by `check_identifier` with `in_term` true, a repeat included —
-with THEOREM.md §4's sentences under `path.for_any[j].name`.
-`Statement`'s reader calls the one and then the other; `Inductive.gen`
-calls the reader, and `Inductive`'s evaluation-time field check the
-check, under `inductive_rules[i]` (THEOREM.md, INDUCTIVE.md); the other
-six here, in `common.py`. A class's `$defs`
+statement, shared by `Theorem` and `Locale`: its reader
+`Statement.of_image`, of the construct and the stored image alike, which
+judges nothing — `statement_of(raw)` normalises a construct's `english`
+on top of it —; its check `check_statement(statement, path)` under the
+field's path, `statement` for a `Theorem`, `assumes[i].statement` for a
+`Locale`'s axiom; and the proposition `Theorem` prints under `recall`.
+Beside it, `variables_of(raw)` reads a `for_any` list into `Variable`s,
+each name and type normalised, and judges nothing, and
+`check_variables(variables, path)` judges the `Variable`s — each name by
+`check_identifier` with `in_term` true, a repeat included — with
+THEOREM.md §4's sentences under `path.for_any[j].name`. `Statement`'s
+reader uses the one and its check the other; `Inductive.gen` uses the
+reader, and `Inductive`'s field check the check, under
+`inductive_rules[i]` (THEOREM.md, INDUCTIVE.md); the other six here, in
+`common.py`. A class's `$defs`
 spreads only the definitions its schema reaches (PLUGIN_SYSTEM §5).
 
 | definition | holds | used by |
@@ -564,7 +569,7 @@ spreads only the definitions its schema reaches (PLUGIN_SYSTEM §5).
 | `CONSTANT_DEFS` | `Constant` | `Define`, `Inductive` |
 
 `QuotientType`'s parameters take no sort (`Parse.type_args`): type
-variables written bare, read by `type_variables_of`, which runs the
+variables written bare, read by `type_variables_of`, judged by the
 check below under the path `type_parameters[i]` (QUOTIENT_TYPE.md §4);
 `TypeSynonym`'s, which `type_synonym` reads the same way, take the same
 shape. The descriptions
@@ -590,10 +595,13 @@ optional sort:
 }
 ```
 
-`common.py` holds its `gen`-time check — on the `ascii` form, a prime,
-then an Isabelle identifier (§5), and no two the same — whose two
-`InvalidField` sentences, pinned here, every class taking the
-definition renders:
+`common.py` holds its reader, `type_parameters_of(raw)`, which reads the
+construct's parameters or a stored image normalised, an empty `sort` no
+sort, and judges nothing, and its check, `check_type_parameters(parameters,
+last)`, which the field check of every class taking the definition runs
+— on the `ascii` form, a prime, then an Isabelle identifier (§5), and no
+two the same —, whose two `InvalidField` sentences, pinned here, every
+such class renders:
 
 ```
 The field `type_parameters[0].name` must be a type variable, such as 'a.
@@ -719,12 +727,12 @@ definitions is defined and emitted as any other, which the
 Isabelle-backed tests of `Typedef` (`'a poly` on `zero`) and
 `QuotientType` (`'a fract` on `idom`) pin.
 
-Five helpers of `common.py` with no definition of their own
-(QUOTIENT_TYPE.md §4–§5; LOCALE.md §4). `dotted_name_of(text, field,
-earlier, noun)`, in `check_identifier`'s shape, judges one name that is
-an Isabelle identifier or identifiers joined by dots — each part on its
-`ascii` an identifier (§5) not ending with an underscore —, not among
-the `earlier` ones, and answers it normalised as an `IsaTerm`; the
+Helpers of `common.py` with no definition of their own
+(QUOTIENT_TYPE.md §4–§5; LOCALE.md §4). `check_dotted_name(name, field,
+earlier, noun)`, in `check_identifier`'s shape, judges one name the node
+holds that is an Isabelle identifier or identifiers joined by dots —
+each part on its `ascii` an identifier (§5) not ending with an
+underscore —, not among the `earlier` ones; the
 noun is what the name names, `locale` for a `Locale_Instance`'s
 `locale` (LOCALE.md §4), `type` for a `LiftingContext`'s `types` entry
 (LIFTING_CONTEXT.md §4); its one `InvalidField` sentence, pinned here
@@ -736,12 +744,15 @@ The field `types[0]` must be a type's name: an Isabelle identifier, or identifie
 ```
 
 The
-type-parameter check above takes the field's path: `type_parameters_of`
-runs it under `type_parameters[i].name`, and `type_variables_of(raw)`,
-over type variables written bare, under `type_parameters[i]`, answering
-`Type_Parameter`s without a sort and reading a stored image back. The
+type-parameter check above takes the field's path: `last` is `.name` for
+the `TypeParameter` shape, under `type_parameters[i].name`, and empty
+over type variables written bare, under `type_parameters[i]`, which
+`type_variables_of(raw)` reads as `Type_Parameter`s without a sort, from
+the construct or a stored image, judging nothing. The reader, the
 check, the defaults and the `morphisms` writer of a pair of function
-names — `function_names_of`, `function_names` and `morphisms_clause` —,
+names — `function_names_of`, which reads each given name normalised, a
+blank one the empty term, and judges nothing; `check_function_names`;
+`function_names` and `morphisms_clause` —,
 the last two parameterised by the class's two default prefixes (`Rep_`
 and `Abs_`, `rep_` and `abs_`): each given name an Isabelle identifier
 (§5) not ending with an underscore, the two given names, as given,
@@ -806,8 +817,11 @@ as constants and `STATEMENT_DEFS` takes too, THEOREM.md §3 their home;
 holds `Locale_Instance`, what the node keeps of an instance; its wire,
 the locale's name, the qualifier or none, and the instantiations in
 their order, each its name and its term, every piece as its `ascii`;
-its reader and its writer. The reader judges, under the class's path
-of the field: the locale's name by `dotted_name_of` under the noun
+its reader, its check and its writer. The reader,
+`Locale_Instance.of_image`, reads the construct's instance or a stored
+image, every piece normalised, and judges nothing. The check,
+`check_locale_instance(instance, path)`, judges, under the class's path
+of the field: the locale's name by `check_dotted_name` under the noun
 `locale` (above); the qualifier, when given, an Isabelle identifier;
 each instantiation's name an Isabelle identifier not ending with an
 underscore, no two the same, refused with the type parameters'
@@ -906,9 +920,8 @@ the stored text bare (DEFINE.md §5, §8; INDUCTIVE.md §5, §8).
 only each name's grammar, the id grammar without hyphens (`InvalidName`
 with `grammar` = `constant name`, §5), since the node's name is computed
 from them. No two constants the same is `check_not_bound_twice` over the
-names read, under `constants[i].name`: `Define.gen` runs it (DEFINE.md
-§4), `Inductive`'s evaluation-time field check runs it (INDUCTIVE.md
-§4).
+names read, under `constants[i].name`: the field check of `Define`
+(DEFINE.md §4) and of `Inductive` (INDUCTIVE.md §4) runs it.
 
 ## 5. Conventions
 
@@ -933,7 +946,7 @@ names read, under `constants[i].name`: `Define.gen` runs it (DEFINE.md
   it has no grammar text of its own; a `LiftingContext`'s `types` entry
   and a `Locale`'s `imports[].locale` are an Isabelle identifier or
   identifiers joined by dots, each part judged as one, by
-  `dotted_name_of` (§4); `Define`'s and `Inductive`'s constants' names,
+  `check_dotted_name` (§4); `Define`'s and `Inductive`'s constants' names,
   from which each node's name is computed, are in the id grammar too, as `IsaTerm`s, since
   `Variable_With_Syntax` keeps them (§4); every other name is an
   Isabelle identifier: on the `ascii` form of its
@@ -951,13 +964,19 @@ names read, under `constants[i].name`: `Define.gen` runs it (DEFINE.md
   (`GRAMMARS`, RENDER_BASELINES §2): `InvalidName` renders it after the
   noun of its grammar, `InvalidField` after `must be`, the noun of what
   the field must be and a colon (THEOREM.md §4, DATATYPE.md §4).
-- A class's own sentences — its descriptions, its `gen`'s refusals,
-  the remedies its `cannot_hold` and `cannot_stand_under` answer,
-  the words of its mark — are in its own document, pinned by the
-  baseline tests. Every shared sentence — a shared `$defs`
-  description, a shared refusal sentence, a shared remedy — has one home, §4,
+- A shared structure's reader (§4) builds what the node holds from the
+  construct or from the stored image, normalised, and judges nothing,
+  for `gen` and `from_store`; its check, where it has one, judges what
+  the node holds and raises its sentence under the field's path, for
+  the class's field check (PLUGIN_SYSTEM §2).
+- A class's own sentences — its descriptions, its `gen`'s and its field
+  check's refusals, the remedies its `cannot_hold` and
+  `cannot_stand_under` answer, the words of its mark — are in its own
+  document, pinned by the baseline tests. Every shared sentence — a
+  shared `$defs` description, a shared refusal sentence, a shared
+  remedy — has one home, §4,
   THEOREM.md for `STATEMENT_DEFS`'s descriptions (§3) and the sentences
-  of its reader and of the `for_any` check (§4), §1 for `Move it out.`, or §6 for the sentences of a `Lifting_Closing`
+  of its check and of the `for_any` check (§4), §1 for `Move it out.`, or §6 for the sentences of a `Lifting_Closing`
   block, and one test pin
   there; a class document lists its own sentences alone and names that
   home for the rest.

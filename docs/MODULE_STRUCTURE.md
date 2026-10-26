@@ -461,7 +461,7 @@ isabelle_theory_agent/
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
   plugin.py            loading node classes and their table; the argument schema grammar
-  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class, named after it, with the class's document under node_classes/ (INDEX.md); statement.py, the statement's schema definitions, Statement, its reader and the proposition Theorem prints under recall, shared by Theorem and Locale, and the reader of a for_any list, shared with Inductive
+  std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class, named after it, with the class's document under node_classes/ (INDEX.md); statement.py, the statement's schema definitions, Statement, its reader, its check and the proposition Theorem prints under recall, shared by Theorem and Locale, and the reader and the check of a for_any list, shared with Inductive
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
   toplevel.py          the two RPC entry points Isabelle calls into, launch_TAT and compile_TAT: the ending object, the Conversation, the Forest, the server
@@ -512,7 +512,8 @@ id (RENDER_BASELINES §3); `None` where no answer refuses. The check runs
 where a node's first own operation does, `Leaf._evaluate` and
 `StdBlock._evaluate`, through `Node._placed(hook)`: a refusal is the
 operation's status, a `CannotEvaluate` carrying the message, the hook
-uncalled; otherwise the hook runs and is timed. Neither method is asked
+uncalled; otherwise the field check is asked (below), and then the hook
+runs and is timed. Neither method is asked
 at the edit, nor with a class; the forest's shape is §4.2's. A nesting
 node also answers `refuses_children()`: whether it takes no child now by
 what its beginning recorded, `False` by default — `Lifting_Closing`'s is
@@ -524,6 +525,20 @@ stood alone, no children header (PRINT.md §2). All three methods are
 synchronous and read only what cannot change without the node being
 invalidated: the classes, the kinds, the authored fields, the ancestor's
 full id and what its beginning recorded.
+
+**The field check.** Every judgement a class makes of a node's fields
+but those its `gen` makes (Construction, below) is its `check_fields()`:
+synchronous, reading the node's class, kind and authored fields alone;
+it raises `InvalidField` for the first thing wrong, in the class's
+order, with the class's sentence under the field's path, or returns;
+nothing by default. `Node._placed` asks it after `_refusal()` and before
+the hook: its `InvalidField` is the operation's status, a
+`CannotEvaluate` whose one message is `str(e)` — the cause sentence
+alone, no `raw_ast_path` prefixed and no opening line written
+(EXCEPTIONS.md §4, §5) —, the hook uncalled; a node the placement check
+refuses is not asked. That `InvalidField` is the one `TAT_Error` the
+walk handles; anything else `check_fields` raises is its class's bug
+(EXCEPTIONS.md §1). Nothing asks it at the edit.
 
 Four aliases name what an id is made of: `Id = str`, the dotted string the
 agent sees; `Id_Component = str`, one `<kind>_<name>`; `Id_Components =
@@ -559,7 +574,8 @@ set alone (CONSTRUCT_INTERACTION §6).
 
 **Construction.** A node enters the forest from a `RawAST` — the JSON
 object the agent submitted, `Mapping[str, Any]` — less `children`, which
-no `gen` ever sees (§4.2). Everything semantic lives in `gen`:
+no `gen` ever sees (§4.2). Its class's `gen` reads it and builds the
+node:
 
 ```python
 @dataclass(frozen=True)
@@ -608,9 +624,14 @@ class NodeConfig(NamedTuple):
 async def gen(cls, config: NodeConfig, raw: RawAST) -> Self
 ```
 
-`gen` checks and constructs; the framework sets the node's `parent`.
-Where a node may stand inside its theory is the placement check's, at
-evaluation (above); `Session` and `Theory` judge their own parent,
+`gen` reads and constructs; the framework sets the node's `parent`. It
+refuses only what keeps the node from being built: the node's own name,
+and the names that name is computed from, outside the id grammar
+without hyphens (`InvalidName`, node_classes/COMMON.md §5) — `Session.gen`
+and `Theory.gen` judge all their fields (PLUGIN_SYSTEM §2). Every other
+judgement the class makes of the fields is the field check's, and
+where a node may stand inside its theory the placement check's, both
+at evaluation (above); `Session` and `Theory` judge their own parent,
 in `gen` and in `on_moving`, each with its `Bad<Class>NodeParent`
 (EXCEPTIONS.md §3). `gen`
 has no part in the replaced node's job outcome: the amend's commit asks
@@ -737,7 +758,7 @@ a `Ready(messages)` or a `CannotEvaluate(messages)` — the Python classes
 of ARCHITECTURE §3.2's `not_evaluated`, `ready` and `cannot_evaluate`;
 the last two are frozen dataclasses with one field, `messages:
 tuple[IsaTerm, ...]`, the output of the run that left the status, or the
-placement check's refusal (§4.1), so a
+placement check's or the field check's refusal (§4.1), so a
 kind is tested with `isinstance` and `==` compares the messages too;
 `Ready()` is a clean run, and `READY_CLEAN` a module-level instance of
 it, a value and never a kind (COMPILATION.md §4). A `Leaf`

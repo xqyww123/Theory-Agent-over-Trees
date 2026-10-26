@@ -4,13 +4,16 @@ definitions `Variable` and `LongStatement`, TAT's copy of AoA's
 of THEOREM.md §3, which every class stating something shares, so that the
 `edit` schema merges one definition (PLUGIN_SYSTEM §5); the argument
 declarations a `gen` reads them through; `Statement`, what a node keeps
-of one, with its reader under the field's path — `statement` for a
-`Theorem`, `assumes[i].statement` for a `Locale`'s axiom — and the
-proposition `Theorem` prints under `recall`."""
+of one, with its reader, which judges nothing, and its check under the
+field's path — `statement` for a `Theorem`, `assumes[i].statement` for
+a `Locale`'s axiom —; the reader and the check of a `for_any` list,
+which `Inductive` shares; and the proposition `Theorem` prints under
+`recall`."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import Any, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -84,7 +87,7 @@ class Premise:
 @dataclass(frozen=True)
 class Statement:
     """A `LongStatement` as the node holds it (THEOREM.md §2): every piece
-    of Isabelle text an `IsaTerm`, the texts normalised once by `gen`."""
+    of Isabelle text an `IsaTerm`, normalised by its reader."""
     english: str
     for_any: tuple[Variable, ...]
     premises: tuple[Premise, ...]
@@ -117,30 +120,46 @@ class Statement:
                 "conclusion": self.conclusion.unicode}
 
     @classmethod
-    def of_image(cls, image: dict[str, Any]) -> Statement:
-        return cls(image["english"],
-                   tuple(Variable(IsaTerm.from_agent(v["name"]),
-                                  IsaTerm.from_agent(v["type"]) if "type" in v else None)
-                         for v in image["for_any"]),
-                   tuple(Premise(IsaTerm.from_agent(p["name"]), IsaTerm.from_agent(p["term"]))
-                         for p in image["premises"]),
-                   IsaTerm.from_agent(image["conclusion"]))
+    def of_image(cls, image: LongStatement_RawAST) -> Statement:
+        """The reader of a statement, the construct's or a stored image's:
+        its Isabelle texts normalised, `for_any` by `variables_of`, a list
+        left out empty; `english` as given, which `statement_of` normalises
+        for a construct.  Judges nothing."""
+        return cls(image["english"], variables_of(image.get("for_any", [])),
+                   tuple(Premise(IsaTerm.from_agent(normalised(p["name"])), IsaTerm.from_agent(normalised(p["term"])))
+                         for p in image.get("premises", [])),
+                   IsaTerm.from_agent(normalised(image["conclusion"])))
 
 
-def statement_of(raw: LongStatement_RawAST, path: str) -> Statement:
-    """The construct's statement, normalised (THEOREM.md §2) and checked
-    (THEOREM.md §4, by the plugin's `check_identifier`) under the field's
-    `path`: every variable's and premise's name an Isabelle identifier on
-    its `ascii` form, a variable's not ending with an underscore, no two
-    of either the same."""
+def variables_of(raw: Sequence[Variable_RawAST]) -> tuple[Variable, ...]:
+    """A `for_any` list, the construct's or a stored image's, each name and
+    type normalised, an empty type none (COMMON.md §4).  Judges nothing."""
     variables: list[Variable] = []
-    for i, v in enumerate(raw.get("for_any", [])):
-        name = check_identifier(v["name"], f"{path}.for_any[{i}].name", [x.name for x in variables], in_term=True)
+    for v in raw:
         type_ = normalised(v.get("type", ""))
-        variables.append(Variable(name, IsaTerm.from_agent(type_) if type_ else None))
-    premises: list[Premise] = []
-    for i, p in enumerate(raw.get("premises", [])):
-        name = check_identifier(p["name"], f"{path}.premises[{i}].name", [x.name for x in premises], in_term=False)
-        premises.append(Premise(name, IsaTerm.from_agent(normalised(p["term"]))))
-    return Statement(normalised(raw["english"]), tuple(variables), tuple(premises),
-                     IsaTerm.from_agent(normalised(raw["conclusion"])))
+        variables.append(Variable(IsaTerm.from_agent(normalised(v["name"])), IsaTerm.from_agent(type_) if type_ else None))
+    return tuple(variables)
+
+
+def check_variables(variables: Sequence[Variable], path: str) -> None:
+    """The `for_any` check (COMMON.md §4; THEOREM.md §4), under
+    `<path>.for_any[j].name`: each name an Isabelle identifier on its
+    `ascii` form, not ending with an underscore, no two the same."""
+    for j, v in enumerate(variables):
+        check_identifier(v.name, f"{path}.for_any[{j}].name", [x.name for x in variables[:j]], in_term=True)
+
+
+def statement_of(raw: LongStatement_RawAST) -> Statement:
+    """The construct's statement as the node holds it (THEOREM.md §2): read
+    by `Statement.of_image`, its `english` normalised.  Judges nothing."""
+    return replace(Statement.of_image(raw), english=normalised(raw["english"]))
+
+
+def check_statement(statement: Statement, path: str) -> None:
+    """THEOREM.md §4's check of a statement under the field's `path`: its
+    `for_any` by `check_variables`, then every premise's name an Isabelle
+    identifier, which may end with an underscore, no two the same."""
+    check_variables(statement.for_any, path)
+    for i, p in enumerate(statement.premises):
+        check_identifier(p.name, f"{path}.premises[{i}].name", [x.name for x in statement.premises[:i]],
+                         in_term=False)

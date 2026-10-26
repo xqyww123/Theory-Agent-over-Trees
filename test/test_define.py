@@ -1,5 +1,5 @@
 """`Define` (node_classes/DEFINE.md): with no Isabelle, the schema and the
-descriptions (§2, §3), `gen`'s checks and refusals (§4), the definition as
+descriptions (§2, §3), `gen` and the field check (§4), the definition as
 the node holds, stores and prints it (§1, §2, §8), the node's name and the
 framework's `DuplicateName` on it (§9), the message, the status and the
 recorded fields (§6), the carry on an amend (§4), the jobs — their calls,
@@ -34,7 +34,7 @@ from isabelle_theory_agent.std.define import (
     Define_Proof_Job, Termination_Task, assertion, goal_hint, task_text)
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import TAT_STD, read_back
-from std_forest import KINDS, forest, insert, inv, refused
+from std_forest import KINDS, field_check, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -122,10 +122,10 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: a constant's name outside §1's
-    grammar (RENDER_BASELINES §2's line for a constant name); a constant
-    twice, the plugin's one sentence (§4's block); a missing field, a
-    recorded field authored or an empty list, by the framework."""
+    """§4's `gen` refuses only a constant's name outside §1's grammar
+    (RENDER_BASELINES §2's line for a constant name), before any field is
+    judged; a missing field, a recorded field authored, an empty list or
+    the integer bound, by the framework."""
     f, x = forest()
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`dl-rev` is not a valid constant name")]
@@ -134,9 +134,6 @@ def test_gen_refuses_as_section_4_says():
     assert str(e) == "At `constructs[0]`: " + invalid.replace("dl-rev", "my-fun")
     for name in ("1st", "sum_upto_", "a b", "x'y-", "", "λ", " sum_upto"):
         assert refused(f, x, [definition(name)], InvalidName).grammar == "constant name"
-    [twice] = fenced_blocks(DD, "4.")[0]
-    e = refused(f, x, [EVEN_ODD | {"constants": [{"name": "even"}, {"name": "even"}]}], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice and e.field == "constants[1].name"
     assert refused(f, x, [definition("my-fun") | {"constants": [{"name": "my-fun"}, {"name": "my-fun"}]}], InvalidName).name == "my-fun"
     for raw in ({k: v for k, v in SUM_UPTO.items() if k != "auto_reduction"},         # required, no default (§1)
                 SUM_UPTO | {"form": "definition"}, SUM_UPTO | {"completeness_method": None},    # recorded, not authored (§1)
@@ -147,6 +144,18 @@ def test_gen_refuses_as_section_4_says():
     e = refused(f, x, [definition() | {"constants": [{"name": "sum_upto", "syntax": {"form": "infixl", "symbol": "+", "priority": 2**64}}]}],
                 InvalidField)
     assert str(e) == "At `constructs[0]`: " + bound.replace("types[0].constructors[1].syntax", "constants[0].syntax")
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check: a constant twice, the plugin's one sentence (§4's
+    block), told alone, no path before it."""
+    f, x = forest()
+    [twice] = fenced_blocks(DD, "4.")[0]
+    e = field_check(f, x, [EVEN_ODD | {"constants": [{"name": "even"}, {"name": "even"}]}])
+    assert str(e) == twice and e.field == "constants[1].name"
+    assert field_check(f, x, [EVEN_ODD]) is None and field_check(f, x, [SUM_UPTO]) is None
     assert x.sub_nodes == []
     inv(f)
 

@@ -1,9 +1,9 @@
 """A forest of the plugin `Isabelle_Std`'s classes against the fake state
 slot table (not a pytest module): the kind table of the fake framework
-classes and every class the plugin registers, and the five helpers the
+classes and every class the plugin registers, and the seven helpers the
 plugin's test modules share — `insert`, `forest`, `inv`, `refused`,
-`assert_a_missing_row_is_refused_at_start`.  A new class of the plugin
-adds its kinds here."""
+`field_check`, `reloaded`, `assert_a_missing_row_is_refused_at_start`.
+A new class of the plugin adds its kinds here."""
 
 import pytest
 
@@ -11,7 +11,7 @@ import test_model as tm
 import test_session_theory as ts
 from invariants import assert_invariants, assert_store_mirrors
 from isabelle_theory_agent import edit
-from isabelle_theory_agent.exceptions import TAT_StartupError
+from isabelle_theory_agent.exceptions import InvalidField, TAT_StartupError
 from isabelle_theory_agent.std import (
     datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
 from isabelle_theory_agent.store import Forest_Store
@@ -49,6 +49,34 @@ def refused(f, parent, raws, cls):
     with pytest.raises(cls) as e:
         insert(f, parent, 0, raws)
     return e.value
+
+
+def field_check(f, parent, raws) -> InvalidField | None:
+    """The field check (PLUGIN_SYSTEM §2) of the one construct in `raws`,
+    inserted at the front of `parent` — which the edit accepts — and
+    deleted after: the `InvalidField` its `check_fields` raises, or None."""
+    (node,) = insert(f, parent, 0, raws)
+    try:
+        node.check_fields()
+    except InvalidField as e:
+        return e
+    finally:
+        run(locked(f, edit.delete(node)))
+    return None
+
+
+def reloaded(path, *constructs, kinds=KINDS) -> tuple[list, list]:
+    """The constructs inserted under `forest()`'s theory, stored at `path`,
+    and the store reopened: the nodes inserted and the nodes loaded, in
+    order."""
+    f, x = forest(*constructs, store=Forest_Store(path, ts.stand_ins.log()), kinds=kinds)
+    with f.store.transaction():
+        for n in x.sub_nodes:
+            f._store_node(n)
+    f.store.close()
+    f2 = Forest_Under_Test(store=Forest_Store(path, ts.stand_ins.log()), kinds=kinds)
+    f2.store.close()
+    return x.sub_nodes, f2.sub_nodes[0].sub_nodes[0].sub_nodes
 
 
 def assert_a_missing_row_is_refused_at_start(path, identity, fields, kinds=KINDS):

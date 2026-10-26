@@ -1,5 +1,5 @@
 """`QuotientType` (node_classes/QUOTIENT_TYPE.md): with no Isabelle, the
-schema and the descriptions (§2, §3), `gen`'s checks and refusals (§4),
+schema and the descriptions (§2, §3), `gen` and the field check (§4),
 the definition as the node holds, stores and prints it (§1, §2, §8), the
 node's name and the framework's `DuplicateName` on it, the beginning's
 message and status and the ending's call (§6), the carry
@@ -33,7 +33,8 @@ from isabelle_theory_agent.std.lift_definition import LiftDefinition, OWING_LINE
 from isabelle_theory_agent.std.quotient_type import OWING_LINE, OWING_LINE_PARTIAL, QuotientType
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import read_back
-from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
+from std_forest import (
+    KINDS, assert_a_missing_row_is_refused_at_start, field_check, forest, insert, inv, refused, reloaded)
 from test_descriptions import descriptions
 from test_lift_definition import definition as lift
 from test_model import locked, run
@@ -51,6 +52,8 @@ ZINT = {**INT, "type_name": "zint"}
 FRACT_SYNTAX = {"form": "mixfix", "template": "_ ratio", "argument_priorities": [21], "priority": 21}
 FRACT = {**_FRACT, "syntax": FRACT_SYNTAX}
 FEMPTY, FMEMBER = FSET["children"]
+[VARIABLE, TWICE, UNUSED] = fenced_blocks(QT, "4.")[0]          # §4's three sentences
+[IDENTIFIER, BOUND_TWICE] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `rep_function_name`")][0]   # COMMON §4's, of a function name
 
 
 def definition(type_name="fset", representation_type="'a list", equiv_relation="λxs ys. set xs = set ys",
@@ -116,15 +119,11 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals in its order: a type name
-    outside §1's grammar (RENDER_BASELINES §2's line); the three sentences
-    of §4's block under `type_parameters[i]`; the two function names by the
-    shared check of the pair (COMMON §4's sentences) — two equal given names
-    refused, a name equal to its default accepted and written into
-    `morphisms` as given, `abs_fset` as the Rep name with the Abs name left
-    out accepted (Isabelle's at the admission); a missing relation, a
-    `partial` that is no boolean, a binder syntax or an `overloaded` field
-    given, by the framework."""
+    """§4's `gen` refuses only a type name outside §1's grammar
+    (RENDER_BASELINES §2's line), before any field is judged; a missing
+    relation, a `partial` that is no boolean, a binder syntax, an
+    `overloaded` field given, a type parameter as an object and the
+    integer bound, by the framework."""
     f, x = forest()
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
@@ -132,39 +131,7 @@ def test_gen_refuses_as_section_4_says():
     assert (e.name, e.grammar) == ("my-list", "type name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "fset_", "a set", "x'y-", "", "α"):
         assert refused(f, x, [definition(name)], InvalidName).grammar == "type name"
-    # the type parameters: the three sentences of §4's block, COMMON §4's check under this class's path
-    [variable, twice, unused] = fenced_blocks(QT, "4.")[0]
-    e = refused(f, x, [definition(type_parameters=("a",))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + variable and e.field == "type_parameters[0]"
-    e = refused(f, x, [definition(type_parameters=("'a", "'a"))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice and e.field == "type_parameters[1]"
-    e = refused(f, x, [definition(type_parameters=("'a", "'b"))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + unused and e.field == "type_parameters[1]"
-    assert refused(f, x, [definition(representation_type="'ab list")], InvalidField).field == "type_parameters[0]"
-    assert refused(f, x, [definition(representation_type="nat list", equiv_relation="λxs ys. set xs = set ys ∧ (x :: 'a) = x")],
-                   InvalidField).field == "type_parameters[0]"             # the relation is not scanned: `representation_type` is
-    # the function names: COMMON §4's two sentences, pinned by test_common.py
-    [identifier, bound_twice] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `rep_function_name`")][0]
-    e = refused(f, x, [definition(rep_function_name="rep_")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier and e.field == "rep_function_name"
-    for name in ("1x", "x y", "", "rep-", "h\\<nat>"):
-        assert refused(f, x, [definition(rep_function_name=name)], InvalidField).field == "rep_function_name"
-    e = refused(f, x, [definition(abs_function_name="abs_")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier.replace("rep_function_name", "abs_function_name")
-    e = refused(f, x, [definition(rep_function_name="list_of_fset", abs_function_name="list_of_fset")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + bound_twice and e.field == "abs_function_name"
-    for fields, morphisms in (({"rep_function_name": "rep_fset"}, "morphisms rep_fset abs_fset"),
-                              ({"abs_function_name": " abs_fset "}, "morphisms rep_fset abs_fset"),
-                              ({"rep_function_name": "abs_fset"}, "morphisms abs_fset abs_fset"),      # Isabelle's refusal (§6)
-                              ({"rep_function_name": "Rep_fset", "abs_function_name": "Abs_fset"}, "morphisms Rep_fset Abs_fset")):
-        (p,) = insert(f, x, 0, [definition(**fields)])
-        assert p._definition(())[1] == morphisms
-        run(locked(f, edit.delete(p)))
-    # §4's order under two faults: the type name, the parameters, their use, then the function names, Rep before Abs
     assert refused(f, x, [definition("my-list", type_parameters=("a",), rep_function_name="rep_")], InvalidName).grammar == "type name"
-    assert refused(f, x, [definition(type_parameters=("a",), rep_function_name="rep_")], InvalidField).field == "type_parameters[0]"
-    assert refused(f, x, [definition(type_parameters=("'a", "'b"), rep_function_name="rep_")], InvalidField).field == "type_parameters[1]"
-    assert refused(f, x, [definition(rep_function_name="rep_", abs_function_name="abs_")], InvalidField).field == "rep_function_name"
     # the framework's integer bound (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's line, the forest unchanged
     [bound] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line.endswith("must be a 64-bit integer.")]
     e = refused(f, x, [definition(syntax={"form": "infixr", "symbol": "+", "priority": 2**64})], InvalidField)
@@ -175,6 +142,51 @@ def test_gen_refuses_as_section_4_says():
                 definition(overloaded=True),                                                 # not a field (§2)
                 definition(type_parameters=({"name": "'a"},))):                               # a bare variable, no object
         refused(f, x, [raw], RawASTError)
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check in its order, each sentence told alone, no path
+    before it: the three sentences of §4's block under `type_parameters[i]`;
+    the two function names by the shared check of the pair (COMMON §4's
+    sentences) — two equal given names refused, a name equal to its default
+    admitted and written into `morphisms` as given, `abs_fset` as the Rep
+    name with the Abs name left out admitted (Isabelle's at the admission);
+    §4's order under two faults."""
+    f, x = forest()
+    # the type parameters: the three sentences of §4's block, COMMON §4's check under this class's path
+    e = field_check(f, x, [definition(type_parameters=("a",))])
+    assert str(e) == VARIABLE and e.field == "type_parameters[0]"
+    e = field_check(f, x, [definition(type_parameters=("'a", "'a"))])
+    assert str(e) == TWICE and e.field == "type_parameters[1]"
+    e = field_check(f, x, [definition(type_parameters=("'a", "'b"))])
+    assert str(e) == UNUSED and e.field == "type_parameters[1]"
+    assert field_check(f, x, [definition(representation_type="'ab list")]).field == "type_parameters[0]"
+    assert field_check(f, x, [definition(representation_type="nat list",
+                                         equiv_relation="λxs ys. set xs = set ys ∧ (x :: 'a) = x")]).field == "type_parameters[0]"
+    # the function names: COMMON §4's two sentences, pinned by test_common.py
+    e = field_check(f, x, [definition(rep_function_name="rep_")])
+    assert str(e) == IDENTIFIER and e.field == "rep_function_name"
+    for name in ("1x", "x y", "", "rep-", "h\\<nat>"):
+        assert field_check(f, x, [definition(rep_function_name=name)]).field == "rep_function_name"
+    e = field_check(f, x, [definition(abs_function_name="abs_")])
+    assert str(e) == IDENTIFIER.replace("rep_function_name", "abs_function_name")
+    e = field_check(f, x, [definition(rep_function_name="list_of_fset", abs_function_name="list_of_fset")])
+    assert str(e) == BOUND_TWICE and e.field == "abs_function_name"
+    for fields, morphisms in (({"rep_function_name": "rep_fset"}, "morphisms rep_fset abs_fset"),
+                              ({"abs_function_name": " abs_fset "}, "morphisms rep_fset abs_fset"),
+                              ({"rep_function_name": "abs_fset"}, "morphisms abs_fset abs_fset"),      # Isabelle's refusal (§6)
+                              ({"rep_function_name": "Rep_fset", "abs_function_name": "Abs_fset"}, "morphisms Rep_fset Abs_fset")):
+        (p,) = insert(f, x, 0, [definition(**fields)])
+        assert p._definition(())[1] == morphisms
+        p.check_fields()
+        run(locked(f, edit.delete(p)))
+    assert field_check(f, x, [definition()]) is None
+    # §4's order under two faults: the parameters, their use, then the function names, Rep before Abs
+    assert field_check(f, x, [definition(type_parameters=("a",), rep_function_name="rep_")]).field == "type_parameters[0]"
+    assert field_check(f, x, [definition(type_parameters=("'a", "'b"), rep_function_name="rep_")]).field == "type_parameters[1]"
+    assert field_check(f, x, [definition(rep_function_name="rep_", abs_function_name="abs_")]).field == "rep_function_name"
     assert x.sub_nodes == []
     inv(f)
 
@@ -250,6 +262,24 @@ def test_the_definition_is_stored_and_a_missing_row_is_refused_at_start(tmp_path
     assert loaded[0].goal_state.name != nodes[0].goal_state.name and loaded[0].goal_state in loaded[0]._states_inside()
     f2.store.close()
     assert_a_missing_row_is_refused_at_start(path, nodes[0].identity, ROWS)      # every row (§1)
+
+
+def test_a_definition_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
+    """`from_store` reads the type parameters and a blank function name back
+    as stored, judging nothing — the blank name the empty term, which the
+    recall line writes `""` —, and the field check refuses each loaded node
+    with the document's sentence."""
+    nodes, loaded = reloaded(tmp_path / "TAT.sqlite", definition(type_parameters=("a",)),
+                             definition("blank", rep_function_name=" "))
+    assert [(n.type_parameters, n.rep_function_name) for n in loaded] == [(n.type_parameters, n.rep_function_name) for n in nodes]
+    assert loaded[1].rep_function_name == IsaTerm.from_agent("")
+    assert loaded[1]._definition(())[1] == 'morphisms "" abs_blank'
+    messages = []
+    for n in loaded:
+        with pytest.raises(InvalidField) as e:
+            n.check_fields()
+        messages.append(str(e.value))
+    assert messages == [VARIABLE, IDENTIFIER]
 
 
 # --- the message and the status (§6), the ending (§6), the mark (§7) ---------

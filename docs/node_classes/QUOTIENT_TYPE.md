@@ -33,8 +33,8 @@ leaves the proof standing. Its Python half is
 `Isabelle_Std/ML/TAT_Quotient_Type.ML`; the ending's two halves are
 `Lifting_Closing`'s (COMMON.md §6). Its agent-facing wording lives here
 — the `description` texts of its construct schema (§3), the sentences
-its `gen` renders, the words on its line and its owing line (§7) —
-pinned by the baseline tests the way TYPEDEF.md's are; the `children`
+its field check renders (§4), the words on its line and its owing line
+(§7) — pinned by the baseline tests the way TYPEDEF.md's are; the `children`
 description is `Lifting_Closing`'s (COMMON.md §6).
 
 One kind, `quotient_type`, which heads the id component:
@@ -253,16 +253,19 @@ the name of the function that sends a value of the existing type to its equivale
 descriptions of `TypeMixfix` and of its arms' fields are COMMON.md
 §4's, pinned there alone.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
 Where a `QuotientType` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`QuotientType.gen` checks: `type_name` against §1's grammar
+`QuotientType.gen` refuses only `type_name` outside §1's grammar
 (`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth
-form); the type parameters through `type_variables_of` (COMMON.md §4) —
-each a type variable on its `ascii`, a prime, then an Isabelle
-identifier (COMMON.md §5), and no two the same —; each type parameter
+form), and reads the rest normalised (§2). The field check
+(PLUGIN_SYSTEM §2) refuses, before the node's first own operation, in
+this order: the type parameters by the shared check under the path
+`type_parameters[i]` (COMMON.md §4) — each a type variable on its
+`ascii`, a prime, then an Isabelle identifier (COMMON.md §5), and no two
+the same —; each type parameter
 used in `representation_type`, the plugin's one check for a type
 parameter declared and not used, shared by every class that declares
 type parameters: a lexical scan of the field's `ascii` for type-variable
@@ -309,7 +312,8 @@ The field `type_parameters[1]` declares `'b`, which is not used.
 
 The first two are this class's, their path its own,
 `type_parameters[i]`; their words are COMMON.md §4's type-parameter
-sentences, rendered by `type_variables_of` (COMMON.md §4). The third is
+sentences, rendered by the shared check `check_type_parameters`
+(COMMON.md §4). The third is
 COMMON.md §4's sentence for a type parameter declared and not used, the
 one sentence of every class that declares type parameters, on the path
 `type_parameters[i]` too. The function names' sentences are the shared

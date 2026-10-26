@@ -6,7 +6,10 @@ Status: design draft.
 
 `TAT_Error` is what TAT says to the agent: an error the agent can act on,
 raised anywhere, handled in exactly one place — the tool boundary — and
-rendered into the tool result. The framework loops between the raise and the
+rendered into the tool result, with one exception: the `InvalidField` a
+node class's `check_fields` raises, which `Node._placed` makes the
+message of the node's first own operation's `cannot_evaluate`
+(PLUGIN_SYSTEM §2). The framework loops between the raise and the
 boundary catch only to annotate and re-raise (§5).
 
 `TAT_InternalError` is a bug: an invariant TAT itself broke. It does **not**
@@ -116,6 +119,12 @@ The same line sorts what node classes raise:
   replacement (CONSTRUCT_INTERACTION §3.1), is asked through
   `_completed`: anything it raises, `TAT_Error` included, is its class's
   bug;
+- `cannot_hold`, `cannot_stand_under` and `check_fields` — the placement
+  check's two answers and the field check (PLUGIN_SYSTEM §2) — are
+  asked inside the evaluating walk: the `InvalidField` of `check_fields`
+  is the one `TAT_Error` the walk handles (above); any other `TAT_Error`
+  one of the three raises is its class's bug, as an evaluation hook's
+  is;
 - a construction job's `_run` has no tool call on the stack: it reports
   through the messages of CONSTRUCT_INTERACTION §3.4 and, while its run is
   still the job's, anything it raises is its class's bug, a cancellation
@@ -192,11 +201,16 @@ TAT_Error                     two framework-written fields: raw_ast_path (§5), 
 │  │                          container's path.  Schema-derived like
 │  │                          MissingField, its dual              [framework]
 │  └─ InvalidField            field, reason — schema-derived like
-│                             MissingField; also ready-made for `gen`
-│                             authors' semantic checks (a term Isabelle
-│                             rejects, …), who derive further subclasses
-│                             freely.  reason is a predicate completing
-│                             "The field `X` …"
+│                             MissingField; also `Session.gen`'s and
+│                             `Theory.gen`'s (node_classes/
+│                             SESSION_AND_THEORY.md §3), and
+│                             `check_fields`'s, the field check at
+│                             evaluation, which `_placed` makes the
+│                             operation's cannot_evaluate message rather
+│                             than a tool result (PLUGIN_SYSTEM §2); a
+│                             node class's author derives further
+│                             subclasses freely.  reason is a predicate
+│                             completing "The field `X` …"
 ├─ BadEdit                    the request is well formed, but the change
 │  │                          would break a standing rule; "edit" in the
 │  │                          broad sense of the glossary (ARCHITECTURE §1)
@@ -319,7 +333,7 @@ Every `TAT_Error` carries its facts as fields; `__str__` assembles the
 agent-facing sentence from them. Logic tests assert on the fields; each
 concrete class keeps one **render baseline** — the owner-approved
 agent-facing wording, collected in RENDER_BASELINES.md. A reason a node
-class's `gen` supplies to a framework exception — `InvalidField`'s
+class's `gen` or field check supplies to a framework exception — `InvalidField`'s
 `<reason>`, whose shape alone is RENDER_BASELINES §2's — is approved in
 that class's document under docs/node_classes/ and pinned by that class's
 test, as `Session`'s and `Theory`'s reasons are in SESSION_AND_THEORY

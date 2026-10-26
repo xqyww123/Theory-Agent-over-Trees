@@ -135,7 +135,8 @@ class Ready:
 @dataclass(frozen=True)
 class CannotEvaluate:
     """The operation ran and its class judged the failure fatal, or the
-    placement check refused the node and the framework did not run it:
+    placement check or the field check refused the node and the framework
+    did not run it:
     the node is an obstacle (ARCHITECTURE §3.3) — while it
     stands it is not rerun unless a walk rewrote its input, and its input
     stands as its result; once invalidated (ARCHITECTURE §3.4) it is
@@ -437,10 +438,12 @@ class Node(ABC):
     async def gen(cls, config: NodeConfig, raw: Any) -> Self:
         """Semantic construction from the agent's construct — `raw`, the
         RawAST, which the class annotates with its own `argument_schema`
-        TypedDict (MODULE_STRUCTURE §4.1): judge the fields' meaning and
-        build the node from `config` — where it may stand inside its theory
-        is the placement check's, at evaluation; the forest's shape is the
-        edit's (MODULE_STRUCTURE §4.2).  May read over
+        TypedDict (MODULE_STRUCTURE §4.1): judge the node's own name and
+        the names it is computed from (`InvalidName`), read the rest and
+        build the node from `config` — every other judgement the class
+        makes of the fields is the field check's and where it may stand
+        inside its theory the placement check's, both at evaluation; the
+        forest's shape is the edit's (MODULE_STRUCTURE §4.2).  May read over
         the wire through the framework's query functions (MODULE_STRUCTURE
         §4.3); must not write.  Raises
         `TAT_Error`s bare — the framework prefixes the `raw_ast_path`
@@ -463,9 +466,9 @@ class Node(ABC):
     def from_store(cls, config: NodeConfig, rows: Node_Rows) -> Self:
         """Rebuild the node from what `to_store` wrote: `gen` with `rows` in
         place of `raw` — `config.parent` the rebuilt parent, `config.state` a
-        fresh slot, no batch and nothing leaving.  Synchronous: nothing over
-        the wire.  Returns the node without children; the framework loads
-        them."""
+        fresh slot, no batch and nothing leaving, so a node the field check
+        refuses loads as it was stored.  Synchronous: nothing over the wire.
+        Returns the node without children; the framework loads them."""
         raise TAT_InternalError(f"{cls.__name__} has no from_store")
 
     # The stored statuses (COMPILATION.md §4): one entry per own operation
@@ -616,6 +619,14 @@ class Node(ABC):
         beginning recorded — nothing that changes without an invalidation."""
         return None
 
+    def check_fields(self) -> None:
+        """The field check (PLUGIN_SYSTEM §2): raise `InvalidField` for the
+        first thing wrong with the node's authored fields, in the class's
+        order, with the class's sentence under the field's path; nothing by
+        default.  Synchronous; reads the node's class, kind and authored
+        fields alone (ARCHITECTURE §6.1) — never its recorded fields, its
+        ancestors, its children or the wire."""
+
     def _ancestors_in_tree(self) -> Iterator[NonLeaf_Node]:
         """The node's ancestors in its tree, nearest first: every ancestor
         below the first `Unchained_Node` (MODULE_STRUCTURE §4.1) — for a
@@ -638,11 +649,19 @@ class Node(ABC):
 
     async def _placed(self, hook: Callable[[], Coroutine[Any, Any, _T]]
                       ) -> tuple[_T | CannotEvaluate, float | None]:
-        """The node's first own operation, run where the node may stand
-        (PLUGIN_SYSTEM §2): the hook's answer and how long it ran; where
-        the placement check refuses the node, a `CannotEvaluate` carrying
-        the refusal, the hook never called."""
+        """The node's first own operation, run where the node may stand and
+        its fields hold (PLUGIN_SYSTEM §2): the hook's answer and how long
+        it ran; where the placement check refuses the node, or else the
+        field check, a `CannotEvaluate` carrying the refusal or the
+        `InvalidField`'s sentence, the hook never called.  That
+        `InvalidField` is the one `TAT_Error` handled outside the tool
+        boundary (EXCEPTIONS.md §1)."""
         refusal = self._refusal()
+        if refusal is None:
+            try:
+                self.check_fields()
+            except InvalidField as e:
+                refusal = str(e)
         if refusal is not None:
             return CannotEvaluate((IsaTerm.from_agent(refusal),)), None
         return await _timed(hook())
@@ -2212,9 +2231,9 @@ class Forest(Unchained_Node):
         ends; under `blocking` the walk then waits, the lock kept, until
         every evaluation job running on a node it passed has ended
         (CONSTRUCT_INTERACTION §5).  A `TAT_Error` escaping the walk comes
-        from an evaluation hook and is its class's bug, so that none is
-        rendered to the agent; anything else passes as it is (EXCEPTIONS.md
-        §1)."""
+        from a node class's code, `InvalidField` from `check_fields` aside,
+        and is its class's bug, so that none is rendered to the agent;
+        anything else passes as it is (EXCEPTIONS.md §1)."""
         assert self.lock.locked(), "a walk runs under the forest lock"
         destination = ev.destination
         assert destination is not None, "an evaluating walk has a destination"
@@ -2225,7 +2244,7 @@ class Forest(Unchained_Node):
         try:
             r = await self._evaluate(ev, Evaluating())
         except TAT_Error as e:
-            raise TAT_InternalError("an evaluation hook raised a TAT_Error") from e
+            raise TAT_InternalError("a node class raised a TAT_Error in the walk") from e
         self._store_written(ev)
         await ev.flush(self.conversation)
         ev.stopped_at = r.stopped_at
@@ -2402,7 +2421,7 @@ class Forest(Unchained_Node):
                 reason = "import_without_theory"
             else:
                 stop = await self._evaluate_tree(ev, tree)
-                reason = "command_failed"         # any obstacle's, the placement check's refusal included
+                reason = "command_failed"         # any obstacle's, the placement check's and the field check's refusals included
         if stop is not None:                              # the one place a stop is recorded (LOGGING.md §4)
             self.conversation.log.evaluation.stopped(
                 node=self.full_id(stop), reason=reason,

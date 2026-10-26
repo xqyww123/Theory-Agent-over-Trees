@@ -31,11 +31,11 @@ inserted, amended or deleted leaves the proof standing. Its Python half
 is `isabelle_theory_agent/std/typedef.py`, its ML half
 `Isabelle_Std/ML/TAT_Typedef.ML`; the ending's two halves are
 `Lifting_Closing`'s (COMMON.md §6). Its agent-facing wording lives here
-— the `description` texts of its construct schema (§3), the sentences
-its `gen` renders, the notice of §6, the words on its line and its owing
-line (§7) — pinned by the baseline tests the way DATATYPE.md's are; the
-`children` description and the remedy are `Lifting_Closing`'s
-(COMMON.md §6).
+— the `description` texts of its construct schema (§3), the notice of
+§6, the words on its line and its owing line (§7) — pinned by the
+baseline tests the way DATATYPE.md's are; the `children` description
+and the remedy are `Lifting_Closing`'s (COMMON.md §6), and its field
+check's sentences COMMON.md §4's (§4).
 
 One kind, `typedef`, which heads the id component: `typedef_dlist`; a
 child's id carries it, `typedef_dlist.lift_definition_dl_rev` (§9).
@@ -214,17 +214,19 @@ the name of the function that sends a representation in the existing type back t
 descriptions of `TypeParameter.sort`, of `TypeMixfix` and of its arms'
 fields are COMMON.md §4's, pinned there alone.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
 Where a `Typedef` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`Typedef.gen` checks: `type_name` against §1's grammar (`InvalidName`
-with `grammar` = `type name`, RENDER_BASELINES §2's fifth form); the
-type parameters by the shared check (COMMON.md §4): each `name` a type
-variable, no two the same; each type parameter used in `set`, the
-plugin's shared check (COMMON.md §4); `rep_function_name` and
-`abs_function_name` through the plugin's shared check of a pair of
+`Typedef.gen` refuses only `type_name` outside §1's grammar
+(`InvalidName` with `grammar` = `type name`, RENDER_BASELINES §2's fifth
+form), and reads the rest normalised (§2). The field check
+(PLUGIN_SYSTEM §2) refuses, before the node's first own operation, in
+this order: the type parameters by the shared check (COMMON.md §4):
+each `name` a type variable, no two the same; each type parameter used
+in `set`, the plugin's shared check (COMMON.md §4); `rep_function_name`
+and `abs_function_name` through the plugin's shared check of a pair of
 function names (COMMON.md §4) — each given name an Isabelle identifier
 (COMMON.md §5) not ending with an underscore (COMMON.md §5's clause on
 internal names), and the two given names, as given, not the same

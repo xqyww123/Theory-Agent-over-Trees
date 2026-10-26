@@ -1,5 +1,5 @@
 """`Typedef` (node_classes/TYPEDEF.md): with no Isabelle, the schema and the
-descriptions (§2, §3), `gen`'s checks and refusals (§4), the definition as
+descriptions (§2, §3), `gen` and the field check (§4), the definition as
 the node holds, stores and prints it (§1, §2, §8), the node's name and the
 framework's `DuplicateName` on it, the beginning's message and status and
 the recorded `lifting`, the ending's call or its copy, the block refusing
@@ -35,7 +35,8 @@ from isabelle_theory_agent.std.lift_definition import LiftDefinition, OWING_LINE
 from isabelle_theory_agent.std.typedef import LIFTING_NOTICE, OWING_LINE, Typedef
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import read_back
-from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
+from std_forest import (
+    KINDS, assert_a_missing_row_is_refused_at_start, field_check, forest, insert, inv, refused, reloaded)
 from test_descriptions import descriptions
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -46,6 +47,7 @@ TD = DOCS / "node_classes" / "TYPEDEF.md"
 COMMON = DOCS / "node_classes" / "COMMON.md"
 BASELINES = DOCS / "RENDER_BASELINES.md"
 [LIFTING_REFUSAL] = fenced_blocks(COMMON, "6.")[0]          # the sentence's one home; test_common pins the constant to it
+[IDENTIFIER, TWICE] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `rep_function_name`")][0]   # COMMON §4's, of a function name
 
 DLIST = json.loads("\n".join(fenced_blocks(TD, "2.")[0]))      # §2's example, the block of `'a dlist` with its two children
 DL_REV, DL_LENGTH = DLIST["children"]
@@ -125,50 +127,17 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: a type name outside §1's grammar
-    (RENDER_BASELINES §2's line); the type parameters by the shared check,
-    each used in `set`, and the two function names by the shared check of
-    the pair (COMMON §4's sentences, pinned by test_common.py) — a name
-    beginning with `Rep_` or `Abs_` and a name equal to its default
-    accepted, written into `morphisms` as given; a missing `set`, a binder
-    syntax, an `overloaded` field given or the recorded `lifting` authored,
-    by the framework."""
+    """§4's `gen` refuses only a type name outside §1's grammar
+    (RENDER_BASELINES §2's line), before any field is judged; a missing
+    `set`, a binder syntax, an `overloaded` field given, the recorded
+    `lifting` authored and the integer bound, by the framework."""
     f, x = forest()
     [invalid] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("`my-list` is not a valid type name")]
     e = refused(f, x, [definition("my-list")], InvalidName)
     assert (e.name, e.grammar) == ("my-list", "type name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "dlist_", "a list", "x'y-", "", "α"):
         assert refused(f, x, [definition(name)], InvalidName).grammar == "type name"
-    [identifier, twice] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field `rep_function_name`")][0]
-    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
-    e = refused(f, x, [definition(rep_function_name="rep_")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier and e.field == "rep_function_name"
-    assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
-    for name in ("1x", "x y", "", "rep-", "h\\<nat>"):
-        assert refused(f, x, [definition(rep_function_name=name)], InvalidField).field == "rep_function_name"
-    e = refused(f, x, [definition(abs_function_name="abs_")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier.replace("rep_function_name", "abs_function_name")
-    e = refused(f, x, [definition(rep_function_name="list_of_dlist", abs_function_name="list_of_dlist")], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice.replace("list_of_fset", "list_of_dlist") and e.field == "abs_function_name"
-    for field, name in (("rep_function_name", "Rep_dlist"), ("rep_function_name", "Abs_x"), ("rep_function_name", " Abs_dlist"),
-                        ("abs_function_name", "Abs_dlist"), ("abs_function_name", "Rep_y")):   # a given name like any other
-        (p,) = insert(f, x, 0, [definition(**{field: name})])
-        assert p._definition(())[1] == "morphisms " + " ".join(
-            name.strip() if g == field else d for g, d in (("rep_function_name", "Rep_dlist"), ("abs_function_name", "Abs_dlist")))
-        run(locked(f, edit.delete(p)))
-    # the type parameters: COMMON §4's check, its sentences pinned by test_common.py; then each used in `set`
-    e = refused(f, x, [definition(type_parameters=({"name": "a"},))], InvalidField)
-    assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
-    e = refused(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
-    assert (e.field, e.reason) == ("type_parameters[1].name", "repeats `'a`")
-    e = refused(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + unused and e.field == "type_parameters[1]"
-    assert refused(f, x, [definition(set="distinct")], InvalidField).field == "type_parameters[0]"
-    # §4's order under two faults: the type name, then the parameters, their use, then the function names, Rep before Abs
     assert refused(f, x, [definition("my-list", type_parameters=({"name": "a"},), rep_function_name="rep_")], InvalidName).grammar == "type name"
-    assert refused(f, x, [definition(type_parameters=({"name": "a"},), rep_function_name="rep_")], InvalidField).field == "type_parameters[0].name"
-    assert refused(f, x, [definition(set="distinct", rep_function_name="rep_")], InvalidField).field == "type_parameters[0]"
-    assert refused(f, x, [definition(rep_function_name="rep_", abs_function_name="abs_")], InvalidField).field == "rep_function_name"
     # the framework's integer bound (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's line, the forest unchanged
     [bound] = [line for line in fenced_lines(BASELINES, "2.") if line.endswith("must be a 64-bit integer.")]
     e = refused(f, x, [definition(syntax={"form": "infixr", "symbol": "+", "priority": 2**64})], InvalidField)
@@ -179,6 +148,49 @@ def test_gen_refuses_as_section_4_says():
                 {"kind": "typedef", "english": "e", "type_name": "t", "set": "UNIV", "overloaded": True},  # not a field (§2)
                 {"kind": "typedef", "english": "e", "type_name": "t", "set": "UNIV", "lifting": True}):
         refused(f, x, [raw], RawASTError)
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check, each sentence told alone, no path before it: the
+    type parameters by the shared check, each used in `set`, and the two
+    function names by the shared check of the pair (COMMON §4's sentences,
+    pinned by test_common.py) — a name beginning with `Rep_` or `Abs_` and
+    a name equal to its default admitted, written into `morphisms` as
+    given; §4's order under two faults."""
+    f, x = forest()
+    [invalid] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("`my-list` is not a valid type name")]
+    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
+    e = field_check(f, x, [definition(rep_function_name="rep_")])
+    assert str(e) == IDENTIFIER and e.field == "rep_function_name"
+    assert IDENTIFIER.endswith(": it " + invalid.split(": a type name ")[1])
+    for name in ("1x", "x y", "", "rep-", "h\\<nat>"):
+        assert field_check(f, x, [definition(rep_function_name=name)]).field == "rep_function_name"
+    e = field_check(f, x, [definition(abs_function_name="abs_")])
+    assert str(e) == IDENTIFIER.replace("rep_function_name", "abs_function_name")
+    e = field_check(f, x, [definition(rep_function_name="list_of_dlist", abs_function_name="list_of_dlist")])
+    assert str(e) == TWICE.replace("list_of_fset", "list_of_dlist") and e.field == "abs_function_name"
+    for field, name in (("rep_function_name", "Rep_dlist"), ("rep_function_name", "Abs_x"), ("rep_function_name", " Abs_dlist"),
+                        ("abs_function_name", "Abs_dlist"), ("abs_function_name", "Rep_y")):   # a given name like any other
+        (p,) = insert(f, x, 0, [definition(**{field: name})])
+        assert p._definition(())[1] == "morphisms " + " ".join(
+            name.strip() if g == field else d for g, d in (("rep_function_name", "Rep_dlist"), ("abs_function_name", "Abs_dlist")))
+        p.check_fields()
+        run(locked(f, edit.delete(p)))
+    # the type parameters: COMMON §4's check, its sentences pinned by test_common.py; then each used in `set`
+    e = field_check(f, x, [definition(type_parameters=({"name": "a"},))])
+    assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
+    e = field_check(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'a"}))])
+    assert (e.field, e.reason) == ("type_parameters[1].name", "repeats `'a`")
+    e = field_check(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'b"}))])
+    assert str(e) == unused and e.field == "type_parameters[1]"
+    assert field_check(f, x, [definition(set="distinct")]).field == "type_parameters[0]"
+    assert field_check(f, x, [definition()]) is None
+    # §4's order under two faults: the parameters, their use, then the function names, Rep before Abs
+    assert field_check(f, x, [definition(type_parameters=({"name": "a"},), rep_function_name="rep_")]).field == "type_parameters[0].name"
+    assert field_check(f, x, [definition(set="distinct", rep_function_name="rep_")]).field == "type_parameters[0]"
+    assert field_check(f, x, [definition(rep_function_name="rep_", abs_function_name="abs_")]).field == "rep_function_name"
     assert x.sub_nodes == []
     inv(f)
 
@@ -248,6 +260,25 @@ def test_the_definition_is_stored_and_a_missing_row_is_refused_at_start(tmp_path
     assert loaded[0].goal_state.name != nodes[0].goal_state.name and loaded[0].goal_state in loaded[0]._states_inside()
     f2.store.close()
     assert_a_missing_row_is_refused_at_start(path, nodes[0].identity, ROWS)      # every row (§1)
+
+
+def test_a_definition_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
+    """`from_store` reads the type parameters and a blank function name back
+    as stored, judging nothing — the blank name the empty term, which the
+    recall line writes `""` —, and the field check refuses each loaded node
+    with COMMON §4's sentence."""
+    [variable, _] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field")][0]
+    nodes, loaded = reloaded(tmp_path / "TAT.sqlite", definition(type_parameters=({"name": "a"},)),
+                             definition("blank", rep_function_name=" "))
+    assert [(n.type_parameters, n.rep_function_name) for n in loaded] == [(n.type_parameters, n.rep_function_name) for n in nodes]
+    assert loaded[1].rep_function_name == IsaTerm.from_agent("")
+    assert loaded[1]._definition(())[1] == 'morphisms "" Abs_blank'
+    messages = []
+    for n in loaded:
+        with pytest.raises(InvalidField) as e:
+            n.check_fields()
+        messages.append(str(e.value))
+    assert messages == [variable, IDENTIFIER]
 
 
 # --- the message and the status (§6), the ending (§6), the block refusing children (§6), the mark (§7) ---

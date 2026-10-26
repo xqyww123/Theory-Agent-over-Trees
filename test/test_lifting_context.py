@@ -1,5 +1,5 @@
 """`LiftingContext` (node_classes/LIFTING_CONTEXT.md): with no Isabelle, the
-schema and the descriptions (§2, §3), `gen`'s checks and refusals (§4),
+schema and the descriptions (§2, §3), `gen` and the field check (§4),
 the fields as the node holds, stores and prints them (§1, §2, §8), the
 node's name and the framework's `DuplicateName` on it, the beginning's
 call and the recorded `opened`, the ending's call (§6), the emitted text
@@ -32,7 +32,8 @@ from isabelle_theory_agent.std.lift_definition import LiftDefinition
 from isabelle_theory_agent.std.lifting_context import LiftingContext
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import read_back
-from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
+from std_forest import (
+    KINDS, assert_a_missing_row_is_refused_at_start, field_check, forest, insert, inv, refused, reloaded)
 from test_descriptions import descriptions
 from test_lift_definition import definition as lift
 from test_model import locked, run
@@ -47,6 +48,7 @@ FSET_SIZE, INT_SWAP = (json.loads("\n".join(block)) for block in fenced_blocks(L
 FCARD, FCARD_FEMPTY = FSET_SIZE["children"]
 (INT_SWAP_DEFINITION,) = INT_SWAP["children"]
 [SENTENCE] = fenced_blocks(LC, "6.")[0]           # §6's one sentence, for `nat`
+[IDENTIFIER, TWICE] = fenced_blocks(LC, "4.")[0]   # §4's two sentences
 ROWS = ("name", "types", "opened")                # §1's rows
 
 
@@ -100,33 +102,18 @@ def test_gen_keeps_the_fields_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals in its order: an entry of
-    `types` that is no type's name, §4's first sentence, the grammar text
-    the framework's; a repeat, the second; the type names before the node's
-    name, which the framework judges after `gen`, and an empty `types`, the
-    framework's `must not be empty`; a missing field, an `english` or the
-    recorded field authored, by the framework."""
+    """§4's `gen` refuses nothing: the node's name is the framework's
+    grammar and sentence, judged after `gen` and before any field; an empty
+    `types` the framework's `must not be empty`; a missing field, an
+    `english` or the recorded field authored, by the framework."""
     f, x = forest()
-    [identifier, twice] = fenced_blocks(LC, "4.")[0]
-    assert identifier.endswith(GRAMMARS["type name"] + ".")
-    e = refused(f, x, [block(types=("'a fset",))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier and e.field == "types[0]"
-    for name in ("fset_", "", "1st", "x y", "a..b", ".fset", "fset.", "FSet.fset_", "h\\<nat>", "fset-set", "'a"):
-        assert refused(f, x, [block(types=("fset", name))], InvalidField).field == "types[1]", name
-    e = refused(f, x, [block(types=("fset", " fset "))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice and e.field == "types[1]"
-    assert refused(f, x, [block(types=("'a", "fset", "fset"))], InvalidField).field == "types[0]"       # §4's order
-    for types in (("FSet.fset",), ("x⇩1", "ε", "Probe.l.t", "int")):           # dots, letter symbols, subscripts
-        (p,) = insert(f, x, 0, [block(types=types)])
-        assert [t.unicode for t in p.types] == list(types)
-        run(locked(f, edit.delete(p)))
     # the node's name: the framework's grammar and sentence (MCP_SPECIFICATION §2), judged after `gen`
     e = refused(f, x, [block("fset size")], InvalidName)
     assert (e.name, e.grammar) == ("fset size", "name")
     assert str(e) == "At `constructs[0]`: `fset size` is not a valid name: a name " + GRAMMARS["name"] + "."
     for name in ("1st", "fset_", "fset-", "", "α"):
         assert refused(f, x, [block(name)], InvalidName).grammar == "name"
-    assert refused(f, x, [block("fset size", types=("'a",))], InvalidField).field == "types[0]"
+    assert refused(f, x, [block("fset size", types=("'a",))], InvalidName).grammar == "name"
     # an empty `types`: the framework's check of the construct (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's line
     [empty] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line == "The field `types` must not be empty."]
     e = refused(f, x, [block(types=())], InvalidField)
@@ -138,6 +125,29 @@ def test_gen_refuses_as_section_4_says():
                 block(english="e"),                                              # no `english` (§2)
                 block(opened=["fset"])):                                         # recorded, not authored (§1)
         refused(f, x, [raw], RawASTError)
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check, each sentence told alone, no path before it: an
+    entry of `types` that is no type's name, §4's first sentence, the
+    grammar text the framework's; a repeat, the second; §4's order; dotted
+    names, letter symbols and subscripts admitted."""
+    f, x = forest()
+    assert IDENTIFIER.endswith(GRAMMARS["type name"] + ".")
+    e = field_check(f, x, [block(types=("'a fset",))])
+    assert str(e) == IDENTIFIER and e.field == "types[0]"
+    for name in ("fset_", "", "1st", "x y", "a..b", ".fset", "fset.", "FSet.fset_", "h\\<nat>", "fset-set", "'a"):
+        assert field_check(f, x, [block(types=("fset", name))]).field == "types[1]", name
+    e = field_check(f, x, [block(types=("fset", " fset "))])
+    assert str(e) == TWICE and e.field == "types[1]"
+    assert field_check(f, x, [block(types=("'a", "fset", "fset"))]).field == "types[0]"       # §4's order
+    for types in (("FSet.fset",), ("x⇩1", "ε", "Probe.l.t", "int")):           # dots, letter symbols, subscripts
+        (p,) = insert(f, x, 0, [block(types=types)])
+        assert [t.unicode for t in p.types] == list(types)
+        p.check_fields()
+        run(locked(f, edit.delete(p)))
     assert x.sub_nodes == []
     inv(f)
 
@@ -180,6 +190,16 @@ def test_the_fields_are_stored_and_a_missing_row_is_refused_at_start(tmp_path):
     assert [c.name for c in loaded[0].sub_nodes] == ["fcard", "fcard_fempty"]
     f2.store.close()
     assert_a_missing_row_is_refused_at_start(path, p.identity, ROWS)            # every row, the recorded one too (§1)
+
+
+def test_a_block_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
+    """`from_store` reads `types` back as stored, judging nothing, and the
+    field check refuses the loaded node with §4's sentence."""
+    (b,), (loaded,) = reloaded(tmp_path / "TAT.sqlite", block(types=("'a fset",)))
+    assert loaded.types == b.types
+    with pytest.raises(InvalidField) as e:
+        loaded.check_fields()
+    assert str(e.value) == IDENTIFIER
 
 
 # --- the beginning and the recorded `opened`, the ending (§6), the mark (§7) ------

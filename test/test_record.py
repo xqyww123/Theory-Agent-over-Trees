@@ -1,5 +1,5 @@
 """`Record` (node_classes/RECORD.md): with no Isabelle, the schema and the
-descriptions (§2, §3), `gen`'s checks and refusals (§4), the definition
+descriptions (§2, §3), `gen` and the field check (§4), the definition
 as the node holds, stores and prints it (§2, §8), the node's name and
 the framework's `DuplicateName` on it, the emitted text (§5), the
 message and the status (§6), the mark (§7).
@@ -11,6 +11,7 @@ import json
 import re
 
 import jsoncomment
+import pytest
 
 import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
@@ -21,7 +22,8 @@ from isabelle_theory_agent.std import common, record
 from isabelle_theory_agent.std.common import Type_Parameter
 from isabelle_theory_agent.std.record import Field, Record
 from isabelle_theory_agent.store import FRAMEWORK_FIELDS, Forest_Store
-from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
+from std_forest import (
+    KINDS, assert_a_missing_row_is_refused_at_start, field_check, forest, insert, inv, refused, reloaded)
 from test_descriptions import descriptions
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -30,6 +32,7 @@ table = ts.table                    # the fake state slot table and the fake wir
 RD = DOCS / "node_classes" / "RECORD.md"
 COMMON = DOCS / "node_classes" / "COMMON.md"
 ROWS = ("english", "type_parameters", "type_name", "parent", "fields")      # the class's rows (§1)
+[VARIABLE, VARIABLE_TWICE] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field")][0]     # COMMON §4's, of a type parameter
 
 # §2's example, the construct of `'a point`, read from the document
 POINT = json.loads("\n".join(fenced_blocks(RD, "2.")[0]))
@@ -100,10 +103,9 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: a type name outside §1's grammar
-    (RENDER_BASELINES §2's line); the type parameters and their use by the
-    shared checks, COMMON §4's sentences pinned by test_common.py; the
-    fields, the two sentences of §4's block; an empty `fields` by the
+    """§4's `gen` refuses only a type name outside §1's grammar
+    (RENDER_BASELINES §2's line), before any field is judged; an empty
+    `fields`, a field without a type and an unknown field by the
     framework."""
     f, x = forest()
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
@@ -112,43 +114,52 @@ def test_gen_refuses_as_section_4_says():
     assert (e.name, e.grammar) == ("my-list", "type name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "point_", "a point", "x'y-", "", "α"):
         assert refused(f, x, [definition(name)], InvalidName).grammar == "type name"
-    [identifier, twice] = fenced_blocks(RD, "4.")[0]
-    [variable, variable_twice] = [b for b in fenced_blocks(COMMON, "4.") if b[0].startswith("The field")][0]
-    e = refused(f, x, [definition(type_parameters=({"name": "a"},))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + variable and e.field == "type_parameters[0].name"
-    e = refused(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + variable_twice and e.field == "type_parameters[1].name"
-    e = refused(f, x, [definition(fields=({"name": "xcoord", "type": "'a"}, {"name": "ycoord_", "type": "'a"}))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier and e.field == "fields[1].name"
-    for name in ("1x", "x y", "", "x-"):
-        assert refused(f, x, [definition(fields=({"name": name, "type": "'a"},))], InvalidField).field == "fields[0].name"
-    e = refused(f, x, [definition(fields=({"name": "xcoord", "type": "'a"}, {"name": "xcoord", "type": "'a"}))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice and e.field == "fields[1].name"
-    assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
-    # every type parameter used, in a field's type or `parent` — COMMON §4's check and sentence, pinned by test_common.py
-    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
-    e = refused(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + unused and e.field == "type_parameters[1]"
-    assert refused(f, x, [definition(fields=({"name": "x", "type": "'ab"},))], InvalidField).field == "type_parameters[0]"
-    (q,) = insert(f, x, 0, [definition("cp", type_parameters=({"name": "'a"}, {"name": "'b"}), parent="'a point",
-                                       fields=({"name": "extra", "type": "'b"},))])
-    run(locked(f, edit.delete(q)))
-    (q,) = insert(f, x, 0, [definition("cp", type_parameters=({"name": "'a"}, {"name": "'b"}), parent="point",
-                                       fields=({"name": "extra", "type": "nat"},))])      # a bare parent uses them all (§2)
-    run(locked(f, edit.delete(q)))
-    # §4's order under two faults: the type name first, then the parameters, then the fields, then their use
     assert refused(f, x, [definition("my-list", type_parameters=({"name": "a"},))], InvalidName).grammar == "type name"
-    assert refused(f, x, [definition(type_parameters=({"name": "a"},), fields=({"name": "x_", "type": "'a"},))],
-                   InvalidField).field == "type_parameters[0].name"
-    assert refused(f, x, [definition(fields=({"name": "x_", "type": "nat"},))], InvalidField).field == "fields[0].name"
-    # `parent`, a field's type and the reserved field name `more` are Isabelle's to judge (§4): each passes `gen`
-    (q,) = insert(f, x, 0, [definition("odd", parent="nat", type_parameters=(),
-                                       fields=({"name": "z", "type": "not a type"}, {"name": "more", "type": "nat"}))])
-    run(locked(f, edit.delete(q)))
     for raw in ({"kind": "record", "english": "e", "type_name": "t", "fields": []},
                 {"kind": "record", "english": "e", "type_name": "t", "fields": [{"name": "x"}]},
                 {"kind": "record", "english": "e", "type_name": "t", "fields": [{"name": "x", "type": "nat"}], "overloaded": True}):
         refused(f, x, [raw], RawASTError)
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check, each sentence told alone, no path before it: the
+    type parameters and their use by the shared checks, COMMON §4's
+    sentences pinned by test_common.py; the fields, the two sentences of
+    §4's block; what §4 admits; §4's order under two faults."""
+    f, x = forest()
+    [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
+                 if line.startswith("`my-list` is not a valid type name")]
+    [identifier, twice] = fenced_blocks(RD, "4.")[0]
+    e = field_check(f, x, [definition(type_parameters=({"name": "a"},))])
+    assert str(e) == VARIABLE and e.field == "type_parameters[0].name"
+    e = field_check(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'a"}))])
+    assert str(e) == VARIABLE_TWICE and e.field == "type_parameters[1].name"
+    e = field_check(f, x, [definition(fields=({"name": "xcoord", "type": "'a"}, {"name": "ycoord_", "type": "'a"}))])
+    assert str(e) == identifier and e.field == "fields[1].name"
+    for name in ("1x", "x y", "", "x-"):
+        assert field_check(f, x, [definition(fields=({"name": name, "type": "'a"},))]).field == "fields[0].name"
+    e = field_check(f, x, [definition(fields=({"name": "xcoord", "type": "'a"}, {"name": "xcoord", "type": "'a"}))])
+    assert str(e) == twice and e.field == "fields[1].name"
+    assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
+    # every type parameter used, in a field's type or `parent` — COMMON §4's check and sentence, pinned by test_common.py
+    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
+    e = field_check(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'b"}))])
+    assert str(e) == unused and e.field == "type_parameters[1]"
+    assert field_check(f, x, [definition(fields=({"name": "x", "type": "'ab"},))]).field == "type_parameters[0]"
+    # what §4 admits: a parameter used in `parent` alone, in its applied form or bare (§2); `parent`, a field's type and
+    # the reserved field name `more`, which are Isabelle's to judge
+    assert field_check(f, x, [definition("cp", type_parameters=({"name": "'a"}, {"name": "'b"}), parent="'a point",
+                                         fields=({"name": "extra", "type": "'b"},))]) is None
+    assert field_check(f, x, [definition("cp", type_parameters=({"name": "'a"}, {"name": "'b"}), parent="point",
+                                         fields=({"name": "extra", "type": "nat"},))]) is None
+    assert field_check(f, x, [definition("odd", parent="nat", type_parameters=(),
+                                         fields=({"name": "z", "type": "not a type"}, {"name": "more", "type": "nat"}))]) is None
+    assert field_check(f, x, [definition()]) is None
+    # §4's order under two faults: the parameters, then the fields, then their use
+    assert field_check(f, x, [definition(type_parameters=({"name": "a"},), fields=({"name": "x_", "type": "'a"},))]).field == "type_parameters[0].name"
+    assert field_check(f, x, [definition(fields=({"name": "x_", "type": "nat"},))]).field == "fields[0].name"
     assert x.sub_nodes == []
     inv(f)
 
@@ -184,6 +195,17 @@ def test_the_definition_is_stored_in_the_construct_s_shape(tmp_path):
     assert all(isinstance(n, Record) for n in loaded)
     f2.store.close()
     assert_a_missing_row_is_refused_at_start(tmp_path / "TAT.sqlite", nodes[1].identity, ROWS)
+
+
+def test_a_definition_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
+    """`from_store` reads the type parameters back as stored, judging
+    nothing, and the field check refuses the loaded node with COMMON §4's
+    sentence."""
+    (r,), (loaded,) = reloaded(tmp_path / "TAT.sqlite", definition(type_parameters=({"name": "a"},)))
+    assert loaded.type_parameters == r.type_parameters and loaded.fields == r.fields
+    with pytest.raises(InvalidField) as e:
+        loaded.check_fields()
+    assert str(e.value) == VARIABLE
 
 
 # --- the message and the status (§6), the mark (§7) ------------------------

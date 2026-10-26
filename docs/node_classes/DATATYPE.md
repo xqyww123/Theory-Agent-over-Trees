@@ -15,8 +15,8 @@ node is finished when it is `ready`. It is a `Leaf` of the plugin
 Datatype(Leaf, Type_Definition)`: its Python half is `isabelle_theory_agent/std/datatype.py`,
 its ML half `Isabelle_Std/ML/TAT_Datatype.ML`. Its agent-facing wording
 lives here — the `description` texts of its construct schema (§3), the
-sentences its `gen` renders, and the words on its line — pinned by the
-baseline tests the way THEOREM.md's are.
+sentences its field check renders (§4), and the words on its line —
+pinned by the baseline tests the way THEOREM.md's are.
 
 Kinds: `datatype` and `codatatype` — the two commands share one syntax
 and one implementation (`bnf_fp_def_sugar.ML`, `parse_co_datatype_cmd`),
@@ -189,23 +189,26 @@ the name of the function that extracts this argument from the constructor, as hd
 The descriptions of `TypeParameter.sort`, of `TypeMixfix`, of `Mixfix`
 and of their arms' fields are COMMON.md §4's, pinned there alone.
 
-## 4. `gen`
+## 4. `gen` and the field check
 
 Where a `Datatype` stands is COMMON.md §1's; the framework checks it, not
 `gen` (PLUGIN_SYSTEM §2).
 
-`Datatype.gen` checks: every `type_name` against §1's grammar, since
+`Datatype.gen` refuses only a `type_name` outside §1's grammar, since
 each is part of the node's name (`InvalidName` with `grammar` = `type
-name`, RENDER_BASELINES §2's fifth form), and no two types the same
-name; the type parameters by the shared check (COMMON.md §4): each
-`name` a type variable, no two the same; every constructor's `name` and
-every `selector` an Isabelle identifier (COMMON.md §5) not ending with
-an underscore (COMMON.md §5's clause on internal names); no two
-constructors of one type the same name — Isabelle qualifies a
-constructor by its type, so two types of a group may share one; no two
-selectors of one constructor the same name (`InvalidField`); and each
-type parameter used in some constructor's argument type, the plugin's
-shared check (COMMON.md §4). A sibling already bearing the node's id
+name`, RENDER_BASELINES §2's fifth form), and reads the rest normalised
+(§2). The field check (PLUGIN_SYSTEM §2) refuses, before the node's
+first own operation, in this order: two types the same name; then the
+type parameters by the shared check (COMMON.md §4): each `name` a type
+variable, no two the same; then each type's constructors in turn: the
+constructor's `name` an Isabelle identifier (COMMON.md §5) not ending
+with an underscore (COMMON.md §5's clause on internal names), no
+earlier constructor of its type the same name — Isabelle qualifies a
+constructor by its type, so two types of a group may share one —, then
+each of its `selector`s likewise, no earlier selector of that
+constructor the same (`InvalidField`); then each type parameter used
+in some constructor's argument type, the plugin's shared check
+(COMMON.md §4). A sibling already bearing the node's id
 component is the framework's `DuplicateName` (MCP_SPECIFICATION §2); any
 other clash of the types' names in the theory — a `codatatype` sibling
 of the same name among them — is Isabelle's at evaluation. Whether the

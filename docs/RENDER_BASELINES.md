@@ -67,9 +67,11 @@ An `inductive` needs the field `name`.
 The `edit` tool needs the argument `evaluate`.
 ```
 
-`InvalidField` — `<reason>` is a schema check's or the `gen` author's, a
-predicate completing the sentence; `argument` replaces `field` for a
-tool call's own arguments:
+`InvalidField` — `<reason>` is a schema check's or the class's, from its
+`gen` or its field check (PLUGIN_SYSTEM §2), a predicate completing the
+sentence; `argument` replaces `field` for a tool call's own arguments; a
+line the field check raises is told alone, as its node's first own
+operation's message, with no path before it and no opening line:
 
 ```
 The field `statement` <reason>.

@@ -1,5 +1,5 @@
 """`Datatype` (node_classes/DATATYPE.md): with no Isabelle, the schema and
-the descriptions (§2, §3), `gen`'s checks and refusals (§4), the
+the descriptions (§2, §3), `gen` and the field check (§4), the
 definition as the node holds, stores and prints it (§2, §8), the node's
 name and the framework's `DuplicateName` on it, the emitted text (§5), the
 message and the status (§6), the mark (§7); through the std harness, the
@@ -20,16 +20,16 @@ from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import text_of
 from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode
 from invariants import assert_invariants, assert_store_mirrors
-from isabelle_theory_agent import compile as C, edit, isabelle_driver, model as M
+from isabelle_theory_agent import compile as C, isabelle_driver, model as M
 from isabelle_theory_agent.exceptions import DuplicateName, InvalidField, InvalidName, RawASTError
 from isabelle_theory_agent.std import common, datatype
 from isabelle_theory_agent.std.common import Binder, Infix, Template, Type_Parameter
 from isabelle_theory_agent.std.datatype import Argument, Constructor, Datatype, Defined_Type
 from isabelle_theory_agent.store import Forest_Store
 from ml_process import read_back
-from std_forest import KINDS, forest, insert, inv, refused
+from std_forest import KINDS, field_check, forest, insert, inv, refused, reloaded
 from test_descriptions import descriptions
-from test_model import locked, run
+from test_model import run
 from test_session_theory import Forest_Under_Test, session, theory
 from test_theorem import lemma
 
@@ -107,11 +107,10 @@ def test_gen_keeps_the_definition_normalised_as_isaterms_and_names_the_node():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: a type name outside §1's grammar
-    (RENDER_BASELINES §2's line); the five sentences of §4's block; the type
-    parameters by the shared check, and, last, each used in some
-    constructor's argument type (COMMON §4's sentences, pinned by
-    test_common.py); an empty `types` or `constructors` by the framework."""
+    """§4's `gen` refuses only a type name outside §1's grammar
+    (RENDER_BASELINES §2's line), before any field is judged; the
+    framework's schema refusals: its integer bound, its choice of a union's
+    arm, an empty `types` or `constructors`."""
     f, x = forest()
     [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
                  if line.startswith("`my-list` is not a valid type name")]
@@ -119,58 +118,8 @@ def test_gen_refuses_as_section_4_says():
     assert (e.name, e.grammar) == ("my-list", "type name") and str(e) == "At `constructs[0]`: " + invalid
     for name in ("1st", "list_", "a list", "x'y-", "", "α"):
         assert refused(f, x, [definition({"type_name": name, "constructors": [{"name": "N"}]})], InvalidName).grammar == "type name"
-    [twice, identifier, again, selector, selector_twice] = fenced_blocks(DT, "4.")[0]
-    e = refused(f, x, [definition(EXPR, {"type_name": "expr", "constructors": [{"name": "N"}]}, type_parameters=())], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + twice and e.field == "types[1].type_name"
-    e = refused(f, x, [definition({"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]})], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + identifier and e.field == "types[0].constructors[1].name"
-    for name in ("1x", "x y", "", "Cons-"):
-        assert refused(f, x, [definition({"type_name": "list", "constructors": [{"name": name}]})], InvalidField).field == "types[0].constructors[0].name"
-    e = refused(f, x, [definition({"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons"}, {"name": "Nil"}]})], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + again and e.field == "types[0].constructors[2].name"
-    e = refused(f, x, [definition({"type_name": "list", "constructors": [
-        {"name": "Nil"}, {"name": "Cons", "arguments": [{"type": "'a", "selector": "hd_"}]}]})], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + selector and e.field == "types[0].constructors[1].arguments[0].selector"
-    e = refused(f, x, [definition({"type_name": "list", "constructors": [
-        {"name": "Nil"}, {"name": "Cons", "arguments": [{"type": "'a", "selector": "hd"}, {"type": "'a list", "selector": "hd"}]}]})], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + selector_twice and e.field == "types[0].constructors[1].arguments[1].selector"
-    assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
-    # two types of a group may share a constructor's name: Isabelle qualifies it by the type
-    (q,) = insert(f, x, 0, [definition({"type_name": "a", "constructors": [{"name": "C"}]},
-                                       {"type_name": "b", "constructors": [{"name": "C"}]}, type_parameters=())])
-    run(locked(f, edit.delete(q)))
-    # the type parameters: COMMON §4's check, its sentences pinned by test_common.py
-    e = refused(f, x, [definition(LIST, type_parameters=({"name": "a"},))], InvalidField)
-    assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
-    e = refused(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'a"}))], InvalidField)
-    assert (e.field, e.reason) == ("type_parameters[1].name", "repeats `'a`")
-    # every type parameter used in some constructor's argument type, last — COMMON §4's check and sentence, pinned by
-    # test_common.py; a group in which only the second type uses the parameter is accepted
-    [unused] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.") if line.endswith("which is not used.")]
-    e = refused(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)
-    assert str(e) == "At `constructs[0]`: " + unused and e.field == "type_parameters[1]"
-    e = refused(f, x, [definition({"type_name": "phantom", "constructors": [{"name": "phantom", "arguments": [{"type": "'b"}]}]},
-                                  type_parameters=({"name": "'a"}, {"name": "'b"}))], InvalidField)     # the phantom idiom too
-    assert (e.field, e.reason) == ("type_parameters[0]", "declares `'a`, which is not used")
-    (q,) = insert(f, x, 0, [definition({"type_name": "a", "constructors": [{"name": "A", "arguments": [{"type": "nat"}]}]},
-                                       {"type_name": "b", "constructors": [{"name": "B", "arguments": [{"type": "'a"}]}]})])
-    run(locked(f, edit.delete(q)))
-    # §4's order under two faults: the type names first, then the parameters, then the constructors and selectors, then
-    # the parameters' use
-    bad_name = {"type_name": "my-list", "constructors": [{"name": "Nil"}]}
-    bad_constructor = {"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]}
-    bad_selector = {"type_name": "cell", "constructors": [{"name": "Cons", "arguments": [{"type": "'a", "selector": "hd_"}]}]}
+    bad_name = {"type_name": "my-list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]}
     assert refused(f, x, [definition(bad_name, type_parameters=({"name": "a"},))], InvalidName).grammar == "type name"
-    assert refused(f, x, [definition(bad_constructor, {"type_name": "list", "constructors": [{"name": "N"}]})],
-                   InvalidField).field == "types[1].type_name"
-    assert refused(f, x, [definition(bad_constructor, type_parameters=({"name": "a"},))], InvalidField).field == "type_parameters[0].name"
-    assert refused(f, x, [definition(bad_selector, bad_constructor)], InvalidField).field == "types[0].constructors[0].arguments[0].selector"
-    assert refused(f, x, [definition(bad_constructor, type_parameters=({"name": "'b"},))], InvalidField).field == "types[0].constructors[1].name"
-    # two constructors of one type may share a selector's name: Isabelle makes one selector of them
-    (q,) = insert(f, x, 0, [definition({"type_name": "t", "constructors": [
-        {"name": "A", "arguments": [{"type": "'a", "selector": "get"}]},
-        {"name": "B", "arguments": [{"type": "'a", "selector": "get"}, {"type": "nat"}]}]})])
-    run(locked(f, edit.delete(q)))
     # the framework's integer bound and its choice of a union's arm (MODULE_STRUCTURE §4.4), RENDER_BASELINES §2's two
     # lines, the forest unchanged
     [bound] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.") if line.endswith("must be a 64-bit integer.")]
@@ -186,6 +135,70 @@ def test_gen_refuses_as_section_4_says():
                 {"kind": "datatype", "english": "e", "types": [{"type_name": "t", "constructors": [{"name": "C", "syntax": {"form": "infix", "symbol": "+"}}]}]},
                 {"kind": "datatype", "english": "e", "types": [{"type_name": "t", "syntax": {"form": "binder", "symbol": "+", "priority": 1}, "constructors": [{"name": "C"}]}]}):
         refused(f, x, [raw], RawASTError)
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check, each sentence told alone, no path before it: the
+    five sentences of §4's block; the type parameters by the shared check,
+    and, last, each used in some constructor's argument type (COMMON §4's
+    sentences, pinned by test_common.py); what §4 admits; §4's order under
+    two faults."""
+    f, x = forest()
+    [invalid] = [line for line in fenced_lines(DOCS / "RENDER_BASELINES.md", "2.")
+                 if line.startswith("`my-list` is not a valid type name")]
+    [twice, identifier, again, selector, selector_twice] = fenced_blocks(DT, "4.")[0]
+    e = field_check(f, x, [definition(EXPR, {"type_name": "expr", "constructors": [{"name": "N"}]}, type_parameters=())])
+    assert str(e) == twice and e.field == "types[1].type_name"
+    e = field_check(f, x, [definition({"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]})])
+    assert str(e) == identifier and e.field == "types[0].constructors[1].name"
+    for name in ("1x", "x y", "", "Cons-"):
+        assert field_check(f, x, [definition({"type_name": "list", "constructors": [{"name": name}]})]).field == "types[0].constructors[0].name"
+    e = field_check(f, x, [definition({"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons"}, {"name": "Nil"}]})])
+    assert str(e) == again and e.field == "types[0].constructors[2].name"
+    e = field_check(f, x, [definition({"type_name": "list", "constructors": [
+        {"name": "Nil"}, {"name": "Cons", "arguments": [{"type": "'a", "selector": "hd_"}]}]})])
+    assert str(e) == selector and e.field == "types[0].constructors[1].arguments[0].selector"
+    e = field_check(f, x, [definition({"type_name": "list", "constructors": [
+        {"name": "Nil"}, {"name": "Cons", "arguments": [{"type": "'a", "selector": "hd"}, {"type": "'a list", "selector": "hd"}]}]})])
+    assert str(e) == selector_twice and e.field == "types[0].constructors[1].arguments[1].selector"
+    assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
+    # the type parameters: COMMON §4's check, its sentences pinned by test_common.py
+    e = field_check(f, x, [definition(LIST, type_parameters=({"name": "a"},))])
+    assert (e.field, e.reason) == ("type_parameters[0].name", "must be a type variable, such as 'a")
+    e = field_check(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'a"}))])
+    assert (e.field, e.reason) == ("type_parameters[1].name", "repeats `'a`")
+    # every type parameter used in some constructor's argument type, last — COMMON §4's check and sentence, pinned by
+    # test_common.py
+    [unused] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.") if line.endswith("which is not used.")]
+    e = field_check(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'b"}))])
+    assert str(e) == unused and e.field == "type_parameters[1]"
+    e = field_check(f, x, [definition({"type_name": "phantom", "constructors": [{"name": "phantom", "arguments": [{"type": "'b"}]}]},
+                                      type_parameters=({"name": "'a"}, {"name": "'b"}))])     # the phantom idiom too
+    assert (e.field, e.reason) == ("type_parameters[0]", "declares `'a`, which is not used")
+    # what §4 admits: a constructor's name shared by two types of a group, which Isabelle qualifies by the type; a
+    # selector's name shared by two constructors of one type, of which Isabelle makes one selector; a parameter only
+    # the group's second type uses
+    assert field_check(f, x, [definition({"type_name": "a", "constructors": [{"name": "C"}]},
+                                         {"type_name": "b", "constructors": [{"name": "C"}]}, type_parameters=())]) is None
+    assert field_check(f, x, [definition({"type_name": "t", "constructors": [
+        {"name": "A", "arguments": [{"type": "'a", "selector": "get"}]},
+        {"name": "B", "arguments": [{"type": "'a", "selector": "get"}, {"type": "nat"}]}]})]) is None
+    assert field_check(f, x, [definition({"type_name": "a", "constructors": [{"name": "A", "arguments": [{"type": "nat"}]}]},
+                                         {"type_name": "b", "constructors": [{"name": "B", "arguments": [{"type": "'a"}]}]})]) is None
+    assert field_check(f, x, [definition(LIST)]) is None
+    # §4's order under two faults: the type names' repeat first, then the parameters, then the constructors and
+    # selectors, then the parameters' use
+    bad_constructor = {"type_name": "list", "constructors": [{"name": "Nil"}, {"name": "Cons_"}]}
+    bad_selector = {"type_name": "cell", "constructors": [{"name": "Cons", "arguments": [{"type": "'a", "selector": "hd_"}]}]}
+    assert field_check(f, x, [definition(EXPR, {"type_name": "expr", "constructors": [{"name": "N"}]}, type_parameters=({"name": "a"},))]).field == "types[1].type_name"
+    assert field_check(f, x, [definition(bad_constructor, {"type_name": "list", "constructors": [{"name": "N"}]})]).field == "types[1].type_name"
+    assert field_check(f, x, [definition(bad_constructor, type_parameters=({"name": "a"},))]).field == "type_parameters[0].name"
+    assert field_check(f, x, [definition(bad_selector, bad_constructor)]).field == "types[0].constructors[0].arguments[0].selector"
+    assert field_check(f, x, [definition({"type_name": "list", "constructors": [
+        {"name": "Nil"}, {"name": "Nil", "arguments": [{"type": "'a", "selector": "hd_"}]}]})]).field == "types[0].constructors[1].name"   # one constructor at a time
+    assert field_check(f, x, [definition(bad_constructor, type_parameters=({"name": "'b"},))]).field == "types[0].constructors[1].name"
     assert x.sub_nodes == []
     inv(f)
 
@@ -219,6 +232,18 @@ def test_the_definition_is_stored_in_the_construct_s_shape(tmp_path):
     loaded = f2.sub_nodes[0].sub_nodes[0].sub_nodes
     assert [(n.name, n.english, n.type_parameters, n.types) for n in loaded] == before
     assert all(isinstance(n, Datatype) for n in loaded)
+
+
+def test_a_definition_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
+    """`from_store` reads the type parameters back as stored, judging
+    nothing, and the field check refuses the loaded node with COMMON §4's
+    sentence."""
+    [variable, _] = [b for b in fenced_blocks(DOCS / "node_classes" / "COMMON.md", "4.") if b[0].startswith("The field")][0]
+    (d,), (loaded,) = reloaded(tmp_path / "TAT.sqlite", definition(LIST, type_parameters=({"name": "a"},)))
+    assert loaded.type_parameters == d.type_parameters and loaded.types == d.types
+    with pytest.raises(InvalidField) as e:
+        loaded.check_fields()
+    assert str(e.value) == variable
 
 
 # --- the message and the status (§6), the mark (§7) ------------------------

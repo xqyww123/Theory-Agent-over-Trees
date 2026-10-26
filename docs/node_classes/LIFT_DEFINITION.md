@@ -192,7 +192,8 @@ Where a `LiftDefinition` stands is COMMON.md §1's; the framework checks it, not
 `LiftDefinition.gen` checks `name` against §1's grammar (`InvalidName`
 with `grammar` = `constant name`, rendered with the fact name's text,
 RENDER_BASELINES §2's sixth line, a grammar `Define` shares, DEFINE.md
-§4). A sibling already bearing the node's id component is the
+§4). The class has no field check (PLUGIN_SYSTEM §2): nothing else of
+its fields is judged before Isabelle reads them. A sibling already bearing the node's id component is the
 framework's `DuplicateName` (MCP_SPECIFICATION §2); any other clash of
 the function's name is Isabelle's at evaluation. Whether `type` parses
 and the Lifting setup of its subtype or quotient type is open here,

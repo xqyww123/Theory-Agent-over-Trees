@@ -17,8 +17,8 @@ from ..model import INDENT, NON_EMPTY, RECALL, Leaf, Theory, emit_lines, print_n
 from ..plugin import TAT_node
 from .common import (
     TYPE_PARAMETER_DEFS, Type_Definition, Type_Parameter, TypeParameter_RawAST, check_identifier,
-    check_type_parameters_used, normalised, require_id_name, text_line, type_head_text, type_parameters_of,
-    type_parameters_wire)
+    check_type_parameters, check_type_parameters_used, normalised, require_id_name, text_line, type_head_text,
+    type_parameters_of, type_parameters_wire)
 
 KINDS = ("record",)
 
@@ -88,22 +88,24 @@ class Record(Leaf, Type_Definition):
 
     @classmethod
     async def gen(cls, config, raw: Record_RawAST):
-        """§4's checks in its order: `type_name` against §1's grammar; the
-        type parameters by the shared check; each field's name, no two the
-        same; then every type parameter used, in a field's type or
-        `parent`."""
+        """§4: `type_name` against §1's grammar; the rest read."""
         require_id_name(raw["type_name"], "type name")
-        type_parameters = type_parameters_of(raw.get("type_parameters", []))
-        fields: list[Field] = []
-        for i, f in enumerate(raw["fields"]):
-            name = check_identifier(f["name"], f"fields[{i}].name", [x.name for x in fields], in_term=True)
-            fields.append(Field(name, IsaTerm.from_agent(normalised(f["type"]))))
         parent = normalised(raw.get("parent", ""))                   # an empty `parent` is no parent (§2)
-        parent_record = IsaTerm.from_agent(parent) if parent else None
-        check_type_parameters_used(type_parameters, [f.type for f in fields] + (
-            [_applied(parent_record, type_parameters)] if parent_record is not None else []))
-        return cls(config.parent, config.state, normalised(raw["english"]), type_parameters, raw["type_name"],
-                   parent_record, tuple(fields))
+        return cls(config.parent, config.state, normalised(raw["english"]),
+                   type_parameters_of(raw.get("type_parameters", [])), raw["type_name"],
+                   IsaTerm.from_agent(parent) if parent else None,
+                   tuple(Field(IsaTerm.from_agent(normalised(f["name"])), IsaTerm.from_agent(normalised(f["type"])))
+                         for f in raw["fields"]))
+
+    def check_fields(self):
+        """§4's field check in its order: the type parameters by the shared
+        check; each field's name, no two the same; then every type
+        parameter used, in a field's type or `parent`."""
+        check_type_parameters(self.type_parameters, ".name")
+        for i, f in enumerate(self.fields):
+            check_identifier(f.name, f"fields[{i}].name", [x.name for x in self.fields[:i]], in_term=True)
+        parent = self.parent_type()
+        check_type_parameters_used(self.type_parameters, [f.type for f in self.fields] + ([parent] if parent is not None else []))
 
     def parent_type(self) -> IsaTerm | None:
         """`parent` in its applied form (§2); None when there is none."""

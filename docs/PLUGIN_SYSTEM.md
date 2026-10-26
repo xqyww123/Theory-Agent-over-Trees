@@ -138,6 +138,26 @@ root holds sessions, a session holds theories, every other node stands
 inside a theory — is the framework's own, checked at the edit
 (MODULE_STRUCTURE §4.2; EXCEPTIONS.md §3).
 
+A class's `gen` refuses only what keeps the node from being built: the
+node's own name, and the names that name is computed from, outside the
+id grammar without hyphens (`InvalidName`, node_classes/COMMON.md §5);
+it reads the rest. Every other judgement the class makes of the node's
+fields is the field check's: `check_fields()`, which a class
+overrides, raises `InvalidField` for the first thing wrong with the
+node's authored fields, in the class's order, with the class's
+sentence under the field's path, and does nothing by default. The
+framework asks it after the placement check, before the node's first
+own operation, at evaluation alone: the `InvalidField` is that operation's
+`CannotEvaluate`, its message the exception's sentence alone
+(RENDER_BASELINES §2), the hook not called; anything else it raises is
+its class's bug (EXCEPTIONS.md §1). It is synchronous and reads the
+node's class, kind and authored fields alone — never its recorded
+fields, its ancestors, its children or the wire. A node it refuses
+stays in the forest and in its store, `from_store` rebuilding it as
+`gen` built it, until an amend replaces it. `Session` runs no operation
+and `Theory`'s `imports` are read before its beginning, so their `gen`s
+judge their fields themselves (node_classes/SESSION_AND_THEORY.md).
+
 A class sets `name` in its `gen` to the name the agent supplied, or to
 one computed from its fields (a `Datatype`'s, DATATYPE.md §2); the
 framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
@@ -298,8 +318,8 @@ registration, per class:
   overrides is — the framework's, or one of the plugin's own base
   classes: `print_fields`, `children_header`, `owing_line` and `mark` are plain, as rendering is
   synchronous (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning`
-  and `emit_ending`, and `cannot_hold`, `cannot_stand_under` and
-  `refuses_children` (§2); the evaluation hooks are coroutines;
+  and `emit_ending`, and `cannot_hold`, `cannot_stand_under`,
+  `refuses_children` and `check_fields` (§2); the evaluation hooks are coroutines;
 - the class defines neither `__eq__` nor `__hash__`: a node is equal to,
   and hashed as, itself alone, since nodes live in sets (PRINT.md §2);
 - the class overrides `gen`, `to_store` and `from_store`: the framework's
