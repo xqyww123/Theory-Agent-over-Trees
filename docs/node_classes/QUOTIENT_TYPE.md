@@ -174,7 +174,7 @@ The class's construct schema:
   "description": "defines a quotient type whose values are the equivalence classes of an existing type under an equivalence relation. Example: quotient_type 'a fset = \"'a list\" / \"λxs ys. set xs = set ys\"",
   "properties": {
     "kind":                { "const": "quotient_type" },
-    "english":             { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":             { "type": "string", "description": "what is defined, in English" },
     "type_parameters":     { "type": "array", "items": { "type": "string" },
                              "description": "the parameters of the quotient type, each a type variable such as 'a; a sort constraint is written inside representation_type, as in \"'a :: idom × 'a\"" },
     "type_name":           { "type": "string" },
@@ -225,7 +225,7 @@ defines a quotient type whose values are the equivalence classes of an existing 
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `type_parameters`:
@@ -385,7 +385,8 @@ lifting_forget fract.lifting
   which `Typedef` uses too. The head, the representation type, the
   relation and
   this clause are assembled by one private helper of quotient_type.py,
-  which §8's line uses too, given the keyword set to write against.
+  which §8's line uses too, given the writer of each piece: here the
+  theory's `print_name`.
 - The terminal proof, `by aoa` or `sorry`, indented two spaces, is
   `Proof_Obligation`'s `proof_text()` (COMMON.md §3); the `aoa` method's
   import is the plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
@@ -398,11 +399,9 @@ lifting_forget fract.lifting
   `emit_ending` (COMMON.md §6).
 - Every other piece of Isabelle text — a name, the representation type, the
   relation — is written through the theory's `print_name`
-  (SESSION_AND_THEORY §2): bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise —
-  `intrel` bare, `"'a list"` and `"λxs ys. set xs = set ys"` quoted; a
-  type variable, a symbol and a template as the writers write them.
+  (SESSION_AND_THEORY §2): `intrel` bare, `"'a list"` and `"λxs ys. set
+  xs = set ys"` quoted; a type variable, a symbol and a template as the
+  writers write them.
 - The text in the `unicode` spelling; the file takes the `\<name>` form
   from the compile's conversion (COMPILATION.md §2) and reads as Unicode
   in jEdit all the same.
@@ -617,7 +616,7 @@ unless an identifier, whatever keywords the theory recorded, without a
 round trip
 to Isabelle; `english` follows at depth 0 alone; no line carries a key.
 The line is the private helper's that writes the emitted text (§5),
-given no keyword set.
+given the module-level `print_name`.
 The children are the framework's to print, in the mode PRINT.md §2's
 table gives them: directly under what was written, or one level deeper
 under `lifting context:` — the children header `Lifting_Block`

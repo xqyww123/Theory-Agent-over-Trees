@@ -71,7 +71,8 @@ never disturbs results already in flight.
 
 The name is what the agent supplied, as the node class's `gen` set it —
 one field of the construct, or a name computed from its fields: a
-`Theorem`'s theorem name, a `Section`'s or a `Text`'s title, a `Theory`'s
+`Theorem`'s theorem name, a `Section`'s or a `Text`'s `name`, written
+into no command (node_classes/SECTION_AND_TEXT.md §2), a `Theory`'s
 short name, a `Session`'s Isabelle session name, a `Datatype`'s type
 names joined with `_` (node_classes/DATATYPE.md §2). The framework makes
 the node's **id component** from it, the kind joined to the name —

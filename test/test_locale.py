@@ -288,6 +288,29 @@ def test_emit_writes_section_5_s_three_examples():
     assert q.emit_ending(2, out) == 2 and out.getvalue() == "\n    end\n"
     assert proposition_text(q.assumes[0].statement, False) == "⋀x (y::nat). ⟦P x; Q y⟧ ⟹ R x y"
     assert proposition_text(b.assumes[0].statement, True) == "(0 < n)"
+    # prose through `latex_of`, the formal comments in Isabelle text translated (COMPILATION.md §3); an axiom that is
+    # one identifier written bare, as Theorem's `shows True` is; `recall` as written
+    (w,) = insert(f, x, 5, [bounded(name="w", english="Sums of n²", fixes=[], imports=[
+        {"locale": "A", "instantiations": [{"name": "f", "term": "f ― ‹x₁›"}]}], assumes=[
+        {"name": "ax", "statement": {"english": "Sums of n²", "conclusion": "R ― ‹x₁›"}},
+        {"name": "unit", "statement": {"english": "One identifier", "conclusion": "P"}}])])
+    recorded(w)
+    x.keywords = frozenset()
+    out = io.StringIO()
+    w.emit_beginning(0, out)
+    assert "\\<" not in out.getvalue()                                                  # in the `unicode` spelling (§5)
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "text ‹Sums of ‹n²›.›"                                            # its own `english`
+    assert lines[5] == "    ―‹Sums of ‹n²›.›"                                            # an axiom's comment
+    assert lines[2] == '  A where f = "f ― ‹‹x₁››" +'                                     # an instantiation term
+    assert lines[4] == '  assumes ax: "R ― ‹‹x₁››"'                                       # an axiom's conclusion
+    assert lines[6] == "  assumes unit: P"
+    out = io.StringIO()
+    w.print_fields(0, out, M.RECALL, 1)
+    assert '  A where f = "f ― ‹x₁›"' in out.getvalue().splitlines() and '  ax: "R ― ‹x₁›"' in out.getvalue().splitlines()
+    out = io.StringIO()
+    w.print_fields(0, out, M.RECALL, 0)                                                 # the depth-0 `recall`: as written
+    assert out.getvalue().splitlines()[0] == "Sums of n²" and "    Sums of n²" in out.getvalue().splitlines(), out.getvalue()
 
 
 # --- the beginning, its records and its messages, the ending (§6) -------------

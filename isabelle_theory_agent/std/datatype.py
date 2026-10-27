@@ -6,7 +6,7 @@ the node is finished when it is `ready`."""
 
 from __future__ import annotations
 
-from collections.abc import Container, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
@@ -76,7 +76,7 @@ class Datatype(Leaf, Type_Definition):
         "type": "object",
         "properties": {
             "kind": {"type": "string", "enum": list(KINDS)},
-            "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
+            "english": {"type": "string", "description": "what is defined, in English"},
             "type_parameters": {"type": "array", "items": {"$ref": "#/$defs/TypeParameter"},
                                 "description": "the parameters of the types defined; sorts are usually not specified"},
             "types": {"type": "array", "minItems": 1,
@@ -186,20 +186,20 @@ class Datatype(Leaf, Type_Definition):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _definition(self, keywords: Container[str]) -> list[tuple[str, list[str]]]:
+    def _definition(self, write: Callable[[str | IsaTerm], str]) -> list[tuple[str, list[str]]]:
         """Each type's head by `type_head_text` and its constructors' texts,
-        every piece through `print_name` against `keywords`: the theory's
-        for the file; none under `recall`, where every name, an identifier,
-        comes out bare."""
+        every piece through `write`: the theory's `print_name` for the file,
+        the module-level one under `recall`, where every name, an
+        identifier, comes out bare."""
         definition = []
         for t in self.types:
-            head = type_head_text(self.type_parameters, t.type_name, t.syntax, keywords)
+            head = type_head_text(self.type_parameters, t.type_name, t.syntax, write)
             constructors = []
             for c in t.constructors:
-                parts = [print_name(c.name, keywords)]
+                parts = [write(c.name)]
                 for a in c.arguments:
-                    type_text = print_name(a.type, keywords)
-                    parts.append(f"({print_name(a.selector, keywords)}: {type_text})" if a.selector is not None
+                    type_text = write(a.type)
+                    parts.append(f"({write(a.selector)}: {type_text})" if a.selector is not None
                                  else type_text)
                 if c.syntax is not None:
                     parts.append(mixfix_text(c.syntax))
@@ -211,7 +211,7 @@ class Datatype(Leaf, Type_Definition):
         """Under `Recall` alone (§8): the definition, one line per type, at
         depths 0 to 2, against no keyword; `english` at 0."""
         if mode is RECALL and depth <= 2:
-            for i, (head, constructors) in enumerate(self._definition(())):
+            for i, (head, constructors) in enumerate(self._definition(print_name)):
                 out.write(INDENT * indent + ("and " if i else "") + f"{head} = " + " | ".join(constructors) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
@@ -220,7 +220,7 @@ class Datatype(Leaf, Type_Definition):
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.english))
         lines = []
-        for i, (head, constructors) in enumerate(self._definition(self.enclosing(Theory).keywords or ())):
+        for i, (head, constructors) in enumerate(self._definition(self.enclosing(Theory).print_name)):
             lines.append(f"{self.kind if i == 0 else 'and'} {head} =")
             lines.append(f"    {constructors[0]}")
             lines.extend(f"  | {c}" for c in constructors[1:])

@@ -414,6 +414,7 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
         """In the `unicode` spelling (§5); the file's `\\<name>` form is the compile's conversion (COMPILATION §2)."""
         out = io.StringIO()
         assert node.emit(1, out) == 1
+        assert "\\<" not in out.getvalue()
         return out.getvalue().splitlines()
 
     def expected(*unicode_lines: str) -> list[str]:
@@ -428,21 +429,27 @@ def test_the_emitted_text_is_section_5_s_with_sorry_until_the_proof_is_checked()
     x.keywords = frozenset({"rev_length", "xs", "ne"})       # keywords of the theory: quoted (§5)
     assert emitted(p)[1:5] == expected('  lemma "rev_length":', '    fixes "xs" :: "\'a list"',
                                        '    assumes "ne": "xs ≠ []"', '    shows "length (rev xs) = length xs"')
-    (q,) = insert(f, x, 1, [lemma("q", english="Ends with a question? ‹Quoted› \\<open>here\\<close>",
+    (q,) = insert(f, x, 1, [lemma("q", english="Ends with a question? ‹Quoted› \\<open>here\\<close> ›",
                                   for_any=({"name": "n"},), premises=())])
-    assert emitted(q) == expected('  text ‹Lemma q. Ends with a question? "Quoted" "here".›', "  lemma q:",
+    assert emitted(q) == expected('  text ‹Lemma ‹q›. Ends with a question? ‹Quoted› ‹here› {\\isasymclose}.›', "  lemma q:",
                                   "    fixes n", '    shows "length (rev xs) = length xs"', "    sorry")
     (r,) = insert(f, x, 2, [lemma("r", english="Bang!", kind="corollary", for_any=(), premises=())])
-    assert emitted(r)[:2] == expected("  text ‹Corollary r. Bang!›", "  corollary r:")
+    assert emitted(r)[:2] == expected("  text ‹Corollary ‹r›. Bang!›", "  corollary r:")
     # every piece of Isabelle text through the theory's `print_name` (§5): a string token
     # (COMPILATION.md §3) unless an identifier that is no keyword
     (t,) = insert(f, x, 3, [lemma("t", conclusion='v = "q"', for_any=({"name": "v", "type": 'foo "bar"'},),
                                   premises=({"name": "h", "term": 'v \\<noteq> "r"'},))])
-    assert emitted(t)[2:5] == expected('    fixes v :: "foo \\"bar\\""', '    assumes h: "v \\<noteq> \\"r\\""',   # as authored
+    assert emitted(t)[2:5] == expected('    fixes v :: "foo \\"bar\\""', '    assumes h: "v ≠ \\"r\\""',   # `\\<noteq>` in `unicode`
                                        '    shows "v = \\"q\\""')
     (u,) = insert(f, x, 4, [lemma("u", conclusion="True", for_any=({"name": "v", "type": "'a"},),
                                   premises=({"name": "h", "term": "P"},))])
     assert emitted(u)[2:5] == expected('    fixes v :: "\'a"', "    assumes h: P", "    shows True")
+    # the `english` through `latex_of`, a formal comment's body translated (COMPILATION.md §3); `recall` as written
+    (w,) = insert(f, x, 5, [lemma("w", conclusion="True ― ‹x₁›", english="Sums of n²", for_any=(), premises=())])
+    assert emitted(w)[0].endswith("Sums of ‹n²›.›") and emitted(w)[2] == '    shows "True ― ‹‹x₁››"'
+    out = io.StringIO()
+    w.print_fields(0, out, M.RECALL, 0)
+    assert out.getvalue().splitlines() == ["True ― ‹x₁›", "Sums of n²"]
 
 
 def test_a_compile_writes_section_5_s_text_and_the_hook_removes_the_proof_stores_of_no_tree(monkeypatch):

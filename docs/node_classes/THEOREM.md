@@ -111,7 +111,7 @@ framework's setting on the construction job (CONSTRUCT_INTERACTION
 `premises`, `premises[].name`, `premises[].term` and `conclusion`:
 
 ```
-the statement in English, as LaTeX text
+the statement in English
 universally quantified variables to fix
 An Isabelle type expression. Leave empty ("") if unsure
 named premises to assume
@@ -164,7 +164,7 @@ The node emits, when its `can_emit` holds — `Theorem` keeps the
 framework's default (COMPILATION.md §3) — two commands:
 
 ```
-text ‹Lemma rev_length. The length of a reversed list.›
+text ‹Lemma ‹rev_length›. The length of a reversed list.›
 lemma rev_length:
   fixes xs :: "'a list"
   assumes ne: "xs ≠ []"
@@ -172,17 +172,14 @@ lemma rev_length:
   by aoa
 ```
 
-- The `text` line's lead: the kind capitalised and the name, `Lemma
-  rev_length.`; the line is COMMON.md §2's.
+- The `text` line's lead: the kind capitalised and the name in a
+  cartouche, `Lemma ‹rev_length›.`; the line is COMMON.md §2's.
 - A variable without `type` is fixed bare (`fixes xs`); an empty
   `for_any` or `premises` omits its clause.
 - Every piece of Isabelle text — a name, a variable's type, a term —
   is written through the theory's `print_name` (SESSION_AND_THEORY §2):
-  bare when its `ascii` is an Isabelle identifier (`is_identifier`,
-  COMMON.md §5) that is not a keyword of the theory, as Isabelle's
-  string token (COMPILATION.md §3) otherwise — `lemma "open":`, `fixes
-  "for"`, `assumes "if":`; `fixes xs :: "'a"` quoted, a conclusion
-  `True` bare, `"P x"` quoted.
+  `lemma "open":`, `fixes "for"`, `assumes "if":`; `fixes xs :: "'a"`
+  quoted, a conclusion `True` bare, `"P x"` quoted.
 - The terminal proof, `by aoa` or `sorry`, is `Proof_Obligation`'s
   `proof_text()` (COMMON.md §3); the `aoa` method's import is the
   plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).

@@ -13,7 +13,7 @@ nothing."""
 
 from __future__ import annotations
 
-from collections.abc import Container
+from collections.abc import Callable
 from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -52,7 +52,7 @@ class Typedef(Beginning_Proof_Obligation, Lifting_Closing):
                        " lists without repetition",
         "properties": {
             "kind": {"const": "typedef"},
-            "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
+            "english": {"type": "string", "description": "what is defined, in English"},
             "type_parameters": {"type": "array", "items": {"$ref": "#/$defs/TypeParameter"},
                                 "description": "the parameters of the subtype; sorts are usually not specified"},
             "type_name": {"type": "string"},
@@ -182,22 +182,22 @@ class Typedef(Beginning_Proof_Obligation, Lifting_Closing):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _definition(self, keywords: Container[str]) -> tuple[str, str | None]:
+    def _definition(self, write: Callable[[str | IsaTerm], str]) -> tuple[str, str | None]:
         """The text after the command — the head by `type_head_text`, `=`
-        and the set, each piece of text through `print_name` against
-        `keywords` (the theory's for the file, none under `recall`) — and
+        and the set, each piece of text through `write` (the theory's
+        `print_name` for the file, the module-level one under `recall`) — and
         beside it the `morphisms` clause by the shared writer, None when
         neither function name was given."""
-        head = type_head_text(self.type_parameters, self.name, self.syntax, keywords)
+        head = type_head_text(self.type_parameters, self.name, self.syntax, write)
         morphisms = morphisms_clause(self.rep_function_name, self.abs_function_name, self.name, _DEFAULT_PREFIXES,
-                                     keywords)
-        return f"{head} = {print_name(self.set, keywords)}", morphisms
+                                     write)
+        return f"{head} = {write(self.set)}", morphisms
 
     def print_fields(self, indent, out, mode, depth):
         """Under `Recall` alone (§8): the definition on one line at depths 0
         to 2, against no keyword; `english` at 0; no line keyed."""
         if mode is RECALL and depth <= 2:
-            out.write(INDENT * indent + " ".join(filter(None, self._definition(()))) + "\n")
+            out.write(INDENT * indent + " ".join(filter(None, self._definition(print_name))) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
         return False
@@ -209,14 +209,14 @@ class Typedef(Beginning_Proof_Obligation, Lifting_Closing):
         the framework writes the empty lines between siblings."""
         assert self.lifting is not None     # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
-        keywords = self.enclosing(Theory).keywords or ()
-        definition, morphisms = self._definition(keywords)
+        write = self.enclosing(Theory).print_name
+        definition, morphisms = self._definition(write)
         lines = [f"{self.kind} {definition}"]
         if morphisms is not None:
             lines.append(f"  {morphisms}")
         lines.append(f"  {self.proof_text()}")
         if self.lifting:
-            lines.append(f"setup_lifting {print_name(f'type_definition_{self.name}', keywords)}")
+            lines.append(f"setup_lifting {write(f'type_definition_{self.name}')}")
         emit_lines(indent, out, "\n".join(lines))
         if self.sub_nodes:
             out.write("\n")

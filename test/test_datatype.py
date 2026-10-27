@@ -346,6 +346,8 @@ def test_the_emitted_text_is_section_5_s():
                                         "constructors": [{"name": "L", "arguments": [{"type": "'a"}]}, {"name": "R", "arguments": [{"type": "'b"}]}]},
                                        english="Sums", type_parameters=({"name": "'a"}, {"name": "'b"}))])
     assert emitted(v)[1] == '  datatype (\'a, \'b) either (infixr "⊕" 60) ='
+    v.english = "Sums of n²"                                      # prose through `latex_of` (COMPILATION.md §3)
+    assert emitted(v)[0] == "  text ‹Sums of ‹n²›.›"
 
 
 def test_a_codatatype_is_the_same_class_under_its_own_kind():

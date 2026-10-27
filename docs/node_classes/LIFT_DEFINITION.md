@@ -136,7 +136,7 @@ The class's construct schema:
   "description": "defines a function on a subtype or a quotient type from a term on its representation type; its proof obligation, which the proof construction proves, is that the term respects the subtype's defining set or the quotient type's equivalence relation. Example: lift_definition dl_rev :: \"'a dlist ⇒ 'a dlist\" is rev, reversal on the subtype 'a dlist of lists without repetition, with the obligation distinct xs ⟹ distinct (rev xs); placed inside the quotient_type or typedef that defines the type, or inside a lifting_context that opens it",
   "properties": {
     "kind":       { "const": "lift_definition" },
-    "english":    { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":    { "type": "string", "description": "what is defined, in English" },
     "name":       { "type": "string" },
     "type":       { "type": "string", "description": "the type of the function, on the subtype or quotient type. Example: 'a dlist ⇒ 'a dlist" },
     "syntax":     { "$ref": "#/$defs/Mixfix" },
@@ -170,7 +170,7 @@ defines a function on a subtype or a quotient type from a term on its representa
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `type`, `is` and `code_dt`:
@@ -253,17 +253,14 @@ lift_definition dl_length :: "'a dlist ⇒ nat" is length by aoa
   (COMMON.md §4): `(infixr "##" 65)`, `(binder "⨆" 10)`, `("⟨_⟩")`.
 - `is`, then the term through `print_name`. The name, `::`, the type,
   the syntax, `is` and the term are written by one private helper of
-  lift_definition.py, which §8's line uses too, given the keyword set to
-  write against.
+  lift_definition.py, which §8's line uses too, given the writer of each
+  piece: here the theory's `print_name`.
 - The terminal proof, `by aoa` or `sorry`, after the term on the same
   line, is `Proof_Obligation`'s `proof_text()` (COMMON.md §3); the `aoa`
   method's import is the plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY
   §2).
 - Every piece of Isabelle text — the name, the type, the term — is
-  written through the theory's `print_name`
-  (SESSION_AND_THEORY §2): bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise —
+  written through the theory's `print_name` (SESSION_AND_THEORY §2):
   `dl_rev`, `rev` and `length` bare, `"open"`, `"'a dlist ⇒ 'a dlist"`
   and `"λx xs. …"` quoted; a symbol and a template as the writer writes
   them.
@@ -620,7 +617,7 @@ text, every piece through `print_name` against no keyword
 the term quoted unless an identifier, whatever keywords the theory
 recorded, without a round trip to Isabelle; `english` follows at depth
 0 alone; no line carries a key. The line is §5's private helper's,
-given no keyword set. At depth 0 the line begins with `(code_dt)` when
+given the module-level `print_name`. At depth 0 the line begins with `(code_dt)` when
 the authored `code_dt` is true, what the agent wrote; the recorded
 `with_code_dt` is not printed.
 

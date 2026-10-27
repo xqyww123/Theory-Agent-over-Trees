@@ -1,6 +1,7 @@
 # Module structure
 
-Status: design draft.
+Status: design draft; revised 2026-10-25 with the prose translator
+(§4's prose.py; COMPILATION.md §3).
 
 ## 1. Directories and files
 
@@ -18,7 +19,7 @@ lib/tat.jar                   the launcher compiled by `isabelle scala_build`; c
 etc/build.props               what `isabelle scala_build` builds into lib/tat.jar, and the classes that register the tools and the Scala function
 ROOT                          declares the Isabelle session `Theory_Agent_over_Trees`, by which the launcher loads TAT's theory (§5), and `directories "test"`; its heap is a compile check nothing runs on
 etc/settings                  the Isabelle component: TAT_HOME="$COMPONENT", lib/tat.jar on the classpath
-Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Lifting_Closing.ML — and one file per node class, LiftDefinition's with TAT_Lift_Definition_Command.ML beside it, the `lift_definition` command with its refusals rendered, the search for the Lifting setups a refused definition needs and the verdict on `(code_dt)`; TAT_Std/TAT_Std.thy, the theory every forest theory imports (PLUGIN_SYSTEM §1); TAT's own ROOT declares its sessions `TAT_Std in "Isabelle_Std/TAT_Std"` and `TAT_Isabelle_Std in Isabelle_Std`
+Isabelle_Std/                 the plugin of Isabelle's standard commands (§4.5): TAT_Isabelle_Std.thy and ML/ with the plugin's shared ML — TAT_Proof_Obligation.ML, TAT_Mixfix.ML, TAT_Lifting_Closing.ML — and one file per node class whose evaluation runs a command, LiftDefinition's with TAT_Lift_Definition_Command.ML beside it, the `lift_definition` command with its refusals rendered, the search for the Lifting setups a refused definition needs and the verdict on `(code_dt)`; TAT_Std/TAT_Std.thy, the theory every forest theory imports (PLUGIN_SYSTEM §1); TAT's own ROOT declares its sessions `TAT_Std in "Isabelle_Std/TAT_Std"` and `TAT_Isabelle_Std in Isabelle_Std`
 isabelle_theory_agent/        the Python package (§4); the pip and conda packages carry the same name
 isabelle_theory_agent/tools/  the tools' hand-written JSON schemas (TOOL_SCHEMAS.md)
 test/                         test_*.py for the Python side, Test_*.thy for the ML side,
@@ -412,8 +413,9 @@ text.
 
 `operation`, the helper a node class writes its callbacks against (§2.5),
 then `Theory`'s section, a client of §2.5. The rows after `Theory` are
-the plugin `Isabelle_Std`'s, one structure per class in a file of its
-own under `Isabelle_Std/ML/` (§4.5) — `Theorem`'s is `TAT_Theorem` —
+the plugin `Isabelle_Std`'s, one structure per class whose evaluation
+runs a command, in a file of its own under `Isabelle_Std/ML/` (§4.5) —
+`Theorem`'s is `TAT_Theorem` —
 after the plugin's shared structures, `TAT_Proof_Obligation`
 (node_classes/COMMON.md §3), `TAT_Mixfix` (COMMON.md §4), and
 `TAT_Lifting_Closing` (COMMON.md §6).
@@ -433,13 +435,15 @@ after the plugin's shared structures, `TAT_Proof_Obligation`
 | `QuotientType` | `TAT.QuotientType.evaluate`: built by `TAT_Proof_Obligation` from `open_goal` — the `quotient_type` transition, its mixfix read through `TAT_Mixfix`, yielding nothing — and `after_admission` — the identity, `Accepted` with the state it was given and `()` (node_classes/QUOTIENT_TYPE.md §6); its ending is `Lifting_Closing`'s |
 | `LiftingContext` | `TAT.LiftingContext.open`: each entry's pointer read from the bundle `t.lifting` as `Lifting_Closing`'s is, and its restore data looked up, the class's sentence answered for an entry with none; an entry whose quotient is registered already left out of `opened`, silently; then the `context` transition, `Toplevel.begin_nested_target` of `Target_Context.context_begin_nested_cmd` on every entry's bundle, under `operation'` into the beginning's resulting slot, answering `opened` beside the messages; `TAT.LiftingContext.close`: the `end` transition, `Toplevel.end_nested_target`, then, for each entry of `opened`, the pointer read again and `Lifting_Closing`'s two transitions on it, as one operation into the block's resulting slot (node_classes/LIFTING_CONTEXT.md §6) |
 | `Locale` | `TAT.Locale.open`: the imports judged on the input state — each locale's name through `Locale.check`, then its parameters less those instantiated and those it defines, one sentence per import that leaves any —; then, in the same `operation'`, the `light_locale` transition into the beginning's resulting slot and, in the state it leaves, the readings of the axioms, the notice and the cancelled implicit structures, answering `annotations`, `parenthesised_conclusions`, and the cancellation's message and the notice beside the messages; `TAT.Locale.close`: the `end` transition, `Toplevel.end_main_target`, under `operation` into the block's resulting slot (node_classes/LOCALE.md §6) |
-| `Section`, `Context`, … | unspecified (OPEN_QUESTIONS §1) |
+| `Context`, … | unspecified (OPEN_QUESTIONS §1) |
 
 `Theory`'s evaluator is registered like every other class's. `Session`
 registers no evaluator: it runs no Isabelle commands — its evaluation is
 the forest's scheduling (ARCHITECTURE §3.5) — and it emits nothing:
 `compile` writes its ROOT entry from its fields (COMPILATION.md §2). The
-Python halves of both are framework classes in `model.py` (§4.1).
+Python halves of both are framework classes in `model.py` (§4.1). The
+plugin's `Section` and `Text` register no evaluator either: neither runs
+a command (node_classes/SECTION_AND_TEXT.md §6).
 
 ## 4. Python side
 
@@ -454,6 +458,7 @@ isabelle_theory_agent/
   jobs.py              Construction_Job, Evaluation_Job, Unfinished, Interactive_Question and Answered, Agent, messages and mailboxes (CONSTRUCT_INTERACTION §3, §4)
   edit.py              building nodes from constructs; the entries behind edit, move and delete
   compile.py           compile, Compile_Report, report_lines and the path listing `paths`: the forest written as `.thy` files and a ROOT (COMPILATION.md §5)
+  prose.py             every text the compile puts inside a cartouche: prose through latex_of and document_cartouche, the formal comments inside Isabelle text through _comments_translated, the ROOT's description untranslated through _cartouche (COMPILATION.md §3)
   invariants.py        the store-mirror helper a node class's test suite calls on its forests (COMPILATION.md §3)
   store.py             Forest_Store and Node_Rows: the working directory's database (ARCHITECTURE §4.1)
   log.py               Log: a conversation's or a compile's log (LOGGING.md)
@@ -493,9 +498,10 @@ messages and the default `mark` (PRINT.md §1, §3), the stored list
 `last_evaluation_statuses()` in the same order, made by
 `Node`'s constructor from `_operation_names()`, the operations' names in
 that order, which the three base classes answer likewise
-(COMPILATION.md §4); `ancestors()`, nearest first, and `enclosing(cls)`,
-the nearest ancestor of class `cls`, `TAT_InternalError` when none; and
-the event hooks (below).
+(COMPILATION.md §4); `ancestors()`, nearest first, `nearest(cls)`, the
+nearest ancestor that is an instance of `cls`, None when there is none,
+and `enclosing(cls)`, the same, `TAT_InternalError` when none; and the
+event hooks (below).
 
 **The placement check.** Where a node may stand inside its theory is
 answered by the classes concerned (PLUGIN_SYSTEM §2): a container's
@@ -848,8 +854,10 @@ the same `Evaluation` (the invalidation functions, below).
   `import_sessions` and `keywords`, recorded when the header runs
   (COMPILATION.md §2; node_classes/SESSION_AND_THEORY.md §2); and
   `print_name(text)`, which writes a piece of Isabelle text — a name, a
-  term, a type, a sort — into the tree's file against `keywords`
-  (SESSION_AND_THEORY §2).
+  term, a type, a sort, a proposition — into the tree's file against
+  `keywords`, quoting through the always-quoted writer, model.py's
+  private `_always_quoted`, which applies the comment translation
+  (SESSION_AND_THEORY §2; COMPILATION.md §3).
   Before its header runs it makes its `Session`'s folder when that is
   absent, with the function the compile uses (COMPILATION.md §2, §5), so
   that AoA's proof store beside the file has a directory to be written
@@ -1370,7 +1378,7 @@ theory `TAT_Isabelle_Std` imports
 `Theory_Agent_over_Trees.Theory_Agent_over_Trees` and `TAT_Std.TAT_Std`
 and loads from `Isabelle_Std/ML/` the plugin's shared ML —
 `TAT_Proof_Obligation.ML`, `TAT_Mixfix.ML`, `TAT_Lifting_Closing.ML` —
-then one ML file per node class,
+then one ML file per node class whose evaluation runs a command,
 `TAT_Lift_Definition.ML` after `TAT_Lift_Definition_Command.ML`, which
 runs the `lift_definition` command with its refusals rendered
 (node_classes/LIFT_DEFINITION.md §6), and `TAT_Locale.ML` after

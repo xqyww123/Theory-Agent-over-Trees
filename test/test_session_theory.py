@@ -173,15 +173,18 @@ def test_a_session_with_its_theories_in_one_call():
     inv(f)
 
 
+HOSTILE = "Sums of n² and @{const x},\n▪ verified."                 # prose the file gets translated (COMPILATION.md §3)
+
+
 def test_the_fields_are_kept_and_stored(tmp_path):
     store = Forest_Store(tmp_path / "TAT.sqlite", stand_ins.log())
     f = Forest_Under_Test(store=store)
     (s,) = insert(f, f, 0, [session(
-        "Arith", theory("X", "Main", "HOL-Library.Multiset", description="Sums,\nverified."),
+        "Arith", theory("X", "Main", "HOL-Library.Multiset", description=HOSTILE),
         options=[{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}],
         description="Arithmetic")])
     assert s.options == [{"name": "document", "value": "pdf"}, {"name": "timeout", "value": "600"}]
-    assert s.description == "Arithmetic" and s.sub_nodes[0].description == "Sums,\nverified."   # as written
+    assert s.description == "Arithmetic" and s.sub_nodes[0].description == HOSTILE        # as written
     assert s.sub_nodes[0].header() == 'theory "X"\n  imports "Main" "HOL-Library.Multiset"\nbegin'
     before = shape(f)
     store.close()
@@ -191,7 +194,10 @@ def test_the_fields_are_kept_and_stored(tmp_path):
     assert isinstance(s2, Session) and s2.parent is f2
     assert isinstance(s2.sub_nodes[0], Theory) and s2.sub_nodes[0].parent is s2
     assert tm.st(s2.sub_nodes[0]) == (NOT_EVALUATED, NOT_EVALUATED)
-    assert (s2.description, s2.sub_nodes[0].description) == ("Arithmetic", "Sums,\nverified.")
+    assert (s2.description, s2.sub_nodes[0].description) == ("Arithmetic", HOSTILE)
+    out = io.StringIO()
+    s2.sub_nodes[0].print_fields(0, out, M.RECALL, 0)                    # `recall` shows it as written (§4)
+    assert out.getvalue().splitlines()[:3] == ["description:", "  Sums of n² and @{const x},", "  ▪ verified."], out.getvalue()
 
 
 def test_a_restart_keeps_the_stored_statuses_of_a_tree_the_walk_does_not_enter(tmp_path):
@@ -283,17 +289,20 @@ def test_import_sessions_and_keywords_are_stored_and_a_missing_row_reads_as_empt
 
 
 def test_print_name_writes_a_piece_of_isabelle_text_bare_or_as_a_string_token():
-    """SESSION_AND_THEORY §2: bare when its `ascii` spelling is an identifier
-    that is not in the keyword set given, Isabelle's string token
-    otherwise, written in `unicode`; a `str` is the text's `ascii`, an
-    `IsaTerm` carries both; the theory's `print_name` is the rule against
-    its `keywords`, none known while they are None."""
+    """SESSION_AND_THEORY §2, the bare rule's one pin: bare when its `ascii`
+    spelling is an identifier that is not among the keywords, Isabelle's
+    string token otherwise, written in `unicode`; a `str` is the text's
+    `ascii`, an `IsaTerm` carries both.  The theory's `print_name` is the
+    rule against its `keywords`, none known while they are None, quoting
+    through the always-quoted writer, which translates the formal comments
+    (COMPILATION.md §3); the module-level `print_name` is the rule against
+    no keyword, quoting with `string_token`."""
     f = Forest_Under_Test()
     (s,) = insert(f, f, 0, [session("S", theory("A", kind="fake_theory"))])
     (a,) = s.sub_nodes
     a.keywords = frozenset({"and", "lemma"})
     for bare in ("xs", "UNIV", "a", "x'", "x_1"):
-        assert a.print_name(bare) == M.print_name(bare, a.keywords) == bare
+        assert a.print_name(bare) == M.print_name(bare) == bare
     assert (a.print_name("\\<alpha>"), a.print_name("x\\<^sub>1")) == ("α", "x₁")    # identifiers on `ascii`, written in `unicode`
     for quoted in ("and", "lemma", "'a", "{xs. distinct xs}", "0.5", "0", "List.list"):
         assert a.print_name(quoted) == f'"{quoted}"'
@@ -303,6 +312,9 @@ def test_print_name_writes_a_piece_of_isabelle_text_bare_or_as_a_string_token():
     assert a.print_name(IsaTerm.from_agent("lemma")) == '"lemma"'
     assert M.print_name(IsaTerm.from_agent("lemma")) == "lemma"              # against no keyword: `recall`'s rule
     assert M.print_name("'a") == '"\'a"'
+    commented = IsaTerm.from_agent("f x ― ‹x₁ is the first›")
+    assert a.print_name(commented) == M._always_quoted(commented) == '"f x ― ‹‹x₁› is the first›"'
+    assert M.print_name(commented) == '"f x ― ‹x₁ is the first›"'           # `recall` shows it as written
     a.keywords = None
     assert (a.print_name("and"), a.print_name("'a")) == ("and", '"\'a"')
 

@@ -10,8 +10,10 @@ signature TAT_MIXFIX =
 sig
   val read_text : 'a parser -> string -> Proof.context -> string -> 'a
     (*Isar text read whole by the parser under the context's keywords; a text
-      it does not read whole is an error, "Malformed <what>: <text>", the
-      operation's messages*)
+      with a malformed symbol in any token is an error, Isabelle's own
+      "Malformed symbolic character: <symbol>", as the build's token check
+      refuses it; a text it does not read whole, "Malformed <what>: <text>";
+      both the operation's messages*)
   val read : Proof.context -> string option -> mixfix
     (*NoSyn for none; otherwise the annotation text in its ascii, parentheses
       included, as `mixfix_text` writes it, through Parse.mixfix*)
@@ -31,10 +33,18 @@ structure TAT_Mixfix : TAT_MIXFIX =
 struct
 
 fun read_text parser what ctxt text =
-  (case Scan.read Token.stopper parser
-          (filter Token.is_proper (Token.explode (Thy_Header.get_keywords' ctxt) Position.none text)) of
-    SOME x => x
-  | NONE => error ("Malformed " ^ what ^ ": " ^ quote text))
+  let
+    val toks = Token.explode (Thy_Header.get_keywords' ctxt) Position.none text;
+    val _ =
+      (case find_first Symbol.is_malformed
+          (maps (map Symbol_Pos.symbol o Input.source_explode o Token.input_of) toks) of
+        SOME sym => error (Symbol.malformed_msg sym)
+      | NONE => ());
+  in
+    (case Scan.read Token.stopper parser (filter Token.is_proper toks) of
+      SOME x => x
+    | NONE => error ("Malformed " ^ what ^ ": " ^ quote text))
+  end
 
 fun read _ NONE = NoSyn
   | read ctxt (SOME text) = read_text Parse.mixfix "mixfix annotation" ctxt text

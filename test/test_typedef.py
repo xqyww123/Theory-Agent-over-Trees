@@ -174,7 +174,7 @@ def test_the_field_check_refuses_as_section_4_says():
     for field, name in (("rep_function_name", "Rep_dlist"), ("rep_function_name", "Abs_x"), ("rep_function_name", " Abs_dlist"),
                         ("abs_function_name", "Abs_dlist"), ("abs_function_name", "Rep_y")):   # a given name like any other
         (p,) = insert(f, x, 0, [definition(**{field: name})])
-        assert p._definition(())[1] == "morphisms " + " ".join(
+        assert p._definition(M.print_name)[1] == "morphisms " + " ".join(
             name.strip() if g == field else d for g, d in (("rep_function_name", "Rep_dlist"), ("abs_function_name", "Abs_dlist")))
         p.check_fields()
         run(locked(f, edit.delete(p)))
@@ -272,7 +272,7 @@ def test_a_definition_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
                              definition("blank", rep_function_name=" "))
     assert [(n.type_parameters, n.rep_function_name) for n in loaded] == [(n.type_parameters, n.rep_function_name) for n in nodes]
     assert loaded[1].rep_function_name == IsaTerm.from_agent("")
-    assert loaded[1]._definition(())[1] == 'morphisms "" Abs_blank'
+    assert loaded[1]._definition(M.print_name)[1] == 'morphisms "" Abs_blank'
     messages = []
     for n in loaded:
         with pytest.raises(InvalidField) as e:
@@ -642,6 +642,8 @@ def test_the_emitted_text_is_section_5_s():
     t.lifting = False
     assert emitted(t) == expected("text ‹Sums!›", 'typedef (\'a, \'b) sum (infixr "⊕" 60) = "UNIV :: (\'a + \'b) set"',
                                   "  morphisms Rep_sum mk_sum", "  sorry")
+    t.english = "Sums of n²"                                      # prose through `latex_of` (COMPILATION.md §3)
+    assert emitted(t)[0] == "  text ‹Sums of ‹n²›.›"
     assert "emit_ending" not in vars(Typedef) and "_eval_ending_opr" not in vars(Typedef)      # `Lifting_Closing`'s
 
 

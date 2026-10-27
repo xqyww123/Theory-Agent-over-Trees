@@ -23,7 +23,7 @@ contents in `children`, a list of constructs.
 
 ## 1. `edit` *(decided 2026-09-04; `auto_construct` 2026-10-01)*
 
-Tool description: `Edit Isabelle theory constructs`.
+Tool description: `Edit Isabelle theory constructs. In every field written in English, surround every Isabelle/HOL term with ‹ ›, e.g. ‹n²›. The rest of such a field is LaTeX: % and $ are LaTeX special characters.`
 
 ```jsonc
 {

@@ -298,6 +298,8 @@ def test_the_emitted_text_is_section_5_s():
     (v,) = insert(f, x, 4, [definition("cp", type_parameters=({"name": "'a"}, {"name": "'b"}), parent="point",
                                        fields=({"name": "z", "type": "nat"},), english="Extended")])
     assert emitted(v)[1:] == expected("record ('a, 'b) cp = \"('a, 'b) point\" +", "  z :: nat")   # a bare parent, applied (§2)
+    v.english = "Sums of n²"                                      # prose through `latex_of` (COMPILATION.md §3)
+    assert emitted(v)[0] == "  text ‹Sums of ‹n²›.›"
 
 
 def test_the_two_spellings_are_kept_apart():

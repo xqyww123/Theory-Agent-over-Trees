@@ -3,7 +3,7 @@
 Status: decided (2026-09-21, after two design reviews; the quickview's
 focus and depth 2026-09-22; the marks, the fields, the blocks and the
 summary 2026-09-30 with CONSTRUCT_INTERACTION.md; the owing line
-2026-10-17).
+2026-10-17; the caption 2026-10-24).
 
 Every node renders itself through one method, in a **print mode** that
 says what the reader is looking at, and at a **depth**, the number of
@@ -23,6 +23,7 @@ def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None  
 def print_fields(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> bool  # the class's: its fields, answering whether it wrote a keyed line (§2); nothing and false by default
 def children_header(self) -> str | None                                                # the class's: the phrase over its children where a keyed line stands above them (§2); None by default
 def mark(self, mode: PrintMode, depth: int) -> str                                     # the framework's default (§1); a class may override
+def caption(self, mode: PrintMode, depth: int) -> str | None                           # the class's: a short text on the line, after the id and a colon, before the mark (§1); None by default
 def owing_line(self) -> str | None                                                     # the class's: one sentence on what the node owes, under the line where detailed (§2); None by default
 def detailed(self, mode: PrintMode, depth: int) -> bool                                # a helper: true for a focus and for Recall below depth 2
 ```
@@ -40,9 +41,13 @@ exception §2 names.
 A node's first line is `- <id> (<mark>)`: the id in its shortest form
 (MCP_SPECIFICATION §2.1) and the mark `mark(mode, depth)` returns, the
 framework's tags after it inside the parentheses (CONSTRUCT_INTERACTION
-§6); no node's line is bare. The lone session's line carries no dash,
-and the forest root writes no line of its own: `Sessions:` is a header
-(§6).
+§6); no node's line is bare. A class may put a **caption** on the line,
+a short text `caption(mode, depth)` answers — `None` on `Node` —, which
+the framework writes after the id and a colon, before the mark: `-
+<id>: <caption> (<mark>)`. `Section` answers its title where the node
+is detailed (node_classes/SECTION_AND_TEXT.md §8). The lone session's
+line carries no dash, and the forest root writes no line of its own:
+`Sessions:` is a header (§6).
 
 The framework's default `mark` reads the node's own operations' instant
 statuses through `evaluation_statuses()` — none for a `Session`, one for
@@ -108,7 +113,8 @@ children one level deeper. `print_fields` answers whether it wrote a
 keyed line; `children_header()` answers the phrase, `None` on `Node`,
 and a class under whose line a keyed line can stand answers its own —
 `Session` `theories` and `Theory` `declarations`
-(node_classes/SESSION_AND_THEORY.md §4),
+(node_classes/SESSION_AND_THEORY.md §4), `Section` `declarations`
+(node_classes/SECTION_AND_TEXT.md §8),
 `Lifting_Closing` and `LiftingContext` `lifting context`
 (node_classes/COMMON.md §6, node_classes/LIFTING_CONTEXT.md §8),
 `Locale` `locale context` (node_classes/LOCALE.md §8). The header is
@@ -378,4 +384,5 @@ here to fix the block's place.
 ## 8. The classes' own marks and fields
 
 `Theorem`'s are node_classes/THEOREM.md §7 and §8, `Define`'s
-node_classes/DEFINE.md §7 and §8.
+node_classes/DEFINE.md §7 and §8; `Section`'s caption and `Text`'s text
+are node_classes/SECTION_AND_TEXT.md §8.

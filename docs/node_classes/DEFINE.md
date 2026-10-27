@@ -133,7 +133,7 @@ The class's construct schema:
   "description": "defines constants by (recursive) equations",
   "properties": {
     "kind":           { "const": "definition" },
-    "english":        { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":        { "type": "string", "description": "what is defined, in English" },
     "constants":      { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Constant" },
                         "description": "the constants defined; several for mutually recursive functions" },
     "equations":      { "type": "array", "minItems": 1, "items": { "type": "string" },
@@ -181,7 +181,7 @@ defines constants by (recursive) equations
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `constants`:
@@ -247,7 +247,7 @@ framework's default (COMPILATION.md §3) — the `text` line, then the
 commands the recorded `form` names. With `form = definition`:
 
 ```
-text ‹Definition twice. Twice a natural number.›
+text ‹Definition ‹twice›. Twice a natural number.›
 definition twice :: "nat ⇒ nat" where
   "twice n = n + n"
 declare twice_def [simp]
@@ -257,7 +257,7 @@ with `form = function (sequential, no_partials)` and no obligation open,
 written `fun`:
 
 ```
-text ‹Definition fib. The Fibonacci numbers.›
+text ‹Definition ‹fib›. The Fibonacci numbers.›
 fun fib :: "nat ⇒ nat" where
   "fib 0 = 0"
 | "fib (Suc 0) = 1"
@@ -269,7 +269,7 @@ open — pattern completeness closed by the evaluation, termination proven
 by the construction —, the equations not simplification rules:
 
 ```
-text ‹Definition sum_upto. The sum of the naturals from i to N.›
+text ‹Definition ‹sum_upto›. The sum of the naturals from i to N.›
 function (sequential, no_partials) sum_upto :: "nat ⇒ nat ⇒ nat" where
   "sum_upto i N = (if N < i then 0 else i + sum_upto (Suc i) N)"
   by pat_completeness auto
@@ -278,8 +278,9 @@ termination
 declare sum_upto.simps [simp del]
 ```
 
-- The `text` line's lead: `Definition` and the constants' names joined
-  by `and`, `Definition even and odd.`; the line is COMMON.md §2's.
+- The `text` line's lead: `Definition` and the constants' names, each in
+  a cartouche, joined by `and`, `Definition ‹even› and ‹odd›.`; the line
+  is COMMON.md §2's.
 - The command: `definition` and plain `function` as recorded; `function
   (sequential, no_partials)` as recorded while an obligation is open, and
   `fun` when none is — both goals were closed by `fun`'s own methods,
@@ -296,8 +297,8 @@ declare sum_upto.simps [simp del]
   `(infixl "⊕" 65)`.
 - `where`, then the equations, each on its own line indented two
   spaces, the second and later led by `| ` — `definition`'s one equation
-  without a leader —, each as Isabelle's string token (COMPILATION.md
-  §3).
+  without a leader —, each through the theory's `print_name`, its
+  formal comments translated (COMPILATION.md §3).
 - Under a function command other than `fun`, after the
   equations, the terminal proof of pattern completeness, indented two
   spaces: `by <completeness_method>`
@@ -314,15 +315,13 @@ declare sum_upto.simps [simp del]
   function's equations simplification rules and a definition's not, and
   the line is written only where the field says otherwise.
 - Every piece of Isabelle text — a name, a type, an equation — is
-  written through the theory's `print_name` (SESSION_AND_THEORY §2),
-  `Token.print_name`'s rule: bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token otherwise; an equation is
-  always a string token; a symbol and a template as the writer writes
-  them; a fact `<name>.simps`, a long identifier, which no keyword is,
-  bare.
-- The whole text in the `\<name>` form (`IsaTerm.ascii`); the file reads
-  as Unicode in jEdit all the same.
+  written through the theory's `print_name` (SESSION_AND_THEORY §2); an
+  equation, never one identifier, is always quoted; a symbol and a
+  template as the writer writes them; a fact `<name>.simps`, a long
+  identifier, which no keyword is, bare.
+- The text in the `unicode` spelling; the file takes the `\<name>` form
+  from the compile's conversion (COMPILATION.md §2) and reads as Unicode
+  in jEdit all the same.
 
 A build of the file replays each `by aoa` from the theory's proof store,
 `<short name>.proof-store` beside the file, where the construction's

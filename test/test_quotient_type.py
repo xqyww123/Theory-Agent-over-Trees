@@ -179,7 +179,7 @@ def test_the_field_check_refuses_as_section_4_says():
                               ({"rep_function_name": "abs_fset"}, "morphisms abs_fset abs_fset"),      # Isabelle's refusal (§6)
                               ({"rep_function_name": "Rep_fset", "abs_function_name": "Abs_fset"}, "morphisms Rep_fset Abs_fset")):
         (p,) = insert(f, x, 0, [definition(**fields)])
-        assert p._definition(())[1] == morphisms
+        assert p._definition(M.print_name)[1] == morphisms
         p.check_fields()
         run(locked(f, edit.delete(p)))
     assert field_check(f, x, [definition()]) is None
@@ -273,7 +273,7 @@ def test_a_definition_with_a_bad_field_is_stored_and_loads_as_it_was(tmp_path):
                              definition("blank", rep_function_name=" "))
     assert [(n.type_parameters, n.rep_function_name) for n in loaded] == [(n.type_parameters, n.rep_function_name) for n in nodes]
     assert loaded[1].rep_function_name == IsaTerm.from_agent("")
-    assert loaded[1]._definition(())[1] == 'morphisms "" abs_blank'
+    assert loaded[1]._definition(M.print_name)[1] == 'morphisms "" abs_blank'
     messages = []
     for n in loaded:
         with pytest.raises(InvalidField) as e:
@@ -524,6 +524,8 @@ def test_the_emitted_text_is_section_5_s():
     assert emitted(s) == expected("text ‹Sums!›", 'quotient_type (\'a, \'b) sum (infixr "⊕" 60) = "\'a + \'b" / sumrel',
                                   "  morphisms rep_sum mk_sum", "  sorry", "", "lifting_update sum.lifting",
                                   "lifting_forget sum.lifting")
+    s.english = "Sums of n²"                                      # prose through `latex_of` (COMPILATION.md §3)
+    assert emitted(s)[0] == "  text ‹Sums of ‹n²›.›"
 
 
 def test_the_two_spellings_are_kept_apart():

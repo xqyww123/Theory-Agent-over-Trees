@@ -92,7 +92,7 @@ class Theorem(Proof_Obligation, Leaf):
     # --- emission (§5)
 
     def emit(self, indent, out):
-        emit_lines(indent, out, text_line(self.statement.english, f"{self.kind.capitalize()} {self.name}."))
+        emit_lines(indent, out, text_line(self.statement.english, (self.kind.capitalize(), [self.name])))
         print_name = self.enclosing(Theory).print_name   # every piece of Isabelle text through it (§5)
         lines = [f"{self.kind} {print_name(self.name)}:"]
         if self.statement.for_any:

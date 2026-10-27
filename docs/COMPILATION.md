@@ -4,7 +4,9 @@ Status: design, tenth revision, revised 2026-10-03 after its sixth
 review and the owner's rulings on it (ai-artifacts/COMPILATION_REVIEW.md
 §13), and 2026-10-12 with the node-class rounds (§3's text rules and
 what `emit` may read, §4's `keywords`, §5's hook;
-ai-artifacts/review/NODE_CLASS_RULINGS.md). A sentence ending in *(decided)* carries the owner's ruling, of
+ai-artifacts/review/NODE_CLASS_RULINGS.md), and 2026-10-25 with the
+prose translator (§3's prose, cartouche marks and comment translation;
+ai-artifacts/PROSE_TRANSLATION_PLAN.md). A sentence ending in *(decided)* carries the owner's ruling, of
 2026-09-30, 2026-10-01, 2026-10-02 or 2026-10-03;
 every other sentence is the author's; §7 holds the approved wording and
 names. The document was approved on 2026-10-02. It is implemented
@@ -151,8 +153,8 @@ session "Sorting" in "Sorting" = "HOL" +
   `theories` items, every option's name — is written in double quotes: a
   name with a hyphen (`HOL-Library`) is not one token of the ROOT's
   syntax unquoted.
-- `description`, when not empty, is one cartouche, through the
-  framework's `cartouche` (§3). Left out when empty.
+- `description`, when not empty, is one cartouche, through `_cartouche`,
+  untranslated (§3). Left out when empty.
 - `options`, when not empty, in the ROOT's own spelling, every value
   quoted (SESSION_AND_THEORY §1). Left out when empty.
 - `sessions` lists the session of every theory the session's written
@@ -379,11 +381,483 @@ loader does *(decided)*.
 Isar, its output is the ROOT entry (§2) and the folder, produced by
 `compile` from its fields.
 
-**Text in a cartouche.** Isabelle text written into a file inside a
-cartouche — a `text` command's, the ROOT's `description` — goes through
-the framework's `cartouche` (model.py), which replaces `‹`, `›`,
-`\<open>` and `\<close>` in it by `"`, so the cartouche closes where it
-should and nothing is refused.
+**Prose.** Prose (PLUGIN_SYSTEM §2) is written into a file through
+`latex_of` (prose.py), as LaTeX in which Isabelle's document presentation
+finds nothing to evaluate, so that neither a build nor an interactive
+session can fail on it: the agent's words as they stand, and everything
+that is Isabelle's — a symbol, a term, a name — inside a bare cartouche,
+which Isabelle typesets without reading. Where a symbol or an
+antiquotation has a LaTeX counterpart that Isabelle itself would write —
+`\emph{…}` for an emphasis, a subscript for `x₁` — the translation writes
+it; that part is best effort, and the guarantee does not rest on it. The
+terms:
+
+- **Document text**: what Isabelle reads with
+  `Document_Output.output_document`: the content of a `text` command and
+  of a heading command, and the body of a formal comment. Isabelle's
+  reader (`Antiquote.parse_comments`, antiquote.ML) picks out of it the
+  kinds of the table below.
+- **Plain text**: the part of document text the reader does not pick
+  out. Isabelle writes it to LaTeX unchanged (document_output.ML).
+- **Quasi-formal text**: the content of a bare cartouche in document
+  text, which Isabelle sets symbol by symbol in its formal style,
+  `\isa{…}`, without reading it as anything (isar-ref, "Document
+  preparation").
+- **Isabelle symbol**: a `\<name>`, such as `\<forall>`; the agent's glyph
+  `∀` is its `unicode` **spelling**, the `\<name>` form its `ascii`
+  spelling.
+- **Control symbol**: a symbol of the form `\<^name>`. A **typesetting
+  control** is one of the one-symbol controls `\<^sub>`, `\<^sup>`,
+  `\<^bold>` (`⇩`, `⇧`, `❙`), which apply to the symbol after them, or a
+  **span marker**, `\<^bsub>`…`\<^esub>` and `\<^bsup>`…`\<^esup>`
+  (`⇘`…`⇙`, `⇗`…`⇖`), which apply to what lies between them.
+- **Antiquotation**: either `@{name …}`, or a control symbol followed by
+  a cartouche, its one argument; a control symbol with no cartouche after
+  it is the same antiquotation with no argument. A **formatting
+  antiquotation** (`emph`, `bold`, `footnote`) takes document text as its
+  argument; a **spacing antiquotation** is `noindent`, `smallskip`,
+  `medskip` or `bigskip`; every other one with an argument is a **formal
+  antiquotation** (`term`, `const`, `thm`, `cite`, `file`, `verbatim`, …),
+  which Isabelle evaluates.
+- **Formal comment**: one of the comment symbols `\<comment>` (`―`),
+  `\<^cancel>` (`⌦`), `\<^latex>`, `\<^marker>` (`✐`), followed by a
+  cartouche (comment.ML). Isabelle's blanks may stand between
+  `\<comment>` and its cartouche; nothing may stand after the other three.
+- **Markdown item**: `\<^item>` (`▪`), `\<^enum>` (`▸`), `\<^descr>` (`➧`).
+- **Cartouche mark**: `‹`/`\<open>` and `›`/`\<close>`. A **bare
+  cartouche** is a cartouche with no control symbol before it. **The
+  partner map** of a list of symbols pairs each close mark with the
+  nearest open mark before it not yet paired, in one pass with a stack; a
+  mark with no partner is **stray**.
+- **Malformed symbol**: a `\<…` that `symbol_explode` cuts as one symbol
+  but that is not well formed: `\<foo` without `>`, a lone `\<`, `\<^>`,
+  `\<^`.
+- **Blank**: Isabelle's `Symbol.is_blank`: a space, a tab, a newline, a
+  carriage return, VT or FF.
+- **Piece**: what `latex_of`'s reader produces and its renderer writes: a
+  **plain piece**, LaTeX plain text; a **cartouche piece**, text for
+  Isabelle to typeset; an **item piece**, a Markdown item the reader
+  reads (the items, below). A **plain run** is a maximal sequence of
+  adjacent plain pieces once the renderer has expanded every cartouche
+  piece.
+- **The renderer**: the three functions that write the pieces into the
+  output — `_render`, with `_cartouche_piece` and `_plain_run` —, applying
+  the **plain-run step** to every plain run and the **content filter** to
+  every part of a cartouche piece.
+- **The comment translation**: what `_comments_translated` does to
+  Isabelle text ("Text in double quotes", below).
+- **The build reader**: how a build reads a theory file — span by span
+  through `Command.read_span`, whose token check refuses a command with a
+  malformed symbol in any token, then `Document_Output.present_thy`,
+  which evaluates the body of every formal comment, and the YXML export of
+  its result. test/ml_process.py's `read_as_built` reads so, and adds the
+  `Document_Output.check_comments` an interactive session runs after each
+  command.
+
+The text line and the lead are node_classes/COMMON.md §2's; Isabelle text
+is PLUGIN_SYSTEM §2's.
+
+**The invariant.** For every string, `latex_of` returns, in time linear
+in the string's length, a sequence of plain runs and cartouches such that
+
+1. no plain run holds `\<`, `@{`, or an ASCII control character other
+   than the newline; with `lists`, an item piece stands between plain
+   runs only at a line's start — nothing but spaces before it on its line
+   — with a blank or the end after it;
+2. no cartouche's content holds a comment symbol, a Markdown item, a
+   malformed symbol, or an ASCII control character other than the
+   newline, and its marks balance;
+3. the output is in the `\<name>` spelling — it holds no glyph of
+   Isabelle's symbol table and no character of the sub- and superscript
+   fold —, so the compile's `ascii_of_unicode` (§2) gives these bytes back
+   from the `unicode` spelling a writer puts them in, and Isabelle reads in
+   the file exactly the symbols the renderer wrote.
+
+That is enough wherever TAT writes prose. Isabelle's reader cuts plain
+text only at a comment symbol, a control symbol, `\<open>`, an `@` before
+`{`, or a newline (antiquote.ML), and writes it through to LaTeX
+unchanged, so a plain run holds nothing to evaluate and no mark that
+could close TAT's own cartouche. Isabelle builds a list only in a `text`
+command, and only from an item that starts a line and has no cartouche
+directly after it (markdown.ML `read_marker`, antiquote.ML
+`scan_control`); it refuses every other item. `lists` is on for two
+fields alone, a `Text` passage and a `Theory`'s description, each the
+whole content of a `text` command, so that a line's start in `latex_of`'s
+output is a line's start in the command's text. A bare cartouche evaluates nothing in its content
+but the body of a `\<comment>`, and is refused only for a malformed symbol
+or an unbalanced mark (document_antiquotations.ML, latex.ML); the filter
+takes out the other comment symbols and the items too, for LaTeX and
+layout. No control character of `latex_of`'s output reaches the YXML
+export, whose markup characters are U+0005 and U+0006 (thy_info.ML). The
+build's token check finds every `\<` opening a well-formed symbol. So a
+`text` command (Markdown on), the `text` block before the header, a
+heading (Markdown off), a formal comment inside a command and the
+`\<comment>` bodies inside Isabelle text all pass. These are Isabelle2025-2's implementation, not
+its documented guarantees; test/test_prose.py asks Isabelle on every run.
+
+**The reader and the renderer.** `latex_of(text, lists=False)` first cuts
+the text into symbols (`_symbols`): `ascii_of_unicode` converts every
+glyph to its `\<name>` spelling; every ASCII control character but the
+newline and the carriage return, and DEL, becomes a space — a tab, VT and
+FF among them, which Markdown refuses —; `symbol_explode` cuts the rest,
+a carriage return read as a newline. The reader, `_document`, reads the
+symbols as Isabelle reads document text, by the table below, into pieces;
+it is best effort. The renderer then expands every cartouche piece, places
+the item pieces, and writes each plain run through the plain-run step,
+each cartouche between `‹` and `›`, each item piece it keeps as it stands.
+Both `_plain_run` and
+`_cartouche_piece` cut their own input again with `_symbols` before they
+write, so that no rule of the reader and no join of two of its symbols
+can break the invariant: a wrong rule makes the LaTeX worse, and never
+puts a refusal into the file.
+
+- The **plain-run step** writes `\relax` between an `@` and a `{` after
+  it, and a space between a `\` and a `<`.
+- **`_cartouche_piece`**, on a cartouche piece: the text, cut by
+  `_symbols`, is split at every stray mark, which stands between the
+  parts as the plain piece `{\isasymopen}` or `{\isasymclose}`; each part
+  goes through the content filter and is trimmed of its leading and
+  trailing spaces, and an empty part writes nothing.
+- The **content filter**, on one part: every comment symbol, Markdown
+  item, malformed symbol and control symbol that is not a typesetting
+  control becomes a space, and so do a one-symbol typesetting control
+  with nothing to apply to and a span marker with no partner in the
+  part. The filter replaces and never deletes: a deletion could join
+  a `\` and a `<` into a new symbol.
+- The **items**: the reader makes every Markdown item it reads, at every
+  depth, an item piece. With
+  **`lists`**, the renderer keeps an item piece that holds one of the
+  three Markdown items and has nothing but spaces before it on its line of
+  the output, writing a space after it unless a blank or the end follows;
+  it drops every other item piece, and without `lists` every one, so that
+  the plain pieces around it join one run. `lists` is on for a `Text`
+  passage and a `Theory`'s description, and off everywhere else.
+
+The reader reads, in this order of precedence, a Markdown item, a comment
+symbol, a control symbol, a bare cartouche, `@{`, any other `\<…`, any
+other character. A body **read again** goes through the reader once more
+as document text, one level deeper, and comes back without its item
+pieces; at depth 32 it is a cartouche piece instead, so that `latex_of`
+returns for every string.
+
+**A script's word.** A subscript, a superscript or a span takes the word
+it stands in: the reader joins its cartouche piece and the pieces of that
+word into one cartouche piece, so that `n²` is set as one formula, `‹n²›`,
+not as `n‹²›`. A word ends at a blank, an item piece, a quote (`"` or
+`` ` ``), a bracket with no partner and the edge of a body read again, and
+it never leaves the bracket pair the script stands in. The brackets are
+`(…)`, `[…]`, `“…”` and `‘…’`, paired as a stack pairs them: a closing
+bracket pairs with the opening bracket on top of the stack when that
+bracket is of its own kind, and otherwise has no partner, the stack
+unchanged. No pair spans an item piece or a newline the agent wrote in
+plain text; a newline inside a cartouche, which Isabelle shows as a
+space, breaks no pair, nor does one inside a body read again break a
+pair around the body. A pair standing in the word belongs to it whole,
+its blanks, its quotes and its closing brackets with no partner with it.
+An agent's cartouche is a cartouche piece no typesetting control made.
+It joins a word only when it holds one identifier or one symbol a
+typesetting control could apply to, and joined it is one symbol of the
+word: a quote, a bracket or a punctuation mark counts as one only in
+plain text. Before the script, the word is taken whole or not at all:
+not when it holds a character LaTeX reads in plain text (`$`, `\`, `{`,
+`}`, `%`, `&`, `#`, `~`, `^`), a plain piece of more than one symbol, a
+cartouche piece that joins no word, or a pair holding a body read again,
+so that the agent's LaTeX stays the agent's. After the script it is
+taken up to the first such piece, never splitting a bracket pair, and
+without the punctuation (`.`, `,`, `;`, `:`, `!`, `?`) that would end
+what is taken. A cartouche piece ending in `\` or a malformed symbol,
+one a typesetting control made among them, takes nothing after it,
+since joined it could fuse with what follows into another symbol. A
+cartouche piece in which a cartouche mark or a span marker has no
+partner among the piece's own symbols joins no word, since joined, such
+a mark could pair with another piece's or split the joined piece,
+changing what the pieces show; any other cartouche a typesetting
+control made joins a word as one symbol does, and bold takes no word.
+
+| kind | what becomes of it | what the document shows |
+| --- | --- | --- |
+| plain text: everything not listed below — the agent's LaTeX, `$…$`, `%`, braces, newlines, characters outside Isabelle's symbol table | a plain piece, as it stands | the agent's LaTeX, unchecked |
+| an ASCII control character other than the newline and the carriage return, and DEL; a tab, VT, FF among them | a space, as the text is cut | a space |
+| a carriage return, alone or before a newline | a newline, as the text is cut (`symbol_explode`, as Isabelle reads it) | a line break |
+| an Isabelle symbol that is no control symbol, comment symbol or cartouche mark | one cartouche piece of that symbol | the glyph, as Isabelle sets it, inside the agent's `$…$` too; one symbol to a cartouche, so that the agent's letters beside it stay in the text's style |
+| a typesetting control with an operand — the next symbol, when it is a plain character or a well-formed symbol that is neither a blank, a control symbol, a comment symbol, an item nor a mark; a span marker with its partner | one cartouche piece of the control and its operand, or of the span, its partner and the symbols between, the content filtered; a subscript, a superscript or a span joined with the word it stands in (above) | a subscript, a superscript or bold on the operand; the span lowered or raised; the script's word in Isabelle's formal style |
+| a typesetting control with nothing to apply to; a span marker with no partner | dropped; of two adjacent controls the later applies | nothing |
+| a formatting antiquotation, in either form or as a glyph | `\emph{`, `\textbf{` or `\protect\footnote{`, the argument read again, `}` | Isabelle's own macros for these; `\protect` lets a footnote stand in a heading |
+| a spacing antiquotation, in either form | `\noindent{}`, `\smallskip{}`, `\medskip{}` or `\bigskip{}` | the skip; the `{}` ends the macro's name |
+| a Markdown item the reader reads, outside every body read again | an item piece, kept or dropped as the items bullet (above) says | kept, Isabelle's own list, `itemize`, `enumerate` or `description`, the agent's indentation nesting; dropped, the items' text as one paragraph |
+| a Markdown item inside a body read again | dropped with the body's item pieces | the items' text as one paragraph |
+| a Markdown item inside a cartouche piece | a space, by the content filter | a space |
+| a formal antiquotation: any other control symbol with a cartouche, any other `@{name …}` with an argument, unknown names included | one cartouche piece of the argument; in the `@{…}` form the name and one `[…]` option list dropped, and each cartouche or `"…"` string among the arguments replaced by what it encloses, a backslash in a string escaping the symbol after it | the argument in Isabelle's formal style, neither evaluated nor checked: `@{thm rev_rev}` shows the name |
+| any other control symbol with no cartouche; an `@{name}` with no argument | dropped, the blanks around it kept | nothing |
+| a bare cartouche | one cartouche piece of its content | what Isabelle's `cartouche` antiquotation writes of what the content filter leaves |
+| `\<comment>‹X›`, Isabelle's blanks allowed before the cartouche | `%`, a newline, `\isamarkupcmt{`, X read again, `%`, a newline, `}` — Isabelle's own enclosure (document_output.ML) | "— X" in Isabelle's comment style; a `%` in X comments out the rest of its own line alone, since the closing brace stands on a line of its own |
+| `\<^cancel>‹X›` | `\isamarkupcancel{`, X as a cartouche piece, `}` | X struck through (isabelle.sty loads `ulem`) |
+| `\<^latex>‹X›` | X read again | the agent's LaTeX |
+| `\<^marker>‹X›`; a comment symbol with no cartouche | dropped | nothing |
+| a stray cartouche mark | the plain piece `{\isasymopen}` or `{\isasymclose}`, a control symbol before a stray open mark dropped, having no cartouche; inside a cartouche piece, it splits the piece | ‹ or › |
+| an `@{` whose `}` never comes | `@\{`; the reader goes on after the `{`, the rest read as the table says | the agent's characters |
+| a malformed symbol in plain text | its characters, the backslash and the `<` as `{\isacharbackslash}{\isacharless}` | the characters; the rest is the agent's LaTeX |
+| a `\` the agent typed directly before a `<`, or an `@` directly before a `{`, where two plain pieces meet | the plain-run step: `\ <`, `@\relax{` | `\relax` shows nothing; `\ ` a space |
+
+The pairs below pin the table, in its order: the prose as the agent
+writes it, then `↦ ` and what the file gets, in the `unicode` spelling
+`pretty_unicode` writes. `latex_of` returns the `\<name>` spelling, which
+equals the pin after `ascii_of_unicode`; test/test_prose.py asserts every
+pair, and holds the pins this fence cannot: a leading space, an empty
+output, a control character, a newline, and the pins with `lists`.
+
+```
+café — “q” 50\% $x_1$ {a}
+↦ café — “q” 50\% $x_1$ {a}
+
+∀x ∈ A. x ≤ y …
+↦ ‹∀›x ‹∈› A. x ‹≤› y ‹…›
+
+$x ∈ A$
+↦ $x ‹∈› A$
+
+x₁ and n²
+↦ ‹x₁› and ‹n²›
+
+x²y and (a + b)², then f(x)²
+↦ ‹x²y› and ‹(a + b)²›, then ‹f(x)²›
+
+x₁,…,xₙ and n².
+↦ ‹x₁,…,xₙ› and ‹n²›.
+
+(n²) "n²" ‘x₁’ a + b)² x )y²
+↦ (‹n²›) "‹n²›" ‘‹x₁›’ a + b)‹²› x )‹y²›
+
+$x$² \emph{a}²+b² x²\,y x²(a$b$)
+↦ $x$‹²› \emph{a}‹²+b²› ‹x²›\,y ‹x²›(a$b$)
+
+‹x›₁ ‹a+b›²c 𝐱² x𝐲
+↦ ‹x₁› ‹a+b›‹²c› ‹𝐱²› x‹𝐲›
+
+𝐚
+↦ ‹𝐚›
+
+\<^bold>text
+↦ ‹𝐭›ext
+
+x ⇘ij⇙ and y
+↦ x ‹⇘ij⇙› and y
+
+⇗ij⇖
+↦ ‹⇗ij⇖›
+
+x⇩ at end
+↦ x at end
+
+x⇩‹a›
+↦ x‹a›
+
+x⇩⇧2
+↦ ‹x²›
+
+⇘unpaired
+↦ unpaired
+
+∗‹X›
+↦ \emph{X}
+
+\<^bold>‹B›
+↦ \textbf{B}
+
+∗‹see ‹rev xs››
+↦ \emph{see ‹rev xs›}
+
+\<^emph>‹see \<^const>‹sorted››
+↦ \emph{see ‹sorted›}
+
+@{emph ‹see @{const sorted}›}
+↦ \emph{see ‹sorted›}
+
+A \<^footnote>‹see \<^const>‹f››.
+↦ A \protect\footnote{see ‹f›}.
+
+\<^noindent>Next
+↦ \noindent{}Next
+
+\<^smallskip>a
+↦ \smallskip{}a
+
+@{medskip} a
+↦ \medskip{} a
+
+@{bigskip}
+↦ \bigskip{}
+
+a ▪ b
+↦ a  b
+
+x ▸ y
+↦ x  y
+
+x ➧ y
+↦ x  y
+
+\<^const>‹sorted_wrt›
+↦ ‹sorted_wrt›
+
+@{term [show_types] "rev xs"}
+↦ ‹rev xs›
+
+@{term ‹rev xs›}
+↦ ‹rev xs›
+
+@{text "a\"b"} c
+↦ ‹a"b› c
+
+@{cite [p. 3] Knuth}
+↦ ‹Knuth›
+
+🗏‹missing.txt›
+↦ ‹missing.txt›
+
+\<^verbatim>‹@{foo}›
+↦ ‹@{foo}›
+
+⇘‹a⇙›
+↦ ‹a›
+
+a\<^here>b
+↦ ab
+
+a@{const}b
+↦ ab
+
+a@{}b
+↦ ab
+
+f ∗ g
+↦ f  g
+
+‹rev_append xs›
+↦ ‹rev_append xs›
+
+the ‹x₁ ∀› case
+↦ the ‹x₁ ∀› case
+
+see ‹the ∗‹key› step›
+↦ see ‹the  ‹key› step›
+
+‹x ∗ y›
+↦ ‹x   y›
+
+‹x⇩›
+↦ ‹x›
+
+‹⇘x›
+↦ ‹x›
+
+‹▪ a›
+↦ ‹a›
+
+‹x⇩‹a››
+↦ ‹x ‹a››
+
+‹a\\<x<b›
+↦ ‹a\ <b›
+
+⌦‹wrong›
+↦ \isamarkupcancel{‹wrong›}
+
+\<^latex>‹\textsc{x}›
+↦ \textsc{x}
+
+a ‹ b ‹c› d
+↦ a {\isasymopen} b ‹c› d
+
+\<^emph>‹see
+↦ {\isasymopen}see
+
+a › b
+↦ a {\isasymclose} b
+
+⇘x›y⇙
+↦ ‹x›{\isasymclose}‹y›
+
+@{text "‹"} and ‹a›
+↦ {\isasymopen} and ‹a›
+
+@{const foo
+↦ @\{const foo
+
+see @{const sorted_wrt for details
+↦ see @\{const sorted_wrt for details
+
+@{const f ∀
+↦ @\{const f ‹∀›
+
+@{term a @{const b}
+↦ ‹a @{const b›
+
+\<foo y
+↦ {\isacharbackslash}{\isacharless}foo y
+
+\<^> x
+↦ {\isacharbackslash}{\isacharless}^> x
+
+a@✐‹m›{x}
+↦ a@\relax{x}
+
+a@‹›{x}
+↦ a@\relax{x}
+
+a@@{text "‹"}
+↦ a@\relax{\isasymopen}
+
+a@∀ b
+↦ a@‹∀› b
+
+\✐‹m›<y
+↦ \ <y
+
+\‹›<y
+↦ \ <y
+
+\∀
+↦ \‹∀›
+
+@{term ‹a\›‹<b›}
+↦ ‹a›
+
+@{term ‹x\›‹<open>›}
+↦ ‹x›{\isasymopen}
+
+∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹∗‹x›››››››››››››››››››››››››››››››››
+↦ \emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{\emph{‹‹x››}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
+The sum of the first n odd numbers is n², by ∗‹induction› on \<^const>‹sum_upto›
+↦ The sum of the first n odd numbers is ‹n²›, by \emph{induction} on ‹sum_upto›
+```
+
+`document_cartouche(text, lists=False)` writes prose as a `text` command
+or a heading carries it: `‹`, `latex_of(text, lists)`, `›`, the content
+started on a line of its own when `lists` kept an item, so that every
+item line carries the indentation `emit_lines` gives the command's later
+lines. A `Text` passage and a `Theory`'s description are written with
+`lists`, a heading's title without. An `english` is written by
+`english_cartouche(english, lead)` (node_classes/COMMON.md §2): `‹`, the
+lead — its word, then each name it names in a bare cartouche, the names
+joined by ` and `, then `. ` —, `latex_of(english)`, a period when the
+authored `english` ends without `.`, `!` or `?`, and `›`. The period is
+appended after the translation, so TAT's own mark is never an operand of
+the agent's antiquotations. Both write `latex_of`'s result back in the
+`unicode` spelling (`pretty_unicode`), as the always-quoted writer does,
+and the compile's conversion (§2) gives back `latex_of`'s bytes, by the
+invariant's clause 3 (test/test_prose.py's writer test).
+
+**Cartouche marks.** A cartouche mark pairs by the partner map. In prose
+a stray mark is an ordinary symbol, written `{\isasymopen}` or
+`{\isasymclose}` (isabellesym.sty). In the ROOT's description, which
+Isabelle never typesets, it becomes `"` (the pairing rule, `_cartouche`,
+prose.py), so that the description's cartouche closes where it should:
+Isabelle's ROOT parser reads the description as one cartouche token,
+decided by its marks alone (sessions.scala), and the session's browser
+page shows it untranslated, in the `\<name>` spelling the ROOT is
+written in.
 
 **Text in double quotes.** Isabelle text written into a file inside
 double quotes — a term, a type, a sort, a mixfix symbol or template, a
@@ -393,6 +867,32 @@ through one framework function, `string_token` (model.py); the ROOT's
 quoted items (§2),
 `print_name` (node_classes/SESSION_AND_THEORY.md §2) and every class's
 emission go through it.
+
+**The comment translation.** Isabelle allows a formal comment inside a
+term or a type; its inner lexer skips it, so the evaluation passes, but a
+build's presentation evaluates the comment's body as document text. The
+theory's always-quoted writer, through which `Theory.print_name` quotes
+(node_classes/SESSION_AND_THEORY.md §2), passes the text's `\<name>`
+spelling through `_comments_translated` (prose.py) and writes the result,
+in the `unicode` spelling again, as a string token; so every piece of the
+agent's Isabelle text that can carry into the file a formal comment whose
+body a build evaluates is translated in this one place.
+`_comments_translated` reads as `Comment.read_body` does (comment.ML),
+symbol by symbol: a comment symbol followed — with Isabelle's blanks after
+`\<comment>`, with nothing after the others — by a paired cartouche opens
+a body. The body of every `\<comment>` goes through `latex_of`; of every
+`\<^cancel>` through the content filter alone, between the comment's own
+marks, since Isabelle writes a cancelled body symbol by symbol and refuses
+only a malformed symbol in it; of every `\<^latex>` as it is but for its
+malformed symbols, written as their characters. In
+a term, a type or a sort, a `\<^marker>` that opens a body never reaches
+the file, since the inner lexer refuses it; one inside a `\<^latex>`
+body is written with that body. The
+text the evaluation ran and the text the file carries differ in these
+bodies alone, and the term reader, which drops a comment, reads the same
+term from both; a library that reads its own cartouche literal's
+characters as data reads a different term once a comment inside the
+literal is translated.
 
 **What `emit` may read.** A compile runs on a forest loaded from the
 database and never evaluated (§1), so `emit` and `can_emit` read only

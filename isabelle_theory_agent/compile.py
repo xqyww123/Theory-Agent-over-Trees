@@ -26,8 +26,8 @@ from Isabelle_RPC_Host.unicode import ascii_of_unicode
 from .exceptions import TAT_InternalError, TAT_StartupError
 from .model import (
     INDENT, CannotEvaluate, EvaluationStatus, Forest, Node, NotEvaluated, Ready, Session,
-    StdBlock, Theory, _indented, _option_value, cartouche, make_session_folder, session_folder_refusal,
-    string_token)
+    StdBlock, Theory, _indented, _option_value, make_session_folder, session_folder_refusal, string_token)
+from .prose import _cartouche
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ def _root(forest: Forest, written: dict[Theory, bool]) -> str:
         lines = [f"session {string_token(session.name)} in {string_token(str(session.folder()))}"
                  f" = {string_token(session.parent_session)} +"]
         if session.description:
-            lines.append(f"{INDENT}description {cartouche(session.description)}")
+            lines.append(f"{INDENT}description {_cartouche(session.description)}")
         if session.options:
             options = ", ".join(f"{string_token(o['name'])} = {string_token(_option_value(o))}"
                                 for o in session.options)

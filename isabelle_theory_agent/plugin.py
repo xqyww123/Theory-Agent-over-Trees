@@ -313,7 +313,7 @@ def _check_class(cls: type[Node]) -> list[str]:
     if cls not in model.FRAMEWORK_NODE_CLASSES and _defined_by(cls, "_evaluate") not in (Leaf, StdBlock):
         raise _refuse(cls, "overrides `_evaluate`, which is the framework's")
     if _defined_by(cls, "print") is not Node:
-        raise _refuse(cls, "overrides `print`; `print_fields`, `children_header`, `owing_line` and `mark` are the override points")
+        raise _refuse(cls, "overrides `print`; `print_fields`, `children_header`, `owing_line`, `mark` and `caption` are the override points")
     if _defined_by(cls, "_children_to_print") not in (Node, NonLeaf_Node):
         raise _refuse(cls, "overrides `_children_to_print`; the descent is the framework's")
     # nodes live in sets, and in lists compared with `==` (PRINT.md §2, `Forest.id_of`)

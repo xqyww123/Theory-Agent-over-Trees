@@ -378,6 +378,8 @@ def test_the_emitted_text_is_section_5_s():
     assert emitted(t)[1] == '  lift_definition dl_length :: "\'a dlist ⇒ nat" is "length" by aoa'
     x.keywords = frozenset()
     assert emitted(t)[1] == '  lift_definition dl_length :: "\'a dlist ⇒ nat" is length by aoa'
+    t.english = "Sums of n²"                                      # prose through `latex_of` (COMPILATION.md §3)
+    assert emitted(t)[0] == "  text ‹Sums of ‹n²›.›"
 
 
 def test_the_two_spellings_are_kept_apart():

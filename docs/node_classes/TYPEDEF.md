@@ -145,7 +145,7 @@ The class's construct schema:
   "description": "defines a subtype: a new type whose values stand for the elements of a non-empty subset of an existing type. Example: typedef 'a dlist = \"{xs :: 'a list. distinct xs}\", the subtype of lists without repetition",
   "properties": {
     "kind":              { "const": "typedef" },
-    "english":           { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":           { "type": "string", "description": "what is defined, in English" },
     "type_parameters":   { "type": "array", "items": { "$ref": "#/$defs/TypeParameter" },
                            "description": "the parameters of the subtype; sorts are usually not specified" },
     "type_name":         { "type": "string" },
@@ -193,7 +193,7 @@ defines a subtype: a new type whose values stand for the elements of a non-empty
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `type_parameters`:
@@ -333,8 +333,8 @@ typedef fm = "UNIV :: (nat, nat) fmap set"
   was given, the one left out written as its default; no line when
   neither was: the plugin's shared writer of the clause (COMMON.md §4).
   The head, the set and this clause are assembled by one private helper
-  of typedef.py, which §8's line uses too, given the keyword set to
-  write against.
+  of typedef.py, which §8's line uses too, given the writer of each
+  piece: here the theory's `print_name`.
 - The terminal proof, `by aoa` or `sorry`, indented two spaces, is
   `Proof_Obligation`'s `proof_text()` (COMMON.md §3); the `aoa` method's
   import is the plugin's (PLUGIN_SYSTEM §1; SESSION_AND_THEORY §2).
@@ -352,12 +352,10 @@ typedef fm = "UNIV :: (nat, nat) fmap set"
   `lifting` is true; nothing, not even the empty line, when it is false:
   `Lifting_Closing`'s `emit_ending` (COMMON.md §6).
 - Every piece of Isabelle text — a name, the set, a sort — is written
-  through the theory's `print_name` (SESSION_AND_THEORY §2): bare when
-  its `ascii` is an Isabelle identifier (`is_identifier`, COMMON.md §5)
-  that is not a keyword of the theory, as Isabelle's string token
-  (COMPILATION.md §3) otherwise — `UNIV` and `zero` bare, `"{xs :: 'a
-  list. distinct xs}"`, `"open"` and `"0.5"` quoted; a type variable, a
-  symbol and a template as the writers write them.
+  through the theory's `print_name` (SESSION_AND_THEORY §2): `UNIV` and
+  `zero` bare, `"{xs :: 'a list. distinct xs}"`, `"open"` and `"0.5"`
+  quoted; a type variable, a symbol and a template as the writers write
+  them.
 - The text in the `unicode` spelling; the file takes the `\<name>` form
   from the compile's conversion (COMPILATION.md §2) and reads as Unicode
   in jEdit all the same.
@@ -583,7 +581,7 @@ every name, an identifier, bare, a sort and the set quoted unless an
 identifier, whatever keywords the theory recorded, without a round trip
 to Isabelle; `english` follows at depth 0 alone; no line carries a key.
 The line is the private helper's that writes the emitted text (§5),
-given no keyword set. `setup_lifting` is not printed: it is not
+given the module-level `print_name`. `setup_lifting` is not printed: it is not
 authored. The children are the framework's to print, in the mode
 PRINT.md §2's table gives them: directly under what was written, or one
 level deeper under `lifting context:` — the children header

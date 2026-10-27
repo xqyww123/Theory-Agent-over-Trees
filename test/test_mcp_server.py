@@ -25,6 +25,7 @@ import stand_ins
 from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import client, free_port, text_of
 from isabelle_theory_agent import log, mcp_server, plugin, toplevel
+from isabelle_theory_agent.mcp import EDIT_DESCRIPTION
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
 from isabelle_theory_agent.jobs import Agent, Message, post
@@ -703,7 +704,7 @@ def test_codex_is_shown_the_schema_without_recursion_and_claude_code_the_assembl
 
     async def body(agent, arguments):
         return ""
-    tool = Tool("edit", "Edit Isabelle theory constructs", schema, body, False)
+    tool = Tool("edit", EDIT_DESCRIPTION, schema, body, False)
     for server_class, shown in ((Claude_Code_Server, schema), (Codex_Server, plugin.given_later_inlined(schema))):
         with _bind(0) as sock:
             server = server_class(stand_ins.ending(), sock, [tool], {})

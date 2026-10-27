@@ -26,7 +26,7 @@ from typing import (TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
                     TextIO, TypeAlias, TypedDict, TypeVar, final)
 
 from Isabelle_RPC_Host import Connection
-from Isabelle_RPC_Host.unicode import IsaTerm, is_identifier
+from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, pretty_unicode, symbol_explode
 
 from . import isabelle_driver
 from .exceptions import (
@@ -39,6 +39,7 @@ from .jobs import (
     cancel_jobs_at_once, check_image, check_of_image, current_run, discard, job_image, job_of_image,
     register, with_message)
 from .log import Log
+from .prose import _comments_translated, document_cartouche
 from .store import Forest_Store, MissingRow, Node_Rows
 
 if TYPE_CHECKING:
@@ -307,19 +308,6 @@ def emit_lines(indent: int, out: TextIO, text: str) -> None:
     out.write("".join(line + "\n" for line in _indented(indent, text)))
 
 
-def cartouche(text: str) -> str:
-    """`text` as one cartouche that closes where it should (COMPILATION.md
-    §3): `‹`, `›`, `\\<open>` and `\\<close>` in it replaced by `"`."""
-    for mark in ("‹", "›", "\\<open>", "\\<close>"):
-        text = text.replace(mark, '"')
-    return f"‹{text}›"
-
-
-# An Isabelle symbol as `Symbol.explode` cuts it: `\<name>` or `\<^name>`, a
-# `\<` left unfinished one symbol all the same; any other character on its own.
-_SYMBOL = re.compile(r"\\<\^?(?:[A-Za-z][A-Za-z0-9_']*)?>?|[\s\S]")
-
-
 def string_token(text: str) -> str:
     """`text` as Isabelle's outer-syntax string token, by the rule of
     `Symbol_Pos.quote_string_qq` (COMPILATION.md §3): Isabelle symbols left
@@ -328,7 +316,7 @@ def string_token(text: str) -> str:
     and its three-digit code; a carriage return read as a newline, as
     `Symbol.explode` reads it."""
     out = ['"']
-    for symbol in _SYMBOL.findall(text.replace("\r\n", "\n").replace("\r", "\n")):
+    for symbol in symbol_explode(text):
         if len(symbol) == 1 and ord(symbol) < 32 and symbol not in " \t\n\v\f":
             out.append(f"\\{ord(symbol):03d}")
         elif symbol in ('"', "\\"):
@@ -339,17 +327,33 @@ def string_token(text: str) -> str:
     return "".join(out)
 
 
-def print_name(text: str | IsaTerm, keywords: Container[str] = ()) -> str:
-    """A piece of Isabelle text — a name, a term, a type, a sort — written
-    bare when its `ascii` is an Isabelle identifier not in `keywords`, as
-    Isabelle's string token otherwise (SESSION_AND_THEORY §2), in the
+def print_name(text: str | IsaTerm) -> str:
+    """A piece of Isabelle text — a name, a term, a type, a sort — as
+    `recall` and every message write it (SESSION_AND_THEORY §2): the bare
+    rule against no keyword, quoted as Isabelle's string token, in the
     `unicode` spelling; a `str` is the text's `ascii`.  A tree's file is
-    written against its theory's `keywords` (`Theory.print_name`), the
-    text under `recall` against none."""
+    written by its theory's `print_name`."""
+    return _print_name(text, (), lambda t: string_token(t.unicode))
+
+
+def _print_name(text: str | IsaTerm, keywords: Container[str], quoted: Callable[[IsaTerm], str]) -> str:
+    """The bare rule (SESSION_AND_THEORY §2): `text` bare, in the `unicode`
+    spelling, when its `ascii` is an Isabelle identifier not in
+    `keywords`, through `quoted` otherwise; a `str` is the text's
+    `ascii`.  It decides on the authored text: an identifier holds no
+    comment symbol and no cartouche mark."""
     if isinstance(text, str):
         text = IsaTerm.from_isabelle(text)
-    bare = is_identifier(text.ascii) and text.ascii not in keywords
-    return text.unicode if bare else string_token(text.unicode)
+    return text.unicode if is_identifier(text.ascii) and text.ascii not in keywords else quoted(text)
+
+
+def _always_quoted(text: str | IsaTerm) -> str:
+    """The theory's always-quoted writer (COMPILATION.md §3): the text's
+    `\\<name>` spelling through the comment translation, written back in
+    the `unicode` spelling as Isabelle's string token; a `str` in either
+    spelling."""
+    ascii = ascii_of_unicode(text.ascii if isinstance(text, IsaTerm) else text)
+    return string_token(pretty_unicode(_comments_translated(ascii)))
 
 
 def print_error(indent: int, out: TextIO, message: str, header: str = "Error:") -> None:
@@ -599,12 +603,17 @@ class Node(ABC):
             yield n
             n = n.parent
 
+    def nearest(self, cls: type[_N]) -> _N | None:
+        """The nearest ancestor that is an instance of `cls`, or None
+        (PLUGIN_SYSTEM §2)."""
+        return next((n for n in self.ancestors() if isinstance(n, cls)), None)
+
     def enclosing(self, cls: type[_N]) -> _N:
-        """The nearest ancestor of class `cls` (PLUGIN_SYSTEM §2)."""
-        for n in self.ancestors():
-            if isinstance(n, cls):
-                return n
-        raise TAT_InternalError(f"no {cls.__name__} above a {type(self).__name__}")
+        """`nearest`, for a class an ancestor must bear (PLUGIN_SYSTEM §2)."""
+        n = self.nearest(cls)
+        if n is None:
+            raise TAT_InternalError(f"no {cls.__name__} above a {type(self).__name__}")
+        return n
 
     def _is_under(self, ancestor: Node) -> bool:
         """Whether `ancestor` is one of this node's ancestors — strictly:
@@ -941,8 +950,10 @@ class Node(ABC):
         line without the dash and its body at the same indent (§6)."""
         forest = self.forest()
         mark = self.mark(mode, depth)
+        caption = self.caption(mode, depth)
         inside = [part for part in (mark, *self._tags(forest.agent)) if part]
-        line = forest.id_of(self) + (f" ({', '.join(inside)})" if inside else "")
+        line = (forest.id_of(self) + (f": {caption}" if caption else "")
+                + (f" ({', '.join(inside)})" if inside else ""))
         alone = self.parent is forest and len(forest.sub_nodes) == 1 and depth >= 1
         out.write(INDENT * indent + ("" if alone else "- ") + line + "\n")
         below = indent if alone else indent + 1
@@ -1121,6 +1132,12 @@ class Node(ABC):
         """The default of PRINT.md §1, its four rows, the first that applies
         winning; a class overrides it to say more."""
         return self._default_mark()
+
+    def caption(self, mode: PrintMode, depth: int) -> str | None:
+        """The class's: a short text on the node's line, after the id and a
+        colon, before the mark (PRINT.md §1) — `Section`'s title where the
+        node is detailed; None, the default, leaves the line `- <id> (<mark>)`."""
+        return None
 
     @final
     def _default_mark(self) -> str:
@@ -2745,6 +2762,9 @@ class Theory_RawAST(TypedDict):
     description: NotRequired[str]
 
 
+THEORY_CHILDREN_HEADER = "declarations"     # `Theory`'s children header (SESSION_AND_THEORY §4), `Section`'s too
+
+
 class Theory(StdBlock):
     """The root of every tree (SESSION_AND_THEORY §2): the header, the
     imports and the `end`.  Its beginning runs the header through the
@@ -2761,7 +2781,7 @@ class Theory(StdBlock):
             "name": {"type": "string", "description": "The theory's short name"},
             "imports": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                         "description": "Theories to import"},
-            "description": {"type": "string", "description": "A summary of the theory, as LaTeX text"},
+            "description": {"type": "string", "description": "A summary of the theory, in English"},
             "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},
                          "description": "The theory's declarations"},
         },
@@ -2885,7 +2905,7 @@ class Theory(StdBlock):
         """A non-empty `description` as a `text ‹…›` block, then the header,
         the one `_eval_beginning_opr` runs (SESSION_AND_THEORY §2)."""
         if self.description:
-            emit_lines(indent, out, f"text {cartouche(self.description)}")
+            emit_lines(indent, out, f"text {document_cartouche(self.description, lists=True)}")
         emit_lines(indent, out, self.header())
         return indent
 
@@ -2901,9 +2921,11 @@ class Theory(StdBlock):
 
     def print_name(self, text: str | IsaTerm) -> str:
         """A piece of Isabelle text as the tree's file writes it
-        (SESSION_AND_THEORY §2): `print_name` against the theory's
-        `keywords`, none known while they are None."""
-        return print_name(text, self.keywords or ())
+        (SESSION_AND_THEORY §2): the bare rule against the theory's
+        `keywords`, none known while they are None, quoted through the
+        always-quoted writer, which translates the formal comments inside
+        it (COMPILATION.md §3); a `str` is the text's `ascii`."""
+        return _print_name(text, self.keywords or (), _always_quoted)
 
     def _set_ending(self, ev, new, duration):
         """ARCHITECTURE §3.4's rule, a property of the stored status: whenever
@@ -2933,7 +2955,7 @@ class Theory(StdBlock):
 
     def children_header(self):
         """SESSION_AND_THEORY §4: `declarations`."""
-        return "declarations"
+        return THEORY_CHILDREN_HEADER
 
     # The two callbacks are `TAT_Common_Nodes.ML`'s; each answers the
     # operation's errors, empty when it passed (ARCHITECTURE §6.2) — the

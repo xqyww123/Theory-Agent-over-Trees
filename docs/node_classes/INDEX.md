@@ -29,8 +29,8 @@ COMMON.md.
 
 | class | commands | base | proof obligation | specified in |
 | --- | --- | --- | --- | --- |
-| `Section` | `chapter`, `section`, `subsection`, `subsubsection`, `paragraph`, `subparagraph` | `StdBlock`, beginning only | none | not yet; its nesting is ARCHITECTURE §2.0, its id properties MCP_SPECIFICATION §2.1 |
-| `Text` | `text` | `Leaf` | none | not yet |
+| `Section` | `chapter`, `section`, `subsection`, `subsubsection`, `paragraph`, `subparagraph` | `StdBlock`, beginning only | none | SECTION_AND_TEXT.md |
+| `Text` | `text` | `Leaf` | none | SECTION_AND_TEXT.md |
 | `Locale` | `light_locale`, the locale command of the light locale component (contrib/light_locale), with its block | `StdBlock`, beginning and ending | none | LOCALE.md |
 | `Context` | `context` | `StdBlock`, beginning and ending | none | not yet; its id properties are open (MCP_SPECIFICATION §6) |
 | `LiftingContext` | `context includes t.lifting … begin … end`, which opens the Lifting setup of one or more types again; its ending emits `lifting_update` and `lifting_forget` for each type it opened | `StdBlock`, beginning and ending | none | LIFTING_CONTEXT.md |
@@ -54,7 +54,7 @@ COMMON.md.
 ## 2. Decided with a class
 
 Commands no row covers whose fate is settled when the named class is
-designed: `text_raw` with `Text`; `termination`, which `Define` emits
+designed: `termination`, which `Define` emits
 (ARCHITECTURE §2.2); `setup_lifting`, which `Typedef` emits
 (TYPEDEF.md §5); `lifting_update` and `lifting_forget`, which
 `Typedef`'s and `QuotientType`'s endings emit (TYPEDEF.md §5,
@@ -82,6 +82,8 @@ Every command inside a proof, since a tree holds no proof (ARCHITECTURE
   what they derive, a `Theorem` states.
 - **For experiment or inside proofs**: `txt`, `experiment`, `notepad`,
   `schematic_goal`.
+- **Raw LaTeX**: `text_raw`, which bypasses the document markup; a
+  tree's passages are `Text`s (SECTION_AND_TEXT.md).
 - **Replaced by the light locale**: `locale`, whose place `Locale`
   fills with `light_locale` (LOCALE.md).
 - **Of narrower use**: `subclass`, `overloading`, `specification`,

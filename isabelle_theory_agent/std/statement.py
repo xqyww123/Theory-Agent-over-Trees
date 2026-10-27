@@ -34,7 +34,7 @@ STATEMENT_DEFS: dict[str, JSON_Schema] = {
     "LongStatement": {
         "type": "object",
         "properties": {
-            "english": {"type": "string", "description": "the statement in English, as LaTeX text"},
+            "english": {"type": "string", "description": "the statement in English"},
             "for_any": {"type": "array", "items": {"$ref": "#/$defs/Variable"},
                         "description": "universally quantified variables to fix"},
             "premises": {"type": "array",

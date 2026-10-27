@@ -23,7 +23,10 @@ statement, and the
 `VariableWithSyntax` paragraph's sharers; §5's constants' names and its
 recorded-choice bullet; `variables_of` and `check_variables`
 implemented 2026-10-25 with the field check
-(ai-artifacts/PLACEMENT_RULES_PLAN.md §5), the rest not implemented.
+(ai-artifacts/PLACEMENT_RULES_PLAN.md §5), the rest not implemented;
+revised 2026-10-25 with the prose translator (COMPILATION.md §3): §2's
+`english` written through `latex_of`, §4's writers taking `write`, §5's
+text the file carries.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -53,6 +56,7 @@ and every class deriving from it:
 | `Theorem`, `Define`, `Inductive`, `LiftDefinition`, `LiftingContext` | `Section`, `Typedef`, `QuotientType`, `LiftingContext`, `Locale` |
 | `Datatype`, `Typedef`, `Record`, `QuotientType` | `Section`, `Locale` |
 | `Locale` | `Section` |
+| `Section`, `Text` | `StdBlock` |
 
 Any other place is refused by the placement check, at evaluation
 (PLUGIN_SYSTEM §2): the framework asks, for the node and each ancestor
@@ -72,6 +76,8 @@ home:
 - `Locale`'s `cannot_stand_under` (LOCALE.md §6) refuses every ancestor
   but the theory and a `Section`: a `Lifting_Block` with `Move it out.`
   and LOCALE.md §6's sentence, any other with `Move it out.`.
+- `Section`'s `cannot_hold` (SECTION_AND_TEXT.md §6) refuses a heading of
+  the same or a lower level at any depth.
 
 `Move it out.` is one constant of common.py, `MOVE_IT_OUT`, whose home
 is here, pinned by the plugin's test (§5):
@@ -90,17 +96,20 @@ command is already the document's text; any other class that carries
 none says so in its own document, with the reason. `Theorem`'s is
 inside its `LongStatement` (THEOREM.md §2); every other class's is a
 field of its construct, its description in the class's own document
-(`Datatype`'s, DATATYPE.md §3).
+(`Datatype`'s, DATATYPE.md §3), saying it is in English as every prose
+field's does (PLUGIN_SYSTEM §2).
 
 `gen` normalises it as it does Isabelle text: newlines become spaces
 and runs of whitespace one space. Emission writes it as a `text`
 command before the class's own command, through `text_line(english,
 lead=None)` of `common.py`: `text` before the `english` written by
-`english_cartouche(english, lead=None)` of `common.py` — a period added when it ends without `.`, `!` or `?`, the
-lead before it when there is one, the text through the framework's
-`cartouche` (COMPILATION.md §3). A class may put a lead before it:
-`Theorem` writes the kind capitalised and the name, `Lemma
-rev_length.` (THEOREM.md §5); `Datatype` writes none (DATATYPE.md §5).
+`english_cartouche(english, lead=None)` of `common.py` — the lead
+before it when there is one, a word and the names it names, each in a
+cartouche, and the `english` through `latex_of`, a period after the
+translation when the authored text ends without `.`, `!` or `?`
+(COMPILATION.md §3). A class may put a lead before it: `Theorem` writes
+the kind capitalised and the name, `Lemma ‹rev_length›.` (THEOREM.md
+§5); `Datatype` writes none (DATATYPE.md §5).
 A `Locale`'s axiom carries its statement's `english` as a formal
 comment, `―` before `english_cartouche`'s text (LOCALE.md §5).
 Evaluation never runs the `text` command. Under
@@ -608,14 +617,16 @@ The field `type_parameters[0].name` must be a type variable, such as 'a.
 The field `type_parameters[1].name` repeats `'a`.
 ```
 
-and its writer, `type_parameters_text(parameters, keywords)`, which
-every class taking the definition uses, for the file against the
-theory's `keywords` and under `recall` against none: no parameter
-writes nothing; one without a sort writes it bare, `'a`; otherwise
-they are parenthesised and comma-separated, a sort after `::` through
-`print_name` (SESSION_AND_THEORY §2) — bare when its `ascii` is an
-Isabelle identifier not in the keyword set given, a string token
-otherwise: `('a :: linorder, 'b)`, `('a :: "{zero, linorder}")`. An
+and its writer, `type_parameters_text(parameters, write)`, which every
+class taking the definition uses. This writer and every later one take
+`write`, the writer of each piece of Isabelle text, with no default: the
+file passes the theory's `print_name`, which writes against the
+theory's `keywords` and translates the formal comments inside the text
+(SESSION_AND_THEORY §2; COMPILATION.md §3), and `recall` passes the
+module-level `print_name`, against no keyword. No parameter writes
+nothing; one without a sort writes it bare, `'a`; otherwise they are
+parenthesised and comma-separated, a sort after `::` through `write`:
+`('a :: linorder, 'b)`, `('a :: "{zero, linorder}")`. An
 empty `sort` is no sort.
 
 `MIXFIX_DEFS` — Isabelle's mixfix annotation (`Parse.mixfix`) less the
@@ -707,10 +718,15 @@ Isabelle's own parser of the annotation, `Parse.mixfix`, under the
 local theory's keywords — `Isabelle_Std/ML/TAT_Mixfix.ML`, structure
 `TAT_Mixfix`, `read`, loaded by `TAT_Isabelle_Std.thy` before the
 class files — so the command receives what the file carries; a text it
-does not read whole is the operation's messages. `mixfix_text` takes
-no keyword set: a symbol and a template are string tokens by
-Isabelle's grammar; `type_parameters_text` writes a type variable bare
-and a sort through `print_name`.
+does not read whole is the operation's messages, and so is a text with a
+malformed symbol in any token, refused with Isabelle's own message
+(`Symbol.malformed_msg`), as the build's token check refuses it.
+`mixfix_text` takes no `write`: Isabelle's mixfix reader refuses `―`
+with its cartouche, the one comment whose body a build evaluates, and
+reads the other comment symbols, each with its cartouche, as delimiters,
+whose bodies a build writes without evaluating them; a translation would
+change the declared syntax. `type_parameters_text` writes a type
+variable bare and a sort through `write`.
 
 No type definition of a forest carries `(overloaded)`:
 `TAT_Std.TAT_Std`, which every theory of a forest imports
@@ -766,11 +782,11 @@ The field `abs_function_name` repeats `list_of_fset`.
 ```
 
 — the names with the defaults filled in, for the class's `message()`;
-and the `morphisms` clause, each name through `print_name` against the
-keywords, none when neither name was given. And
-`type_head_text(parameters, name, syntax, keywords)`, a type's head as
-the commands write it: `type_parameters_text` over the parameters, the
-name through `print_name` against the keywords, and `mixfix_text`'s
+and the `morphisms` clause, `morphisms_clause(rep, abs, type_name,
+prefixes, write)`, each name through `write`, none when neither name was
+given. And `type_head_text(parameters, name, syntax, write)`, a type's
+head as the commands write it: `type_parameters_text` over the
+parameters, the name through `write`, and `mixfix_text`'s
 annotation in parentheses when a syntax is given — `'a fset`, `('a, 'b)
 t (infixr "+" 10)`. And the check that every declared type parameter is
 used, for every class that declares type parameters (`Datatype`,
@@ -833,16 +849,15 @@ The field `imports[0].qualifier` must be an Isabelle identifier: it starts with 
 The field `imports[0].instantiations[1].name` must be an Isabelle identifier: it starts with a letter and continues with letters, digits, underscores and primes ('), and does not end with an underscore.
 ```
 
-The writer, `locale_instance_text(instance, keywords)`, writes an
-instance as a locale expression writes it: the qualifier through
-`print_name` and a colon when given; the locale's name through
-`print_name`, bare when it has a dot, Isabelle's lexer reading
-`Group.monoid` as one token (§6); then `where` and the instantiations
-in their order joined by ` and `, each the parameter's name through
-`print_name`, `=` and the term through `print_name`, the
-instantiation `_` bare — `S: semigroup where f = f`, `padic_integers
-where Zp = _ and p = p`, and against a theory whose keywords include
-`is` and `open`, `"is": A where "open" = m` —; the name alone when
+The writer, `locale_instance_text(instance, write)`, writes an instance
+as a locale expression writes it: the qualifier through `write` and a
+colon when given; the locale's name through `write`, bare when it has a
+dot, Isabelle's lexer reading `Group.monoid` as one token (§6); then
+`where` and the instantiations in their order joined by ` and `, each
+the parameter's name through `write`, `=` and the term through `write`,
+the instantiation `_` bare — `S: semigroup where f = f`, `padic_integers
+where Zp = _ and p = p`, and with the `print_name` of a theory whose
+keywords include `is` and `open`, `"is": A where "open" = m` —; the name alone when
 there is no instantiation. `Interpretation` and `Sublocale` are expected to take
 `LocaleInstance`, each confirming it in its own document, which settles
 how it instantiates a parameter the locale defines: the `_` of the
@@ -880,8 +895,8 @@ for both `NoSyntax` and none. Its writer, `fixes_text(variables,
 write)`: the variables joined by ` and `, each its name, its type after
 `::` and its annotation through `mixfix_text`, nothing for `NoSyntax`,
 each piece of Isabelle text through `write` — `f :: "'a ⇒ 'a ⇒ 'a"
-(infixl "⊗" 70)` with `print_name`; `Locale`'s recall passes
-`print_name` too. The ML half reads the wire with `TAT_Mixfix.fixes`
+(infixl "⊗" 70)` with the module-level `print_name`, which `Locale`'s
+recall passes. The ML half reads the wire with `TAT_Mixfix.fixes`
 (`Isabelle_Std/ML/TAT_Mixfix.ML`), which every class keeping
 `Variable_With_Syntax` shares;
 its converse, `TAT_Mixfix.arm_of`, takes Isabelle's `mixfix` to the
@@ -914,8 +929,8 @@ an optional mixfix annotation (DEFINE.md §2, INDUCTIVE.md §2):
 `Constant` has `VariableWithSyntax`'s shape and its own description of
 `type`: a constant is defined, a `Locale`'s parameter is fixed. What
 the node keeps of one is `Variable_With_Syntax`, with its wire and its
-writer `fixes_text` (above): the file passes `print_name`, the recall
-the stored text bare (DEFINE.md §5, §8; INDUCTIVE.md §5, §8).
+writer `fixes_text` (above): the file passes the theory's `print_name`,
+the recall the stored text bare (DEFINE.md §5, §8; INDUCTIVE.md §5, §8).
 `common.py`'s `constants_of(raw)` reads the construct's list and judges
 only each name's grammar, the id grammar without hyphens (`InvalidName`
 with `grammar` = `constant name`, §5), since the node's name is computed
@@ -939,9 +954,10 @@ names read, under `constants[i].name`: the field check of `Define`
   — `Datatype`'s `type_name`s — is `str` in the id grammar without
   hyphens — a letter, then letters, digits, underscores and primes, not
   ending in an underscore (MCP_SPECIFICATION §2), except
-  `LiftingContext`'s `name`, written into no command, which is in the
-  framework's name grammar and judged by the framework
-  (LIFTING_CONTEXT.md §4); a type parameter's name is a type variable,
+  `LiftingContext`'s, `Section`'s and `Text`'s `name`, written into no
+  command, which is in the framework's name grammar and judged by the
+  framework (LIFTING_CONTEXT.md §4, SECTION_AND_TEXT.md §4); a type
+  parameter's name is a type variable,
   shown in its refusal by Isabelle's own example, `such as 'a`, since
   it has no grammar text of its own; a `LiftingContext`'s `types` entry
   and a `Locale`'s `imports[].locale` are an Isabelle identifier or
@@ -1000,7 +1016,9 @@ names read, under `constants[i].name`: the field check of `Define`
   under a
   recorded choice it runs that alone, and a refusal is the operation's
   failure, never a switch. So the text the evaluation ran is the text
-  the file carries, a re-evaluation under a changed context never
+  the file carries, but for the bodies of the formal comments inside its
+  Isabelle text, which the file carries translated (COMPILATION.md §3)
+  and Isabelle's term reader skips; a re-evaluation under a changed context never
   changes it, and a decision that costs failed trials or a probe costs
   them once. A proof attempt whose success depends on the context —
   `Define`'s `pat_completeness auto` and `lexicographic_order` — is no

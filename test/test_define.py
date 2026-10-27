@@ -703,10 +703,17 @@ def test_the_emitted_text_is_section_5_s():
                                                         "syntax": {"form": "infixl", "symbol": "⊕", "priority": 65}}, {"name": "odd"}]}])
     evaluated(u, "definition")
     evaluated(eo, *FUN)
-    assert emitted(u) == ["text ‹Definition u. Untyped.›", "definition u where", '  "u n = n"', "declare u_def [simp]"]
-    assert emitted(eo) == ["text ‹Definition even and odd. Parity of a natural number, by mutual recursion.›",
+    assert emitted(u) == ["text ‹Definition ‹u›. Untyped.›", "definition u where", '  "u n = n"', "declare u_def [simp]"]
+    assert emitted(eo) == ["text ‹Definition ‹even› and ‹odd›. Parity of a natural number, by mutual recursion.›",
                            'fun even :: "nat ⇒ bool" (infixl "⊕" 65) and odd where', '  "even 0 = True"', '| "even (Suc n) = odd n"',
                            '| "odd 0 = False"', '| "odd (Suc n) = even n"', "declare even.simps odd.simps [simp del]"]
+    # prose through `latex_of`, a formal comment in a constant's type and in an equation translated (COMPILATION.md §3);
+    # `recall` as written
+    (c,) = insert(f, x, 5, [definition("c", ("c n = n ― ‹x₁›",), "Sums of n²", type="nat ⇒ nat ― ‹x₁›", auto_reduction=True)])
+    evaluated(c, "definition")
+    assert emitted(c)[:3] == ["text ‹Definition ‹c›. Sums of ‹n²›.›", 'definition c :: "nat ⇒ nat ― ‹‹x₁››" where',
+                              '  "c n = n ― ‹‹x₁››"']
+    assert fields(c, M.RECALL, 1) == ["  c :: nat ⇒ nat ― ‹x₁›", "  c n = n ― ‹x₁›"]
 
 
 def test_the_two_spellings_are_kept_apart():
@@ -792,14 +799,14 @@ async def test_the_three_forms_are_defined_and_the_open_goals_held(std_conversat
     assert file.startswith('theory "TAT_Std_A"\n  imports "Main" "TAT_Std.TAT_Std"\nbegin\n') and file.endswith("end\n")
     [one, two, three] = fenced_blocks(DD, "5.")
     for block in (one, two, [*three[:5], "  sorry", *three[6:]],
-                  ["text ‹Definition even and odd. Parity of a natural number, by mutual recursion.›",
+                  ["text ‹Definition ‹even› and ‹odd›. Parity of a natural number, by mutual recursion.›",
                    'fun even :: "nat ⇒ bool" and odd :: "nat ⇒ bool" where', '  "even 0 = True"', '| "even (Suc n) = odd n"',
                    '| "odd 0 = False"', '| "odd (Suc n) = even n"', "declare even.simps odd.simps [simp del]"],
-                  ["text ‹Definition half. Half, undefined on one.›", 'fun half :: "nat ⇒ nat" where', '  "half 0 = 0"',
+                  ["text ‹Definition ‹half›. Half, undefined on one.›", 'fun half :: "nat ⇒ nat" where', '  "half 0 = 0"',
                    '| "half (Suc (Suc n)) = Suc (half n)"'],
-                  ["text ‹Definition step. Down to zero, by a non-constructor pattern.›", 'function step :: "nat ⇒ nat" where',
+                  ["text ‹Definition ‹step›. Down to zero, by a non-constructor pattern.›", 'function step :: "nat ⇒ nat" where',
                    '  "step (n + 1) = step n"', '| "step 0 = 0"', "  sorry", "termination", "  by lexicographic_order"],
-                  ["text ‹Definition pred_pos. The predecessor, on the positive naturals.›", 'function pred_pos :: "nat ⇒ nat" where',
+                  ["text ‹Definition ‹pred_pos›. The predecessor, on the positive naturals.›", 'function pred_pos :: "nat ⇒ nat" where',
                    '  "0 < n ⟹ pred_pos n = n - 1"', "  sorry", "termination", "  by lexicographic_order"]):
         assert "".join(ascii_of_unicode(line) + "\n" for line in block) in file, file
     await read_back(std_harness, file, tmp_path)
@@ -853,6 +860,31 @@ async def test_a_refused_definition_is_an_obstacle_with_both_slots_empty(std_con
         assert g._status.messages[0].unicode.startswith("Extra variables on rhs"), g._status.messages
     rendered = C.render(forest)
     assert not any(C.Path(f"TAT_Suite/TAT_Std_{t}.thy") in rendered.files for t in "BC")
+
+
+@pytest.mark.isabelle(deadline=300)
+async def test_a_template_with_a_malformed_symbol_is_refused_at_evaluation(std_conversation):
+    """COMMON.md §4: a constant's template holding a malformed symbol, which
+    a build's token check refuses, is an obstacle at evaluation with
+    Isabelle's own message (`TAT_Mixfix.read_text`); a well-formed one is
+    defined."""
+    forest = std_conversation.forest
+    syntax = {"form": "mixfix", "argument_priorities": [10], "priority": 10}
+    async with std_conversation.client() as session:
+        result = await session.call_tool("edit", {
+            "action": "append", "target_id": "Sessions", "evaluate": True,
+            "constructs": [ts.session("TAT_Suite", ts.theory("TAT_Std_B") | {"children": [
+                definition("bad", ("bad n = n",), "Bad", type=None, auto_reduction=True,
+                           constants=[{"name": "bad", "type": "nat ⇒ nat", "syntax": syntax | {"template": "\\<foo _"}}]),
+                definition("good", ("good n = n",), "Good", type=None, auto_reduction=True,
+                           constants=[{"name": "good", "type": "nat ⇒ nat", "syntax": syntax | {"template": "⊙ _"}}])]})]})
+        assert not result.isError, text_of(result)
+    (s,) = forest.sub_nodes
+    (b,) = s.sub_nodes
+    bad, good = b.sub_nodes
+    assert isinstance(bad._status, M.CannotEvaluate), bad._status
+    assert [m.unicode for m in bad._status.messages] == ['Malformed symbolic character: "\\<foo"'], bad._status.messages
+    assert not isinstance(good._status, M.CannotEvaluate), good._status
 
 
 # --- the construction, end to end, the proof agent a scripted one (§7) -------

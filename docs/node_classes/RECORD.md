@@ -92,7 +92,7 @@ The class's construct schema:
   "type": "object",
   "properties": {
     "kind":            { "const": "record" },
-    "english":         { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":         { "type": "string", "description": "what is defined, in English" },
     "type_parameters": { "type": "array", "items": { "$ref": "#/$defs/TypeParameter" },
                          "description": "the type's parameters; sorts are usually not specified" },
     "type_name":       { "type": "string" },
@@ -131,7 +131,7 @@ once, in TAT_Std.thy (COMMON.md §4), so no record carries the option.
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `type_parameters`:
@@ -228,11 +228,8 @@ record 'a cpoint = "'a point" +
   as `print_name` writes it: `xcoord :: "'a"`, `colour :: colour`.
 - Every piece of Isabelle text — the type's name, a field's name, a
   sort, a type — is written through the theory's `print_name`
-  (SESSION_AND_THEORY §2): bare when its `ascii` is an Isabelle
-  identifier (`is_identifier`, COMMON.md §5) that is not a keyword of
-  the theory, as Isabelle's string token (COMPILATION.md §3) otherwise
-  — `colour` and `linorder` bare, `"'a"`, `"'a point"` and a keyword
-  quoted; a type variable as the writer writes it.
+  (SESSION_AND_THEORY §2): `colour` and `linorder` bare, `"'a"`, `"'a
+  point"` and a keyword quoted; a type variable as the writer writes it.
 - The text in the `unicode` spelling; the file takes the `\<name>` form
   from the compile's conversion (COMPILATION.md §2) and reads as Unicode
   in jEdit all the same.
@@ -316,9 +313,10 @@ by one space — assembled from the stored text in the `unicode`
 spelling, every piece as `print_name` writes it against no keyword,
 every name bare, without a round trip to Isabelle; `english` follows
 at depth 0 alone; no line carries a key. One private helper writes the
-type's head, its parent record and its fields, given the keyword set —
-the theory's for emission, none here; emission and `print_fields` lay
-its lines out differently.
+type's head, its parent record and its fields, given the writer of each
+piece: the theory's `print_name` for emission, the module-level
+`print_name` here; emission and `print_fields` lay its lines out
+differently.
 
 ```
 'a point = xcoord :: "'a" ycoord :: "'a"

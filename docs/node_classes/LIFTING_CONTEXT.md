@@ -147,7 +147,7 @@ The class's construct schema:
   "description": "opens the Lifting setup of one or more subtypes (by `typedef`) or quotient types (such as fset) again, so that lift_definition and the `transfer` tactic are available, working through the representation of the types (the lists under fset); in Isabelle code, context includes fset.lifting begin … end",
   "properties": {
     "kind":     { "const": "lifting_context" },
-    "name":     { "type": "string", "description": "the block's name, by which it is referred to" },
+    "name":     { "type": "string", "description": "the name used in the node's id" },
     "types":    { "type": "array", "minItems": 1, "items": { "type": "string" },
                   "description": "the types whose Lifting setup the block opens again, each by its name" },
     "children": { "type": "array", "items": { "$ref": "#/$defs/Construct" },
@@ -183,7 +183,7 @@ opens the Lifting setup of one or more subtypes (by `typedef`) or quotient types
 `name`:
 
 ```
-the block's name, by which it is referred to
+the name used in the node's id
 ```
 
 `types`:
@@ -248,7 +248,7 @@ context includes fset.lifting begin
 text ‹The number of elements of a finite set.›
 lift_definition fcard :: "'a fset ⇒ nat" is "λxs. card (set xs)" by aoa
 
-text ‹Lemma fcard_fempty. The empty finite set has no element.›
+text ‹Lemma ‹fcard_fempty›. The empty finite set has no element.›
 lemma fcard_fempty:
   shows "fcard fempty = 0"
   by aoa

@@ -19,7 +19,7 @@ from IsaMini.AoA.task import StdTask, aoa_task
 from .. import isabelle_driver
 from ..exceptions import series
 from ..jobs import Failed, Succeeded
-from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Theory, emit_lines, print_name, status_of_errors, string_token
+from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Theory, emit_lines, status_of_errors
 from ..plugin import TAT_node
 from .common import (
     MIXFIX_DEFS, Construction_Setup, Mixfix_RawAST, Proof_Check, Proof_Job, Variable_With_Syntax,
@@ -199,7 +199,7 @@ class Define(With_Proof_Obligations, Leaf):
         "description": "defines constants by (recursive) equations",
         "properties": {
             "kind": {"const": "definition"},
-            "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
+            "english": {"type": "string", "description": "what is defined, in English"},
             "constants": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Constant"},
                           "description": "the constants defined; several for mutually recursive functions"},
             "equations": {"type": "array", "minItems": 1, "items": {"type": "string"},
@@ -433,18 +433,17 @@ class Define(With_Proof_Obligations, Leaf):
         return f"by {method}" if method is not None else self.proof_text()
 
     def emit(self, indent, out):
-        """§5: the `text` line; the command `_command()` names, the equations
-        as string tokens, under a function command the two terminal proofs
+        """§5: the `text` line; the command `_command()` names, every piece
+        of Isabelle text — the constants, the equations — through the
+        theory's `print_name`, under a function command the two terminal proofs
         around `termination`; the `declare` line where `auto_reduction`
         says otherwise than the command does."""
         names = self.constant_names()
-        emit_lines(indent, out, text_line(self.english, f"Definition {' and '.join(names)}."))
-        keywords = self.enclosing(Theory).keywords or ()
-        def write(text: str | IsaTerm) -> str:
-            return print_name(text, keywords)
+        emit_lines(indent, out, text_line(self.english, ("Definition", names)))
+        write = self.enclosing(Theory).print_name
         command = self._command()
         lines = [f"{command} {fixes_text(self.constants, write)} where"]
-        lines += [("  " if i == 0 else "| ") + string_token(e.unicode) for i, e in enumerate(self.equations)]
+        lines += [("  " if i == 0 else "| ") + write(e) for i, e in enumerate(self.equations)]
         if command not in (DEFINITION, "fun"):
             lines += [f"  {self._terminal(PATTERN_COMPLETENESS)}", "termination", f"  {self._terminal(TERMINATION)}"]
         if self.form == DEFINITION and self.auto_reduction:

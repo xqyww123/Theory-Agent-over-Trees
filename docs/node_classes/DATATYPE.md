@@ -104,7 +104,7 @@ The class's construct schema:
   "type": "object",
   "properties": {
     "kind":            { "type": "string", "enum": ["datatype", "codatatype"] },
-    "english":         { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":         { "type": "string", "description": "what is defined, in English" },
     "type_parameters": { "type": "array", "items": { "$ref": "#/$defs/TypeParameter" },
                          "description": "the parameters of the types defined; sorts are usually not specified" },
     "types":           { "type": "array", "minItems": 1,
@@ -163,7 +163,7 @@ What the class does not take: discriminator names and
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `types`:
@@ -283,11 +283,8 @@ and bexp =
   margin in place of the command.
 - Every piece of Isabelle text — a name, a sort, an argument's type —
   is written through the theory's `print_name` (SESSION_AND_THEORY §2):
-  bare when its `ascii` is an Isabelle identifier (`is_identifier`,
-  COMMON.md §5) that is not a keyword of the theory, as Isabelle's
-  string token (COMPILATION.md §3) otherwise — `nat` and `linorder`
-  bare, `"'a list"` and a keyword quoted; a type variable, a symbol and
-  a template as the writers write them.
+  `nat` and `linorder` bare, `"'a list"` and a keyword quoted; a type
+  variable, a symbol and a template as the writers write them.
 - The text in the `unicode` spelling; the file takes the `\<name>` form
   from the compile's conversion (COMPILATION.md §2) and reads as Unicode
   in jEdit all the same.
@@ -364,9 +361,9 @@ stored text, every piece through `print_name` against no keyword
 an argument's type quoted unless an identifier, whatever keywords the
 theory recorded, without a round trip to Isabelle; `english` follows
 at depth 0 alone; no line carries a key. One private helper writes a
-type's head and constructors, given the keyword set — the theory's for
-emission, none here; emission and `print_fields` lay its lines out
-differently.
+type's head and constructors, given the writer of each piece: the
+theory's `print_name` for emission, the module-level `print_name` here;
+emission and `print_fields` lay its lines out differently.
 
 ```
 'a list = Nil | Cons (hd: "'a") (tl: "'a list") (infixr "#" 65)

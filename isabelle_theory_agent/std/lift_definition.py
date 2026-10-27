@@ -8,7 +8,7 @@ the command carries `(code_dt)`, which every later evaluation keeps to
 
 from __future__ import annotations
 
-from collections.abc import Container
+from collections.abc import Callable
 from typing import Any, Literal, NotRequired, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
@@ -46,7 +46,7 @@ class LiftDefinition(Proof_Obligation, Leaf):
                        " that defines the type, or inside a lifting_context that opens it",
         "properties": {
             "kind": {"const": "lift_definition"},
-            "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
+            "english": {"type": "string", "description": "what is defined, in English"},
             "name": {"type": "string"},
             "type": {"type": "string",
                      "description": "the type of the function, on the subtype or quotient type. Example: 'a dlist ⇒ 'a dlist"},
@@ -149,14 +149,15 @@ class LiftDefinition(Proof_Obligation, Leaf):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _definition(self, keywords: Container[str]) -> str:
+    def _definition(self, write: Callable[[str | IsaTerm], str]) -> str:
         """The text after the command: the name, `::`, the type, the syntax
         when given, `is` and the term — the name, the type and the term
-        through `print_name` against `keywords` (the theory's for the file,
-        none under `recall`), the syntax as its writer writes it."""
-        return " ".join(filter(None, (print_name(self.name, keywords), "::", print_name(self.type, keywords),
+        through `write` (the theory's `print_name` for the file, the
+        module-level one under `recall`), the syntax as its writer writes
+        it."""
+        return " ".join(filter(None, (write(self.name), "::", write(self.type),
                                       mixfix_text(self.syntax) if self.syntax is not None else "",
-                                      "is", print_name(self.is_, keywords))))
+                                      "is", write(self.is_))))
 
     def print_fields(self, indent, out, mode, depth):
         """Under `Recall` alone (§8): the definition on one line at depths 0
@@ -164,7 +165,7 @@ class LiftDefinition(Proof_Obligation, Leaf):
         authored `code_dt` is true; `english` at 0."""
         if mode is RECALL and depth <= 2:
             option = "(code_dt) " if depth == 0 and self.code_dt else ""
-            out.write(INDENT * indent + option + self._definition(()) + "\n")
+            out.write(INDENT * indent + option + self._definition(print_name) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
         return False
@@ -175,7 +176,7 @@ class LiftDefinition(Proof_Obligation, Leaf):
         line."""
         assert self.with_code_dt is not None        # a node written is one an evaluation recorded (`can_emit`)
         emit_lines(indent, out, text_line(self.english))
-        keywords = self.enclosing(Theory).keywords or ()
+        write = self.enclosing(Theory).print_name
         command = f"{self.kind} (code_dt)" if self.with_code_dt else self.kind
-        emit_lines(indent, out, f"{command} {self._definition(keywords)} {self.proof_text()}")
+        emit_lines(indent, out, f"{command} {self._definition(write)} {self.proof_text()}")
         return indent

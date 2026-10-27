@@ -107,9 +107,9 @@ A node either contains other nodes or does not.
 `Theorem` is a leaf.
 
 `Section` contains the declarations under its heading. It is **presentational
-only**: it emits a `section` command and creates no Isabelle scope, so it changes
-nothing about how its children are checked or named. It is a nesting node with an
-beginning command and no ending one.
+only**: it emits a heading command and creates no Isabelle scope, so it changes
+nothing about how its children are checked or named. It is a nesting node with a
+beginning command and no ending one (node_classes/SECTION_AND_TEXT.md).
 
 `Context` and `Locale` also contain nodes, and unlike `Section` they carry
 **operational behaviour**: they open an Isabelle context, so their children are
@@ -591,8 +591,9 @@ already made rather than proposing any.
 
 Whether a node emits is `can_emit`, one method whose default answers yes
 when every stored status of the node is a `Ready`; a class narrows or
-replaces it. `Theorem` keeps the default and emits a `text ‹Lemma <name>.
-<english>›` line, the statement, and `by aoa` for a proof that is
+replaces it. `Theorem` keeps the default and emits a text line, `text
+‹Lemma ‹<name>›. <english>›` (node_classes/COMMON.md §2, THEOREM.md §5),
+the statement, and `by aoa` for a proof that is
 `SUCCEEDED` and `PASSED` by its check, `sorry` otherwise (THEOREM.md §5).
 A `Theory` with a `description` emits it as a `text ‹…›` block before its
 `theory` line (node_classes/SESSION_AND_THEORY.md §2). `Define` will not

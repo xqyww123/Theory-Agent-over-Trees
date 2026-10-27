@@ -25,13 +25,13 @@ from baselines import DOCS, composed_refusal, fenced_blocks, fenced_lines, table
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
 from isabelle_theory_agent.exceptions import GRAMMARS, InvalidField
 from isabelle_theory_agent.std import (
-    common, datatype, define, lift_definition, lifting_context, quotient_type, record, theorem, typedef)
+    common, datatype, define, lift_definition, lifting_context, quotient_type, record, section, text, theorem, typedef)
 from isabelle_theory_agent.std.common import (
     Binder, Infix, Lifting_Block, Lifting_Closing, Proof_Obligation, Template, Type_Definition, Type_Parameter,
     english_cartouche, lifting_closing_text,
     text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
-from ml_process import ROOT, ml_process, ml_string
+from ml_process import BUILD_READER, ROOT, ml_process, ml_string
 from test_datatype import LIST, definition
 from test_define import SUM_UPTO
 from test_lift_definition import DL_REV
@@ -55,7 +55,14 @@ EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: DLIST for kind in typedef.KINDS},
             **{kind: DL_REV for kind in lift_definition.KINDS},
             **{kind: FSET_SIZE for kind in lifting_context.KINDS},
-            **{kind: FSET for kind in quotient_type.KINDS}}
+            **{kind: FSET for kind in quotient_type.KINDS},
+            **{kind: {"kind": kind, "name": "H", "title": "A heading"} for kind in section.KINDS},
+            **{kind: {"kind": kind, "name": "p", "text": "A passage."} for kind in text.KINDS}}
+
+
+def marked(text: str | IsaTerm) -> str:
+    """A marker writer: which pieces a writer routes through `write`."""
+    return f"<{text if isinstance(text, str) else text.unicode}>"
 
 
 def section_1_table():
@@ -149,13 +156,45 @@ def test_the_placement_check_answers_section_1_s_table():
 
 
 def test_the_text_line_is_section_2_s():
-    """§2: a period added when `english` ends without `.`, `!` or `?`; the
-    class's lead before it; the text through the framework's `cartouche`."""
+    """§2: the class's lead; the `english` through `latex_of`
+    (COMPILATION.md §3); a period when the authored text ends without `.`,
+    `!` or `?`, after the translation; in the `unicode` spelling."""
     assert text_line("The length of a reversed list") == "text ‹The length of a reversed list.›"
     assert [text_line(e) for e in ("Bang!", "Why?", "Done.")] == ["text ‹Bang!›", "text ‹Why?›", "text ‹Done.›"]
-    assert text_line("Bang", "Lemma q.") == "text ‹Lemma q. Bang.›"
-    assert text_line("‹Quoted› \\<open>here\\<close>") == 'text ‹"Quoted" "here".›'
-    assert english_cartouche("Bang", "Lemma q.") == "‹Lemma q. Bang.›"     # the text alone: an axiom's comment
+    assert text_line("Bang", ("Lemma", ["q"])) == "text ‹Lemma ‹q›. Bang.›"                      # the names in cartouches
+    assert text_line("Parity", ("Definition", ["even", "odd"])) == "text ‹Definition ‹even› and ‹odd›. Parity.›"
+    assert text_line("‹Quoted› \\<open>here\\<close> and ›") == "text ‹‹Quoted› ‹here› and {\\isasymclose}.›"   # a stray mark a symbol
+    assert text_line("Sums of n²") == "text ‹Sums of ‹n²›.›"                                     # back in `unicode`
+    assert english_cartouche("sums of x⇩") == "‹sums of x.›"                                      # the period after the translation
+    assert english_cartouche("Bang") == "‹Bang.›"                                                  # an axiom's comment
+
+
+def test_every_registered_class_stores_its_english_as_written():
+    """§2: `gen` stores an `english` as the agent wrote it, but for its
+    whitespace — no antiquotation replaced, no glyph converted —, and the
+    depth-0 `recall` shows it so; the file gets its translation
+    (COMPILATION.md §3).  A heading, a passage and a lifting context carry
+    none; `Locale`, outside `EXAMPLES`, is pinned in test_locale.py."""
+    loaded = plugin.load(["isabelle_theory_agent.std"])
+    registered = {kind: cls for kind, cls in loaded.kinds.items() if cls not in M.FRAMEWORK_NODE_CLASSES}
+    f = Forest_Under_Test(kinds={**ts.KINDS, **registered})
+    (s,) = run(locked(f, edit.insert(f, 0, [session("Arith", theory("X"))])))
+    (x,) = s.sub_nodes
+    authored, shown = "n² and @{const x}\n and ▪ item", "n² and @{const x} and ▪ item"
+    for kind, construct in EXAMPLES.items():
+        construct = {k: v for k, v in construct.items() if k != "children"}
+        if "statement" in construct:                                      # the theorem kinds
+            construct["statement"] = construct["statement"] | {"english": authored}
+        elif "english" in construct:
+            construct["english"] = authored
+        else:
+            assert kind in (*section.KINDS, *text.KINDS, *lifting_context.KINDS), kind
+            continue
+        (node,) = run(locked(f, edit.insert(x, 0, [construct])))
+        out = io.StringIO()
+        node.print_fields(0, out, M.RECALL, 0)
+        assert shown in out.getvalue().splitlines(), (kind, out.getvalue())
+        run(locked(f, edit.delete(node)))
 
 
 @pytest.mark.parametrize("shape", ["leaf", "block"])
@@ -547,41 +586,38 @@ def test_the_function_name_pair_s_check_renders_section_4_s_two_sentences_and_it
     assert common.function_names(None, None, "fset", prefixes) == (IsaTerm.from_agent("rep_fset"), IsaTerm.from_agent("abs_fset"))
     assert common.function_names(rep, None, "fset", prefixes) == (rep, IsaTerm.from_agent("abs_fset"))
     assert common.function_names(None, abs_, "fset", ("Rep_", "Abs_")) == (IsaTerm.from_agent("Rep_fset"), abs_)
-    assert common.morphisms_clause(None, None, "fset", prefixes, ()) is None
-    assert common.morphisms_clause(rep, None, "fset", prefixes, ()) == "morphisms list_of_fset abs_fset"
-    assert common.morphisms_clause(None, abs_, "fset", prefixes, frozenset({"rep_fset"})) == 'morphisms "rep_fset" Abs_fset'
-    assert common.morphisms_clause(IsaTerm.from_agent("ρ"), abs_, "fset", prefixes, ()) == "morphisms ρ Abs_fset"
+    assert common.morphisms_clause(None, None, "fset", prefixes, M.print_name) is None
+    assert common.morphisms_clause(rep, None, "fset", prefixes, M.print_name) == "morphisms list_of_fset abs_fset"
+    assert common.morphisms_clause(None, abs_, "fset", prefixes, marked) == "morphisms <rep_fset> <Abs_fset>"
+    assert common.morphisms_clause(IsaTerm.from_agent("ρ"), abs_, "fset", prefixes, M.print_name) == "morphisms ρ Abs_fset"
 
 
 def test_type_head_text_writes_section_4_s_examples():
     """§4: the parameters by `type_parameters_text`, the name through
-    `print_name` against the keywords, the syntax by `mixfix_text` when
-    given."""
+    `write`, the syntax by `mixfix_text` when given."""
     of, head = common.type_variables_of, common.type_head_text
-    assert head(of(["'a"]), "fset", None, ()) == "'a fset"
-    assert head(of(["'a", "'b"]), "t", common.mixfix_of({"form": "infixr", "symbol": "+", "priority": 10}), ()) == "('a, 'b) t (infixr \"+\" 10)"
-    assert head((), "int", None, ()) == "int"
-    assert head((), "term", None, frozenset({"term"})) == '"term"'
-    assert head(common.type_parameters_of([{"name": "'a", "sort": "zero"}]), "z", None, frozenset({"zero"})) == "('a :: \"zero\") z"
-    assert head(of(["'a"]), "fract", common.mixfix_of({"form": "mixfix", "template": "_ ratio", "argument_priorities": [21], "priority": 21}), ()) == "'a fract (\"_ ratio\" [21] 21)"
+    assert head(of(["'a"]), "fset", None, M.print_name) == "'a fset"
+    assert head(of(["'a", "'b"]), "t", common.mixfix_of({"form": "infixr", "symbol": "+", "priority": 10}), M.print_name) == "('a, 'b) t (infixr \"+\" 10)"
+    assert head((), "int", None, M.print_name) == "int"
+    assert head((), "term", None, marked) == "<term>"
+    assert head(common.type_parameters_of([{"name": "'a", "sort": "zero"}]), "z", None, marked) == "('a :: <zero>) <z>"
+    assert head(of(["'a"]), "fract", common.mixfix_of({"form": "mixfix", "template": "_ ratio", "argument_priorities": [21], "priority": 21}), M.print_name) == "'a fract (\"_ ratio\" [21] 21)"
 
 
 def test_type_parameters_text_writes_section_4_s_examples():
     """§4: nothing for none, one without a sort bare, otherwise parenthesised
-    and comma-separated with a sort after `::` through `print_name` against
-    the keyword set given — a keyword quoted, none against no set — in
-    `unicode`."""
+    and comma-separated with a sort after `::` through `write`, in
+    `unicode`; a type variable never through it."""
     of, text = common.type_parameters_of, common.type_parameters_text
-    assert text(of([])) == ""
-    assert text(of([{"name": "'a"}])) == "'a"
-    assert text(of([{"name": "'a", "sort": "linorder"}])) == "('a :: linorder)"
-    assert text(of([{"name": "'a", "sort": "linorder"}, {"name": "'b"}])) == "('a :: linorder, 'b)"
-    assert text(of([{"name": "'a", "sort": "{zero, linorder}"}])) == "('a :: \"{zero, linorder}\")"
-    assert text(of([{"name": "'a"}, {"name": "'b"}])) == "('a, 'b)"
+    assert text(of([]), M.print_name) == ""
+    assert text(of([{"name": "'a"}]), M.print_name) == "'a"
+    assert text(of([{"name": "'a", "sort": "linorder"}]), M.print_name) == "('a :: linorder)"
+    assert text(of([{"name": "'a", "sort": "linorder"}, {"name": "'b"}]), M.print_name) == "('a :: linorder, 'b)"
+    assert text(of([{"name": "'a", "sort": "{zero, linorder}"}]), M.print_name) == "('a :: \"{zero, linorder}\")"
+    assert text(of([{"name": "'a"}, {"name": "'b"}]), M.print_name) == "('a, 'b)"
     greek = of([{"name": "'α", "sort": "linorder"}, {"name": "'b"}])
-    assert text(greek) == "('α :: linorder, 'b)"
-    assert text(greek, frozenset({"linorder"})) == "('α :: \"linorder\", 'b)"
-    assert text(of([{"name": "'a", "sort": "linorder"}]), frozenset({"'a"})) == "('a :: linorder)"    # a variable never quoted
+    assert text(greek, M.print_name) == "('α :: linorder, 'b)"
+    assert text(greek, marked) == "('α :: <linorder>, 'b)"                 # the variables bare
 
 
 def test_mixfix_text_and_mixfix_wire_write_section_4_s_examples():
@@ -815,16 +851,16 @@ def test_locale_instance_s_reader_and_check_render_section_4_s_sentences_and_its
     of, check, term = common.Locale_Instance.of_image, common.check_locale_instance, IsaTerm.from_agent
     s = of({"locale": "semigroup", "qualifier": "S", "instantiations": [{"name": "f", "term": "f"}]})
     assert s == common.Locale_Instance(term("semigroup"), term("S"), (common.Instantiation(term("f"), term("f")),))
-    assert common.locale_instance_text(s) == "S: semigroup where f = f"
+    assert common.locale_instance_text(s, M.print_name) == "S: semigroup where f = f"
     p = of({"locale": "padic_integers", "instantiations": [{"name": "Zp", "term": "_"}, {"name": "p", "term": " p\n"}]})
-    assert p.qualifier is None and common.locale_instance_text(p) == "padic_integers where Zp = _ and p = p"
-    assert common.locale_instance_text(of({"locale": "Group.monoid", "instantiations": []})) == "Group.monoid"
+    assert p.qualifier is None and common.locale_instance_text(p, M.print_name) == "padic_integers where Zp = _ and p = p"
+    assert common.locale_instance_text(p, marked) == "<padic_integers> where <Zp> = _ and <p> = <p>"   # `_` bare
+    assert common.locale_instance_text(of({"locale": "Group.monoid", "instantiations": []}), M.print_name) == "Group.monoid"
     k = of({"locale": "A", "qualifier": "is", "instantiations": [{"name": "open", "term": "m"}]})
-    assert common.locale_instance_text(k, {"is", "open", "m", "A"}) == '"is": "A" where "open" = "m"'
-    assert common.locale_instance_text(k, {"is", "open"}) == '"is": A where "open" = m'
-    assert common.locale_instance_text(k) == "is: A where open = m"
+    assert common.locale_instance_text(k, marked) == "<is>: <A> where <open> = <m>"
+    assert common.locale_instance_text(k, M.print_name) == "is: A where open = m"
     dotted = of({"locale": "Group.monoid", "instantiations": [{"name": "G", "term": "G"}]})
-    assert common.locale_instance_text(dotted, {"Group.monoid", "monoid"}) == "Group.monoid where G = G"   # one token
+    assert common.locale_instance_text(dotted, marked) == "Group.monoid where <G> = <G>"     # one token: bare
     padded = of({"locale": " semigroup\n", "qualifier": " S ", "instantiations": [{"name": " f ", "term": " f\n  x "}]})
     assert padded == common.Locale_Instance(term("semigroup"), term("S"), (common.Instantiation(term("f"), term("f x")),))
     assert of({"locale": "semi-group", "qualifier": " ", "instantiations": []}).qualifier == term("")    # read, not judged
@@ -866,15 +902,17 @@ def test_variable_with_syntax_holds_the_three_annotations_and_fixes_text_writes_
     assert g.image() == {"name": "g", "syntax": {"form": "NoSyntax"}} and h.image() == {"name": "h"}
     assert f.wire() == ("f", "'a \\<Rightarrow> 'a \\<Rightarrow> 'a", '(infixl "\\<otimes>" 70)')
     assert g.wire() == ("g", None, None) and h.wire() == ("h", None, None)
-    assert common.fixes_text([f, g, h], lambda t: M.print_name(t, ())) == 'f :: "\'a ⇒ \'a ⇒ \'a" (infixl "⊗" 70) and g and h'
+    assert common.fixes_text([f, g, h], M.print_name) == 'f :: "\'a ⇒ \'a ⇒ \'a" (infixl "⊗" 70) and g and h'
     assert common.fixes_text([f], IsaTerm.to_unicode) == 'f :: \'a ⇒ \'a ⇒ \'a (infixl "⊗" 70)'
-    assert common.fixes_text([h], lambda t: M.print_name(t, {"h"})) == '"h"' and common.fixes_text([], str) == ""
+    assert common.fixes_text([h], marked) == "<h>" and common.fixes_text([], str) == ""
     assert common.mixfix_of({"form": "NoSyntax"}) is None
     for defs, name in ((common.MIXFIX_DEFS, "Mixfix"), (common.TYPE_MIXFIX_DEFS, "TypeMixfix")):
         assert defs[name]["anyOf"][-1]["properties"]["form"]["enum"] == ["NoSyntax"]       # the shared last arm
 
 
-# --- TAT_Mixfix.arm_of (§4), on a raw ML process of the heap the plugin runs on: the structure's file from source
+# --- TAT_Mixfix (§4), on a raw ML process of the heap the plugin runs on: the structure's file from source
+
+TAT_MIXFIX_ML = ROOT / "Isabelle_Std" / "ML" / "TAT_Mixfix.ML"
 
 ARM_FORMS = [                                       # every form of `MIXFIX_DEFS`, priorities given and not, `NoSyntax` too
     {"form": "infixr", "symbol": "#", "priority": 65}, {"form": "infix", "symbol": "+", "priority": 0},
@@ -911,7 +949,7 @@ async def test_tat_mixfix_arm_of_is_the_converse_of_read_for_every_form(std_harn
     listed = ", ".join(f"({i}, {option(t)})" for i, t in enumerate([*texts, *ARM_NONE]))
     cases = tmp_path / "arm_cases.ML"
     cases.write_text(ARM_CASES % listed)
-    files = ", ".join(ml_string(f) for f in [str(ROOT / "Isabelle_Std" / "ML" / "TAT_Mixfix.ML"), str(cases)])
+    files = ", ".join(ml_string(f) for f in [str(TAT_MIXFIX_ML), str(cases)])
     r = await ml_process(std_harness, f"val _ = in_theory thy0 [{files}];",
                          logic="Minilang_AoA", base="Minilang_AoA.Minilang_AoA")
     lines = r.stdout.splitlines()
@@ -929,3 +967,42 @@ async def test_tat_mixfix_arm_of_is_the_converse_of_read_for_every_form(std_harn
                     None if p == "-" else int(p))
         assert common.mixfix_of_wire(wire) == arm, (raw, shown[i])
     assert [shown[len(arms) + i] for i in range(len(ARM_NONE))] == ["NONE", "NONE"]
+
+
+READ_TEXT_CASES = BUILD_READER + r"""
+  val thy = Context.the_theory (Context.the_generic_context ());
+  val ctxt = Proof_Context.init_global thy;
+  fun said (i, (typ, text)) =
+    writeln ("READ " ^ string_of_int i ^ ": " ^ verdict (fn () => TAT_Mixfix.read ctxt (SOME text)) ^ " | "
+      ^ verdict (fn () => read_as_built thy ("theory A\n  imports Main\nbegin\nconsts c :: " ^ quote typ ^ " " ^ text ^ "\nend\n")));
+  val _ = List.app said [%s];
+  val _ = writeln "READ DONE";
+"""
+READ_TEXTS = [                       # an annotation in its ascii, as `mixfix_text` writes it, a type it fits, what `read` says
+    ('("\\<foo _" [10] 10)', "nat => nat", 'refused: Malformed symbolic character: "\\<foo"'),
+    ('(infixl "\\<foo" 65)', "nat => nat => nat", 'refused: Malformed symbolic character: "\\<foo"'),
+    ('("\\<^cancel>\\<open>\\<foo\\<close> _" [10] 10)', "nat => nat", 'refused: Malformed symbolic character: "\\<foo"'),
+    ('("\\< _")', "nat => nat", 'refused: Malformed symbolic character: "\\<"'),
+    ('("\\<^marker>\\<open>m\\<close> _" [10] 10)', "nat => nat", "ok"),   # a marker: a delimiter, its body never evaluated
+    ('("\\<odot> _" [10] 10)', "nat => nat", "ok"), ('("a\\"b _")', "nat => nat", "ok"), ('("a\\\\b _")', "nat => nat", "ok")]
+
+
+async def test_tat_mixfix_refuses_a_malformed_symbol_as_the_build_does(std_harness, tmp_path):
+    """§4: `read_text` refuses an annotation with a malformed symbol in any
+    token, with Isabelle's own message; a well-formed symbol, a marker with
+    its cartouche and an escaped quote or backslash are read.  A build
+    reading a `consts` with the annotation, asked on every run, refuses it
+    exactly where `read_text` does."""
+    cases = tmp_path / "read_cases.ML"
+    cases.write_text(READ_TEXT_CASES % ", ".join(f"({i}, ({ml_string(typ)}, {ml_string(t)}))"
+                                                 for i, (t, typ, _) in enumerate(READ_TEXTS)))
+    files = ", ".join(ml_string(f) for f in [str(TAT_MIXFIX_ML), str(cases)])
+    r = await ml_process(std_harness, f"val _ = in_theory thy0 [{files}];",
+                         logic="Minilang_AoA", base="Minilang_AoA.Minilang_AoA")
+    lines = r.stdout.splitlines()
+    assert r.returncode == 0 and "READ DONE" in lines, (r.stdout[-3000:], r.stderr[-3000:])
+    said = {int(m[1]): (m[2], m[3]) for m in (re.fullmatch(r"READ (\d+): (.*) \| (.*)", line) for line in lines) if m}
+    tat = [said[i][0] for i in range(len(READ_TEXTS))]
+    assert tat == [expected for _, _, expected in READ_TEXTS], said
+    assert [said[i][1] for i in range(len(READ_TEXTS))] == [
+        "ok" if v == "ok" else "refused: Malformed command syntax" for v in tat], said

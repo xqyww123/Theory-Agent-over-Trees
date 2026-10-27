@@ -238,7 +238,7 @@ The class's construct schema:
   "description": "A light-weight Isabelle locale: lets you define a local theory (like group theory) under axioms and develop theorems under it.",
   "properties": {
     "kind":               { "const": "locale" },
-    "english":            { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":            { "type": "string", "description": "what is defined, in English" },
     "name":               { "type": "string" },
     "imports":            { "type": "array", "items": { "$ref": "#/$defs/LocaleInstance" },
                             "description": "the local theories this locale extends. Example: group extends monoid; a ring extends an abelian group (its addition) and a monoid (its multiplication)" },
@@ -297,7 +297,7 @@ A light-weight Isabelle locale: lets you define a local theory (like group theor
 `english`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 ```
 
 `imports`:
@@ -408,7 +408,7 @@ light_locale idempotent_semigroup =
     ―‹Applying the operation to an element and itself gives it back.›
 begin
 
-text ‹Lemma idem_twice. Applying the operation to an element twice over gives it back.›
+text ‹Lemma ‹idem_twice›. Applying the operation to an element twice over gives it back.›
 lemma idem_twice:
   fixes x :: "'a"
   shows "x ⊗ (x ⊗ x) = x"
@@ -471,8 +471,8 @@ end
   `implicit_structure "padic_int p"`, or `no_implicit_structure` for
   `null`.
 - Each axiom on its own line, `assumes`, its name, a colon and its
-  proposition as a string token, which one private writer of
-  locale.py writes from the statement, given whether the conclusion
+  proposition through the theory's `print_name`, the proposition's text
+  composed by one private writer of locale.py from the statement, given whether the conclusion
   stands in parentheses: one `⋀` binding the `for_any` variables in
   their order, a typed one in parentheses with its type after `::`,
   `⋀(x::'a) y (z::'b).`, none when `for_any` is empty; then the
@@ -488,15 +488,12 @@ end
   indent.
 - Every piece of Isabelle text — the locale's name, an import as
   `locale_instance_text` writes it, a parameter's name and type, the
-  implicit structure, an axiom's name — is written through the
-  theory's `print_name` (SESSION_AND_THEORY §2): bare when its `ascii`
-  is an Isabelle identifier (`is_identifier`, COMMON.md §5) that is not
-  a keyword of the theory, as Isabelle's string token (COMPILATION.md
-  §3) otherwise — `f` and `G` bare, `"'a ⇒ 'a ⇒ 'a"` and a keyword
-  quoted, `assumes "open": …`; the exceptions: an axiom's proposition
-  is always a string token, an import's dotted locale name and the
-  instantiation `_` are written bare (COMMON.md §4), and a syntax's
-  symbol is written by `mixfix_text`.
+  implicit structure, an axiom's name and proposition — is written
+  through the theory's `print_name` (SESSION_AND_THEORY §2): `f` and `G`
+  bare, `"'a ⇒ 'a ⇒ 'a"` and a keyword quoted, `assumes "open": …`, a
+  proposition that is one identifier, `P`, bare; the exceptions: an
+  import's dotted locale name and the instantiation `_` are written bare
+  (COMMON.md §4), and a syntax's symbol is written by `mixfix_text`.
 - The text in the `unicode` spelling; the file takes the `\<name>` form
   from the compile's conversion (COMPILATION.md §2) and reads as Unicode
   in jEdit all the same.

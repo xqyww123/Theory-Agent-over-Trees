@@ -7,7 +7,9 @@ grammars, the `imports` items, the reserved names, §3), 2026-09-30
 through Isabelle, the messages on the status values, `import_sessions`,
 `file_path()`, §3, §4; COMPILATION.md) and 2026-10-12 (`keywords`,
 `print_name`, `imports` non-empty by the framework's check, §2–§3;
-ai-artifacts/review/NODE_CLASS_RULINGS.md); the classes are in `model.py`, their
+ai-artifacts/review/NODE_CLASS_RULINGS.md) and 2026-10-25 (the prose
+translator: the two `description`s and the two `print_name`s, §1, §2;
+COMPILATION.md §3); the classes are in `model.py`, their
 descriptions pinned by `test/test_descriptions.py` and §3's sentences by
 `test/test_session_theory.py`.
 
@@ -61,8 +63,10 @@ The session's theories
 
 A `Session` owns its ROOT entry, which `compile` writes from its fields
 (COMPILATION.md §2): `session "<name>" in "<name>" = "<parent_session>" +`,
-then `description` as one cartouche when not empty, through the
-framework's `cartouche` (COMPILATION.md §3), `options` when not empty, in the
+then `description` as one cartouche when not empty, through
+`_cartouche` (COMPILATION.md §3), untranslated: Isabelle never typesets
+it, and shows it in the `\<name>` spelling on the session's browser
+page; `options` when not empty, in the
 ROOT's own spelling with every name and value quoted (a value the agent
 supplied in quotes is unquoted first), `sessions` listing the session of
 every theory the session's written trees import that is neither the
@@ -153,7 +157,7 @@ Theories to import
 `description`:
 
 ```
-A summary of the theory, as LaTeX text
+A summary of the theory, in English
 ```
 
 `children`:
@@ -163,8 +167,9 @@ The theory's declarations
 ```
 
 A non-empty `description` is emitted as a `text ‹…›` block before the
-`theory` line, the content as written and no period added, through the
-framework's `cartouche` (COMPILATION.md §3; ARCHITECTURE §4, §5). It is never
+`theory` line, the content as stored and no period added, through
+`document_cartouche` with `lists` (COMPILATION.md §3; ARCHITECTURE §4,
+§5): a Markdown item that starts a line makes a list. It is never
 run: evaluation runs the header and the `end` alone. An amend that
 changes it re-evaluates the tree like any other amend. `Theory` writes its
 text through `emit_beginning` — that block, then the header, each line
@@ -206,21 +211,25 @@ Isabelle refuses two theory files whose names differ only in case
 names the holder). Whether an import exists is reported by `begin_theory`
 at evaluation, which also records `import_sessions` and `keywords`.
 
-`print_name(text, keywords)` is how a piece of Isabelle text — a name,
-a term, a type, a sort — is written, in the `unicode` spelling: bare
+A piece of Isabelle text — a name, a term, a type, a sort, a
+proposition — is written by one rule, in the `unicode` spelling: bare
 when its `ascii` spelling is an identifier
-(`Isabelle_RPC_Host.unicode.is_identifier`) that is not in `keywords`,
-and as Isabelle's string token (COMPILATION.md §3) otherwise — the
-rule of Isabelle's own `Token.print_name` for an identifier: `lemma
-open:` is refused by Isabelle, so `lemma "open":`, `fixes "for"`;
-`UNIV` bare, `"{xs. distinct xs}"`, `"'a ⇒ 'b"`, `"0"`, `"List.list"`
-and `"0.5"` quoted. A keyword as a name is no failure: Isabelle accepts
-it quoted at every use. The tree's file is written against the
-theory's `keywords` — the theory's `print_name(text)` — and takes its
-`\<name>` form from the compile's conversion (COMPILATION.md §2);
-`recall`, read by the agent, is written against no keyword, so every
-name, an identifier, is bare there, and which other pieces a class
-writes through `print_name` its own document's §8 says. While
+(`Isabelle_RPC_Host.unicode.is_identifier`) that is not among the
+keywords, and quoted otherwise — the rule of Isabelle's own
+`Token.print_name` for an identifier: `lemma open:` is refused by
+Isabelle, so `lemma "open":`, `fixes "for"`; `UNIV` bare, `"{xs.
+distinct xs}"`, `"'a ⇒ 'b"`, `"0"`, `"List.list"` and `"0.5"` quoted. A
+keyword as a name is no failure: Isabelle accepts it quoted at every
+use. The theory's `print_name(text)` writes the tree's file by the
+rule, against the theory's `keywords`, quoting through the always-quoted
+writer, which translates the formal comments inside the text and writes
+a string token (COMPILATION.md §3). The file takes its `\<name>` form
+from the compile's conversion (COMPILATION.md §2).
+The module-level `print_name(text)` writes `recall`, read by the agent,
+and every message, against no keyword, quoting with `string_token`: every
+name, an identifier, is bare there, a formal comment shown as written,
+and which other pieces a class writes through it its own document's §8
+says. While
 `keywords` is `None`, no keyword is known. `Theory.can_emit` is the
 framework's default and `keywords` known: a tree whose keyword table
 is `None` is not written (COMPILATION.md §3, §4). A node of a plugin

@@ -53,7 +53,7 @@ class LiftingContext(Lifting_Block):
                        " fset.lifting begin … end",
         "properties": {
             "kind": {"const": "lifting_context"},
-            "name": {"type": "string", "description": "the block's name, by which it is referred to"},
+            "name": {"type": "string", "description": "the name used in the node's id"},
             "types": {"type": "array", "minItems": 1, "items": {"type": "string"},
                       "description": "the types whose Lifting setup the block opens again, each by its name"},
             "children": {"type": "array", "items": {"$ref": "#/$defs/Construct"},

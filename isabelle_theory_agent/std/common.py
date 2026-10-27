@@ -20,21 +20,22 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
-from collections.abc import Callable, Container, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, NotRequired, TypedDict, cast, final, overload
 
 import IsaMini.AoA  # noqa: F401  # the remote procedure `IsaMini.AoA`, served by this process (§3)
-from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, symbol_explode
+from Isabelle_RPC_Host.unicode import IsaTerm, ascii_of_unicode, is_identifier, pretty_unicode, symbol_explode
 
 from .. import isabelle_driver, jobs
 from ..compile import identity, paths
 from ..exceptions import ID_NAME_TEXT, Id_Name_Grammar, InvalidField, InvalidName, TAT_InternalError
 from ..jobs import PASSED, RUNNING, Failed, Succeeded, with_message
 from ..model import (
-    CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Node, NonLeaf_Node, Ready, StdBlock, cartouche, emit_lines,
-    print_name, status_of_errors, string_token)
+    CannotEvaluate, Forest, Isar_State_Slot, JSON_Schema, Node, NonLeaf_Node, Ready, StdBlock, emit_lines,
+    status_of_errors, string_token)
 from ..plugin import TAT_compile_hook, TAT_import
+from ..prose import latex_of
 
 # every theory of the forest imports it: the `aoa` method, the plugin's AoA tasks and the configuration option
 # `typedef_overloaded` (§3, §4)
@@ -53,17 +54,20 @@ class Type_Definition:
 MOVE_IT_OUT = "Move it out."      # §1's remedy, the one home of the sentence
 
 
-def english_cartouche(english: str, lead: str | None = None) -> str:
-    """`english` as the file carries it (§2): a period added when it ends
-    without `.`, `!` or `?`, after the class's lead when it has one,
-    through the framework's `cartouche` — the `text` line's text, and a
-    `Locale` axiom's formal comment (LOCALE.md §5)."""
-    if english and english[-1] not in ".!?":
-        english += "."
-    return cartouche(english if lead is None else f"{lead} {english}")
+def english_cartouche(english: str, lead: tuple[str, Sequence[str]] | None = None) -> str:
+    """`english` as the file carries it (§2; COMPILATION.md §3): `‹`; the
+    class's lead when it has one — its word, then each name in a bare
+    cartouche, joined by ` and `, then `. `; `english` through `latex_of`,
+    in the `unicode` spelling (`pretty_unicode`); a period when the authored text ends without `.`, `!` or `?`,
+    appended after the translation; `›` — the `text` line's text, and a
+    `Locale` axiom's formal comment (LOCALE.md §5).  The names are checked
+    identifiers, so their cartouches are safe as they stand."""
+    head = "" if lead is None else f"{lead[0]} " + " and ".join(f"‹{n}›" for n in lead[1]) + ". "
+    period = "." if english and english[-1] not in ".!?" else ""
+    return "‹" + head + pretty_unicode(latex_of(english)) + period + "›"
 
 
-def text_line(english: str, lead: str | None = None) -> str:
+def text_line(english: str, lead: tuple[str, Sequence[str]] | None = None) -> str:
     """The `text` command a class writes before its own (§2)."""
     return f"text {english_cartouche(english, lead)}"
 
@@ -363,16 +367,16 @@ def _type_variables(ascii: str) -> set[str]:
     return found
 
 
-def type_parameters_text(parameters: Sequence[Type_Parameter], keywords: Container[str] = ()) -> str:
+def type_parameters_text(parameters: Sequence[Type_Parameter], write: Callable[[str | IsaTerm], str]) -> str:
     """§4's writer: nothing for none; one without a sort bare, `'a`;
     otherwise parenthesised and comma-separated, a sort after `::`
-    through `print_name` against `keywords` — `('a :: linorder, 'b)`."""
+    through `write` — `('a :: linorder, 'b)`."""
     if not parameters:
         return ""
     if len(parameters) == 1 and parameters[0].sort is None:
         return parameters[0].name.unicode
     return "(" + ", ".join(
-        p.name.unicode + (f" :: {print_name(p.sort, keywords)}" if p.sort is not None else "")
+        p.name.unicode + (f" :: {write(p.sort)}" if p.sort is not None else "")
         for p in parameters) + ")"
 
 
@@ -488,12 +492,12 @@ def mixfix_of_wire(wire: tuple[str, str, list[int] | None, int | None] | None) -
 
 
 def type_head_text(parameters: Sequence[Type_Parameter], name: str, syntax: TypeMixfix | None,
-                   keywords: Container[str]) -> str:
+                   write: Callable[[str | IsaTerm], str]) -> str:
     """§4's writer of a type's head, as the commands write it: the type
-    parameters by `type_parameters_text`, the name through `print_name`
-    against `keywords`, and the syntax by `mixfix_text` when one is given
-    — `'a fset`, `('a, 'b) t (infixr "+" 10)`."""
-    return " ".join(filter(None, (type_parameters_text(parameters, keywords), print_name(name, keywords),
+    parameters by `type_parameters_text`, the name through `write`, and
+    the syntax by `mixfix_text` when one is given — `'a fset`, `('a, 'b) t
+    (infixr "+" 10)`."""
+    return " ".join(filter(None, (type_parameters_text(parameters, write), write(name),
                                   mixfix_text(syntax) if syntax is not None else "")))
 
 
@@ -595,20 +599,20 @@ def check_locale_instance(instance: Locale_Instance, path: str) -> None:
                          [x.name for x in instance.instantiations[:i]], in_term=True)
 
 
-def locale_instance_text(instance: Locale_Instance, keywords: Container[str] = ()) -> str:
+def locale_instance_text(instance: Locale_Instance, write: Callable[[str | IsaTerm], str]) -> str:
     """§4's writer, an instance as a locale expression writes it: the
     qualifier and a colon when given; the locale's name, bare when it has
     a dot (one token to Isabelle's lexer); `where` and the instantiations
     joined by ` and `, each `name = term`, the instantiation `_` bare —
-    every other piece through `print_name` against `keywords`: `S:
-    semigroup where f = f`, `padic_integers where Zp = _ and p = p`."""
+    every other piece through `write`: `S: semigroup where f = f`,
+    `padic_integers where Zp = _ and p = p`."""
     parts = []
     if instance.qualifier is not None:
-        parts.append(print_name(instance.qualifier, keywords) + ":")
-    parts.append(instance.locale.unicode if "." in instance.locale.ascii else print_name(instance.locale, keywords))
+        parts.append(write(instance.qualifier) + ":")
+    parts.append(instance.locale.unicode if "." in instance.locale.ascii else write(instance.locale))
     if instance.instantiations:
         parts.append("where " + " and ".join(
-            f"{print_name(i.name, keywords)} = {'_' if i.term.ascii == '_' else print_name(i.term, keywords)}"
+            f"{write(i.name)} = {'_' if i.term.ascii == '_' else write(i.term)}"
             for i in instance.instantiations))
     return " ".join(parts)
 
@@ -644,13 +648,13 @@ def function_names(rep: IsaTerm | None, abs_: IsaTerm | None, type_name: str,
 
 
 def morphisms_clause(rep: IsaTerm | None, abs_: IsaTerm | None, type_name: str, prefixes: tuple[str, str],
-                     keywords: Container[str]) -> str | None:
+                     write: Callable[[str | IsaTerm], str]) -> str | None:
     """§4's writer of the `morphisms` clause: the two names with the
-    defaults filled in, each through `print_name` against `keywords`;
-    None when neither was given."""
+    defaults filled in, each through `write`; None when neither was
+    given."""
     if rep is None and abs_ is None:
         return None
-    return "morphisms " + " ".join(print_name(f, keywords) for f in function_names(rep, abs_, type_name, prefixes))
+    return "morphisms " + " ".join(write(f) for f in function_names(rep, abs_, type_name, prefixes))
 
 
 # --- Proof_Obligation and its jobs (§3)

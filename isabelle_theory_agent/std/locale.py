@@ -89,7 +89,7 @@ class Locale(StdBlock):
                        " axioms and develop theorems under it.",
         "properties": {
             "kind": {"const": "locale"},
-            "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
+            "english": {"type": "string", "description": "what is defined, in English"},
             "name": {"type": "string"},
             "imports": {"type": "array", "items": {"$ref": "#/$defs/LocaleInstance"},
                         "description": "the local theories this locale extends. Example: group extends monoid; a ring"
@@ -262,7 +262,7 @@ class Locale(StdBlock):
             return False
         lines: list[str] = [self.english] if depth == 0 else []
         if self.imports:
-            lines += ["imports:", *(INDENT + locale_instance_text(i) for i in self.imports)]
+            lines += ["imports:", *(INDENT + locale_instance_text(i, print_name) for i in self.imports)]
         if self.fixes:
             lines += ["fixes:", *(INDENT + fixes_text([v], print_name) for v in self.fixes)]
         lines.append("implicit_structure: "
@@ -290,17 +290,18 @@ class Locale(StdBlock):
         """§5: the `text` line; `light_locale`, the name and `=`; the imports,
         the `for` clause or the `fixes` element, ` +` on every import line
         but the last and on the line before the first element; the implicit
-        structure; each axiom with its `english` as a formal comment;
-        `begin`; one empty line when the block has children."""
+        structure; each axiom, its proposition through the theory's
+        `print_name` as every piece of Isabelle text is, with its `english`
+        as a formal comment; `begin`; one empty line when the block has
+        children."""
         assert self.annotations is not None and self.parenthesised_conclusions is not None   # recorded (`can_emit`)
         theory = self.enclosing(Theory)
         write: Callable[[str | IsaTerm], str] = theory.print_name
-        keywords = theory.keywords or ()
         emit_lines(indent, out, text_line(self.english))
         lines = [f"light_locale {write(self.name)} ="]
         fixes = [v if v.syntax is not None else Variable_With_Syntax(v.name, v.type, annotation)
                  for v, annotation in zip(self.fixes, self.annotations)]
-        imports = [locale_instance_text(i, keywords) for i in self.imports]
+        imports = [locale_instance_text(i, write) for i in self.imports]
         if imports:
             expression = [*(line + " +" for line in imports[:-1]), imports[-1],
                           *([f"for {fixes_text(fixes, write)}"] if fixes else [])]
@@ -311,7 +312,7 @@ class Locale(StdBlock):
         lines.append("  " + (f"implicit_structure {write(self.implicit_structure)}"
                              if self.implicit_structure is not None else "no_implicit_structure"))
         for a, parenthesised in zip(self.assumes, self.parenthesised_conclusions):
-            lines.append(f"  assumes {write(a.name)}: {string_token(proposition_text(a.statement, parenthesised))}")
+            lines.append(f"  assumes {write(a.name)}: {write(IsaTerm.from_agent(proposition_text(a.statement, parenthesised)))}")
             lines.append(f"    ―{english_cartouche(a.statement.english)}")
         lines.append("begin")
         emit_lines(indent, out, "\n".join(lines))

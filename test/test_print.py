@@ -1056,3 +1056,40 @@ def test_a_leaf_gets_no_children_header_and_print_md_section_2_s_quickview_is_as
     y = theory(b, "X", beginning=failing("Fail to load `Nowhere.Nope` because it is not found."), ending=READY)
     [_, _, quickview] = fenced_blocks(PRINT, "2.")
     assert render(g, g, focus(y))[1:] == quickview
+
+
+# --- the caption (PRINT.md §1) ----------------------------------------------
+
+class Captioned_Section(Section):
+    """A nesting node putting a caption on its line where it is detailed, as
+    `Section` puts its title (node_classes/SECTION_AND_TEXT.md §8)."""
+    def caption(self, mode, depth):
+        return f"heading {self.name}" if self.detailed(mode, depth) else None
+
+
+def line_of(rendering: list[str], node_id: str) -> str:
+    [line] = [line.strip() for line in rendering if line.strip().startswith(f"- {node_id}")]
+    return line
+
+
+def test_the_caption_stands_between_the_id_and_the_mark_where_the_class_answers_one():
+    """PRINT.md §1: `- <id>: <caption> (<mark>)` where `caption` answers a
+    text — here where the node is detailed: a focus, `Recall` at depth 0
+    and 1 — and the plain line where it answers None: on the path, beside
+    a focus, in the briefing, at `Recall`'s depth 2 and 3."""
+    f, a, x, s, p = deep_forest()
+    c = Captioned_Section(x, slot()); c.name = "C"
+    c.evaluation_status_beginning = c.evaluation_status_ending = READY
+    enter(x, c, "section")
+    q = leaf(Lemma, c, "lemma", "Q", status=READY)
+    captioned, plain = "- section_C: heading C (incomplete)", "- section_C (incomplete)"
+    assert render(f, c, RECALL)[0] == captioned                       # depth 0
+    assert line_of(render(f, x, RECALL), "section_C") == captioned    # depth 1
+    assert line_of(render(f, a, RECALL), "section_C") == plain        # depth 2
+    assert line_of(render(f, f, RECALL), "section_C") == plain        # depth 3
+    assert line_of(render(f, f, focus(c)), "section_C") == captioned  # a focus
+    assert line_of(render(f, f, focus(x, depth=-1)), "section_C") == captioned   # under a focus, within its depth
+    assert line_of(render(f, f, focus(q)), "section_C") == plain      # on the path
+    assert line_of(render(f, f, focus(s)), "section_C") == plain      # beside the path
+    assert line_of(render(f, f, BRIEFING), "section_C") == plain
+    assert render(f, q, RECALL)[0] == "- lemma_Q (valid statement, proof not started)"    # `Node`'s None

@@ -3,7 +3,9 @@
 Status: design, approved 2026-09-04; §2, §3 and §5 revised 2026-10-12
 with the node-class rounds (ai-artifacts/review/NODE_CLASS_RULINGS.md):
 the construct checked against its construct schema, the agreement
-check at every depth, the grammar without `Any`.
+check at every depth, the grammar without `Any`; §2 and §5 revised
+2026-10-25 with the prose translator (COMPILATION.md §3): prose, and the
+theory's `print_name` translating the formal comments in Isabelle text.
 
 A node class is a plugin: an Isabelle theory carrying its evaluator, and a
 Python package carrying everything else (ARCHITECTURE §6). This document is
@@ -111,7 +113,14 @@ The two schemas describe one thing twice, for two readers — the agent and
 the type checker — and the loader holds them to each other (§5). Isabelle
 text among a class's fields is typed `IsaTerm` (MODULE_STRUCTURE §4.3),
 which `gen` builds with `IsaTerm.from_agent` from the submitted
-string.
+string. Prose among a class's fields — an `english`, a heading's title, a
+passage, a `Theory`'s `description` — is `str`, which `gen` stores as the
+agent wrote it, its whitespace normalised where the class's document says
+so, and which emission writes through `latex_of` (COMPILATION.md §3). A
+prose field's schema description says what the field holds and that it
+is in English — "the statement in English", "the heading, in English" —,
+which is how the `edit` tool's description, on every field written in
+English (TOOL_SCHEMAS.md §1), reaches it.
 
 Where a node of the class may stand inside its theory is answered by
 two methods a class overrides, each from its own side: a container's
@@ -165,9 +174,12 @@ framework makes the id component `<kind>_<name>` from it (MCP_SPECIFICATION
 MODULE_STRUCTURE §4.1 lists; of its log a class writes `note` records
 alone, the named events being the framework's (LOGGING.md §3, §5) —,
 `forest().id_of` for a node's id as the agent sees it,
-`enclosing(cls)`, the nearest ancestor of class `cls`, and so its
-theory's `print_name` over the stored `keywords`, `enclosing(Theory).print_name`
-(node_classes/SESSION_AND_THEORY.md §2), its own
+`nearest(cls)` and `enclosing(cls)`, the nearest ancestor that is an
+instance of `cls` — None, or an error, when there is none —, and so its
+theory's `print_name`, `enclosing(Theory).print_name`, the writer of every
+piece of Isabelle text its file carries: against the stored `keywords`,
+the formal comments inside the text translated
+(node_classes/SESSION_AND_THEORY.md §2; COMPILATION.md §3), its own
 `operation_slots(operation)` — an operation's input slot and resulting
 slot, what the operation's evaluation hook runs from and into
 (MODULE_STRUCTURE §4.1, "States") — and `job_operation_status()`, the
@@ -307,7 +319,7 @@ registration, per class:
   override point (ARCHITECTURE §3.2) — nor `_operations_ready` nor
   `job_operation_status` nor
   `_own_statuses` (MODULE_STRUCTURE §4.1), nor `print` nor
-  `_children_to_print` — `print_fields`, `children_header`, `owing_line` and `mark` are (PRINT.md); the
+  `_children_to_print` — `print_fields`, `children_header`, `owing_line`, `mark` and `caption` are (PRINT.md); the
   methods a class never overrides carry `typing.final` as well, so the
   type checker says it before the loader does;
 - a `StdBlock` class does not override `emit` — the children are the
@@ -316,7 +328,7 @@ registration, per class:
   say whether the class has an ending command;
 - an override is a coroutine function exactly when the method it
   overrides is — the framework's, or one of the plugin's own base
-  classes: `print_fields`, `children_header`, `owing_line` and `mark` are plain, as rendering is
+  classes: `print_fields`, `children_header`, `owing_line`, `mark` and `caption` are plain, as rendering is
   synchronous (PRINT.md), and so are `can_emit`, `emit`, `emit_beginning`
   and `emit_ending`, and `cannot_hold`, `cannot_stand_under`,
   `refuses_children` and `check_fields` (§2); the evaluation hooks are coroutines;
@@ -383,7 +395,8 @@ one positional argument, neither a coroutine nor a generator. A compile runs on 
 loaded from the database and never evaluated, every instant status
 `not_evaluated`, so `can_emit`, `emit` and a hook read only what is
 stored — authored fields, the recorded fields the class stores, its
-`Theory`'s stored `keywords` through `print_name`,
+`Theory`'s stored `keywords` through the theory's `print_name`, which
+translates the formal comments in the Isabelle text it writes,
 `last_evaluation_statuses()`, `check_outcome()` and `job()`
 (COMPILATION.md §3).
 A hook finds its paths through `paths(working_directory)` of

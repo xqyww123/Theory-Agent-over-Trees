@@ -335,7 +335,7 @@ def test_the_roots_clauses_and_quoting(tmp_path):
                 theory("Own", "A"),
                 theory("Failing", "ZF.ZF") | {"children": [lemma("broken", fail=True)]},
                 theory("Unrun", "FOL.FOL"),
-                description='A ‹quoted› word \\<open>and\\<close> a second line\nhere',
+                description='A ‹quoted› word \\<open>and\\<close> a second line\nhere ›',     # a stray mark: `"`
                 options=[{"name": "document", "value": '"pdf"'},
                          {"name": "document_tags", "value": 'a"b\\c'}]),
         session("Bare"),
@@ -352,7 +352,7 @@ def test_the_roots_clauses_and_quoting(tmp_path):
     C.compile(f, [])
     assert (tmp_path / "work" / "ROOT").read_text() == ascii_of_unicode(
         'session "HOL-Extras" in "HOL-Extras" = "HOL" +\n'
-        '  description ‹A "quoted" word "and" a second line\nhere›\n'
+        '  description ‹A ‹quoted› word \\<open>and\\<close> a second line\nhere "›\n'
         '  options ["document" = "pdf", "document_tags" = "a\\"b\\\\c"]\n'
         '  sessions\n'                       # of the written trees: sorted, each once, less the
         '    "HOL-Algebra"\n'                # parent and the session itself
@@ -601,16 +601,18 @@ def test_a_hook_runs_after_the_files_and_before_the_empty_folders_and_the_root(t
 
 def test_a_theorys_description_is_a_text_block_before_the_header(tmp_path):
     """SESSION_AND_THEORY §2: a non-empty `description` is emitted as a
-    `text ‹…›` block before the `theory` line, as written and with no
-    period added, `‹`, `›`, `\\<open>` and `\\<close>` in it replaced by
-    `"`; nothing for an empty one."""
+    `text ‹…›` block before the `theory` line, with no period added,
+    through `document_cartouche` with `lists` (COMPILATION.md §3): a
+    paired cartouche mark kept, a stray one a symbol, a list kept with the
+    content started on a line of its own; nothing for an empty one."""
     f = forest(tmp_path / "work", session("S", theory("A") | {
-        "description": 'A ‹quoted› word \\<open>and\\<close> a second line\nhere',
+        "description": 'A ‹quoted› word \\<open>and\\<close> a second line\nhere›\n▪ one\n▪ two',
         "children": [lemma("x")]}, theory("B")))
     run(f.evaluate_to(None, False))
     files = C.render(f).files
     assert files[C.Path("S/A.thy")] == (
-        'text \\<open>A "quoted" word "and" a second line\nhere\\<close>\n'
+        'text \\<open>\nA \\<open>quoted\\<close> word \\<open>and\\<close> a second line\nhere{\\isasymclose}\n'
+        '\\<^item> one\n\\<^item> two\\<close>\n'
         'theory "A"\n  imports "Main"\nbegin\n'
         'text \\<open>x\\<close>\n'
         'end\n')

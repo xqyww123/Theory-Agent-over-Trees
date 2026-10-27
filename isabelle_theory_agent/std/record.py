@@ -6,7 +6,7 @@ when it is `ready`."""
 
 from __future__ import annotations
 
-from collections.abc import Container
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
@@ -49,7 +49,7 @@ class Record(Leaf, Type_Definition):
         "type": "object",
         "properties": {
             "kind": {"const": "record"},
-            "english": {"type": "string", "description": "what is defined, in English, as LaTeX text"},
+            "english": {"type": "string", "description": "what is defined, in English"},
             "type_parameters": {"type": "array", "items": {"$ref": "#/$defs/TypeParameter"},
                                 "description": "the type's parameters; sorts are usually not specified"},
             "type_name": {"type": "string"},
@@ -154,23 +154,23 @@ class Record(Leaf, Type_Definition):
 
     # --- what it prints (§8) and emission (§5)
 
-    def _definition(self, keywords: Container[str]) -> tuple[str, list[str]]:
+    def _definition(self, write: Callable[[str | IsaTerm], str]) -> tuple[str, list[str]]:
         """The head — the type's head by `type_head_text`, `=`, `parent` in
         its applied form and `+` when given — and the fields' texts, every
-        piece through `print_name` against `keywords`: the theory's for the
-        file; none under `recall`, where every name, an identifier, comes
-        out bare."""
-        head = type_head_text(self.type_parameters, self.name, None, keywords) + " ="
+        piece through `write`: the theory's `print_name` for the file, the
+        module-level one under `recall`, where every name, an identifier,
+        comes out bare."""
+        head = type_head_text(self.type_parameters, self.name, None, write) + " ="
         parent_type = self.parent_type()
         if parent_type is not None:
-            head += f" {print_name(parent_type, keywords)} +"
-        return head, [f"{print_name(f.name, keywords)} :: {print_name(f.type, keywords)}" for f in self.fields]
+            head += f" {write(parent_type)} +"
+        return head, [f"{write(f.name)} :: {write(f.type)}" for f in self.fields]
 
     def print_fields(self, indent, out, mode, depth):
         """Under `Recall` alone (§8): the definition, one line, at depths 0
         to 2, against no keyword; `english` at 0."""
         if mode is RECALL and depth <= 2:
-            head, fields = self._definition(())
+            head, fields = self._definition(print_name)
             out.write(INDENT * indent + " ".join([head, *fields]) + "\n")
         if mode is RECALL and depth == 0:
             out.write(INDENT * indent + self.english + "\n")
@@ -178,7 +178,7 @@ class Record(Leaf, Type_Definition):
 
     def emit(self, indent, out):
         emit_lines(indent, out, text_line(self.english))
-        head, fields = self._definition(self.enclosing(Theory).keywords or ())
+        head, fields = self._definition(self.enclosing(Theory).print_name)
         emit_lines(indent, out, "\n".join([f"{self.kind} {head}", *(f"  {f}" for f in fields)]))
         return indent
 

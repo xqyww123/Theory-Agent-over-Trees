@@ -27,6 +27,8 @@ from .plugin import Loaded, check_call, validate_call_schema
 WAIT_AT_LEAST = 3
 WAIT_AT_MOST = 12 * 3600 - 60
 NO_JOB = "No job is running."     # `check_construct`'s one-line body when nothing stands (CONSTRUCT_INTERACTION §5)
+EDIT_DESCRIPTION = ("Edit Isabelle theory constructs. In every field written in English, surround every Isabelle/HOL"
+                    " term with ‹ ›, e.g. ‹n²›. The rest of such a field is LaTeX: % and $ are LaTeX special characters.")
 
 _TOOLS = Path(__file__).parent / "tools"
 
@@ -231,8 +233,7 @@ def tools(forest: Forest, loaded: Loaded) -> list[Tool]:
         construct_tools.append(_tool("answer", "Answer the question a construction job asked you",
                                      answer_schema, run_answer, read_only=False))
 
-    return [_tool("edit", "Edit Isabelle theory constructs", loaded.edit_schema, run_edit,
-                  read_only=False),
+    return [_tool("edit", EDIT_DESCRIPTION, loaded.edit_schema, run_edit, read_only=False),
             _tool("move", "Move an Isabelle theory construct", _schema("move"), run_move,
                   read_only=False),
             _tool("delete", "Delete an Isabelle theory construct", _schema("delete"), run_delete,
