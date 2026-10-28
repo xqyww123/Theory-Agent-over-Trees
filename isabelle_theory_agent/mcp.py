@@ -20,7 +20,7 @@ from .jobs import RUNNING, Agent, Construction_Job, Job_Class, Standing, by_titl
 from .mcp_server import Body, Tool, Trailer, With_Trailer
 from .model import (
     BRIEFING, Evaluation, Forest, JSON_Schema, Node, NonLeaf_Node, RECALL, Relative_Focus, Theory)
-from .plugin import Loaded, check_call, validate_call_schema
+from .plugin import Loaded, agent_arguments, check_call, validate_call_schema
 
 # `check_construct`'s clamps on `wait_seconds` (CONSTRUCT_INTERACTION §5, §8): at
 # least 3 seconds, and a minute under the clients' twelve-hour tool limit
@@ -322,12 +322,15 @@ def _check_construct_description(constructions: tuple[Any, ...], checks: tuple[A
 def _tool(name: str, description: str, schema: JSON_Schema, run: Body, read_only: bool) -> Tool:
     """One object per tool is what the agent is told and what a call is
     held to: the schema validated as the tool is built
-    (`plugin.validate_call_schema`), and every call checked against it
+    (`plugin.validate_call_schema`), and every call, its strings repaired
+    by the input layer (`plugin.agent_arguments`), checked against it
     before `run` sees it (`plugin.check_call`); the constructs inside
-    `edit`'s are `edit.py`'s to check, element by element."""
+    `edit`'s are `edit.py`'s to check, element by element.  Both steps
+    stand inside the tool's body, after the tool log's `call` record."""
     validate_call_schema(schema, name)
 
     async def checked(agent: Agent, arguments: dict[str, Any]) -> str | With_Trailer:
+        arguments = agent_arguments(arguments)
         check_call(schema, name, arguments)
         return await run(agent, arguments)
     return Tool(name, description, schema, checked, read_only)

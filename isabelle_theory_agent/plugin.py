@@ -1,9 +1,10 @@
 """Loading node classes (PLUGIN_SYSTEM.md): registration under `@TAT_node`,
 the table from `kind` to class that `edit` dispatches on, the `$defs` that
-complete the `edit` tool's schema at start, the one checker — of a tool
-call's arguments and of a submitted construct, each against its schema
-(MODULE_STRUCTURE §4.4) — and the argument schema grammar, what a class's
-TypedDict may declare.
+complete the `edit` tool's schema at start, the input layer's repair of
+a tool call's strings, the one checker — of a tool call's arguments and
+of a submitted construct, each against its schema (MODULE_STRUCTURE
+§4.4) — and the argument schema grammar, what a class's TypedDict may
+declare.
 
 Importing a plugin's package is what registers its classes, into the
 process-wide `registry`; `load` imports every package `launch_TAT`
@@ -830,13 +831,144 @@ class _Agreement:
             self.agree(arm, by_values[values], f"{where}<{field}={'|'.join(sorted(values))}>")
 
 
+# --- the input layer (MODULE_STRUCTURE §4.4) ------------------------------------
+# Every string of a tool call, repaired before the call is checked: a lone
+# UTF-16 surrogate, which `json.loads` admits and no UTF-8 encoder writes,
+# becomes U+FFFD; a string holding YXML's markup characters that Isabelle's
+# inner-syntax reader reads as source text (syntax.ML `parse_input`) becomes
+# that text.  The check refuses a string still holding either character.
+
+_X, _Y = "\x05", "\x06"                                     # YXML's markup characters (yxml.ML)
+_SURROGATE = re.compile("[\ud800-\udfff]")                  # after `json.loads`, every one is lone
+_INTEGER = re.compile("-?[0-9]+")                           # value.ML `parse_int`
+_POSITION = ("line", "offset", "end_offset", "end_line")    # position.ML `range_of_properties`
+
+
+def agent_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """A tool call's arguments, every string through `agent_string`, in new
+    containers; an argument nested deeper than `NESTING_LEVELS` as it is,
+    for the check to refuse next."""
+    return {name: value if _nested_deeper_than(value, NESTING_LEVELS) else _repaired(value)
+            for name, value in arguments.items()}
+
+
+def _repaired(value: Any) -> Any:
+    if isinstance(value, str):
+        return agent_string(value)
+    if isinstance(value, Mapping):
+        return {k: _repaired(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_repaired(v) for v in value]
+    return value
+
+
+def agent_string(text: str) -> str:
+    """One string of a tool call as TAT keeps it: a lone surrogate U+FFFD;
+    a string holding a markup character that `parse_input` reads as source
+    text — a body of one text node, or of one `input` element whose
+    position reads — its text content; any other unchanged."""
+    text = _SURROGATE.sub("\ufffd", text)
+    if _X not in text and _Y not in text:
+        return text
+    try:
+        body = _parse_body(text)
+    except _Malformed:
+        return text
+    match body:
+        case [str() as source]:
+            return source
+        case [_Elem("input", attributes, _)] if _position_reads(attributes):
+            return _content(body)
+        case _:
+            return text
+
+
+class _Elem(NamedTuple):
+    name: str
+    attributes: list[tuple[str, str]]
+    body: list[_Elem | str]          # a `str` is a text node
+
+
+class _Malformed(Exception):
+    """yxml.ML's `Malformed YXML`."""
+
+
+def _parse_body(text: str) -> list[_Elem | str]:
+    """yxml.ML `parse_body`: a stack of open elements, each with its body."""
+    pending = [_Elem("", [], [])]
+    for chunk in filter(None, text.split(_X)):
+        fields = chunk.split(_Y)
+        if fields == ["", ""]:                                  # X Y X closes an element
+            if len(pending) == 1:
+                raise _Malformed
+            closed = pending.pop()
+            pending[-1].body.append(closed)
+        elif fields[0] == "":                                   # X Y name Y att=val … X opens one
+            if not fields[1]:
+                raise _Malformed
+            pending.append(_Elem(fields[1], [_attribute(a) for a in fields[2:]], []))
+        else:
+            pending[-1].body.extend(fields)
+    if len(pending) > 1:
+        raise _Malformed
+    return pending[0].body
+
+
+def _attribute(text: str) -> tuple[str, str]:
+    name, equals, value = text.partition("=")
+    if not equals or not name:
+        raise _Malformed
+    return name, value
+
+
+def _content(body: list[_Elem | str]) -> str:
+    """xml0.ML `content_of`, an explicit stack in place of its recursion,
+    since the agent sets the depth."""
+    out, stack = [], [iter(body)]
+    while stack:
+        for tree in stack[-1]:
+            if isinstance(tree, str):
+                out.append(tree)
+            else:
+                stack.append(iter(tree.body[1:] if _wraps(tree) else tree.body))
+                break
+        else:
+            stack.pop()
+    return "".join(out)
+
+
+def _wraps(tree: _Elem) -> bool:
+    """xml0.ML `unwrap_elem_body`'s test: an `xml_elem` whose first
+    attribute is `xml_name` and whose first child is a bare `xml_body`, a
+    child `content_of` skips."""
+    match tree:
+        case _Elem("xml_elem", [("xml_name", _), *_], [_Elem("xml_body", [], _), *_]):
+            return True
+        case _:
+            return False
+
+
+def _position_reads(attributes: list[tuple[str, str]]) -> bool:
+    """Whether Isabelle reads an `input` element's position: each position
+    property present first given as an integer (properties.ML `get_int`)."""
+    first = dict(reversed(attributes))          # a name's first occurrence wins, as `get_int` reads it
+    return all(_INTEGER.fullmatch(first[name]) for name in _POSITION if name in first)
+
+
+def _holds_markup(value: Any) -> bool:
+    """A string still holding a markup character, which the check refuses."""
+    return isinstance(value, str) and (_X in value or _Y in value)
+
+
 # --- the check (MODULE_STRUCTURE §4.4) ------------------------------------------
 # One checker: of a tool call's own arguments against the very schema the
 # tool advertises (TOOL_SCHEMAS.md §4), and of each submitted construct
 # against its class's construct schema, so that what the agent is told and
 # what it is held to are one object.  Its sentences stay within
 # RENDER_BASELINES §2's vocabulary — the JSON types' phrases, `must be one
-# of`, `must not be empty`, the nesting bound — each held once here.
+# of`, `must not be empty`, `must be a 64-bit integer`, `cannot hold
+# Isabelle's internal markup (U+0005 or U+0006)`, the nesting bound — each
+# held once here.
 
 NESTING_LEVELS = 100      # a tool call's argument nests no deeper, each object or array a level
 INTEGER_RANGE = (-2**63, 2**63 - 1)   # a JSON integer lies within it: the signed 64-bit range, which
@@ -911,7 +1043,8 @@ class _Check:
 
     def value(self, value: Any, schema: JSON_Schema, holder: str, path: str) -> None:
         """One value against its schema — its JSON type, an integer's
-        range, its `enum`, an empty list against `minItems` — descending so that the field
+        range, a string's markup characters, its `enum`, an empty list
+        against `minItems` — descending so that the field
         reported is the innermost at fault: an object's field by its name,
         a typed `items`' element by its index, an `anyOf` by the arm the
         value is for.  The constructs are opaque here, `edit.py`'s to
@@ -924,6 +1057,8 @@ class _Check:
             raise InvalidField(path, _must_be([json_type]))
         if not _within_integer_range(value):
             raise InvalidField(path, "must be a 64-bit integer")
+        if _holds_markup(value):
+            raise InvalidField(path, "cannot hold Isabelle's internal markup (U+0005 or U+0006)")
         if "enum" in schema and value not in schema["enum"]:
             raise InvalidField(path, _one_of(schema["enum"]))
         if "minItems" in schema and not value:

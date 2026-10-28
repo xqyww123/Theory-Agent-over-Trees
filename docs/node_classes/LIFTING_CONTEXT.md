@@ -3,7 +3,8 @@
 Status: proposed 2026-10-18 and revised the same day after its review
 (ai-artifacts/review/lifting_context/LIFTING_CONTEXT_REVIEW.md); the
 agent-facing wording below is the owner's (the rulings of 2026-10-18):
-the four descriptions of §3, the sentence of §6, and `name` under the
+the four descriptions of §3 (`name`'s of 2026-10-24), the sentence of
+§6, and `name` under the
 framework's name grammar; the `types[i]` and `repeats` sentences of §4
 are COMMON.md §4's under this class's path;
 implemented the same day, with `Lifting_Closing` (COMMON.md §6).

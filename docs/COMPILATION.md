@@ -488,7 +488,9 @@ but the body of a `\<comment>`, and is refused only for a malformed symbol
 or an unbalanced mark (document_antiquotations.ML, latex.ML); the filter
 takes out the other comment symbols and the items too, for LaTeX and
 layout. No control character of `latex_of`'s output reaches the YXML
-export, whose markup characters are U+0005 and U+0006 (thy_info.ML). The
+export, whose markup characters are U+0005 and U+0006 (thy_info.ML), and
+no string the store takes holds either (MCP_SPECIFICATION §1), so none
+reaches the export through any other writer. The
 build's token check finds every `\<` opening a well-formed symbol. So a
 `text` command (Markdown on), the `text` block before the header, a
 heading (Markdown off), a formal comment inside a command and the

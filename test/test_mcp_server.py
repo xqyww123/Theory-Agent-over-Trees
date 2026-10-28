@@ -24,7 +24,7 @@ from mcp.shared.exceptions import McpError
 import stand_ins
 from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import client, free_port, text_of
-from isabelle_theory_agent import log, mcp_server, plugin, toplevel
+from isabelle_theory_agent import log, mcp, mcp_server, plugin, toplevel
 from isabelle_theory_agent.mcp import EDIT_DESCRIPTION
 from isabelle_theory_agent.exceptions import (
     NodeNotFound, TAT_DisasterError, TAT_InternalError, TAT_StartupError)
@@ -1082,6 +1082,34 @@ def test_a_message_rides_on_its_recipients_next_result_between_the_body_and_the_
                 ("message_posted", {"recipient": "main", "kind": "notification", "interrupts": False,
                                     "text": "third message"}),
                 ("message_delivered", {"recipient": "main"})]
+    run(scenario)
+
+
+def test_a_calls_strings_are_repaired_and_checked_inside_its_body():
+    """A tool `mcp._tool` builds, over the wire: the input layer and the
+    check run inside the body (MODULE_STRUCTURE §4.6), so a string
+    Isabelle reads as source text reaches the body as that text, the
+    `call` record holds the arguments as received, and a string left
+    holding a markup character is refused as any `TAT_Error` is — its
+    `result` record carrying the class, a waiting message delivered
+    with it."""
+    async def echo(agent, arguments):
+        return "echo " + arguments["text"]
+    framed, held = "\x05\x06input\x05hi\x05\x06\x05", "\x05\x06b\x05hi\x05\x06\x05"
+
+    async def scenario():
+        tool = mcp._tool("echo", "the echo tool", {"type": "object", "properties": {"text": {"type": "string"}},
+                                                   "required": ["text"], "additionalProperties": False},
+                         echo, read_only=True)
+        async with serving(free_port(), [tool]) as (server, serve), client(server.url) as session:
+            assert text_of(await session.call_tool("echo", {"text": framed})) == "echo hi"
+            post(server.ending.log, Message(server.agents["main"], "a message", interrupts=False))
+            refused = await session.call_tool("echo", {"text": held})
+            assert refused.isError and text_of(refused) == (
+                "The argument `text` cannot hold Isabelle's internal markup (U+0005 or U+0006).\n\na message")
+            records = stand_ins.records("tool")
+            assert [r["data"]["arguments"] for r in records if r["event"] == "call"] == [{"text": framed}, {"text": held}]
+            assert [r["data"].get("class") for r in records if r["event"] == "result"] == [None, "InvalidField"]
     run(scenario)
 
 

@@ -82,9 +82,14 @@ A schema check's own reasons are `must be` followed by the JSON type —
 `a string`, `an integer`, `a number`, `a boolean`, `a list`, `an object`,
 and `null` for the one arm a construct's union may admit (PLUGIN_SYSTEM §5)
 — several joined with ` or `, each JSON type once, in the order the schema first names them; `must be one of` followed by the `enum`,
-backticked, `must not be empty` for `minItems`, and `must be a 64-bit
-integer` for an integer outside the signed 64-bit range, for a tool
-call's arguments and a construct's fields alike (MODULE_STRUCTURE §4.4);
+backticked, `must not be empty` for `minItems`, `must be a 64-bit
+integer` for an integer outside the signed 64-bit range, and `cannot
+hold Isabelle's internal markup (U+0005 or U+0006)` for a string still
+holding either character once the call's strings are repaired
+(MCP_SPECIFICATION §1) — but in the field that tells a union's arms
+apart, whose value matches no arm's `enum` and is told `must be one of`
+— for a tool call's arguments and a construct's fields alike
+(MODULE_STRUCTURE §4.4);
 and `must not be nested deeper than 100 levels`, said of a tool call's
 argument before any other check, each object or array a level:
 
@@ -97,6 +102,8 @@ The argument `constructs` must not be nested deeper than 100 levels.
 The field `types` must not be empty.
 The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`, `NoSyntax`.
 The field `types[0].constructors[1].syntax.priority` must be a 64-bit integer.
+The field `english` cannot hold Isabelle's internal markup (U+0005 or U+0006).
+The argument `node_id` cannot hold Isabelle's internal markup (U+0005 or U+0006).
 ```
 
 `UnexpectedField` — the holder is the kind, or a nested container's path,

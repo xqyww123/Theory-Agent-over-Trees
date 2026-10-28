@@ -1,10 +1,10 @@
 """`Section` and `Text` (node_classes/SECTION_AND_TEXT.md): with no
-Isabelle, the schemas and the descriptions (§2, §3), `gen`'s checks and
-refusals (§4), the fields as the nodes hold, store and print them (§1,
-§2, §8), the beginning's judgement of the level and the copy (§6), the
-caption and the renderings (§8), the emitted text (§5), the id properties
-(§9); through the std harness, a theory of headings and passages
-evaluated and recalled, a level refused, the file rendered (§5, §6, §8).
+Isabelle, the schemas and the descriptions (§2, §3), `gen`'s refusals and
+the field check (§4), the fields as the nodes hold, store and print them
+(§1, §2, §8), the level rule and the copy (§6), the caption and the
+renderings (§8), the emitted text (§5), the id properties (§9); through
+the std harness, a theory of headings and passages evaluated and
+recalled, a level refused, the file rendered (§5, §6, §8).
 Run: python -m pytest test/test_section_text.py
 """
 
@@ -19,16 +19,17 @@ import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, fenced_blocks, fenced_lines
 from harness import text_of
+from baselines import composed_refusal
 from Isabelle_RPC_Host.unicode import IsaTerm
 from isabelle_theory_agent import compile as C, edit, model as M
 from isabelle_theory_agent.exceptions import (
     GRAMMARS, DuplicateName, InvalidField, InvalidName, RawASTError, UnexpectedChildren)
 from isabelle_theory_agent.jobs import NOT_STARTED, PASSED
 from isabelle_theory_agent.std import section, text as text_module
-from isabelle_theory_agent.std.section import Section, level_refusal
+from isabelle_theory_agent.std.section import USE_A_LOWER_LEVEL, Section
 from isabelle_theory_agent.std.text import Text
 from isabelle_theory_agent.store import Forest_Store
-from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, forest, insert, inv, refused
+from std_forest import KINDS, assert_a_missing_row_is_refused_at_start, field_check, forest, insert, inv, refused
 from test_descriptions import descriptions
 from test_model import locked, run
 from test_session_theory import Forest_Under_Test, session, theory
@@ -41,7 +42,7 @@ BASICS, OVERVIEW = (json.loads("\n".join(block)) for block in fenced_blocks(DOC,
 INTRO, REV_REV, LENGTHS = BASICS["children"]
 (REV_LENGTH,) = LENGTHS["children"]
 [TITLE_EMPTY, TEXT_EMPTY] = fenced_blocks(DOC, "4.")[0]          # §4's two sentences
-[LEVEL_SENTENCE] = fenced_blocks(DOC, "6.")[0]                   # §6's sentence, a `section` under a `subsection`
+[LEVEL_SENTENCE] = fenced_blocks(DOC, "6.")[0]                   # §6's refusal, a `section` under `section_A`
 
 
 def heading(name="Basics", title="Basic lemmas about reversal", kind="section", **fields):
@@ -104,24 +105,17 @@ def test_gen_keeps_the_fields_and_names_the_nodes():
 
 
 def test_gen_refuses_as_section_4_says():
-    """§4's refusals: an empty `title`, after normalisation,
-    and a `text` of whitespace alone, the two sentences; the node's name,
-    which the framework judges after `gen`; a missing field, an `english`,
-    a `children` on a passage, by the framework."""
+    """§4: `gen` refuses nothing; the node's name, which the framework
+    judges after `gen`; a missing field, an `english`, a `children` on a
+    passage, by the framework."""
     f, x = forest()
-    for title in ("", " ", "\n\t "):
-        e = refused(f, x, [heading(title=title)], InvalidField)
-        assert str(e) == "At `constructs[0]`: " + TITLE_EMPTY and e.field == "title"
-    for text in ("", "   ", "\n\n"):
-        e = refused(f, x, [passage(text=text)], InvalidField)
-        assert str(e) == "At `constructs[0]`: " + TEXT_EMPTY and e.field == "text"
     e = refused(f, x, [heading("Basic lemmas")], InvalidName)
     assert (e.name, e.grammar) == ("Basic lemmas", "name")
     assert str(e) == "At `constructs[0]`: `Basic lemmas` is not a valid name: a name " + GRAMMARS["name"] + "."
     for name in ("1st", "intro_", "intro-", "", "α"):
         assert refused(f, x, [heading(name)], InvalidName).grammar == "name"
         assert refused(f, x, [passage(name)], InvalidName).grammar == "name"
-    assert refused(f, x, [heading("Basic lemmas", title="")], InvalidField).field == "title"    # `gen` before the name
+    assert refused(f, x, [heading("Basic lemmas", title="")], InvalidName).name == "Basic lemmas"    # `gen` judges no title
     for raw in ({"kind": "section", "name": "n"},                       # no `title`
                 {"kind": "section", "title": "t"},                      # no `name`
                 {"kind": "text", "name": "n"},                          # no `text`
@@ -130,6 +124,22 @@ def test_gen_refuses_as_section_4_says():
                 {"kind": "sections", "name": "n", "title": "t"}):       # no such kind
         refused(f, x, [raw], RawASTError)
     refused(f, x, [passage(children=[])], UnexpectedChildren)           # a leaf
+    assert x.sub_nodes == []
+    inv(f)
+
+
+def test_the_field_check_refuses_as_section_4_says():
+    """§4's field check, each sentence told alone, no path before it: an
+    empty `title`, after normalisation, and a `text` of whitespace alone;
+    a `title` and a `text` with a character admitted."""
+    f, x = forest()
+    for title in ("", " ", "\n\t "):
+        e = field_check(f, x, [heading(title=title)])
+        assert str(e) == TITLE_EMPTY and e.field == "title"
+    for text in ("", "   ", "\n\n"):
+        e = field_check(f, x, [passage(text=text)])
+        assert str(e) == TEXT_EMPTY and e.field == "text"
+    assert field_check(f, x, [heading(title=" a ")]) is None and field_check(f, x, [passage(text="\na\n")]) is None
     assert x.sub_nodes == []
     inv(f)
 
@@ -168,10 +178,10 @@ def test_the_fields_are_stored_and_a_missing_row_is_refused_at_start(tmp_path):
 
 # --- the beginning, the level and the copy (§6), the mark (§7) ----------------------
 
-def test_the_beginning_judges_the_level_and_passes_the_state_through():
-    """§6: a heading under a heading of a higher level — the nearest
-    `Section` above, through other blocks — runs, levels skipped; one
-    under the same or a lower level is an obstacle with the sentence, its
+def test_the_level_rule_and_the_beginning_s_copy():
+    """§6: a heading under headings of higher levels alone, through other
+    blocks, runs, levels skipped; one under a heading of the same or a
+    lower level is an obstacle with the refusal naming that heading, its
     children `not_evaluated`, its ending `Ready` by the copy; a `Text` and
     a heading that runs copy their input slot into their resulting slot;
     a move is judged anew; the marks the framework's (§7)."""
@@ -196,12 +206,12 @@ def test_the_beginning_judges_the_level_and_passes_the_state_through():
         assert node.evaluation_status_beginning == M.READY_CLEAN and node.evaluation_status_ending == M.READY_CLEAN, node.name
     for node in (p1, sub.sub_nodes[0], p4):
         assert node._status == M.READY_CLEAN, node.name
-    for node, above in ((same, "section"), (up, "section")):
+    for node in (same, up):
         assert isinstance(node.evaluation_status_beginning, M.CannotEvaluate), node.name
-        assert [m.unicode for m in node.evaluation_status_beginning.messages] == [level_refusal(node.kind, above)]
+        assert [m.unicode for m in node.evaluation_status_beginning.messages] == [
+            composed_refusal(node.kind, f.full_id(sec), USE_A_LOWER_LEVEL)]
         assert node.evaluation_status_ending == M.READY_CLEAN                   # the framework's copy past the block
         assert all(c._status is M.NOT_EVALUATED for c in node.sub_nodes)
-    assert level_refusal("section", "subsection") == LEVEL_SENTENCE
     copies = [(src, dst) for name, src, dst in tm.TABLE.calls if name == "copy"]
     assert (ch.state.name, p1.state.name) in copies                              # the beginning: into the first child's slot
     assert (deep.state.name, deep._state_before_ending.name) in copies           # no child: into the slot before the ending
@@ -213,12 +223,29 @@ def test_the_beginning_judges_the_level_and_passes_the_state_through():
     run(locked(f, edit.move(sub, deep, 0)))
     assert sub.evaluation_status_beginning is M.NOT_EVALUATED
     run(x.evaluate_to(None, True))
-    assert [m.unicode for m in sub.evaluation_status_beginning.messages] == [level_refusal("subsubsection", "paragraph")]
+    assert [m.unicode for m in sub.evaluation_status_beginning.messages] == [
+        composed_refusal("subsubsection", f.full_id(deep), USE_A_LOWER_LEVEL)]
     run(locked(f, edit.move(same, x, 3)))                                        # and back to the theory: no heading above
     run(x.evaluate_to(None, True))
     assert same.evaluation_status_beginning == M.READY_CLEAN
     (fresh,) = insert(f, x, 0, [heading("Fresh", "New")])
     assert fresh.mark(M.BRIEFING, 0) == "not evaluated"
+    inv(f)
+
+
+def test_the_level_rule_names_the_outermost_heading():
+    """§6's refusal, as the placement check composes it: a `section` under
+    a `subsection` under a `section` names the outermost heading it
+    cannot stand under, `section_A`; the `subsection` stands."""
+    f = Forest_Under_Test(kinds=KINDS)
+    insert(f, f, 0, [session("S", theory("X") | {"children": [
+        heading("A", "A", children=[heading("B", "B", "subsection", children=[heading("C", "C")])])]})])
+    (x,) = f.sub_nodes[0].sub_nodes
+    (a,) = x.sub_nodes
+    (b,) = a.sub_nodes
+    (c,) = b.sub_nodes
+    assert b._refusal() is None and c._refusal() == LEVEL_SENTENCE
+    assert LEVEL_SENTENCE == composed_refusal("section", f.full_id(a), USE_A_LOWER_LEVEL)
     inv(f)
 
 
@@ -288,7 +315,8 @@ def test_section_8_s_renderings():
         heading("Lengths", "Length is preserved", "subsection", children=[
             heading("Details", "The details", children=[REV_LENGTH])])]})])
     (details,) = g.sub_nodes[0].sub_nodes[0].sub_nodes[0].sub_nodes
-    details.evaluation_status_beginning = M.CannotEvaluate((IsaTerm.from_agent(level_refusal("section", "subsection")),))
+    assert details._refusal() == composed_refusal("section", g.full_id(details.parent), USE_A_LOWER_LEVEL)
+    details.evaluation_status_beginning = M.CannotEvaluate((IsaTerm.from_agent(details._refusal()),))
     details.evaluation_status_ending = M.READY_CLEAN
     with_proof(details.sub_nodes[0], M.NOT_EVALUATED, NOT_STARTED)
     assert g.render(details, M.RECALL, stand_ins.agent(g.conversation)).splitlines() == refused_heading
@@ -367,7 +395,7 @@ def test_section_9_s_id_properties():
 async def test_headings_and_passages_pass_the_state_through(std_conversation):
     """§6 through the real wire: §2's heading and passage evaluated, every
     operation `Ready` and the lemmas admitted; a `section` under a
-    `subsection` refused with the sentence, in a theory of its own, the
+    `subsection` refused with §6's refusal, in a theory of its own, the
     copy made; `recall` as §8's first rendering shows but for the proofs;
     the file rendered as §5 shows, `sorry` for the unproven lemmas."""
     forest = std_conversation.forest
@@ -391,7 +419,8 @@ async def test_headings_and_passages_pass_the_state_through(std_conversation):
         assert await basics.operation_slots("beginning")[1].is_initialized() and await intro.resulting_state().is_initialized()
         assert isinstance(rev_rev._status, M.Ready) and isinstance(lengths.sub_nodes[0]._status, M.Ready)   # admitted (THEOREM §6)
         assert isinstance(inner.evaluation_status_beginning, M.CannotEvaluate)
-        assert [m.unicode for m in inner.evaluation_status_beginning.messages] == [LEVEL_SENTENCE]
+        assert [m.unicode for m in inner.evaluation_status_beginning.messages] == [
+            composed_refusal("section", forest.full_id(outer), USE_A_LOWER_LEVEL)]
         assert not await inner.operation_slots("beginning")[1].is_initialized()
         assert await inner.resulting_state().is_initialized() and inner.sub_nodes[0]._status is M.NOT_EVALUATED
         [recall_heading, *_] = fenced_blocks(DOC, "8.")

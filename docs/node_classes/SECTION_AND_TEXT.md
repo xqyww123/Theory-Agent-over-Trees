@@ -1,11 +1,13 @@
 # The `Section` and `Text` node classes
 
 Status: proposed and implemented 2026-10-24, revised the same day after
-its review (ai-artifacts/review/section/); the agent-facing wording
-below is the owner's (the rulings of 2026-10-24): the descriptions of
-§3, the sentences of §4 and §6, `name` under the framework's name
-grammar, the caption on the line (PRINT.md §1); revised 2026-10-25 with
-the prose translator (COMPILATION.md §3).
+its review (ai-artifacts/review/section/SECTION_REVIEW.md); the
+agent-facing wording below is the owner's (the rulings of 2026-10-24):
+the descriptions of §3, the sentences of §4, `name` under the
+framework's name grammar, the caption on the line (PRINT.md §1), and
+§6's remedy (2026-10-25); revised 2026-10-25 with the prose translator
+(COMPILATION.md §3), and 2026-10-27 with the placement check and the
+field check (PLUGIN_SYSTEM §2).
 
 A `Section` is a heading of the theory's document, with the
 declarations under it; a `Text` is a passage of prose in it. Both are
@@ -24,7 +26,8 @@ and `_eval_beginning_opr` (PLUGIN_SYSTEM §5; COMPILATION.md §3) —;
 `isabelle_theory_agent/std/section.py` and
 `isabelle_theory_agent/std/text.py`. Their agent-facing wording lives
 here — the `description` texts of their construct schemas (§3), the
-sentences their `gen`s and `Section`'s rule render (§4, §6) — pinned by
+sentences their field checks and `Section`'s `cannot_hold` render (§4,
+§6) — pinned by
 the baseline tests the way LIFTING_CONTEXT.md's are.
 
 `Section`'s kinds are the six heading commands, from the top level down:
@@ -63,17 +66,18 @@ A `Section` has two operations, the beginning and the ending
 A `Text` has one. What an operation's last evaluation reported travels
 on its status, as for every class (COMPILATION.md §4): a `Section`'s
 beginning is a `CannotEvaluate` with its message where the framework
-refuses the heading — by its level rule (§6), or under a parent that
-refuses children (PLUGIN_SYSTEM §2) — and a clean `Ready` otherwise; a
-`Text`'s operation is a clean `Ready`, or the framework's refusal under
-such a parent. The constructors take the parent, the input slot and the
+refuses the heading — its place, by the placement check, the level rule
+of a heading above it among the answers (§6), or its `title`, by the
+field check (§4) — and a clean `Ready` otherwise; a `Text`'s operation
+is a clean `Ready`, or the framework's refusal of its place or of its
+`text`. The constructors take the parent, the input slot and the
 fields; `StdBlock` builds a `Section` with no children and mints its
 slot before the ending (MODULE_STRUCTURE §4.1).
 
 ## 2. The heading and the passage
 
 A heading is a name, a title and the declarations placed under it; its
-level is judged against the nearest heading above it (§6):
+level is judged against every heading above it (§6):
 
 ```json
 {
@@ -123,21 +127,20 @@ reads.
 
 The levels are ordered, `chapter` above `section` above `subsection`
 above `subsubsection` above `paragraph` above `subparagraph`. A heading
-stands under a heading of a higher level alone — the nearest `Section`
-above it, whatever blocks lie between —, and may skip levels: a
-`subsection` directly under a `chapter`. A heading under a heading of
-the same or a lower level is refused at evaluation by `Section`'s rule
-(§6), where a move is judged like an insert; `gen` does not judge it.
-No command ends a heading, and the file writes the headings in tree
-order (§5): so in the document a node placed after a heading's last
-child reads under that heading, and a heading placed after a sibling
-heading of a higher level reads under it — the tree keeps them as
-siblings, and `recall` shows the tree.
+stands only under headings of higher levels, whatever blocks lie
+between, and may skip levels: a `subsection` directly under a `chapter`.
+A heading under a heading of the same or a lower level is refused at
+evaluation by that heading's level rule (§6), where a move is judged
+like an insert; `gen` does not judge it. No command ends a heading, and
+the file writes the nodes in tree order (§5): so in the document every
+node that follows a heading as its sibling — a passage, a declaration, a
+heading of a lower level — reads under that heading, up to the next
+heading of the same or a higher level; the tree keeps them as siblings,
+and `recall` shows the tree.
 
 Headings and passages stand under any block, and any class stands under
-a heading: no placement rule of the plugin's refuses either, and
-`Section` declares none but its level rule (PLUGIN_SYSTEM §2) — a
-heading opens no Isabelle scope.
+a heading: `Section`'s `cannot_hold` answers its level rule alone (§6),
+and a heading opens no Isabelle scope.
 
 The classes' construct schemas:
 
@@ -221,16 +224,18 @@ a passage of prose in the theory's document
 the passage, in English
 ```
 
-## 4. `gen`
+## 4. `gen` and the field check
 
-`Section.gen` stores `title` as §2 says and refuses one that is empty
-after it (`InvalidField`); `Text.gen` stores `text` likewise and refuses
-one with no character but whitespace. A `name` outside the framework's
-name grammar is the framework's `InvalidName`, and a sibling already
-bearing the node's id component its `DuplicateName` (MCP_SPECIFICATION
-§2). Whether the heading stands under a heading of a higher level is
-judged at evaluation (§6); a refusal there is an evaluation failure, not
-an exception. The children of a `Section` are the framework's: built by
+`Section.gen` and `Text.gen` refuse nothing: they store `title` and
+`text` as §2 says. The field check (PLUGIN_SYSTEM §2) refuses, before
+the node's first own operation, a `title` empty after normalisation and
+a `text` with no character but whitespace (`InvalidField`). A `name`
+outside the framework's name grammar is the framework's `InvalidName`,
+and a sibling already bearing the node's id component its
+`DuplicateName` (MCP_SPECIFICATION §2). Whether the heading stands
+under headings of higher levels is judged at evaluation too (§6); a
+refusal there, as the field check's, is an evaluation failure, not an
+exception. The children of a `Section` are the framework's: built by
 their own classes' `gen`s and placed under the node (MODULE_STRUCTURE
 §4.2).
 
@@ -302,17 +307,19 @@ Sortedness is ‹sorted› of the list library.›
 
 Neither class runs an Isabelle command: the heading and the passage are
 read when the file is built, as an `english` is (COMMON.md §2). The
-framework's refusals stand before either hook, as for every class
-(PLUGIN_SYSTEM §2): a parent that refuses children, and `Section`'s one
-placement rule.
+framework's checks stand before either hook, as for every class
+(PLUGIN_SYSTEM §2): the placement check, then the field check (§4).
 
-**The level rule.** `Section` declares one placement rule (PLUGIN_SYSTEM
-§2): a heading whose nearest `Section` above — whatever blocks lie
-between — is of the same or a lower level is refused with one message,
-the two kinds named:
+**The level rule.** `Section`'s `cannot_hold` (PLUGIN_SYSTEM §2)
+refuses a heading of the same or a higher level than its own, at any
+depth below it, whatever blocks lie between, with the remedy `Use a
+lower level, or move it out.` The placement check asks every ancestor
+outermost first, so the refusal names the outermost heading the node
+cannot stand under: a `section` under a `subsection` under `section_A`
+is refused with `section_A` named:
 
 ```
-A `section` cannot stand under a `subsection`.
+A `section` cannot stand under `session_S.theory_X.section_A`. Use a lower level, or move it out.
 ```
 
 The framework asks it before the heading's beginning at every
@@ -345,11 +352,12 @@ and is a clean `Ready`.
 ## 7. The mark
 
 Both classes take the framework's default mark (PRINT.md §1). A `Text`
-reads `not evaluated` until its operation ran, `failed` under a parent
-that refuses children, and `complete` otherwise. A `Section` reads `not
-evaluated`, `incomplete` while something under it is unfinished,
-`failed` when its beginning is refused — by the level rule or by a
-parent that refuses children — and `complete`. Neither answers an owing
+reads `not evaluated` until its operation ran, `failed` when the
+placement check or the field check refuses it, and `complete` otherwise.
+A `Section` reads `not evaluated`, `incomplete` while something under it
+is unfinished, `failed` when its beginning is refused — by the placement
+check, the level rule among its answers, or by the field check — and
+`complete` otherwise. Neither answers an owing
 line. In an ancestor's Recall summary (PRINT.md §2) a heading is counted
 by its own operations, among the failed nodes while its beginning is
 refused.
@@ -383,8 +391,8 @@ beginning's refusal —, directly under the line otherwise. A `Text`'s
 stored but for its trailing line breaks, which it drops; no key; and
 answers false.
 
-A `recall` of the heading of §2 — its `Text` and its lemmas at depth 1,
-the subsection's lemma at depth 2:
+A `recall` of the heading of §2 — its passage, its lemma and its
+subsection at depth 1, the subsection's lemma at depth 2:
 
 ```
 - section_Basics: Basic lemmas about reversal (incomplete)
@@ -429,14 +437,15 @@ session_A (incomplete)
 - theory_Y (complete)
 ```
 
-A `recall` of a heading whose beginning was refused, a `section` moved
-under a `subsection`: the `Error:` block is a keyed line, so its
-children stand under `declarations:`:
+A `recall` of a heading whose beginning was refused, a `section` placed
+under a `subsection_Lengths` that stands directly under `theory_X`: the
+`Error:` block is a keyed line, so its children stand under
+`declarations:`:
 
 ```
 - section_Details: The details (failed)
   Error:
-    A `section` cannot stand under a `subsection`.
+    A `section` cannot stand under `session_A.theory_X.subsection_Lengths`. Use a lower level, or move it out.
   declarations:
     - lemma_rev_length (not evaluated, proof not started)
       ⋀xs::'a list. length (rev xs) = length xs

@@ -1,6 +1,8 @@
 """The loader (PLUGIN_SYSTEM.md): registration and its checks, the
 process-wide registry and the conversation's kind table selected from it,
-assembly of the `edit` schema's `$defs`.
+assembly of the `edit` schema's `$defs`; the check of a tool call, and
+the input layer's repair of its strings — by hand, and through the
+harness against Isabelle's own reading of test/yxml_corpus.py.
 Run: python -m pytest test/test_plugin.py
 """
 
@@ -10,6 +12,10 @@ from typing import Annotated, Literal, NotRequired, Required, TypedDict, get_arg
 
 import jsonschema
 import pytest
+
+import yxml_corpus
+from ml_process import ml_process, ml_string
+from yxml_corpus import FRAMED, POSITION_CASES, X, Y, element, positioned
 
 from isabelle_theory_agent import jobs, model as M, plugin
 from isabelle_theory_agent.exceptions import (
@@ -913,6 +919,91 @@ def test_the_one_bare_object_the_grammar_admits():
             plugin.validate_call_schema(call_schema({"answer": wrong}), "answer")
     with pytest.raises(TAT_InternalError, match="answer.node_id: an object schema needs"):
         plugin.validate_call_schema(call_schema({"node_id": bare}), "answer")   # another property of the tool's
+
+
+# --- the input layer (MODULE_STRUCTURE §4.4) ---------------------------------
+
+def test_the_input_layer_repairs_what_isabelle_reads_and_the_check_refuses_the_rest():
+    """`agent_string` on strings as `json.loads` decodes them: a lone
+    surrogate U+FFFD, a valid pair kept; a string holding a markup
+    character that Isabelle reads as source text — one text node, one
+    `input` element whose position reads — that text; any other
+    unchanged, and then refused by the check."""
+    for given, kept in [(r'"\ud800"', "\ufffd"), (r'"x\udc00"', "x\ufffd"), (r'"\ude00\ud83d"', "\ufffd\ufffd"),
+                        (r'"\ud800x"', "\ufffdx"),              # not `?x`, a schematic variable
+                        (r'"\ud83d\ude00"', "\U0001f600")]:
+        assert plugin.agent_string(json.loads(given)) == kept, given
+    assert plugin.agent_string(element("input", [], "f x")) == "f x"
+    assert plugin.agent_string(X + "ab") == "ab"
+    # inside an `input` element, Isabelle's `content_of`: a wrapping's `xml_body` skipped, near misses read whole
+    assert [plugin.agent_string(s) for s in FRAMED[:4]] == ["shown", "", "hiddenshown", "thidden"]
+    text = call_schema({"text": {"type": "string"}})
+    for given in ["a" + X + "b",                                 # two text nodes
+                  element("b", [], "f x"),                       # a term framed by another element
+                  element("1", ["0=x"], ""),                     # Term_XML's `Free ("x", dummyT)`
+                  element("input", [], "f x")[:-3],              # malformed: the element left open
+                  FRAMED[-1],                                    # malformed: an element with no name
+                  X]:                                            # the empty body
+        assert plugin.agent_string(given) == given, repr(given)
+        with pytest.raises(InvalidField) as e:
+            plugin.check_call(text, "t", {"text": given})
+        assert (e.value.field, e.value.reason) == ("text", "cannot hold Isabelle's internal markup (U+0005 or U+0006)")
+    for properties, reads in POSITION_CASES:
+        given = positioned(properties)
+        assert plugin.agent_string(given) == ("x" if reads else given), properties
+
+
+def test_the_repair_reaches_as_deep_as_the_check_admits():
+    """`agent_arguments`: a lone surrogate at the leaf of an argument 100
+    levels deep repaired, every container on the way new; arguments 101
+    and thousands of levels deep handed back as they are, for the check
+    to refuse, with no `RecursionError`; the request's own left alone;
+    the keys as received, for the check to judge."""
+    def nested(levels):
+        value = "\ud800"
+        for i in range(levels):
+            value = [value] if i % 2 else {"k": value}
+        return value
+    arguments = {"a": nested(100), "b": nested(101), "c": nested(5000)}
+    repaired = plugin.agent_arguments(arguments)
+    assert repaired is not arguments and repaired["b"] is arguments["b"] and repaired["c"] is arguments["c"]
+    old, new = arguments["a"], repaired["a"]
+    while not isinstance(old, str):
+        assert new is not old
+        old, new = (old[0], new[0]) if isinstance(old, list) else (old["k"], new["k"])
+    assert (old, new) == ("\ud800", "\ufffd")
+    assert plugin.agent_arguments({X + "k": {X + "j": "v"}}) == {X + "k": {X + "j": "v"}}
+
+
+# Each string asked of `Syntax.parse_input` on Pure: `S` and the hex of the
+# source text it reads, or `-` where it decodes the body or refuses it.
+PARSE_INPUT = """
+  val ctxt = Proof_Context.init_global (Theory.get_pure ());
+  fun hex s = String.translate (fn c => StringCvt.padLeft #"0" 2 (Int.fmt StringCvt.HEX (Char.ord c))) s;
+  fun read i s =
+    writeln ("READ " ^ string_of_int i ^ " " ^
+      (case Exn.result (Syntax.parse_input ctxt (K NONE) (K Markup.empty) (SOME o Symbol_Pos.content o #1)) s of
+        Exn.Res (SOME text) => "S" ^ hex text
+      | _ => "-"));
+"""
+
+
+@pytest.mark.isabelle(deadline=300)
+async def test_the_input_layer_reads_as_isabelle_does(harness, tmp_path):
+    """Every string of test/yxml_corpus.py, asked of Isabelle on each run:
+    where `parse_input` reads source text from a string holding a markup
+    character, `agent_string` gives that text; every other string comes
+    back unchanged."""
+    strings = yxml_corpus.corpus()
+    cases = tmp_path / "parse_input.ML"
+    cases.write_text(PARSE_INPUT + "".join(f"val _ = read {i} {ml_string(s)};\n" for i, s in enumerate(strings)))
+    r = await ml_process(harness, f"val _ = in_theory thy0 [{ml_string(str(cases))}];", logic="Pure", base="Pure")
+    read = dict(line.split(" ")[1:] for line in r.stdout.splitlines() if line.startswith("READ "))
+    assert r.returncode == 0 and len(read) == len(strings), (r.stdout[-2000:], r.stderr[-2000:])
+    for i, s in enumerate(strings):
+        reads = read[str(i)]
+        source = bytes.fromhex(reads[1:]).decode() if reads.startswith("S") and (X in s or Y in s) else s
+        assert plugin.agent_string(s) == source, (s, reads)
 
 
 # --- assembly ----------------------------------------------------------------

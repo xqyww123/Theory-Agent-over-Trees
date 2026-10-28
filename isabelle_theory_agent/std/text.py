@@ -46,11 +46,13 @@ class Text(Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Text_RawAST):
-        """§4: `text` as written, with some character but whitespace left;
-        `name` is the framework's to judge."""
-        if not raw["text"].strip():
-            raise InvalidField("text", "must not be empty")
+        """§4: `text` as written; `name` is the framework's to judge."""
         return cls(config.parent, config.state, raw["name"], raw["text"])
+
+    def check_fields(self):
+        """§4's field check: `text` with some character but whitespace."""
+        if not self.text.strip():
+            raise InvalidField("text", "must not be empty")
 
     def to_store(self, rows):
         rows.put("name", self.name)

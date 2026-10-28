@@ -12,6 +12,7 @@ import stand_ins
 import test_model as tm
 from invariants import assert_invariants, assert_store_mirrors
 from test_model import Block, T, add, locked, run, slot, st
+from yxml_corpus import element
 
 import isabelle_theory_agent.model as M
 from isabelle_theory_agent import edit, plugin
@@ -247,8 +248,9 @@ def test_a_construct_is_checked_against_its_construct_schema():
     `edit.py`'s — which the kind does not "take", nor `kind`, the two set
     aside at the top alone; a `$ref` is followed into the class's `$defs`;
     an `enum` and `minItems` speak for a construct's field as for a tool's
-    argument; the innermost field at fault is reported, a typo before its
-    own hole."""
+    argument, and so does a string still holding a markup character; the
+    innermost field at fault is reported, a typo before its own hole."""
+    MARKUP = "cannot hold Isabelle's internal markup (U+0005 or U+0006)"
     RICH = construct_schema({
         "name": {"type": "string"},
         "priority": {"type": "integer"},
@@ -293,6 +295,9 @@ def test_a_construct_is_checked_against_its_construct_schema():
         ({"kind": "t", "name": "x", "priority": -2**63 - 1}, "priority", "must be a 64-bit integer"),
         ({"kind": "t", "name": "x", "note": 2**64}, "note", "must be a 64-bit integer"),            # in an `anyOf` arm too
         ({"kind": "t", "name": "x", "weight": 2**64}, "weight", "must be a 64-bit integer"),        # an integer under `number`
+        ({"kind": "t", "name": "x", "level": "lo\x05w"}, "level", MARKUP),                            # before the `enum`
+        ({"kind": "t", "name": "x", "note": "a\x06b"}, "note", MARKUP),                               # in an `anyOf` arm
+        ({"kind": "t", "name": "x", "tags": ["a", element("b", [], "f x")]}, "tags[1]", MARKUP),     # a term framed by a `b` element
         ({"kind": "t", "name": "x", "level": "mid"}, "level", "must be one of `low`, `high`"),
         ({"kind": "t", "name": "x", "note": []}, "note", "must be a string or an integer"),
         ({"kind": "t", "name": "x", "facts": [{"name": 1}]}, "facts[0].name", "must be a string"),

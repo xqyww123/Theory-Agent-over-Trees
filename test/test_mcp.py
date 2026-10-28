@@ -14,6 +14,7 @@ Run: python -m pytest test/test_mcp.py
 """
 
 import asyncio
+import json
 import typing
 
 import jsoncomment
@@ -24,6 +25,7 @@ import test_model as tm
 from baselines import DOCS, fenced_blocks, fenced_lines, stated
 from test_jobs import Check, Checked, Lemma, Proof, asking, ready, report, until
 from test_model import T, add, slot
+from yxml_corpus import element
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 
@@ -600,6 +602,8 @@ def test_a_malformed_call_is_refused_on_its_own_shape_with_no_opening_line():
         (move, dict(source_id="t_a", location={"position": "under", "node_id": "t_c"}, evaluate=False)),
         # the bound, before any other check: `evaluate` is missing too
         (edit, dict(action="append", target_id="t_c", constructs=nested(101))),
+        # a string the input layer leaves holding a markup character: a term framed by a `b` element
+        (edit, dict(action="append", target_id=element("b", [], "t_c"), constructs=[t("x")], evaluate=False)),
     ]:
         e, lines = refused(tool, RawASTError, **arguments)
         assert isinstance(e, (MissingField, UnexpectedField, InvalidField)) and e.of_tool
@@ -631,6 +635,32 @@ def test_a_malformed_call_is_refused_on_its_own_shape_with_no_opening_line():
     e, lines = refused(delete, MissingField)
     assert (e.holder, e.field, e.of_tool) == ("delete", "node_id", True)
     assert names(thy) == ["Section", "c"] and names(sec) == ["a", "b"]
+
+
+def test_every_string_of_a_call_is_repaired_before_the_check():
+    """The input layer, the first step of every tool's body (MODULE_STRUCTURE
+    §4.6): a lone surrogate becomes U+FFFD, shown on a stub tool since the
+    SDK's client cannot send one; an id framed by an `input` element is
+    read as the id; a string still holding a markup character is refused
+    by the check, inside a construct as in a tool's own argument; an
+    argument's name is not repaired, and one holding a markup character
+    is an argument the tool does not take."""
+    async def echo(agent, arguments):
+        return arguments["text"]
+    stub = mcp._tool("echo", "Echo the text.", {"type": "object", "properties": {"text": {"type": "string"}},
+                                                "required": ["text"], "additionalProperties": False},
+                     echo, read_only=True)
+    assert asyncio.run(stub.run(agent(), {"text": json.loads(r'"a\ud800"')})) == "a\ufffd"
+    f, thy, sec, *_, tools = build()
+    assert call(tools["recall"], node_id=element("input", [], "t_c")) == call(tools["recall"], node_id="t_c")
+    e, _ = refused(tools["recall"], UnexpectedField, **{"\x05node_id": "t_c"})
+    assert (e.field, e.of_tool) == ("\x05node_id", True)
+    e, lines = refused(tools["edit"], InvalidField, action="append", target_id="block_Theory",
+                       constructs=[t(element("b", [], "x"))], evaluate=False)
+    assert lines == ["Cannot append block_Theory",
+                     "At `constructs[0]`: The field `name` cannot hold Isabelle's internal markup (U+0005 or U+0006)."]
+    assert (e.field, e.of_tool, e.raw_ast_path) == ("name", False, "constructs[0]")
+    assert names(thy) == ["Section", "c"]
 
 
 # --- move ---------------------------------------------------------------------

@@ -2,34 +2,28 @@
 commands, `chapter` down to `subparagraph` (node_classes/SECTION_AND_TEXT.md):
 a heading of the theory's document with the declarations under it.  No
 Isabelle scope, no proof obligation, no jobs, no `english`, no ML half: the
-beginning judges the heading's level and passes the state through."""
+level rule is its `cannot_hold`, and the beginning passes the state
+through."""
 
 from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from Isabelle_RPC_Host.unicode import IsaTerm
-
 from ..exceptions import InvalidField
-from ..model import READY_CLEAN, THEORY_CHILDREN_HEADER, CannotEvaluate, StdBlock, emit_lines
+from ..model import READY_CLEAN, THEORY_CHILDREN_HEADER, StdBlock, emit_lines
 from ..plugin import TAT_node
 from ..prose import document_cartouche
 from .common import normalised
 
 KINDS = ("chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph")   # from the top level down
 _LEVEL = {kind: level for level, kind in enumerate(KINDS)}
+USE_A_LOWER_LEVEL = "Use a lower level, or move it out."     # §6's remedy
 
 
 class Section_RawAST(TypedDict):
     kind: Literal["chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"]
     name: str
     title: str
-
-
-def level_refusal(kind: str, above: str) -> str:
-    """§6's sentence: a heading of kind `kind` under one of kind `above`,
-    which is of no higher level."""
-    return f"A `{kind}` cannot stand under a `{above}`."
 
 
 @TAT_node
@@ -61,12 +55,14 @@ class Section(StdBlock):
 
     @classmethod
     async def gen(cls, config, raw: Section_RawAST):
-        """§4: `title` with its whitespace normalised (§2) and not empty;
-        `name` is the framework's to judge."""
-        title = normalised(raw["title"])
-        if not title:
+        """§4: `title` with its whitespace normalised (§2); `name` is the
+        framework's to judge."""
+        return cls(config.parent, config.state, raw["name"], normalised(raw["title"]))
+
+    def check_fields(self):
+        """§4's field check: `title` not empty."""
+        if not self.title:
             raise InvalidField("title", "must not be empty")
-        return cls(config.parent, config.state, raw["name"], title)
 
     def to_store(self, rows):
         rows.put("name", self.name)
@@ -78,12 +74,15 @@ class Section(StdBlock):
 
     # --- evaluation (§6): no command runs
 
+    def cannot_hold(self, descendant, depth) -> str | None:
+        """§6's level rule: a heading of the same or a higher level, at any
+        depth."""
+        if isinstance(descendant, Section) and _LEVEL[descendant.kind] <= _LEVEL[self.kind]:
+            return USE_A_LOWER_LEVEL
+        return None
+
     async def _eval_beginning_opr(self):
-        """The nearest `Section` above must be of a higher level; then the
-        input slot is copied into the beginning's resulting slot."""
-        above = self.nearest(Section)
-        if above is not None and _LEVEL[above.kind] >= _LEVEL[self.kind]:
-            return CannotEvaluate((IsaTerm.from_agent(level_refusal(self.kind, above.kind)),))
+        """The input slot copied into the beginning's resulting slot."""
         input_slot, resulting_slot = self.operation_slots("beginning")
         await input_slot.copy_to(resulting_slot)
         return READY_CLEAN

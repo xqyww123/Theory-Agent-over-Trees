@@ -135,8 +135,10 @@ No `evaluate`: there is nothing new to see (MCP_SPECIFICATION §3.2).
 ## 4. What a call renders
 
 A **malformed call** — an argument missing, one the tool does not take,
-of the wrong type, outside its allowed set, an empty `constructs`, or
-nested deeper than 100 levels —
+of the wrong type, outside its allowed set, an empty `constructs`, an
+integer outside the signed 64-bit range, a string still holding U+0005
+or U+0006 once the call's strings are repaired (MCP_SPECIFICATION §1),
+or nested deeper than 100 levels —
 is refused before any operation is named — one nested deeper than 100
 levels before any other check, the rest against the schema the tool
 advertises, as a construct's fields are checked (EXCEPTIONS.md §3's
@@ -151,6 +153,7 @@ The argument `constructs` must not be empty.
 The argument `constructs` must not be nested deeper than 100 levels.
 The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.
 The argument `location.position` must be one of `before`, `after`, `into`.
+The argument `target_id` cannot hold Isabelle's internal markup (U+0005 or U+0006).
 ```
 
 A **successful** `edit`, `move` or `delete` opens with one line naming

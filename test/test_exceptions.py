@@ -118,6 +118,8 @@ def test_invalid_field():
           "The argument `action` must be one of `append`, `insert_before`, `insert_after`, `amend`.")
     check(of_tool(InvalidField("constructs", "must not be empty")),
           "The argument `constructs` must not be empty.")
+    check(of_tool(InvalidField("node_id", "cannot hold Isabelle's internal markup (U+0005 or U+0006)")),
+          "The argument `node_id` cannot hold Isabelle's internal markup (U+0005 or U+0006).")
     # The tool call's entry point's own refusal, before the check (MODULE_STRUCTURE §4.4).
     check(of_tool(InvalidField("constructs", "must not be nested deeper than 100 levels")),
           "The argument `constructs` must not be nested deeper than 100 levels.")
@@ -130,6 +132,8 @@ def test_invalid_field():
           "The field `types` must not be empty.")
     check(InvalidField(field="types[0].constructors[1].syntax.priority", reason="must be a 64-bit integer"),
           "The field `types[0].constructors[1].syntax.priority` must be a 64-bit integer.")
+    check(InvalidField(field="english", reason="cannot hold Isabelle's internal markup (U+0005 or U+0006)"),
+          "The field `english` cannot hold Isabelle's internal markup (U+0005 or U+0006).")
     check(InvalidField(field="types[0].constructors[1].syntax.form",
                        reason="must be one of `infix`, `infixl`, `infixr`, `binder`, `mixfix`, `NoSyntax`"),
           "The field `types[0].constructors[1].syntax.form` must be one of `infix`, `infixl`, `infixr`,"

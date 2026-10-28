@@ -77,7 +77,8 @@ home:
   but the theory and a `Section`: a `Lifting_Block` with `Move it out.`
   and LOCALE.md §6's sentence, any other with `Move it out.`.
 - `Section`'s `cannot_hold` (SECTION_AND_TEXT.md §6) refuses a heading of
-  the same or a lower level at any depth.
+  the same or a higher level than its own at any depth, with
+  SECTION_AND_TEXT.md §6's remedy.
 
 `Move it out.` is one constant of common.py, `MOVE_IT_OUT`, whose home
 is here, pinned by the plugin's test (§5):

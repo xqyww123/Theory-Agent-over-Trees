@@ -34,6 +34,14 @@ the nodes' automatic construction (`auto_construct`): while it is on,
 an evaluation that reaches the node starts its construction job when
 the node needs it.
 
+Every tool call's strings are repaired before the call is checked, by
+one rule for every string — a term, a mixfix template, a name, a node
+id, prose: a lone UTF-16 surrogate (a `\ud800` escape in the JSON with
+no partner) becomes U+FFFD, and a string holding U+0005 or U+0006 (the
+markup characters of Isabelle's internal YXML encoding) that Isabelle's
+inner-syntax reader reads as source text becomes that source text. A
+string still holding either character is refused (RENDER_BASELINES §2).
+
 `move` exists because order carries meaning at theory level: a lemma must follow
 everything it uses. Reordering and re-homing declarations is what a tree does
 better than text.
@@ -71,8 +79,8 @@ never disturbs results already in flight.
 
 The name is what the agent supplied, as the node class's `gen` set it —
 one field of the construct, or a name computed from its fields: a
-`Theorem`'s theorem name, a `Section`'s or a `Text`'s `name`, written
-into no command (node_classes/SECTION_AND_TEXT.md §2), a `Theory`'s
+`Theorem`'s theorem name, a `Section`'s or a `Text`'s `name`
+(node_classes/SECTION_AND_TEXT.md §1), a `Theory`'s
 short name, a `Session`'s Isabelle session name, a `Datatype`'s type
 names joined with `_` (node_classes/DATATYPE.md §2). The framework makes
 the node's **id component** from it, the kind joined to the name —

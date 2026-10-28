@@ -114,8 +114,8 @@ the type checker — and the loader holds them to each other (§5). Isabelle
 text among a class's fields is typed `IsaTerm` (MODULE_STRUCTURE §4.3),
 which `gen` builds with `IsaTerm.from_agent` from the submitted
 string. Prose among a class's fields — an `english`, a heading's title, a
-passage, a `Theory`'s `description` — is `str`, which `gen` stores as the
-agent wrote it, its whitespace normalised where the class's document says
+passage, a `Theory`'s `description` — is `str`, which `gen` stores as
+`raw` holds it, its whitespace normalised where the class's document says
 so, and which emission writes through `latex_of` (COMPILATION.md §3). A
 prose field's schema description says what the field holds and that it
 is in English — "the statement in English", "the heading, in English" —,
@@ -373,7 +373,8 @@ registration, per class:
   sets, never by position, since an annotation does not reliably keep
   its order (MODULE_STRUCTURE §4.4). So what a construct schema says of
   the class's own fields — which the check enforces — is what `gen`'s
-  `raw` holds. Which classes a `children` property's `items` admit
+  `raw` holds, and no string in it holds U+0005, U+0006 or a lone
+  surrogate (MCP_SPECIFICATION §1). Which classes a `children` property's `items` admit
   only describes where a node may stand (§3).
 
 At assembly, once every class is known:

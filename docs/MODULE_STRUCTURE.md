@@ -465,7 +465,7 @@ isabelle_theory_agent/
   hook.py              the conversation's hooks' script, copied into the working directory's .tat/ by configure (CLIENT_HOOKS.md §1)
   guard.py             the guard script that keeps Claude Code's agents in the agent directory, copied likewise (CLIENT_HOOKS.md §5)
   isabelle_driver.py   typed calls to the ML side's callbacks; IsaTerm in, IsaTerm out for Isabelle text
-  plugin.py            loading node classes and their table; the argument schema grammar
+  plugin.py            loading node classes and their table; the input layer's repair of a tool call's strings; the argument schema grammar
   std/                 the Python half of the plugin Isabelle_Std (§4.5): common.py, what its classes share — With_Proof_Obligations and under it Proof_Obligation with Proof_Job and Proof_Check, text_line (the text line), the shared $defs and their writers, Lifting_Closing (the StdBlock whose ending closes a type's Lifting setup), the compile hook for AoA's proof stores (node_classes/COMMON.md; COMPILATION.md §5) — then one module per node class, named after it, with the class's document under node_classes/ (INDEX.md); statement.py, the statement's schema definitions, Statement, its reader, its check and the proposition Theorem prints under recall, shared by Theorem and Locale, and the reader and the check of a for_any list, shared with Inductive
   mcp.py               the tools, recall
   mcp_server.py        the Streamable HTTP MCP server and its tool boundary, which delivers an agent's mailbox; TAT_Server and its two client subclasses (CONSTRUCT_INTERACTION §8)
@@ -1271,7 +1271,8 @@ chose the class from it, and it may be a bare `const`. Shared by both:
 a field the schema does not name, a required one missing, a type, an
 integer outside the signed 64-bit range — which MessagePack holds on
 the wire and in the store — whatever the schema's number type, `must be
-a 64-bit integer`, an `enum` by membership, an empty list under
+a 64-bit integer`, a string holding U+0005 or U+0006, `cannot hold
+Isabelle's internal markup (U+0005 or U+0006)`, an `enum` by membership, an empty list under
 `minItems: 1`, an object's
 fields by their names and a typed `items`' elements by their index, a
 `$ref` followed into the class's `$defs`, an `anyOf` in this order — a
@@ -1299,6 +1300,18 @@ errors render as tool and argument (RENDER_BASELINES §2); a construct's
 refusal is never so marked, renders with the word `field`, and its `it
 takes` lists the top-level fields less `kind` and `children`. The
 vocabulary is one, the JSON types' phrases, held once.
+Before the check, the input layer repairs every string of a tool call
+(MCP_SPECIFICATION §1): `agent_arguments(arguments)` hands back the
+arguments in new containers, every string through `agent_string`, an
+argument nested deeper than 100 levels as it is, for the check to
+refuse. `agent_string` makes a lone UTF-16 surrogate U+FFFD, and reads
+a string holding U+0005 or U+0006 with a port of Isabelle's
+`YXML.parse_body` and `XML.content_of` (yxml.ML, xml0.ML), which walks
+the body with a stack of its own, the agent setting its depth: where
+Isabelle's `Syntax.parse_input` (syntax.ML) reads source text — a body
+of one text node, or of one `input` element whose position properties,
+where present, are integers — it returns that text, and the string
+unchanged otherwise, for the check to refuse.
 `validate_call_schema(schema, where)` refuses, as the tools are built
 (§4.6), a schema saying anything the check does not enforce or its
 sentences cannot say, and one saying too little for the check to read —
@@ -1423,8 +1436,10 @@ only when a loaded class names the job class each needs
 (CONSTRUCT_INTERACTION §3.1) — through one
 builder, `_tool(name, description, schema, run, read_only)`, which
 validates the schema as the tool is built (`plugin.validate_call_schema`)
-and checks every call against it before the entry runs
-(`plugin.check_call`, §4.4), enums and `minItems` included — so no entry
+and, inside the tool's body and so after the tool log's `call` record,
+repairs every string of a call (`plugin.agent_arguments`, the input
+layer, §4.4), then checks the call against the schema before the entry
+runs (`plugin.check_call`, §4.4), enums and `minItems` included — so no entry
 can skip the check, and none retypes anything off the schema; `edit`'s
 dispatches on an `action` the check let through; `answer`'s entry checks
 the call once more, against the schema with the pending question's in

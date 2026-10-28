@@ -609,7 +609,8 @@ class Node(ABC):
         return next((n for n in self.ancestors() if isinstance(n, cls)), None)
 
     def enclosing(self, cls: type[_N]) -> _N:
-        """`nearest`, for a class an ancestor must bear (PLUGIN_SYSTEM §2)."""
+        """`nearest`, where an ancestor of class `cls` must exist:
+        `TAT_InternalError` when none (PLUGIN_SYSTEM §2)."""
         n = self.nearest(cls)
         if n is None:
             raise TAT_InternalError(f"no {cls.__name__} above a {type(self).__name__}")
@@ -938,8 +939,9 @@ class Node(ABC):
     # may say more in `mark`.
 
     def print(self, indent: int, out: TextIO, mode: PrintMode, depth: int) -> None:
-        """The line at `indent` — the mark and the framework's tags inside
-        the parentheses — then `print_fields` (never in the briefing), the
+        """The line at `indent` — the id, the caption after a colon, the mark
+        and the framework's tags inside the parentheses — then
+        `print_fields` (never in the briefing), the
         messages, the owing line, the failure blocks, the children — one
         level deeper, or two under the children header when a keyed line
         was written and the class answers one; for a nesting node with no
@@ -1123,8 +1125,8 @@ class Node(ABC):
         return written
 
     def detailed(self, mode: PrintMode, depth: int) -> bool:
-        """A helper for a class's `print_fields`: this node is a focus, or
-        under `recall` above the grandchildren."""
+        """Whether the node is detailed (PRINT.md §2): a focus, or under
+        `recall` above the grandchildren."""
         return ((isinstance(mode, Relative_Focus) and self in mode.nodes)
                 or (mode is RECALL and depth < 2))
 
