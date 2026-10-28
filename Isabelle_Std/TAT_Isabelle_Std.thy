@@ -11,6 +11,7 @@ ML_file "ML/TAT_Typedef.ML"
 ML_file "ML/TAT_Lift_Definition_Command.ML"
 ML_file "ML/TAT_Lift_Definition.ML"
 ML_file "ML/TAT_Define.ML"
+ML_file "ML/TAT_Inductive.ML"
 ML_file "ML/TAT_Quotient_Type.ML"
 ML_file "ML/TAT_Lifting_Context.ML"
 

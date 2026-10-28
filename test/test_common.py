@@ -23,17 +23,19 @@ import test_model as tm
 import test_session_theory as ts
 from baselines import DOCS, composed_refusal, fenced_blocks, fenced_lines, table_rows
 from isabelle_theory_agent import edit, isabelle_driver, model as M, plugin
-from isabelle_theory_agent.exceptions import GRAMMARS, InvalidField
+from isabelle_theory_agent.exceptions import GRAMMARS, InvalidField, InvalidName
 from isabelle_theory_agent.std import (
-    common, datatype, define, lift_definition, lifting_context, quotient_type, record, section, text, theorem, typedef)
+    common, datatype, define, inductive, lift_definition, lifting_context, quotient_type, record, section, text, theorem,
+    typedef)
 from isabelle_theory_agent.std.common import (
     Binder, Infix, Lifting_Block, Lifting_Closing, Proof_Obligation, Template, Type_Definition, Type_Parameter,
-    english_cartouche, lifting_closing_text,
+    Variable_With_Syntax, english_cartouche, lifting_closing_text,
     text_line)
 from Isabelle_RPC_Host.unicode import IsaTerm
 from ml_process import BUILD_READER, ROOT, ml_process, ml_string
 from test_datatype import LIST, definition
 from test_define import SUM_UPTO
+from test_inductive import STAR
 from test_lift_definition import DL_REV
 from test_lifting_context import FSET_SIZE
 from test_model import locked, run
@@ -55,6 +57,7 @@ EXAMPLES = {**{kind: lemma("p", kind=kind) for kind in theorem.KINDS},
             **{kind: DLIST for kind in typedef.KINDS},
             **{kind: DL_REV for kind in lift_definition.KINDS},
             **{kind: FSET_SIZE for kind in lifting_context.KINDS},
+            **{kind: {**STAR, "kind": kind} for kind in inductive.KINDS},
             **{kind: FSET for kind in quotient_type.KINDS},
             **{kind: {"kind": kind, "name": "H", "title": "A heading"} for kind in section.KINDS},
             **{kind: {"kind": kind, "name": "p", "text": "A passage."} for kind in text.KINDS}}
@@ -452,12 +455,25 @@ def test_lifting_closing_text_writes_section_6_s_two_lines_and_the_ending_writes
 # --- the shared `$defs` (§4): the schema text, the type parameters' check and writer, the mixfix writers
 
 def test_the_shared_defs_are_section_4_s_schema_text():
-    """§4: the five definitions, descriptions included, are the section's
+    """§4: the six definitions, descriptions included, are the section's
     jsonc blocks, pinned here alone; `Datatype`'s `$defs` are the first
     three."""
     blocks = [jsoncomment.JsonComment().loads("\n".join(b)) for b in fenced_blocks(COMMON, "4.") if b[0] == "{"]
     assert blocks == [common.TYPE_PARAMETER_DEFS, common.MIXFIX_DEFS, common.TYPE_MIXFIX_DEFS,
-                      common.LOCALE_INSTANCE_DEFS, common.VARIABLE_WITH_SYNTAX_DEFS]
+                      common.LOCALE_INSTANCE_DEFS, common.VARIABLE_WITH_SYNTAX_DEFS, common.CONSTANT_DEFS]
+
+
+def test_constants_of_refuses_a_name_outside_the_id_grammar_and_judges_nothing_else():
+    """§4: `constants_of` reads each constant by `Variable_With_Syntax.of_image`,
+    its name in the id grammar without hyphens first (`InvalidName`,
+    `constant name`); a repeat is the field check's."""
+    for name in ("my-f", "f_", "1f", ""):
+        with pytest.raises(InvalidName) as e:
+            common.constants_of([{"name": "g"}, {"name": name}])
+        assert (e.value.name, e.value.grammar) == (name, "constant name")
+    assert common.constants_of([{"name": "f", "type": " nat\n⇒ nat "}, {"name": "f"}]) == (
+        Variable_With_Syntax(IsaTerm.from_agent("f"), IsaTerm.from_agent("nat ⇒ nat"), None),
+        Variable_With_Syntax(IsaTerm.from_agent("f"), None, None))
 
 
 def test_the_type_parameters_check_renders_section_4_s_two_sentences():

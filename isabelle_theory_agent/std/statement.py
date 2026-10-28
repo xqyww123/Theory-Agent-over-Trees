@@ -1,5 +1,6 @@
 """The statement (node_classes/THEOREM.md §2, §3; COMMON.md §4): the schema
-definitions `Variable` and `LongStatement`, TAT's copy of AoA's
+definitions `Variable`, which `Inductive` takes alone for a rule's
+`for_any`, and `LongStatement`, TAT's copy of AoA's
 (contrib/Isa-Mini/IsaMini/AoA/tools/cc_edit.jsonc) with the descriptions
 of THEOREM.md §3, which every class stating something shares, so that the
 `edit` schema merges one definition (PLUGIN_SYSTEM §5); the argument
@@ -21,7 +22,7 @@ from Isabelle_RPC_Host.unicode import IsaTerm
 from ..model import JSON_Schema
 from .common import TERM_DESCRIPTION, TYPE_DESCRIPTION, check_identifier, normalised
 
-STATEMENT_DEFS: dict[str, JSON_Schema] = {
+VARIABLE_DEFS: dict[str, JSON_Schema] = {
     "Variable": {
         "type": "object",
         "properties": {
@@ -31,6 +32,10 @@ STATEMENT_DEFS: dict[str, JSON_Schema] = {
         "required": ["name"],
         "additionalProperties": False,
     },
+}
+
+STATEMENT_DEFS: dict[str, JSON_Schema] = {
+    **VARIABLE_DEFS,
     "LongStatement": {
         "type": "object",
         "properties": {
@@ -77,6 +82,16 @@ class Variable:
     name: IsaTerm
     type: IsaTerm | None            # None when untyped: fixed bare (THEOREM.md §5)
 
+    def image(self) -> dict[str, Any]:
+        """The store's row, in the `unicode` spelling: no `type` key when
+        untyped."""
+        return {"name": self.name.unicode, **({"type": self.type.unicode} if self.type is not None else {})}
+
+    def wire(self) -> tuple[str, str | None]:
+        """The variable as the ML halves read it: the name and the type in
+        `ascii`, None when untyped."""
+        return (self.name.ascii, self.type.ascii if self.type is not None else None)
+
 
 @dataclass(frozen=True)
 class Premise:
@@ -96,7 +111,7 @@ class Statement:
     def structure(self) -> Any:
         """The statement as structure, each `IsaTerm` as its `ascii`:
         `Theorem`'s `goal_structure()` (THEOREM.md §4, §6), `english` aside."""
-        return ([(v.name.ascii, v.type.ascii if v.type is not None else None) for v in self.for_any],
+        return ([v.wire() for v in self.for_any],
                 [(p.name.ascii, p.term.ascii) for p in self.premises],
                 self.conclusion.ascii)
 
@@ -114,8 +129,7 @@ class Statement:
     def image(self) -> dict[str, Any]:
         """The store's row, in the `unicode` spelling (THEOREM.md §2)."""
         return {"english": self.english,
-                "for_any": [{"name": v.name.unicode, **({"type": v.type.unicode} if v.type is not None else {})}
-                            for v in self.for_any],
+                "for_any": [v.image() for v in self.for_any],
                 "premises": [{"name": p.name.unicode, "term": p.term.unicode} for p in self.premises],
                 "conclusion": self.conclusion.unicode}
 

@@ -23,7 +23,8 @@ statement, and the
 `VariableWithSyntax` paragraph's sharers; §5's constants' names and its
 recorded-choice bullet; `variables_of` and `check_variables`
 implemented 2026-10-25 with the field check
-(ai-artifacts/PLACEMENT_RULES_PLAN.md §5), the rest not implemented;
+(ai-artifacts/PLACEMENT_RULES_PLAN.md §5), the rest implemented
+2026-10-28 with that class;
 revised 2026-10-25 with the prose translator (COMPILATION.md §3): §2's
 `english` written through `latex_of`, §4's writers taking `write`, §5's
 text the file carries.

@@ -86,12 +86,13 @@ def emitted(node) -> list[str]:
 
 def test_the_schema_and_the_descriptions_are_the_documents():
     [_, _, schema] = fenced_blocks(DD, "2.")
-    text = "\n".join(line for line in schema if not line.lstrip().startswith("...MIXFIX_DEFS"))   # the spread
+    text = "\n".join(line for line in schema if not line.lstrip().startswith("..."))   # the spreads
     expected = jsoncomment.JsonComment().loads(text)
-    expected["$defs"] = {**expected["$defs"], **common.MIXFIX_DEFS}
+    expected["$defs"] = {**expected["$defs"], **common.CONSTANT_DEFS, **common.MIXFIX_DEFS}
     assert Define.construct_schema == expected
     assert list(define.KINDS) == ["definition"]
-    assert sorted(descriptions(Define.construct_schema)) == sorted(fenced_lines(DD, "3.") + descriptions(common.MIXFIX_DEFS))
+    assert sorted(descriptions(Define.construct_schema)) == sorted(
+        fenced_lines(DD, "3.") + descriptions(common.CONSTANT_DEFS) + descriptions(common.MIXFIX_DEFS))
     assert FIB == {"kind": "definition", "english": "The Fibonacci numbers", "constants": [{"name": "fib", "type": "nat ⇒ nat"}],
                    "equations": ["fib 0 = 0", "fib (Suc 0) = 1", "fib (Suc (Suc n)) = fib n + fib (Suc n)"],
                    "auto_reduction": True}

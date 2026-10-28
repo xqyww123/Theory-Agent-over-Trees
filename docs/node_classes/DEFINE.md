@@ -6,7 +6,7 @@ agent-facing wording below is the owner's, the mark's three states, the
 owing line, the failure header and the layout of §8 ruled on 2026-10-17;
 implemented on 2026-10-17; revised 2026-10-24 with the `Inductive`
 design (INDUCTIVE.md): §2–§4's `Constant` moved to COMMON.md §4, read by
-`constants_of`; not implemented.
+`constants_of`; implemented on 2026-10-28.
 
 A `Define` defines one or more constants by equations, and lets Isabelle
 choose how: a plain `definition` when the equations are one non-recursive

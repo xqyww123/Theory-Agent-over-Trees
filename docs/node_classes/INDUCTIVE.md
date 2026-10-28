@@ -5,7 +5,7 @@ Status: proposed 2026-10-24, from the design discussion of 2026-10-21 to
 ai-artifacts/review/inductive/DECISIONS.md); revised the same day after
 its review (ai-artifacts/review/inductive/design_review.json) and its
 re-review (design_rereview.json); the agent-facing wording below is the
-owner's. Not implemented.
+owner's. Implemented on 2026-10-28.
 
 An `Inductive` defines one or more predicates by rules: under the kind
 `inductive` as the least predicates that satisfy the rules, under
@@ -72,8 +72,8 @@ names none. The conclusion applies one of the predicates. `kind`,
 `english`, `constants` and `inductive_rules` are required, and in a rule
 `name`, `english` and `conclusion`. `gen` normalises every piece of
 Isabelle text once, when the construct is accepted, as `Define`'s `gen`
-does (DEFINE.md §2), and stores the node's `english` and every rule's
-as prose, through `prose_normalised` (COMMON.md §2).
+does (DEFINE.md §2), and the node's `english` and every rule's through
+`normalised` (COMMON.md §2).
 
 The class's construct schema:
 
@@ -83,7 +83,7 @@ The class's construct schema:
   "description": "inductive/coinductive predicate definition: defining the predicate as the least one that satisfies the provided inductive rules, or the greatest one consistent with the provided coinductive rules. Example: inductive star :: \"('a ⇒ 'a ⇒ bool) ⇒ 'a ⇒ 'a ⇒ bool\" where refl: \"star r x x\" | step: \"star r x z\" if \"r x y\" \"star r y z\"",
   "properties": {
     "kind":            { "type": "string", "enum": ["inductive", "coinductive"] },
-    "english":         { "type": "string", "description": "what is defined, in English, as LaTeX text" },
+    "english":         { "type": "string", "description": "what is defined, in English" },
     "constants":       { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/Constant" },
                          "description": "the predicates defined; several for mutually inductive predicates" },
     "inductive_rules": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/InductiveRule" },
@@ -96,7 +96,7 @@ The class's construct schema:
       "type": "object",
       "properties": {
         "name":       { "type": "string", "description": "the rule's name. Example: refl, which a later proof cites as star.refl" },
-        "english":    { "type": "string", "description": "the rule in English, as LaTeX text" },
+        "english":    { "type": "string", "description": "the rule in English" },
         "for_any":    { "type": "array", "items": { "$ref": "#/$defs/Variable" },
                         "description": "universally quantified variables to fix" },
         "premises":   { "type": "array", "items": { "type": "string", "description": "Isabelle/HOL term with all literal numbers annotated with types" },
@@ -139,7 +139,7 @@ inductive/coinductive predicate definition: defining the predicate as the least 
 `english`, `constants` and `inductive_rules`:
 
 ```
-what is defined, in English, as LaTeX text
+what is defined, in English
 the predicates defined; several for mutually inductive predicates
 the inductive/coinductive rules. An optimization: when an argument of the predicates is unchanged throughout the rules, such as the `r` in `star r x y`, make it the first argument and give it the same variable name in every rule.
 ```
@@ -149,7 +149,7 @@ the inductive/coinductive rules. An optimization: when an argument of the predic
 
 ```
 the rule's name. Example: refl, which a later proof cites as star.refl
-the rule in English, as LaTeX text
+the rule in English
 universally quantified variables to fix
 premises to assume
 an Isabelle/HOL term, which must be an application of one of the predicates. Example: star r x z
@@ -204,7 +204,7 @@ framework's default (COMPILATION.md §3) — the `text` line, then the
 command:
 
 ```
-text ‹Inductive star. The reflexive transitive closure of a relation r.›
+text ‹Inductive ‹star›. The reflexive transitive closure of a relation r.›
 inductive star :: "('a ⇒ 'a ⇒ bool) ⇒ 'a ⇒ 'a ⇒ bool" for r where
   refl: "star r x x"
     ―‹Every element reaches itself.›
@@ -213,15 +213,16 @@ inductive star :: "('a ⇒ 'a ⇒ bool) ⇒ 'a ⇒ 'a ⇒ bool" for r where
 ```
 
 - The `text` line's lead: the kind capitalised and the predicates'
-  names joined by `and`, `Inductive star.`, `Coinductive bisim.`,
-  `Inductive even and odd.`; the line is COMMON.md §2's.
+  names, each in a cartouche, joined by `and`, `Inductive ‹star›.`,
+  `Coinductive ‹bisim›.`, `Inductive ‹even› and ‹odd›.`; the line is
+  COMMON.md §2's.
 - The command: the kind, then the constants as `fixes_text` writes them
   (COMMON.md §4); then, when `fixed_parameters` is non-empty, `for` and
   the fixed parameters as `fixes_text` writes them, each with the first
   type a rule's `for_any` gives it, or none; then `where`.
 - The rules, each on its own line indented two spaces, the second and
   later led by `| `: the rule's name and `:`, the conclusion; `if` and
-  the premises, each a string token, when there are premises; `for`
+  the premises when there are premises; `for`
   and the rule's `for_any` less the fixed parameters as `fixes_text`
   writes them, when any remain — `for x :: "'a" and y :: "'a"`. A
   `Variable` reaches `fixes_text` as a `Variable_With_Syntax` without
@@ -230,13 +231,15 @@ inductive star :: "('a ⇒ 'a ⇒ bool) ⇒ 'a ⇒ 'a ⇒ bool" for r where
   comment: `―` before `english_cartouche`'s text (COMMON.md §2), as a
   `Locale`'s axiom carries its statement's. After the rule, so that no
   comment stands between `|` and a rule's name.
-- Every piece of Isabelle text is written through the theory's
-  `print_name` (SESSION_AND_THEORY §2), `fixes_text`'s `write`
-  included: bare when its `ascii` is an Isabelle identifier that is not
-  a keyword of the theory, as Isabelle's string token otherwise; a
-  conclusion and a premise always a string token (COMPILATION.md §3).
-- The whole text in the `\<name>` form (`IsaTerm.ascii`); the file
-  reads as Unicode in jEdit all the same.
+- Every piece of Isabelle text — a name, a rule's name, a type, a
+  conclusion, a premise — is written through the theory's `print_name`
+  (SESSION_AND_THEORY §2), `fixes_text`'s `write` included: bare when
+  its `ascii` is an Isabelle identifier that is not a keyword of the
+  theory, as Isabelle's string token otherwise, the formal comments
+  inside it translated (COMPILATION.md §3).
+- The text in the `unicode` spelling; the file takes the `\<name>` form
+  from the compile's conversion (COMPILATION.md §2) and reads as Unicode
+  in jEdit all the same.
 
 ## 6. Evaluation
 

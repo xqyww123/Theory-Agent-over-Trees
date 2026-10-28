@@ -4,9 +4,8 @@ whose commands open proof obligations, and under it `Proof_Obligation`,
 the base of those whose one command opens one goal — a `Leaf`'s one
 operation, or a block's beginning through `Beginning_Proof_Obligation`
 — with its two job classes (§3); the
-shared `$defs` — the type parameter and the two mixfix annotations —
-with their readers and writers, the type parameter's checks, and the
-checks of a name (§4, §5); the package's compile hook for AoA's proof
+shared `$defs` with their readers and writers, the type parameter's
+checks, and the checks of a name (§4, §5); the package's compile hook for AoA's proof
 stores (§3; COMPILATION.md §5); `Type_Definition`, the marker of the
 type-defining classes, and `MOVE_IT_OUT`, the remedy of §1;
 `Lifting_Block`, the plugin's `StdBlock` inside which a Lifting setup
@@ -131,7 +130,7 @@ def check_dotted_name(name: IsaTerm, field: str, earlier: Iterable[IsaTerm], nou
     check_not_bound_twice(name, field, earlier)
 
 
-# --- the shared `$defs` (§4): the type parameter and the two mixfix annotations
+# --- the shared `$defs` (§4)
 
 TYPE_PARAMETER_DEFS: dict[str, JSON_Schema] = {
     "TypeParameter": {
@@ -235,6 +234,20 @@ VARIABLE_WITH_SYNTAX_DEFS: dict[str, JSON_Schema] = {
         "properties": {
             "name": {"type": "string"},
             "type": {"type": "string", "description": TYPE_DESCRIPTION},
+            "syntax": {"$ref": "#/$defs/Mixfix"},
+        },
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+}
+
+CONSTANT_DEFS: dict[str, JSON_Schema] = {
+    "Constant": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string",
+                     "description": "the constant's type; left out, Isabelle infers it from its definition"},
             "syntax": {"$ref": "#/$defs/Mixfix"},
         },
         "required": ["name"],
@@ -501,7 +514,7 @@ def type_head_text(parameters: Sequence[Type_Parameter], name: str, syntax: Type
                                   mixfix_text(syntax) if syntax is not None else "")))
 
 
-# --- a variable with an optional annotation (§4): a `Locale`'s parameter, a `Define`'s constant
+# --- a variable with an optional annotation (§4): a `Locale`'s parameter, a constant a class defines
 
 @dataclass(frozen=True)
 class Variable_With_Syntax:
@@ -535,6 +548,18 @@ class Variable_With_Syntax:
         `NoSyntax` and none alike."""
         return (self.name.ascii, self.type.ascii if self.type is not None else None,
                 mixfix_wire(self.syntax) if not isinstance(self.syntax, NoSyntax) else None)
+
+
+def constants_of(raw: Sequence[VariableWithSyntax_RawAST]) -> tuple[Variable_With_Syntax, ...]:
+    """The constants a class defines (§4): each name in the id grammar
+    without hyphens first, since the node's name is computed from them
+    (`InvalidName`), then read by `Variable_With_Syntax.of_image`; no
+    repeat check, which is the field check's."""
+    constants: list[Variable_With_Syntax] = []
+    for c in raw:
+        require_id_name(c["name"], "constant name")
+        constants.append(Variable_With_Syntax.of_image(c))
+    return tuple(constants)
 
 
 def fixes_text(variables: Sequence[Variable_With_Syntax], write: Callable[[str | IsaTerm], str]) -> str:

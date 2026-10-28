@@ -10,7 +10,7 @@ replayed by the proof check."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Annotated, Any, ClassVar, Literal, NotRequired, TypedDict
+from typing import Annotated, Any, ClassVar, Literal, TypedDict
 
 from Isabelle_RPC_Host.unicode import IsaTerm
 from IsaMini.AoA.model import Role_Major
@@ -22,9 +22,9 @@ from ..jobs import Failed, Succeeded
 from ..model import INDENT, NON_EMPTY, RECALL, Isar_State_Slot, Leaf, Theory, emit_lines, status_of_errors
 from ..plugin import TAT_node
 from .common import (
-    MIXFIX_DEFS, Construction_Setup, Mixfix_RawAST, Proof_Check, Proof_Job, Variable_With_Syntax,
-    With_Proof_Obligations, check_not_bound_twice, fixes_text, normalised, proof_wire, require_id_name, text_line,
-    unverified)
+    CONSTANT_DEFS, MIXFIX_DEFS, Construction_Setup, Proof_Check, Proof_Job, Variable_With_Syntax,
+    VariableWithSyntax_RawAST, With_Proof_Obligations, check_not_bound_twice, constants_of, fixes_text, normalised,
+    proof_wire, text_line, unverified)
 
 KINDS = ("definition",)
 DEFINITION, SEQUENTIAL, PLAIN = "definition", "function (sequential, no_partials)", "function"
@@ -120,16 +120,10 @@ class Termination_Task(_Define_Task):
 
 # --- the node
 
-class Constant_RawAST(TypedDict):
-    name: str
-    type: NotRequired[str]
-    syntax: NotRequired[Mixfix_RawAST]
-
-
 class Define_RawAST(TypedDict):
     kind: Literal["definition"]
     english: str
-    constants: Annotated[list[Constant_RawAST], NON_EMPTY]
+    constants: Annotated[list[VariableWithSyntax_RawAST], NON_EMPTY]
     equations: Annotated[list[str], NON_EMPTY]
     auto_reduction: bool
 
@@ -210,20 +204,7 @@ class Define(With_Proof_Obligations, Leaf):
         },
         "required": ["kind", "english", "constants", "equations", "auto_reduction"],
         "additionalProperties": False,
-        "$defs": {
-            "Constant": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "type": {"type": "string",
-                             "description": "the constant's type; left out, Isabelle infers it from the equations"},
-                    "syntax": {"$ref": "#/$defs/Mixfix"},
-                },
-                "required": ["name"],
-                "additionalProperties": False,
-            },
-            **MIXFIX_DEFS,
-        },
+        "$defs": {**CONSTANT_DEFS, **MIXFIX_DEFS},
     }
     argument_schema = Define_RawAST
     construction_job_class = Define_Proof_Job
@@ -262,15 +243,11 @@ class Define(With_Proof_Obligations, Leaf):
 
     @classmethod
     async def gen(cls, config, raw: Define_RawAST):
-        """§4: each constant's name against §1's grammar; the texts read
-        normalised.  On an amend, `failed_obligation` comes from the
-        replaced node exactly when the commit carries its outcome (§7), the
-        two answering one question."""
-        constants: list[Variable_With_Syntax] = []
-        for c in raw["constants"]:
-            require_id_name(c["name"], "constant name")
-            constants.append(Variable_With_Syntax.of_image(c))
-        node = cls(config.parent, config.state, normalised(raw["english"]), tuple(constants),
+        """§4: the constants by `constants_of`, each name against §1's
+        grammar; the texts read normalised.  On an amend,
+        `failed_obligation` comes from the replaced node exactly when the
+        commit carries its outcome (§7), the two answering one question."""
+        node = cls(config.parent, config.state, normalised(raw["english"]), constants_of(raw["constants"]),
                    tuple(IsaTerm.from_agent(normalised(e)) for e in raw["equations"]), raw["auto_reduction"])
         old = config.replaces()
         if isinstance(old, Define) and node._carries_job_from(old):
