@@ -609,34 +609,49 @@ async def test_a_statement_is_admitted_and_a_bad_one_is_an_obstacle(std_conversa
     assert not await p.goal_state.is_initialized() and await p.resulting_state().is_initialized()
 
 
-async def test_an_undeclared_variable_is_refused(std_conversation):
+async def test_an_undeclared_or_unused_variable_is_refused(std_conversation):
     """§2, §6: a variable the premises or the conclusion use that `for_any`
     does not declare — Isabelle fixed it by itself — makes the statement
     an obstacle, `goal_state` empty, with §6's sentence naming the
-    variables in alphabetical order; a declared but unused one is not."""
+    variables in alphabetical order; so does a variable `for_any` declares
+    and neither uses, one only under the statement's own `⋀` included, with
+    COMMON §4's unused-variable sentence after the undeclared one; a
+    variable a premise alone uses is used."""
+    one_unused, two_unused = (line for line in fenced_lines(COMMON, "4.") if line.startswith("The field `statement.for_any`"))
     forest = std_conversation.forest
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
             "constructs": [over_the_wire(
                 lemma("one", for_any=(), premises=(), conclusion="rev (rev ys) = ys", english="One"),
-                lemma("two", for_any=({"name": "xs", "type": "'a list"},),
+                lemma("two", for_any=({"name": "y", "type": "'a list"},),
                       premises=({"name": "ne", "term": "zs ≠ []"},),
-                      conclusion="rev (rev ys) = ys", english="Two, one of them in a premise"),
-                lemma("unused", for_any=({"name": "xs", "type": "'a list"}, {"name": "n", "type": "nat"}),
-                      premises=(), conclusion="rev (rev xs) = xs", english="A declared variable unused"))]})
+                      conclusion="rev (rev ys) = ys", english="Two, one of them in a premise, and one unused"),
+                lemma("unused", for_any=({"name": "y", "type": "nat"}, {"name": "xs", "type": "'a list"},
+                                         {"name": "z", "type": "nat"}),
+                      premises=(), conclusion="rev (rev xs) = xs", english="Two declared variables unused"),
+                lemma("bound", for_any=({"name": "x", "type": "nat"},), premises=(),
+                      conclusion="⋀x::nat. x = x", english="A declared variable only under the statement's own binder"),
+                lemma("premise", for_any=({"name": "xs", "type": "'a list"},),
+                      premises=({"name": "ne", "term": "xs ≠ []"},), conclusion="True",
+                      english="A variable a premise alone uses"))]})
         assert not result.isError and "evaluation stopped at lemma_one" in text_of(result), text_of(result)
         result = await session.call_tool("evaluate_to", {"node_id": "theory_TAT_Std_A", "ignore_error": True})
         assert not result.isError, text_of(result)
         (s,) = forest.sub_nodes
         (x,) = s.sub_nodes
-        one, two, unused = x.sub_nodes
+        one, two, unused, bound, premise = x.sub_nodes
         assert isinstance(one._status, M.CannotEvaluate) and not await one.goal_state.is_initialized()
         assert [m.unicode for m in one._status.messages] == ["Undeclared variable `ys`: declare it in `for_any`."]
         assert isinstance(two._status, M.CannotEvaluate)
         assert [m.unicode for m in two._status.messages] == [
-            "Undeclared variables `ys` and `zs`: declare them in `for_any`."]
-        assert isinstance(unused._status, M.Ready) and unused._status.messages == ()
+            "Undeclared variables `ys` and `zs`: declare them in `for_any`.", one_unused]
+        assert isinstance(unused._status, M.CannotEvaluate) and not await unused.goal_state.is_initialized()
+        assert [m.unicode for m in unused._status.messages] == [two_unused]
+        assert isinstance(bound._status, M.CannotEvaluate)
+        assert [m.unicode for m in bound._status.messages] == [
+            "The field `statement.for_any` declares `x`, but it is not used."]
+        assert isinstance(premise._status, M.Ready) and premise._status.messages == ()
 
 
 @pytest.mark.isabelle(deadline=300)

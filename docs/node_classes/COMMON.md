@@ -27,7 +27,11 @@ implemented 2026-10-25 with the field check
 2026-10-28 with that class;
 revised 2026-10-25 with the prose translator (COMPILATION.md §3): §2's
 `english` written through `latex_of`, §4's writers taking `write`, §5's
-text the file carries.
+text the file carries; revised 2026-10-28 with the unused-variable check
+(ai-artifacts/UNUSED_TERM_VARIABLE_PLAN.md): §3's `open_goal`, §4's check
+and its sentence, and the type-parameter sentence ending "but it is not
+used"; implemented the same day for `Theorem` and `Inductive`, `Locale`'s
+part not implemented.
 
 The plugin `Isabelle_Std` (MODULE_STRUCTURE §4.5) carries the node
 classes of Isabelle's standard commands (INDEX.md). What they share is
@@ -283,8 +287,8 @@ and `message()`, records what the two steps yielded and answers the
 tuple of `IsaTerm` messages the `Ready` carries; the default records
 nothing and answers `()`; `Typedef`'s sets `lifting` and answers its
 notice exactly when it sets it to false (TYPEDEF.md §6). `Theorem`'s
-`open_goal` is the `lemma` transition and
-the undeclared-variable check, yielding `()`; its `after_admission` the
+`open_goal` is the `lemma` transition, the undeclared-variable check
+and the unused-variable check (§4), yielding `()`; its `after_admission` the
 identity (THEOREM.md §6).
 
 **The jobs.** `Proof_Job` and `Proof_Check` are `Proof_Obligation`'s
@@ -800,7 +804,32 @@ not found refused on its path with the one `InvalidField` sentence,
 pinned here:
 
 ```
-The field `type_parameters[1]` declares `'b`, which is not used.
+The field `type_parameters[1]` declares `'b`, but it is not used.
+```
+
+The unused-variable check, its term-variable twin: a variable a
+`for_any` list declares must occur free in its own proposition — a
+`Theorem`'s `statement.for_any` in the statement, a `Locale` axiom's
+`assumes[i].statement.for_any` in that axiom, an `Inductive` rule's
+`inductive_rules[i].for_any` in that rule —, in a premise or the
+conclusion; an occurrence only under the agent's own `⋀x.` or `λx.`
+binds another variable and does not count. Isabelle reads such a
+variable and drops it silently. The check needs Isabelle's parse of the
+proposition, so it runs at evaluation, in each class's ML (THEOREM.md §6, LOCALE.md §6,
+INDUCTIVE.md §6), and refuses the run: one message for the node, written
+by `unused_sentence` of TAT_Theorem.ML — one group per list holding an
+unused variable, in field order, each "the field `<path>.for_any`
+declares" and the list's unused names in its order, separated by
+spaces; the groups separated by `, `, with `, and` before the last; the
+ending `it is` for one variable in all, `they are` for more. Where the
+class also has the undeclared-variable check, that check's messages come
+first. Pinned here:
+
+```
+The field `statement.for_any` declares `y`, but it is not used.
+The field `statement.for_any` declares `y` `z`, but they are not used.
+The field `inductive_rules[0].for_any` declares `x` `y`, and the field `inductive_rules[2].for_any` declares `z`, but they are not used.
+The field `assumes[1].statement.for_any` declares `z`, and the field `assumes[3].statement.for_any` declares `z`, but they are not used.
 ```
 
 `LOCALE_INSTANCE_DEFS` — a locale instance, a locale a `Locale`

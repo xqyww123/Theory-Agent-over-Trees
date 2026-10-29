@@ -511,7 +511,7 @@ def test_the_unused_type_parameter_check_renders_section_4_s_sentence():
     in none of the texts — `'a`, not within `'ab`, `'a1`, `'a'`, `'a⇩1` or
     `x'a` — is refused on its path with the section's sentence, the first
     such parameter; a letter symbol is a letter."""
-    [sentence] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
+    [sentence] = [line for line in fenced_lines(COMMON, "4.") if line.startswith("The field `type_parameters[1]` declares")]
     of = common.type_parameters_of
 
     def texts(*ts):

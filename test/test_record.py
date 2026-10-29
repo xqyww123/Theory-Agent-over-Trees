@@ -144,7 +144,7 @@ def test_the_field_check_refuses_as_section_4_says():
     assert str(e) == twice and e.field == "fields[1].name"
     assert identifier.endswith(": it " + invalid.split(": a type name ")[1])
     # every type parameter used, in a field's type or `parent` — COMMON §4's check and sentence, pinned by test_common.py
-    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
+    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.startswith("The field `type_parameters[1]` declares")]
     e = field_check(f, x, [definition(type_parameters=({"name": "'a"}, {"name": "'b"}))])
     assert str(e) == unused and e.field == "type_parameters[1]"
     assert field_check(f, x, [definition(fields=({"name": "x", "type": "'ab"},))]).field == "type_parameters[0]"

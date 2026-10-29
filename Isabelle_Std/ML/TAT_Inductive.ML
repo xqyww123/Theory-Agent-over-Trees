@@ -1,10 +1,11 @@
 (*  Title:      Isabelle_Std/ML/TAT_Inductive.ML
 
 The ML half of the plugin's `Inductive` (isabelle_theory_agent/std/inductive.py;
-docs/node_classes/INDUCTIVE.md §6): the rules read as the `inductive` command reads
-them, the fixed parameters found on that reading -- or the recorded ones taken --
-with the notice's variables, and the definition made by the command's own call,
-`Inductive.add_inductive_cmd`.
+docs/node_classes/INDUCTIVE.md §6): the rules parsed as the `inductive` command
+parses them, the definition refused when a `for_any` variable is unused; the rules
+read as the command reads them, the fixed parameters found on that reading -- or
+the recorded ones taken -- with the notice's variables; and the definition made by
+the command's own call, `Inductive.add_inductive_cmd`.
 *)
 
 structure TAT_Inductive =
@@ -50,6 +51,26 @@ fun args ctxt ((_, constants, rules, _) : definition) params : args =
       map (fn (v, T) => (Binding.name v, T, NoSyn)) (filter_out (member (op =) params o #1) for_any)))
      rules)
 
+(*** the parse and the unused-variable check (§6; COMMON.md §4) ***)
+
+(*each rule parsed, never checked, where the command parses it (specification.ML,
+  prep_specs): in the context read_multi_specs leaves for the constants and the
+  parameters, the rule's own `for_any` fixed; its conclusion and its premises*)
+fun parsed ctxt ((cnames_syn, pnames_syn, specs) : args) =
+  let val vars_ctxt = #2 (Specification.read_multi_specs (cnames_syn @ pnames_syn) [] ctxt) in
+    specs |> map (fn ((_, concl), prems, for_any) =>
+      let val rule_ctxt = #2 (vars_ctxt |> fold_map Proof_Context.read_var for_any |-> Proof_Context.add_fixes)
+      in (Syntax.parse_prop rule_ctxt concl, map (Syntax.parse_prop rule_ctxt) prems) end)
+  end
+
+(*COMMON.md §4's message on the `for_any` variables, as the rules write them, that
+  are not free in their rule's parse*)
+fun unused_message (rules : rule list) parses =
+  TAT_Theorem.unused_sentence (map_index (fn (i, ((_, _, _, for_any), (concl, prems))) =>
+    ("inductive_rules[" ^ string_of_int i ^ "].for_any",
+     TAT_Theorem.unused_in (fold Term.add_free_names (concl :: prems) []) (map #1 for_any)))
+    (rules ~~ parses))
+
 (*** the detection (§6) ***)
 
 (*the occurrences in `t` as check_prem' finds them (inductive.ML): a subterm
@@ -72,29 +93,27 @@ fun occurrences cs t =
   apart from the rule's variable of the same name, as check_rule keeps it.  A
   rule's variable is one of the Frees of the binders the closing added -- the
   leading ones, those the conclusion's text binds itself following, counted
-  on its parse where prep_specs parses it, the rule's `for_any` fixed --,
-  never one the context fixes.  A
-  position's common variable is the Free every occurrence of every predicate
+  on its parse in `parses` --, never one the context fixes.  A position's
+  common variable is the Free every occurrence of every predicate
   carries there, equal by name and typ; none at any position when some
   predicate has no occurrence.  The run: the leading positions whose common
   variables are all different, each a rule's variable or a parameter step 1
   fixed.  The notice, while some premise has an occurrence: each rule's
   variable not in the run that is a later position's common variable, in
   position order.  A read that fails raises, the definition's failure*)
-fun detect ctxt ((cnames_syn, pnames_syn, specs) : args) =
+fun detect ctxt ((cnames_syn, pnames_syn, specs) : args) parses =
   let
-    val ((vars, intrs), specs_ctxt) = Specification.read_multi_specs (cnames_syn @ pnames_syn) specs ctxt
+    val ((vars, intrs), _) = Specification.read_multi_specs (cnames_syn @ pnames_syn) specs ctxt
     val (cs, ps) = chop (length cnames_syn) (map (Free o apfst Binding.name_of o fst) vars)
-    fun taken_apart ((_, rule), ((_, concl_text), _, for_any)) =
+    fun taken_apart ((_, rule), (concl_parse, _)) =
       let
         val params = Term.variant_bounds rule (Logic.strip_params rule)
-        val parse_ctxt = #2 (specs_ctxt |> fold_map Proof_Context.read_var for_any |-> Proof_Context.add_fixes)
-        val own = length (Logic.strip_params (Type.strip_constraints (Syntax.parse_prop parse_ctxt concl_text)))
+        val own = length (Logic.strip_params (Type.strip_constraints concl_parse))
         val frees = rev (map Free params)
         val concl = subst_bounds (frees, Logic.strip_assums_concl rule)
         val prems = map (curry subst_bounds frees) (Logic.strip_assums_hyp rule)
       in (map Free (take (length params - own) params), occurrences cs concl, maps (occurrences cs) prems) end
-    val rules = map taken_apart (intrs ~~ specs)   (*each its variables, its conclusion's occurrences, its premises'*)
+    val rules = map taken_apart (intrs ~~ parses)   (*each its variables, its conclusion's occurrences, its premises'*)
     val occs = maps (fn (_, concl_occs, prem_occs) => concl_occs @ prem_occs) rules
     fun common i =
       (case map (fn t => try (nth (snd (strip_comb t))) i) occs of
@@ -127,17 +146,26 @@ fun definition_transition coind ((cnames_syn, pnames_syn, specs) : args) =
   |> Toplevel.local_theory NONE NONE (snd o Inductive.add_inductive_cmd true coind cnames_syn pnames_syn specs [])
 
 (*from the input state to the state after the definition, with the parameters
-  run and the notice's variables: step 1 under the recorded parameters, none
-  under NONE; the parameters the recorded ones, or the run under NONE, never a
-  switch; step 2 on the arguments for them*)
-fun run (definition as (kind, _, _, recorded) : definition) st =
+  run and the notice's variables: the rules parsed under the recorded parameters,
+  none under NONE, refused when a `for_any` variable is unused; step 1 and the
+  detection, which counts on that parse; the parameters the recorded ones, or
+  the run under NONE, never a switch; step 2 on the arguments for them*)
+fun run (definition as (kind, _, rules, recorded) : definition) st =
   let
     val ctxt = Toplevel.context_of st
-    val (found, notice) = detect ctxt (args ctxt definition (these recorded))
-    val params = the_default found recorded
+    val recorded_args = args ctxt definition (these recorded)
+    val parses = parsed ctxt recorded_args
   in
-    TAT_Framework.apply_transition (definition_transition (kind = "coinductive") (args ctxt definition params)) st
-    |> TAT_Framework.map_answer (rpair (params, notice))
+    (case unused_message rules parses of
+      [] =>
+        let
+          val (found, notice) = detect ctxt recorded_args parses
+          val params = the_default found recorded
+        in
+          TAT_Framework.apply_transition (definition_transition (kind = "coinductive") (args ctxt definition params)) st
+          |> TAT_Framework.map_answer (rpair (params, notice))
+        end
+    | messages => TAT_Framework.Refused messages)
   end
 
 (*the callback: the input slot, the resulting slot and the definition; one

@@ -3,7 +3,8 @@
 Status: decided, last on 2026-10-02, after four design reviews
 (ai-artifacts/review/CONSTRUCT_RULING*.md); revised 2026-10-12 with the
 node-class rounds (ai-artifacts/review/NODE_CLASS_RULINGS.md), what
-every class shares moved to COMMON.md; the AoA round is open. The
+every class shares moved to COMMON.md; revised 2026-10-28 with the
+unused-variable check (COMMON.md §4); the AoA round is open. The
 machinery this class uses — jobs, agents, messages, the tools — is
 CONSTRUCT_INTERACTION.md; this file says only what `Theorem` makes of
 it.
@@ -70,7 +71,9 @@ using it merges the same definition (PLUGIN_SYSTEM §5):
 optional. Every variable the premises and the conclusion use is declared
 in `for_any`, unless the context the node stands in fixes it — a
 `Locale`'s parameters inside its block (LOCALE.md §6): one Isabelle
-fixed by itself is refused at evaluation (§6).
+fixed by itself is refused at evaluation (§6). Every variable `for_any`
+declares is used, free in a premise or the conclusion: one that is not
+is refused at evaluation too (§6; COMMON.md §4).
 `gen` normalises every piece of Isabelle text — the names, the types,
 the terms — and `english` once, when the construct is accepted:
 newlines become spaces and runs of whitespace one space; printing,
@@ -199,7 +202,7 @@ slot, and its `message()`: `kind`, `name` and `goal_structure()` — the
 each `IsaTerm` as its `ascii` (§2). The callback is built by
 `TAT_Proof_Obligation` (COMMON.md §3) from `Theorem`'s two steps:
 `open_goal`, the `lemma` command's transition and, on the open goal,
-the check below, yielding nothing; `after_admission`, the identity.
+the two checks below, yielding nothing; `after_admission`, the identity.
 Between the two the callback applies the half of `sorry` that ends a
 toplevel goal (`Isar_Cmd.global_skip_proof`):
 
@@ -234,6 +237,13 @@ Its head, `Undeclared variable(s) …`, is written by one writer of
 TAT_Theorem.ML, which the axioms' sentences of LOCALE.md §6 share with
 the axioms named after the variables; the lists are joined by its
 `series`, the twin of the framework's `exceptions.series`.
+
+On the same free variables, `open_goal` runs the unused-variable check
+(COMMON.md §4): the `for_any` variables that are none of them — an
+occurrence only under the agent's own `⋀x.` binds another `x` — refuse
+the statement with COMMON.md §4's one message, its path
+`statement.for_any`, after the undeclared-variable message when there
+is one.
 
 Otherwise `_eval_opr` returns `Ready` with no messages: `Theorem`'s
 `record_from_evaluation` is `Proof_Obligation`'s default, which records

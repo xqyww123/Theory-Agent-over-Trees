@@ -353,7 +353,7 @@ def check_type_parameters_used(parameters: Sequence[Type_Parameter], texts: Iter
     used = set().union(*(_type_variables(t.ascii) for t in texts))
     for i, p in enumerate(parameters):
         if p.name.ascii not in used:
-            raise InvalidField(f"type_parameters[{i}]", f"declares `{p.name.unicode}`, which is not used")
+            raise InvalidField(f"type_parameters[{i}]", f"declares `{p.name.unicode}`, but it is not used")
 
 
 def _type_variables(ascii: str) -> set[str]:

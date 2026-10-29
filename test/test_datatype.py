@@ -171,12 +171,12 @@ def test_the_field_check_refuses_as_section_4_says():
     assert (e.field, e.reason) == ("type_parameters[1].name", "repeats `'a`")
     # every type parameter used in some constructor's argument type, last — COMMON §4's check and sentence, pinned by
     # test_common.py
-    [unused] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.") if line.endswith("which is not used.")]
+    [unused] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.") if line.startswith("The field `type_parameters[1]` declares")]
     e = field_check(f, x, [definition(LIST, type_parameters=({"name": "'a"}, {"name": "'b"}))])
     assert str(e) == unused and e.field == "type_parameters[1]"
     e = field_check(f, x, [definition({"type_name": "phantom", "constructors": [{"name": "phantom", "arguments": [{"type": "'b"}]}]},
                                       type_parameters=({"name": "'a"}, {"name": "'b"}))])     # the phantom idiom too
-    assert (e.field, e.reason) == ("type_parameters[0]", "declares `'a`, which is not used")
+    assert (e.field, e.reason) == ("type_parameters[0]", "declares `'a`, but it is not used")
     # what §4 admits: a constructor's name shared by two types of a group, which Isabelle qualifies by the type; a
     # selector's name shared by two constructors of one type, of which Isabelle makes one selector; a parameter only
     # the group's second type uses

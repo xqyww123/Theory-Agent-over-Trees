@@ -161,7 +161,7 @@ def test_the_field_check_refuses_as_section_4_says():
     given; §4's order under two faults."""
     f, x = forest()
     [invalid] = [line for line in fenced_lines(BASELINES, "2.") if line.startswith("`my-list` is not a valid type name")]
-    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.endswith("which is not used.")]
+    [unused] = [line for line in fenced_lines(COMMON, "4.") if line.startswith("The field `type_parameters[1]` declares")]
     e = field_check(f, x, [definition(rep_function_name="rep_")])
     assert str(e) == IDENTIFIER and e.field == "rep_function_name"
     assert IDENTIFIER.endswith(": it " + invalid.split(": a type name ")[1])

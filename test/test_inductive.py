@@ -406,8 +406,9 @@ def test_the_emitted_text_is_section_5_s():
 
 # --- the detection (§6), on a raw ML process ---------------------------------
 
-DETECT_ML = [str(ROOT / "ML" / "TAT_Framework.ML"), str(ROOT / "ML" / "TAT_Common_Nodes.ML"),
-             str(ROOT / "Isabelle_Std" / "ML" / "TAT_Mixfix.ML"), str(ROOT / "Isabelle_Std" / "ML" / "TAT_Inductive.ML")]
+DETECT_ML = [str(ROOT / "ML" / f) for f in ("TAT_Framework.ML", "TAT_Common_Nodes.ML")] + [
+    str(ROOT / "Isabelle_Std" / "ML" / f)
+    for f in ("TAT_Proof_Obligation.ML", "TAT_Mixfix.ML", "TAT_Theorem.ML", "TAT_Inductive.ML")]
 
 DETECT_CASES = r"""
   val thy0 = Context.the_theory (Context.the_generic_context ());
@@ -417,7 +418,8 @@ DETECT_CASES = r"""
   val in_L = lthy "locale L = fixes r :: \"'a \<Rightarrow> 'a \<Rightarrow> bool\"\ncontext L begin";
   fun case' recorded label ctxt constants rules =
     let val definition = ("inductive", map (fn (n, T) => (n, SOME T, NONE)) constants, rules, SOME recorded)
-        val (run, notice) = TAT_Inductive.detect ctxt (TAT_Inductive.args ctxt definition recorded)
+        val args = TAT_Inductive.args ctxt definition recorded
+        val (run, notice) = TAT_Inductive.detect ctxt args (TAT_Inductive.parsed ctxt args)
     in writeln (label ^ ": [" ^ commas run ^ "] [" ^ commas notice ^ "]") end;
   val case_ = case' [];
   val starT = "('a \<Rightarrow> 'a \<Rightarrow> bool) \<Rightarrow> 'a \<Rightarrow> 'a \<Rightarrow> bool";
@@ -480,6 +482,81 @@ async def test_the_detection_answers_the_table(std_harness, tmp_path):
     lines = r.stdout.splitlines()
     assert r.returncode == 0 and "DETECT DONE" in lines, (r.stdout[-3000:], r.stderr[-3000:])
     assert [line for line in lines if line[:1] in "abcdefghijklmnopqrs" and line[1:3] == ": "] == DETECTED, lines
+
+
+# --- the parse and the unused-variable check (§6; COMMON.md §4), on a raw ML process
+
+RUN_CASES = r"""
+  val thy0 = Context.the_theory (Context.the_generic_context ());
+  fun state text = fold (Toplevel.command_exception true)
+    (Outer_Syntax.parse_text thy0 (K thy0) Position.start text) (Toplevel.make_state (SOME thy0));
+  val top = state "";
+  fun case' recorded label st constants rules =
+    let val definition = ("inductive", map (fn (n, T) => (n, SOME T, NONE)) constants, rules, recorded)
+    in writeln (label ^ ": " ^
+      ((case TAT_Inductive.run definition st of
+         TAT_Framework.Accepted (_, (run, notice)) => "Accepted [" ^ commas run ^ "] [" ^ commas notice ^ "]"
+       | TAT_Framework.Refused messages => "Refused " ^ space_implode " | " messages)
+       handle ERROR m => "ERROR " ^ m))
+    end;
+  val case_ = case' NONE;
+  val p = [("p", "nat \<Rightarrow> bool")];
+  val ord = [("x", SOME "'a::order")];
+  val length_w = ("b", "p (length (w :: 'a list))", [], []);
+  val _ = case_ "A" top p [("a", "p 0", [], ord), length_w];
+  val _ = case_ "B" top p [("a", "p (size [x])", [], ord)];
+  val _ = case_ "C" top p [("a", "p (size [x])", [], ord), length_w];
+  val _ = case_ "D" top p [("a", "p (if _ then x else 1)", [], [("x", SOME "nat")])];
+  val _ = case_ "E" top p [("a", "p (if _ then x else 1)", [], [("x", SOME "nat"), ("y", NONE)])];
+  val _ = case_ "F" top p [("a", "p w", [], [("w", SOME "nat")]), ("b", "p 0", [], [("w", SOME "nat")])];
+  val _ = case_ "G" top p [("a", "p 0", ["x > (0::nat)"], [("x", NONE)])];
+  val _ = case_ "H" top p [("a", "\<And>r. p r", [], [("r", NONE)])];
+  val _ = case_ "I" top p [("a", "\<And>r. p r", ["p r"], [("r", NONE)])];
+  val _ = case_ "J" top p [("a", "p u", [], [("x", NONE), ("u", NONE), ("y", NONE)]), ("b", "p 0", [], []),
+                           ("c", "p 1", [], [("z", NONE)])];
+  val pr = [("p", "nat \<Rightarrow> nat \<Rightarrow> bool")];
+  val recorded_r = [("a", "p r 0", [], [("r", NONE), ("w", SOME "nat")])];
+  val _ = case' (SOME ["r"]) "K" top pr recorded_r;
+  val _ = case' (SOME ["r"]) "L" (state "consts r :: nat") pr recorded_r;
+  val _ = case_ "M" top p [("a", "p size", [], [("size", SOME "nat")])];
+  val _ = case_ "N" top p [("a", "p u", [], [("b", NONE), ("u", NONE), ("a", NONE)]), ("b", "p 0", [], [("d", NONE)]),
+                           ("c", "p 1", [], [("c", NONE)])];
+  val _ = writeln "RUN DONE";
+"""
+
+
+@pytest.mark.isabelle(deadline=300)
+async def test_the_parse_and_the_unused_variable_check_answer_the_table(std_harness, tmp_path):
+    """§6's parse and COMMON §4's unused-variable check, through
+    `TAT_Inductive.run`: (A) a rule's unused `x :: 'a::order` beside a
+    rule on `'a list`, refused by the check, not by a sort clash; (B, C)
+    the same `x` used, alone and beside that rule, accepted; (D) a dummy
+    pattern beside a used variable, and (E) with an unused one; (F) a
+    rule's unused `w` while another rule uses a `w`; (G) a variable a
+    premise alone uses; (H) a variable only under the conclusion's own
+    `⋀`, and (I) the same used by a premise; (J) COMMON §4's sentence of
+    two rules; (K, L) under recorded `[r]`, `r` used and `w` not, in a
+    context with and without a constant `r`; (M) a variable named like a
+    constant; (N) three groups, each in its list's order."""
+    [two_rules] = [line for line in fenced_lines(DOCS / "node_classes" / "COMMON.md", "4.")
+                   if line.startswith("The field `inductive_rules")]
+    cases = tmp_path / "run_cases.ML"
+    cases.write_text(RUN_CASES)
+    files = ", ".join(ml_string(f) for f in [*DETECT_ML, str(cases)])
+    r = await ml_process(std_harness, f"val _ = in_theory thy0 [{files}];",
+                         logic="Minilang_AoA", base="Minilang_AoA.Minilang_AoA")
+    lines = r.stdout.splitlines()
+    assert r.returncode == 0 and "RUN DONE" in lines, (r.stdout[-3000:], r.stderr[-3000:])
+
+    def unused(rule, name):
+        return f"Refused The field `inductive_rules[{rule}].for_any` declares `{name}`, but it is not used."
+    assert [line for line in lines if line[:1] in "ABCDEFGHIJKLMN" and line[1:3] == ": "] == [
+        "A: " + unused(0, "x"), "B: Accepted [] []", "C: Accepted [] []", "D: Accepted [] []",
+        "E: " + unused(0, "y"), "F: " + unused(1, "w"), "G: Accepted [] []", "H: " + unused(0, "r"),
+        "I: Accepted [] []", "J: Refused " + two_rules, "K: " + unused(0, "w"), "L: " + unused(0, "w"),
+        "M: Accepted [size] []",
+        "N: Refused The field `inductive_rules[0].for_any` declares `b` `a`, the field `inductive_rules[1].for_any` "
+        "declares `d`, and the field `inductive_rules[2].for_any` declares `c`, but they are not used."], lines
 
 
 # --- the evaluation, in the plugin's run of the harness (§5, §6, §8) --------
@@ -578,7 +655,9 @@ async def test_refused_definitions_are_obstacles_and_a_record_runs_as_recorded(s
     recorded `r` under a constant `r :: nat` declared before the node
     later still accepted (step 1 under the record); and the lifted type:
     `star` untyped, `r` typed by a later rule's `for_any`, fixes `star`
-    at that type, so a theorem stating it at a type variable is refused."""
+    at that type, so a theorem stating it at a type variable is refused.
+    And a rule's unused `x :: 'a::order` beside a rule on `'a list`
+    refused by COMMON §4's unused-variable check (§6)."""
     forest = std_conversation.forest
     refused_concl = definition(rule("refl", "star r x x", english="Every element reaches itself"),
                                rule("step", "r x z", english="A step of r followed by a path is a path",
@@ -590,6 +669,8 @@ async def test_refused_definitions_are_obstacles_and_a_record_runs_as_recorded(s
                       constants=({"name": "ev", "type": "nat ⇒ bool"},))
     at_b = lemma("at_b", "lstar r x x", "At a type variable",
                  ({"name": "r", "type": "'b ⇒ 'b ⇒ bool"}, {"name": "x", "type": "'b"}), ())
+    sortcase = definition(rule("a", "p 0", for_any=({"name": "x", "type": "'a::order"},)),
+                          rule("b", "p (length (w :: 'a list))"), constants=({"name": "p", "type": "nat ⇒ bool"},))
     async with std_conversation.client() as session:
         result = await session.call_tool("edit", {
             "action": "append", "target_id": "Sessions", "evaluate": True,
@@ -597,11 +678,16 @@ async def test_refused_definitions_are_obstacles_and_a_record_runs_as_recorded(s
                 ts.theory("TAT_Std_J") | {"children": [refused_concl]},
                 ts.theory("TAT_Std_K") | {"children": [myor, mono]},
                 ts.theory("TAT_Std_L") | {"children": [renamed(STAR, "path")]},
-                ts.theory("TAT_Std_M") | {"children": [renamed(LIFTED, "lstar"), at_b]})]})
+                ts.theory("TAT_Std_M") | {"children": [renamed(LIFTED, "lstar"), at_b]},
+                ts.theory("TAT_Std_N") | {"children": [sortcase]})]})
         text = text_of(result)
-        assert not result.isError and text.count("Error:") == 3, text
+        assert not result.isError and text.count("Error:") == 4, text
         (s,) = forest.sub_nodes
-        j, k, l, m = s.sub_nodes
+        j, k, l, m, n = s.sub_nodes
+        (unused,) = n.sub_nodes
+        assert isinstance(unused._status, M.CannotEvaluate) and unused.fixed_parameters is None
+        assert [msg.unicode for msg in unused._status.messages] == [
+            "The field `inductive_rules[0].for_any` declares `x`, but it is not used."]
         (bad,) = j.sub_nodes
         _, ev = k.sub_nodes
         (path,) = l.sub_nodes

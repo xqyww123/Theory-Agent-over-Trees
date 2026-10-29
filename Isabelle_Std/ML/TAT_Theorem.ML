@@ -2,9 +2,10 @@
 
 The ML half of the plugin's `Theorem` (isabelle_theory_agent/std/theorem.py;
 docs/node_classes/THEOREM.md §6): the statement opened as the `lemma` command's
-goal, with the undeclared-variable check on it, and nothing after the admission;
-the callback is built by `TAT_Proof_Obligation.register` (COMMON.md §3), whose
-are also the admission, the proof construction and the proof check.
+goal, with the undeclared-variable and unused-variable checks on it, and nothing
+after the admission; the callback is built by `TAT_Proof_Obligation.register`
+(COMMON.md §3), whose are also the admission, the proof construction and the
+proof check.
 *)
 
 structure TAT_Theorem =
@@ -37,16 +38,23 @@ fun statement_transition ((kind, name, for_any, premises, conclusion) : statemen
          Element.Assumes (map (fn (p, t) => ((Binding.name p, []), [(t, [])])) premises)]
         (Element.Shows [(Binding.empty_atts, [(conclusion, [])])]))
 
-(*§6's check once the goal is open: the statement's free variables -- in the
-  goal and in the premises assumed beside it -- that `for_any` does not
-  declare and the input state's context does not fix (a `Locale`'s parameters
-  inside its block, LOCALE.md §6), which Isabelle fixed by itself; sorted*)
-fun undeclared ((_, _, for_any, _, _) : statement) st_input st =
-  let val ctxt0 = Toplevel.context_of st_input
-      val {context, goal, ...} = Proof.goal (Toplevel.proof_of st)
+(*the free names of the open goal: in the goal and in the premises assumed
+  beside it past the input state's context `ctxt0`*)
+fun goal_frees ctxt0 st =
+  let val {context, goal, ...} = Proof.goal (Toplevel.proof_of st)
       val props = Thm.prop_of goal :: map Thm.prop_of (Assumption.local_prems_of context ctxt0)
-      val frees = distinct (op =) (map #1 (fold Term.add_frees props []))
-   in sort_strings (filter_out (Variable.is_fixed ctxt0) (subtract (op =) (map #1 for_any) frees)) end
+   in fold Term.add_free_names props [] end
+
+(*§6's undeclared-variable check: the free names that `for_any` does not
+  declare and the input state's context `ctxt0` does not fix (a `Locale`'s
+  parameters inside its block, LOCALE.md §6), which Isabelle fixed by itself;
+  sorted*)
+fun undeclared for_any ctxt0 frees =
+  sort_strings (filter_out (Variable.is_fixed ctxt0) (subtract (op =) (map #1 for_any) frees))
+
+(*the unused-variable check (COMMON.md §4): the declared `names` not among the
+  free names `frees`, in order*)
+fun unused_in frees names = subtract (op =) frees names
 
 (*names joined by `, ` with `last` before the final one, the twin of the
   framework's `exceptions.series` (LOCALE.md §6)*)
@@ -63,18 +71,39 @@ fun undeclared_head names axioms =
   ^ (if null axioms then ""
      else " in the axiom" ^ (if length axioms = 1 then " " else "s ") ^ series "and" (map quoted axioms))
 
-fun undeclared_sentence names =
-  undeclared_head names [] ^ (if length names = 1 then ": declare it in `for_any`." else ": declare them in `for_any`.")
+(*`Theorem`'s one message on undeclared variables; no message when there is none*)
+fun undeclared_sentence [] = []
+  | undeclared_sentence names =
+      [undeclared_head names [] ^
+        (if length names = 1 then ": declare it in `for_any`." else ": declare them in `for_any`.")]
+
+(*COMMON.md §4's one message on unused variables: each `for_any` list as its
+  path and its unused names, in field order; a list with none left out; no
+  message when none has one*)
+fun unused_sentence groups =
+  (case filter_out (null o #2) groups of
+    [] => []
+  | groups' =>
+      let
+        val clauses = groups' |> map_index (fn (i, (path, names)) =>
+          (if i = 0 then "The" else "the") ^ " field `" ^ path ^ "` declares " ^ space_implode " " (map quoted names))
+        val joined = (case split_last clauses of ([], one) => one | (front, last) => commas front ^ ", and " ^ last)
+      in [joined ^ (if length (maps #2 groups') = 1 then ", but it is not used." else ", but they are not used.")] end)
 
 (*`Theorem`'s `open_goal` (COMMON.md §3): the statement's transition from the
-  input state to the state with the goal open, refused -- one message --
-  when a variable is undeclared; yields nothing*)
-fun open_goal statement st =
+  input state to the state with the goal open, refused when a variable is
+  undeclared or unused -- the undeclared-variable message first; yields
+  nothing*)
+fun open_goal (statement as (_, _, for_any, _, _) : statement) st =
   TAT_Framework.apply_transition (statement_transition statement) st
   |> TAT_Framework.bind_answer (fn st' =>
-      (case undeclared statement st st' of
-        [] => Accepted (st', ())
-      | names => Refused [undeclared_sentence names]))
+      let
+        val ctxt0 = Toplevel.context_of st
+        val frees = goal_frees ctxt0 st'
+        val messages =
+          undeclared_sentence (undeclared for_any ctxt0 frees) @
+          unused_sentence [("statement.for_any", unused_in frees (map #1 for_any))]
+      in if null messages then Accepted (st', ()) else Refused messages end)
 
 (*`after_admission` the identity, `Accepted` with the state and nothing*)
 val _ = Theory.setup (TAT_Proof_Obligation.register

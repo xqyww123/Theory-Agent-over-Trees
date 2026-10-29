@@ -5,7 +5,9 @@ Status: proposed 2026-10-24, from the design discussion of 2026-10-21 to
 ai-artifacts/review/inductive/DECISIONS.md); revised the same day after
 its review (ai-artifacts/review/inductive/design_review.json) and its
 re-review (design_rereview.json); the agent-facing wording below is the
-owner's. Implemented on 2026-10-28.
+owner's. Implemented on 2026-10-28. Revised 2026-10-28 with the
+unused-variable check (COMMON.md §4; ai-artifacts/UNUSED_TERM_VARIABLE_PLAN.md):
+§6's parse.
 
 An `Inductive` defines one or more predicates by rules: under the kind
 `inductive` as the least predicates that satisfy the rules, under
@@ -260,6 +262,17 @@ message: `cnames_syn`, the constants as `TAT_Mixfix.fixes` reads them;
 `for_any` gives it, or none, and `NoSyn`; `specs`, each rule's name, its
 conclusion's and premises' text, and its `for_any` less the parameters.
 
+**The parse and the unused-variable check.** On the command's arguments
+for the recorded fixed parameters, none under `None`, each rule's
+conclusion and premises are parsed, never checked, where the command
+parses them (`specification.ML`, `prep_specs`): in the context
+`Specification.read_multi_specs (cnames_syn @ pnames_syn) []` leaves,
+with the rule's own `for_any` fixed. A parse that fails is the
+definition's failure, with Isabelle's messages. A variable of a rule's
+`for_any`, as the agent wrote it, that is not a free variable of that
+rule's parse refuses the definition before step 1, with COMMON.md §4's
+one message, its paths `inductive_rules[i].for_any`.
+
 **Step 1, the rules read.** In the input state's local theory,
 `Specification.read_multi_specs (cnames_syn @ pnames_syn) specs`, on the
 command's arguments for the recorded fixed parameters, none under
@@ -279,7 +292,8 @@ compared with `=`; a position has none when some predicate has no
 occurrence, some occurrence has fewer arguments, or two occurrences
 differ there. The *run* is the longest
 run of leading positions whose common variables are all different,
-each a rule's variable — one the rule's closing binds, not one the
+each a rule's variable — one the rule's closing binds, not one its
+conclusion's own `⋀` binds (counted on the rule's parse) nor one the
 context fixes, such as a `Locale`'s parameter — or a parameter step 1
 fixed. With `fixed_parameters` `None`, the run's variables are the
 parameters: the criterion Isabelle's own check applies to them
