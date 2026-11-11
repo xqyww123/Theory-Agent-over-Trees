@@ -13,3 +13,5 @@ build/
 *.proof-store
 *.proof-store.lock
 *.proof-store.tmp*
+# review details never enter the repository
+review_result.json
